@@ -798,7 +798,7 @@ without losing chat state:
 | `CODEX_SESSIONS_ROOT` | Codex history search root | `~/.codex/sessions` |
 | `HYADEX_JOB_MAX_ACTIVE_RUNS` | Scheduled-job concurrency cap (`0` disables this dedicated cap) | `0` |
 | `HYADEX_MAX_ACTIVE_AGENT_RUNS` | Optional server-wide concurrency cap for chat, cron and goal runs (`0` means no count limit) | `0` |
-| `HYADEX_JOB_MIN_AVAILABLE_MEM_MB` | Job launch memory guardrail | `4096` |
+| `HYADEX_JOB_MIN_AVAILABLE_MEM_MB` | Additional job launch memory guardrail; the normal turn floor also applies | `1536` |
 | `HYADEX_MIN_START_AVAILABLE_MEM_MB` | Interactive launch memory guardrail | `2048` |
 | `HYADEX_HANDOFF_DIGEST_BACKEND` | LLM backend for context digests, `claude` or `codex` | `claude` |
 | `HYADEX_HANDOFF_DIGEST_MODEL` | LLM model for context digests | `sonnet` |

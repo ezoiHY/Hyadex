@@ -991,6 +991,7 @@ class ConfigureServerLoggingTests(unittest.TestCase):
         with (
             patch.object(agent_server, "configure_server_logging") as configure,
             patch.object(agent_server.uvicorn, "run", fake_run),
+            patch.object(agent_server, "AGENT_TOKEN", "test-native-token"),
             patch.object(agent_server.sys, "argv", ["agent_server.py"]),
         ):
             self.assertEqual(agent_server.main(), 0)

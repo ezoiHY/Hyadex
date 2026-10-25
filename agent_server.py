@@ -1000,7 +1000,7 @@ JOB_BUSY_RETRY_SECONDS = int(hyadex_setting("JOB_BUSY_RETRY_SECONDS", "60"))
 # Zero means scheduled jobs have no scheduler-specific concurrency ceiling.
 # The optional global cap and low-memory check still apply.
 JOB_MAX_ACTIVE_RUNS = int(hyadex_setting("JOB_MAX_ACTIVE_RUNS", "0"))
-JOB_MIN_AVAILABLE_MEM_MB = int(hyadex_setting("JOB_MIN_AVAILABLE_MEM_MB", "4096"))
+JOB_MIN_AVAILABLE_MEM_MB = int(hyadex_setting("JOB_MIN_AVAILABLE_MEM_MB", "1536"))
 JOB_DEFER_EVENT_MIN_SECONDS = int(hyadex_setting("JOB_DEFER_EVENT_MIN_SECONDS", "300"))
 # A missing or logged-out provider runtime may recover without operator action,
 # but an occurrence must not be parked forever.  Keep the small retry budget on
@@ -5927,7 +5927,6 @@ def request_authorized(request: Request) -> bool:
         token_matches(bearer_token(request.headers.get("authorization")))
         or token_matches(request.headers.get("x-hyadex-token"))
         or token_matches(request.headers.get("x-zenithdock-token"))
-        or token_matches(request.query_params.get("token"))
     )
 
 
@@ -6064,6 +6063,16 @@ def network_host_is_loopback(host: str) -> bool:
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
         address = address.ipv4_mapped
     return address.is_loopback
+
+
+def validate_listener_auth() -> None:
+    """Require a client credential before exposing any non-loopback listener."""
+
+    if not str(AGENT_TOKEN or "").strip() and not network_host_is_loopback(SERVER_BIND_ADDRESS):
+        raise RuntimeError(
+            "Non-loopback listeners require HYADEX_AGENT_TOKEN. "
+            "Set a token or use --bind 127.0.0.1 for local development."
+        )
 
 
 AGENT_HELPER_PROXY_HEADERS = {
@@ -6217,7 +6226,6 @@ def websocket_authorized(ws: WebSocket) -> bool:
         token_matches(bearer_token(ws.headers.get("authorization")))
         or token_matches(ws.headers.get("x-hyadex-token"))
         or token_matches(ws.headers.get("x-zenithdock-token"))
-        or token_matches(ws.query_params.get("token"))
         or websocket_token_subprotocol(ws) is not None
     )
 
@@ -53025,6 +53033,34 @@ def low_available_memory_message(available_mb: int, minimum_mb: int, *, action: 
     )
 
 
+def scheduled_job_resource_diagnostics(pressure: dict[str, Any], active_count: int) -> dict[str, Any]:
+    """Explain resource admission from one snapshot, without taking run locks.
+
+    Per-chat ownership, provider readiness and maintenance remain separate
+    admission checks. Health must not wait for their locks to explain memory.
+    """
+
+    available = pressure.get("available_mem_mb")
+    blocker = None
+    for cap, minimum, action, message in (
+        (MAX_ACTIVE_AGENT_RUNS, MIN_START_AVAILABLE_MEM_MB, "start an agent turn",
+         f"server already has {active_count} active agent run(s)"),
+        (JOB_MAX_ACTIVE_RUNS, JOB_MIN_AVAILABLE_MEM_MB, "start a scheduled job",
+         f"{active_count} active agent run(s)"),
+    ):
+        if cap > 0 and active_count >= cap:
+            blocker = message
+            break
+        if isinstance(available, int) and minimum > 0 and available < minimum:
+            blocker = low_available_memory_message(available, minimum, action=action)
+            break
+    return {
+        "effective_min_available_mem_mb": max(0, MIN_START_AVAILABLE_MEM_MB, JOB_MIN_AVAILABLE_MEM_MB),
+        "resource_blocked": blocker is not None,
+        "resource_blocking_reason": blocker,
+    }
+
+
 async def scheduled_job_blocker(
     session_id: str,
     *,
@@ -79273,6 +79309,7 @@ async def bounded_shutdown_phase(
 async def lifespan(app: FastAPI):
     from execution_ownership import acquire_state_ownership
 
+    validate_listener_auth()
     # Both the maintained legacy entrypoint and the split worker pass here.
     # Retain the descriptor until process exit: bounded shutdown can leave
     # finalizers alive after this lifespan returns.
@@ -79728,9 +79765,9 @@ class HyadexServerCORSMiddleware(CORSMiddleware):
 app = FastAPI(title="HyadexServer", lifespan=lifespan)
 app.add_middleware(
     HyadexServerCORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[],
+    allow_methods=[],
+    allow_headers=[],
 )
 app.mount(TEAM_HUB_MOUNT_PATH, TEAM_HUB_RUNTIME, name="team-hub")
 app.mount(
@@ -80672,6 +80709,9 @@ async def require_agent_token(request: Request, call_next):
         and not secure_peer_admin_route
         and not secure_peer_proxy_route
         and not interactive_chat_guest_route
+        # Restart has a stricter header-only check below, including its
+        # structured error contract. URL credentials must reach that rejection.
+        and request.url.path != "/api/admin/restart"
         and not request_authorized(request)
     ):
         logger.warning("unauthorized request method=%s path=%s host=%s", request.method, request.url.path, request.client.host if request.client else "-")
@@ -83438,7 +83478,7 @@ async def health() -> dict[str, Any]:
         "update_blocking_queued_count": update_blocking_queued_count,
         "update_service_cgroup": update_service_cgroup,
         "jobs": len(JOBS.jobs),
-        "job_guard": pressure,
+        "job_guard": {**pressure, **scheduled_job_resource_diagnostics(pressure, len(active))},
         "host_health_log": str(HOST_HEALTH_FILE),
         "runtimes": runtime_diagnostics_snapshot(),
     }
@@ -99692,6 +99732,10 @@ def main() -> int:
     # must target the socket selected by the CLI, not the import-time default.
     SERVER_BIND_ADDRESS = str(args.bind)
     SERVER_PORT = int(args.port)
+    try:
+        validate_listener_auth()
+    except RuntimeError as exc:
+        parser.error(str(exc))
     uvicorn.run(
         app,
         host=args.bind,

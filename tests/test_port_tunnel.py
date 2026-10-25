@@ -227,13 +227,13 @@ class PortTunnelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(websocket.calls[-1][0:2], ("close", 4401))
         connection.assert_not_awaited()
 
-    async def test_legacy_websocket_auth_keeps_query_token_compatibility(self) -> None:
+    async def test_websocket_auth_rejects_query_only_token(self) -> None:
         websocket = RecordingWebSocket(
             (agent_server.PORT_TUNNEL_WEBSOCKET_PROTOCOL,),
             query_params={"token": "server-token"},
         )
         with patch.object(agent_server, "AGENT_TOKEN", "server-token"):
-            self.assertTrue(
+            self.assertFalse(
                 agent_server.websocket_authorized(websocket)  # type: ignore[arg-type]
             )
             self.assertFalse(
@@ -945,6 +945,7 @@ class PortTunnelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_uvicorn_does_not_apply_tunnel_frame_limit_globally(self) -> None:
         with patch("sys.argv", ["agent_server.py"]), \
+             patch.object(agent_server, "AGENT_TOKEN", "test-native-token"), \
              patch.object(
                  agent_server,
                  "configure_server_logging",

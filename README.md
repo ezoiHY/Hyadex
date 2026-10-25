@@ -104,6 +104,11 @@ See the [server reference](docs/SERVER_REFERENCE.md) for the full list and
 
 - REST under `/api/...` with `Authorization: Bearer <token>`. FastAPI serves the
   schema at `/openapi.json`.
+- A non-loopback listener requires a nonempty `HYADEX_AGENT_TOKEN`. HTTP
+  credentials belong in `Authorization` or `x-hyadex-token`, never `?token=`.
+  WebSockets also accept the `hyadex-token.<base64url-token>` subprotocol.
+  Cross-origin browser access to the server API is disabled; native clients
+  and same-origin requests do not need CORS.
 - Chat timelines stream over `WS /api/sessions/{id}/events?after=<seq>`;
   group timelines over `WS /api/groups/{id}/events/stream?after=<seq>`.
 - Groups: [docs/GROUP_DISCUSSIONS.md](docs/GROUP_DISCUSSIONS.md). Autopilot:

@@ -10,7 +10,7 @@ establish an out-of-memory crash or memory leak.
 | Setting | Default | Purpose |
 | --- | ---: | --- |
 | `HYADEX_MIN_START_AVAILABLE_MEM_MB` | 2048 | Minimum available memory before a new agent turn, including queued turns and goal resumes that use normal admission. |
-| `HYADEX_JOB_MIN_AVAILABLE_MEM_MB` | 4096 | Additional reserve before launching a scheduled job. |
+| `HYADEX_JOB_MIN_AVAILABLE_MEM_MB` | 1536 | Additional reserve before launching a scheduled job. |
 
 Both values are in **MiB** (1024 × 1024 bytes); the existing `_MB` environment
 variable names are retained for compatibility. Linux uses `MemAvailable`;
@@ -30,15 +30,20 @@ check. Concurrency limits, provider readiness, maintenance/update fences and
 per-chat ownership checks still apply. An unavailable memory reading retains
 the previous behavior: no memory-based rejection. Scheduled jobs must pass both
 the global turn guard and their additional job guard; the first blocker is
-reported. Their 4096 MiB default remains conservative because unattended work
-can wait instead of competing with interactive work.
+reported. The effective scheduled-job default is therefore **2048 MiB**, the
+larger of the two floors. A machine with about 3.1 GiB available can pass both.
 
-## Clearer errors, unchanged limits
+## Errors and diagnostics
 
 The interactive default remains **2 GiB (2048 MiB)**; the scheduled-job
-default remains **4 GiB (4096 MiB)**. Only the error message changes. A host
+reserve is **1.5 GiB (1536 MiB)**. A host
 with 567 MiB available still fails the default interactive check. These
 thresholds are admission policy, not a guarantee that every workload will fit.
+
+`GET /api/health` includes the current snapshot in `job_guard`, with
+`effective_min_available_mem_mb`, `resource_blocked` and
+`resource_blocking_reason`. These describe memory and concurrency checks;
+per-chat ownership, provider readiness and maintenance can still defer work.
 
 When the guard blocks, the existing HTTP 503 detail now says, for example:
 

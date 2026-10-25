@@ -60,7 +60,7 @@ class AgentAdmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ns["MAX_ACTIVE_AGENT_RUNS"], 0)
         self.assertEqual(ns["JOB_MAX_ACTIVE_RUNS"], 0)
         self.assertEqual(ns["MIN_START_AVAILABLE_MEM_MB"], 2048)
-        self.assertEqual(ns["JOB_MIN_AVAILABLE_MEM_MB"], 4096)
+        self.assertEqual(ns["JOB_MIN_AVAILABLE_MEM_MB"], 1536)
         self.assertIsNone(await ns["turn_start_blocker"]())
         self.assertIsNone(await ns["turn_start_blocker"](ignore_session_id="busy-0"))
         self.assertIsNone(await ns["scheduled_job_blocker"]("new-cron"))
@@ -92,19 +92,29 @@ class AgentAdmissionTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNone(blocker)
 
     async def test_scheduled_memory_floor_and_action_are_independent(self):
-        ns = load_admission()
-        for available in (2048, 2049, 3072, 4095, 4096, 4097):
+        ns = load_admission({"HYADEX_MIN_START_AVAILABLE_MEM_MB": "1024"})
+        for available in (1024, 1535, 1536, 1537, 3072):
             with self.subTest(available=available):
                 ns["host_pressure_snapshot"] = lambda: {"available_mem_mb": available}
                 self.assertIsNone(await ns["turn_start_blocker"]())
                 for manual in (False, True):
                     blocker = await ns["scheduled_job_blocker"]("new-cron", manual=manual)
-                    if available < 4096:
+                    if available < 1536:
                         self.assertIn(f"{available} MiB available", blocker)
-                        self.assertIn("at least 4 GiB (4096 MiB) required to start a scheduled job", blocker)
+                        self.assertIn("at least 1536 MiB required to start a scheduled job", blocker)
                         self.assertIn("then retry", blocker)
                     else:
                         self.assertIsNone(blocker)
+
+    async def test_default_scheduled_jobs_allow_three_gib_but_keep_global_floor(self):
+        ns = load_admission()
+        for available in (1536, 2047, 2048, 3174):
+            ns["host_pressure_snapshot"] = lambda: {"available_mem_mb": available}
+            blocker = await ns["scheduled_job_blocker"]("new-cron")
+            if available < 2048:
+                self.assertIn("2 GiB (2048 MiB)", blocker)
+            else:
+                self.assertIsNone(blocker)
 
     async def test_memory_overrides_use_effective_floor_including_legacy(self):
         for prefix in ("HYADEX", "ZENITHBOT"):

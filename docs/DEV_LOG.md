@@ -3,6 +3,30 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-25 — Listener security and scheduled-job admission
+
+- Non-loopback listeners now require a nonempty server token, checked by both
+  the CLI and ASGI startup before loading sessions or recovering queued work.
+- HTTP and WebSocket authentication no longer accepts `?token=`. Native
+  authorization headers and WebSocket token subprotocols remain supported.
+- The server API no longer grants cross-origin browser access. Mounted Hub
+  transport policies remain separately enforced.
+- The scheduled-job memory reserve is now 1536 MiB. The normal 2048 MiB turn
+  floor still applies. Health reports the effective floor and the current
+  memory/concurrency blocking reason without taking additional run locks.
+
+**Validation.** 110 focused tests passed. The full isolated suite ran 6,339
+cases; inherited platform failures remain. Two newly exposed contract/fixture
+issues were corrected, and those plus two parallel-run failures passed in an
+11-test serial recheck. All tracked Python sources compile and the dependency
+lock check passes. The real-process `scripts/check_network_security.py` uses
+`scripts/dev_server.py`, fresh state and a random loopback port to verify
+startup rejection, HTTP header/query authentication, CORS, WebSocket denial,
+authenticated reconnects and health diagnostics. It uses real HTTP/WS, with
+no mocked server. Desktop/mobile client acceptance is not claimed.
+
+**Availability:** source only; no installed service or release changed.
+
 ## 2026-10-25 — Autopilot
 
 **Feature.** Autopilot runs let one agent plan and another implement, with a
