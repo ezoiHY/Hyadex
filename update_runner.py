@@ -86,15 +86,6 @@ RUNNER_OWNED_ACTIVE_PHASES = {
     "installing",
     "restarting",
 }
-SECURE_PEER_HEALTH_REQUIREMENTS = {
-    "available": True,
-    "state_available": True,
-    "state_error_code": None,
-    "required": False,
-    "version": 1,
-    "control_path": "/api/admin/secure-peers/v1/status",
-    "proxy_prefix": "/api/team-hub-secure",
-}
 
 
 class ReleaseUnavailableError(RuntimeError):
@@ -588,7 +579,7 @@ def assert_post_update_identity(
     expected_server_version: str | None = None,
     expected_api_contract_version: int | None = None,
 ) -> None:
-    """Fence a replacement by stable server and managed Hub identities."""
+    """Fence a replacement by stable server identity, version and API contract."""
 
     health = server_health_snapshot(port, token=token)
     if str(health.get("server_identity") or "") != expected_server_identity:
@@ -607,129 +598,11 @@ def assert_post_update_identity(
         or health["api_contract_version"] != expected_api_contract_version
     ):
         raise RuntimeError("updated HyadexServer API contract does not match the signed release")
-    capabilities = health.get("capabilities")
-    secure_peer_capability = (
-        capabilities.get("secure_peer_v1")
-        if isinstance(capabilities, dict)
-        else None
-    )
-    if not isinstance(secure_peer_capability, dict) or any(
-        secure_peer_capability.get(name) != value
-        for name, value in SECURE_PEER_HEALTH_REQUIREMENTS.items()
-    ):
-        raise RuntimeError("updated HyadexServer secure-peer state is unavailable")
-    if expected_team_hub_id is None:
-        if (
-            expected_team_hub_transport is not None
-            or expected_team_hub_url is not None
-            or expected_team_hub_direct_ip_url is not None
-        ):
-            raise RuntimeError("managed Team Hub transport has no bound Hub identity")
-        return
-    capability = (
-        capabilities.get("team_hub_v1")
-        if isinstance(capabilities, dict)
-        else None
-    )
-    expected_capability = {
-        "available": True,
-        "designated_host": True,
-        "version": 1,
-        "base_path": "/api/team-hub",
-        "hub_id": expected_team_hub_id,
-        "host_server_identity": expected_server_identity,
-    }
-    if not isinstance(capability, dict) or any(
-        capability.get(name) != value
-        for name, value in expected_capability.items()
-    ):
-        raise RuntimeError("updated HyadexServer lost or changed its Team Hub identity")
-    actual_transport = capability.get("transport")
-    actual_hub_url = capability.get("hub_url")
-    if expected_team_hub_transport is None:
-        if actual_transport not in {None, "loopback"} or actual_hub_url is not None:
-            raise RuntimeError("updated HyadexServer changed its legacy Team Hub transport")
-    elif (
-        actual_transport != expected_team_hub_transport
-        or actual_hub_url != expected_team_hub_url
-    ):
-        raise RuntimeError("updated HyadexServer changed its Team Hub transport")
-    if expected_team_hub_direct_ip_url is not None:
-        expected_routes = [
-            {
-                "transport": expected_team_hub_transport or "loopback",
-                "hub_url": expected_team_hub_url,
-            }
-        ]
-        if (
-            expected_team_hub_direct_ip_url
-            and expected_team_hub_transport != "direct_ip"
-        ):
-            expected_routes.append(
-                {
-                    "transport": "direct_ip",
-                    "hub_url": expected_team_hub_direct_ip_url,
-                }
-            )
-        if capability.get("routes") != expected_routes:
-            raise RuntimeError("updated HyadexServer changed its Team Hub routes")
-
-
-def assert_repaired_team_hub_identity(
-    port: int,
-    *,
-    token: str | None,
-    expected_server_identity: str,
-    expected_team_hub_transport: str,
-    expected_team_hub_url: str | None,
-    expected_team_hub_direct_ip_url: str,
-) -> str:
-    """Verify that an unavailable managed host was repaired in place."""
-
-    health = server_health_snapshot(port, token=token)
-    capabilities = health.get("capabilities")
-    capability = (
-        capabilities.get("team_hub_v1")
-        if isinstance(capabilities, dict)
-        else None
-    )
-    required = {
-        "available": True,
-        "designated_host": True,
-        "version": 1,
-        "base_path": "/api/team-hub",
-        "host_server_identity": expected_server_identity,
-        "transport": expected_team_hub_transport,
-        "hub_url": expected_team_hub_url,
-    }
-    if not isinstance(capability, dict) or any(
-        capability.get(name) != value for name, value in required.items()
-    ):
-        raise RuntimeError("updated HyadexServer did not repair its Team Hub host")
-    hub_id = capability.get("hub_id")
-    if not isinstance(hub_id, str) or re.fullmatch(
-        r"[A-Za-z0-9_.:-]{8,240}", hub_id
-    ) is None:
-        raise RuntimeError("repaired Team Hub identity is invalid")
-    expected_routes = [
-        {
-            "transport": expected_team_hub_transport,
-            "hub_url": expected_team_hub_url,
-        }
-    ]
-    if (
-        expected_team_hub_direct_ip_url
-        and expected_team_hub_transport != "direct_ip"
-    ):
-        expected_routes.append(
-            {
-                "transport": "direct_ip",
-                "hub_url": expected_team_hub_direct_ip_url,
-            }
-        )
-    if capability.get("routes") != expected_routes:
-        raise RuntimeError("repaired Team Hub routes changed")
-    return hub_id
+    if any(value is not None for value in (
+        expected_team_hub_id, expected_team_hub_transport, expected_team_hub_url,
+        expected_team_hub_direct_ip_url,
+    )):
+        raise RuntimeError("Team Hub update recovery is no longer supported")
 
 
 def assert_server_idle(
@@ -863,56 +736,8 @@ def consume_auth_token_file(path: str | None) -> str:
     return token
 
 
-def clear_team_hub_maintenance(args: argparse.Namespace) -> bool:
-    """Clear the exact durable update fence without opening the Hub DB."""
-
-    hub_id = str(getattr(args, "expected_team_hub_id", "") or "").strip()
-    snapshot = str(getattr(args, "team_hub_snapshot", "") or "").strip()
-    data_dir = str(getattr(args, "team_hub_data_dir", "") or "").strip()
-    host_identity = str(
-        getattr(args, "expected_server_identity", "") or ""
-    ).strip()
-    operation_id = str(getattr(args, "update_id", "") or "").strip()
-    if not any((hub_id, snapshot, data_dir)):
-        return False
-    if not all((hub_id, snapshot, data_dir, host_identity, operation_id)):
-        raise RuntimeError("managed Team Hub maintenance arguments are incomplete")
-    from hyadex_team_hub.store import HubStore
-
-    return HubStore.clear_maintenance_fence_control(
-        Path(data_dir),
-        expected_hub_id=hub_id,
-        expected_host_identity=host_identity,
-        expected_reason="server-update",
-        expected_operation_id=operation_id,
-        expected_snapshot=Path(snapshot),
-    )
 
 
-def team_hub_maintenance_fence_present(args: argparse.Namespace) -> bool:
-    """Return whether this exact update still has an on-disk Hub fence."""
-
-    hub_id = str(getattr(args, "expected_team_hub_id", "") or "").strip()
-    snapshot = str(getattr(args, "team_hub_snapshot", "") or "").strip()
-    data_dir = str(getattr(args, "team_hub_data_dir", "") or "").strip()
-    host_identity = str(
-        getattr(args, "expected_server_identity", "") or ""
-    ).strip()
-    operation_id = str(getattr(args, "update_id", "") or "").strip()
-    if not any((hub_id, snapshot, data_dir)):
-        return False
-    if not all((hub_id, snapshot, data_dir, host_identity, operation_id)):
-        raise RuntimeError("managed Team Hub maintenance arguments are incomplete")
-    from hyadex_team_hub.store import HubStore
-
-    return HubStore.maintenance_fence_matches_control(
-        Path(data_dir),
-        expected_hub_id=hub_id,
-        expected_host_identity=host_identity,
-        expected_reason="server-update",
-        expected_operation_id=operation_id,
-        expected_snapshot=Path(snapshot),
-    )
 
 
 def version_is_prerelease(version: str) -> bool:
@@ -1292,166 +1117,12 @@ def run_update(args: argparse.Namespace) -> None:
         expected_service_cgroup,
     ) is None:
         raise RuntimeError("managed update has an invalid service cgroup")
-    repair_failed_team_hub_host = bool(
-        getattr(args, "repair_failed_team_hub_host", False)
-    )
-    expected_team_hub_id = str(
-        getattr(args, "expected_team_hub_id", "") or ""
-    ).strip() or None
-    raw_team_hub_transport = getattr(args, "expected_team_hub_transport", None)
-    expected_team_hub_transport = (
-        str(raw_team_hub_transport).strip()
-        if raw_team_hub_transport is not None
-        else None
-    )
-    raw_team_hub_url = getattr(args, "expected_team_hub_url", None)
-    expected_team_hub_url = (
-        str(raw_team_hub_url).strip()
-        if raw_team_hub_url is not None
-        else None
-    )
-    raw_team_hub_direct_ip_url = getattr(
-        args, "expected_team_hub_direct_ip_url", None
-    )
-    expected_team_hub_direct_ip_url = (
-        str(raw_team_hub_direct_ip_url).strip()
-        if raw_team_hub_direct_ip_url is not None
-        else None
-    )
-    team_hub_snapshot = str(
-        getattr(args, "team_hub_snapshot", "") or ""
-    ).strip() or None
-    team_hub_data_dir = str(
-        getattr(args, "team_hub_data_dir", "") or ""
-    ).strip() or None
-    if any((expected_team_hub_id, team_hub_snapshot, team_hub_data_dir)) and not all(
-        (expected_team_hub_id, team_hub_snapshot, team_hub_data_dir)
-    ):
-        raise RuntimeError("managed Team Hub rollback arguments must be complete")
-    if repair_failed_team_hub_host and any(
-        (expected_team_hub_id, team_hub_snapshot, team_hub_data_dir)
-    ):
-        raise RuntimeError(
-            "failed Team Hub repair cannot reuse live-host rollback arguments"
-        )
-    if expected_team_hub_id is None and not repair_failed_team_hub_host:
-        if (
-            expected_team_hub_transport is not None
-            or expected_team_hub_url is not None
-            or expected_team_hub_direct_ip_url is not None
-        ):
-            raise RuntimeError("managed Team Hub transport arguments require a Hub identity")
-    if repair_failed_team_hub_host and (
-        raw_team_hub_transport is None
-        or raw_team_hub_url is None
-        or raw_team_hub_direct_ip_url is None
-    ):
-        raise RuntimeError(
-            "failed Team Hub repair requires exact transport continuity arguments"
-        )
-    if (
-        expected_team_hub_id is not None or repair_failed_team_hub_host
-    ) and expected_team_hub_transport is None:
-        if raw_team_hub_url is not None:
-            raise RuntimeError("legacy loopback Team Hub cannot have a remote URL")
-    elif expected_team_hub_id is not None or repair_failed_team_hub_host:
-        if expected_team_hub_transport == "loopback":
-            if raw_team_hub_url is None or expected_team_hub_url != "":
-                raise RuntimeError("loopback Team Hub cannot have a remote URL")
-            expected_team_hub_url = None
-        elif expected_team_hub_transport in {"tailscale_serve", "direct_ip"}:
-            if expected_team_hub_url is None:
-                raise RuntimeError("remote Team Hub transport requires its exact URL")
-            try:
-                from team_hub_host import (  # Imported only for the managed-Hub path.
-                    TEAM_HUB_MODE_HOST,
-                    configured_team_hub_endpoint,
-                )
-
-                resolved_transport, resolved_url, _host, config_error = (
-                    configured_team_hub_endpoint(
-                        TEAM_HUB_MODE_HOST,
-                        expected_team_hub_url,
-                        expected_team_hub_transport,
-                        args.port,
-                    )
-                )
-            except Exception as exc:
-                raise RuntimeError("could not validate the expected Team Hub URL") from exc
-            if (
-                config_error is not None
-                or resolved_transport != expected_team_hub_transport
-                or resolved_url != expected_team_hub_url
-            ):
-                raise RuntimeError("expected Team Hub URL is invalid")
-        else:
-            raise RuntimeError("managed Team Hub transport is invalid")
-    if expected_team_hub_direct_ip_url is not None:
-        if expected_team_hub_id is None and not repair_failed_team_hub_host:
-            raise RuntimeError("managed Team Hub direct-IP route requires a Hub identity")
-        if expected_team_hub_direct_ip_url:
-            try:
-                from team_hub_host import (
-                    TEAM_HUB_MODE_HOST,
-                    configured_team_hub_endpoint,
-                )
-
-                direct_transport, direct_url, _host, direct_error = (
-                    configured_team_hub_endpoint(
-                        TEAM_HUB_MODE_HOST,
-                        expected_team_hub_direct_ip_url,
-                        "direct_ip",
-                        args.port,
-                    )
-                )
-            except Exception as exc:
-                raise RuntimeError(
-                    "could not validate the expected Team Hub direct-IP route"
-                ) from exc
-            if (
-                direct_error is not None
-                or direct_transport != "direct_ip"
-                or direct_url != expected_team_hub_direct_ip_url
-            ):
-                raise RuntimeError("expected Team Hub direct-IP route is invalid")
-        if (
-            expected_team_hub_transport == "direct_ip"
-            and expected_team_hub_direct_ip_url != expected_team_hub_url
-        ):
-            raise RuntimeError("primary direct-IP Team Hub route changed")
-    if repair_failed_team_hub_host:
-        with server_update_status_lock(status_path):
-            admitted = _read_status_unlocked(status_path)
-        expected_repair_routes = [
-            {
-                "transport": expected_team_hub_transport,
-                "hub_url": expected_team_hub_url,
-            }
-        ]
-        if (
-            expected_team_hub_direct_ip_url
-            and expected_team_hub_transport != "direct_ip"
-        ):
-            expected_repair_routes.append(
-                {
-                    "transport": "direct_ip",
-                    "hub_url": expected_team_hub_direct_ip_url,
-                }
-            )
-        expected_status = {
-            "update_id": update_id,
-            "phase": "starting",
-            "team_hub_repair_mode": "failed_start",
-            "team_hub_host_server_identity": expected_server_identity,
-            "team_hub_transport": expected_team_hub_transport,
-            "team_hub_url": expected_team_hub_url,
-            "team_hub_direct_ip_url": expected_team_hub_direct_ip_url,
-            "team_hub_routes": expected_repair_routes,
-        }
-        if any(admitted.get(name) != value for name, value in expected_status.items()):
-            raise RuntimeError(
-                "failed Team Hub repair is not owned by the exact admitted update"
-            )
+    if any(getattr(args, name, None) for name in (
+        "repair_failed_team_hub_host", "expected_team_hub_id",
+        "expected_team_hub_transport", "expected_team_hub_url",
+        "expected_team_hub_direct_ip_url", "team_hub_snapshot", "team_hub_data_dir",
+    )):
+        raise RuntimeError("Team Hub updates are no longer supported; existing data was preserved")
     update_status(
         status_path,
         expected_update_id=update_id,
@@ -1567,45 +1238,6 @@ def run_update(args: argparse.Namespace) -> None:
         if manifest.get("schema") == 2 or prepared_update is not None:
             command.extend(["--expected-api-contract", str(manifest["api_contract_version"])])
         command.extend(instance_installer_arguments(source))
-        if expected_team_hub_id is not None:
-            command.extend(
-                [
-                    "--expected-team-hub-id", expected_team_hub_id,
-                    "--team-hub-snapshot", str(team_hub_snapshot),
-                    "--team-hub-data-dir", str(team_hub_data_dir),
-                    "--team-hub-operation-id", update_id,
-                ]
-            )
-            if expected_team_hub_transport is not None:
-                command.extend(
-                    [
-                        "--expected-team-hub-transport",
-                        expected_team_hub_transport,
-                        "--expected-team-hub-url",
-                        expected_team_hub_url or "",
-                    ]
-                )
-            if expected_team_hub_direct_ip_url is not None:
-                command.extend(
-                    [
-                        "--expected-team-hub-direct-ip-url",
-                        expected_team_hub_direct_ip_url,
-                    ]
-                )
-        elif repair_failed_team_hub_host:
-            command.extend(
-                [
-                    "--repair-failed-team-hub-host",
-                    "--managed-update-id",
-                    update_id,
-                    "--expected-team-hub-transport",
-                    expected_team_hub_transport or "",
-                    "--expected-team-hub-url",
-                    expected_team_hub_url or "",
-                    "--expected-team-hub-direct-ip-url",
-                    expected_team_hub_direct_ip_url or "",
-                ]
-            )
         wait_for_server_idle(
             args.port,
             status_path=status_path,
@@ -1638,7 +1270,6 @@ def run_update(args: argparse.Namespace) -> None:
             managed_update_id=(
                 update_id
                 if expected_service_cgroup is not None
-                or repair_failed_team_hub_host
                 else None
             ),
             expected_service_cgroup=expected_service_cgroup,
@@ -1646,41 +1277,13 @@ def run_update(args: argparse.Namespace) -> None:
         identity_arguments: dict[str, Any] = {
             "token": auth_token,
             "expected_server_identity": expected_server_identity,
-            "expected_team_hub_id": expected_team_hub_id,
         }
         if manifest.get("schema") == 2:
             identity_arguments.update(
                 expected_server_version=version,
                 expected_api_contract_version=manifest["api_contract_version"],
             )
-        if expected_team_hub_transport is not None and not repair_failed_team_hub_host:
-            identity_arguments["expected_team_hub_transport"] = (
-                expected_team_hub_transport
-            )
-        if expected_team_hub_url is not None and not repair_failed_team_hub_host:
-            identity_arguments["expected_team_hub_url"] = expected_team_hub_url
-        if (
-            expected_team_hub_direct_ip_url is not None
-            and not repair_failed_team_hub_host
-        ):
-            identity_arguments["expected_team_hub_direct_ip_url"] = (
-                expected_team_hub_direct_ip_url
-            )
         assert_post_update_identity(args.port, **identity_arguments)
-        if repair_failed_team_hub_host:
-            assert_repaired_team_hub_identity(
-                args.port,
-                token=auth_token,
-                expected_server_identity=expected_server_identity,
-                expected_team_hub_transport=expected_team_hub_transport or "",
-                expected_team_hub_url=expected_team_hub_url,
-                expected_team_hub_direct_ip_url=(
-                    expected_team_hub_direct_ip_url or ""
-                ),
-            )
-        # install.sh owns the success clear while it can still stop the
-        # candidate, restore the verified snapshot, and restart the old
-        # release. The runner clears only failures before install starts.
 
     update_status(
         status_path,
@@ -1775,17 +1378,7 @@ def main() -> int:
                     "downloading",
                     "verifying",
                 }:
-                    # Keep the owning active status in place until its exact
-                    # Hub fence is cleared. A clear failure therefore remains
-                    # fail-closed instead of publishing a false terminal row.
-                    clear_team_hub_maintenance(args)
                     release_handoff = bool(getattr(args, "execution_handoff_file", None))
-                elif phase in {"installing", "restarting"} and \
-                        team_hub_maintenance_fence_present(args):
-                    # Once install.sh starts, only its verified rollback or
-                    # successful candidate handoff may clear the fence. Keep
-                    # the active row if recovery was not proven complete.
-                    return 1
                 # Installer preflight can fail after the public phase changed
                 # to installing but before it creates a transaction. The same
                 # exact old hold then needs cleanup; the helper refuses any

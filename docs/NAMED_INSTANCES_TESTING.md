@@ -98,8 +98,8 @@ Normal Python bytecode caches in this checkout no longer block installation.
 
 The existing activation, service-state, health-security, stage-cleanup, update,
 release-manifest and terminal suites provide backward-compatibility checks.
-The complete existing installer suite includes longer Team Hub recovery cases;
-passing the focused tests is not a claim that the entire repository suite ran.
+Run the complete installer suite as well as focused instance tests; focused
+results do not imply that the entire repository suite ran.
 
 `tests/test_cross_instance_import.py` covers ownership filtering, stale/manual
 imports, parked IDs, stopped/removed instances, unsafe indexes and cancellation

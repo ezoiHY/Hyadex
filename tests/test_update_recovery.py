@@ -135,7 +135,6 @@ class RecoveryTests(unittest.TestCase):
             "--update-id", self.update_id]
         with patch.dict(os.environ, {"HYADEX_SERVER_INSTALL_DIR": str(self.item.root)}), \
                 patch.object(sys, "argv", argv), \
-                patch.object(updates, "team_hub_maintenance_fence_present", return_value=True), \
                 patch.object(updates, "run_update", side_effect=RuntimeError("interrupted fixture")):
             self.assertEqual(updates.main(), 1)
         status = json.loads(self.status_path.read_text())

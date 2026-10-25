@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 import agent_server
 
@@ -74,37 +75,19 @@ class ChatReferenceMentionTests(unittest.IsolatedAsyncioTestCase):
     def test_cross_server_agent_reference_is_rejected_before_runtime_lookup(
         self,
     ) -> None:
-        reference = agent_server.ChatReference(
-            session_id="22222222-2222-4222-8222-222222222222",
-            display_title_snapshot="Remote",
-            source_text_start=0,
-            source_text_end=7,
-            action="instruction",
-            target_kind="secure_peer",
-            target_server_identity="peer_" + "a" * 64,
-            target_connection_id="11111111-1111-4111-8111-111111111111",
-            target_route_id="22222222-2222-4222-8222-222222222222",
-            target_route_revision="rev_" + "d" * 32,
-        )
-        with (
-            patch.object(agent_server, "AGENT_TOKEN", "token"),
-            patch.object(agent_server, "SECURE_PEER_AGENT_RELAY_ENABLED", False),
-            patch.object(agent_server.STORE, "sessions", self.sessions),
-            patch.object(
-                agent_server.SECURE_PEER_RUNTIME,
-                "remote_route_delivery_available",
-                side_effect=AssertionError("remote relay must not be consulted"),
-            ) as runtime_lookup,
-            self.assertRaises(HTTPException) as raised,
-        ):
-            agent_server.validate_chat_references(
-                "source-private-id",
-                "@Remote",
-                [reference],
+        with self.assertRaises(ValidationError):
+            reference = agent_server.ChatReference(
+                session_id="22222222-2222-4222-8222-222222222222",
+                display_title_snapshot="Remote",
+                source_text_start=0,
+                source_text_end=7,
+                action="instruction",
+                target_kind="secure_peer",
+                target_server_identity="peer_" + "a" * 64,
+                target_connection_id="11111111-1111-4111-8111-111111111111",
+                target_route_id="22222222-2222-4222-8222-222222222222",
+                target_route_revision="rev_" + "d" * 32,
             )
-        self.assertEqual(raised.exception.status_code, 400)
-        self.assertIn("Team Network Inbox", str(raised.exception.detail))
-        runtime_lookup.assert_not_called()
 
     async def test_inbox_only_capability_strips_legacy_secure_relay_grants(
         self,
@@ -127,7 +110,6 @@ class ChatReferenceMentionTests(unittest.IsolatedAsyncioTestCase):
         with (
             tempfile.TemporaryDirectory() as temporary,
             patch.object(agent_server, "AGENT_TOKEN", "token"),
-            patch.object(agent_server, "SECURE_PEER_AGENT_RELAY_ENABLED", False),
             patch.object(
                 agent_server,
                 "CROSS_CHAT_AUTHORITY_ROOT",
@@ -140,14 +122,13 @@ class ChatReferenceMentionTests(unittest.IsolatedAsyncioTestCase):
                 "run_inbox_only",
                 [],
                 actions={"publish", "secure_peer_instruction"},
-                secure_peer_route_snapshots=[snapshot],
             )
             token = agent_server.json.loads(authority.read_text())[
                 "provider_capability"
             ]
             token_hash = agent_server.hashlib.sha256(token.encode()).hexdigest()
             capability = agent_server.CROSS_CHAT_CAPABILITIES.pop(token_hash)
-        self.assertEqual(capability["secure_peer_grants"], {})
+        self.assertNotIn("secure_peer_grants", capability)
         self.assertNotIn("secure_peer_instruction", capability["actions"])
 
     async def test_forged_legacy_secure_capability_cannot_submit(self) -> None:
@@ -169,7 +150,6 @@ class ChatReferenceMentionTests(unittest.IsolatedAsyncioTestCase):
         submit = Mock()
         with (
             patch.object(agent_server, "AGENT_TOKEN", "token"),
-            patch.object(agent_server, "SECURE_PEER_AGENT_RELAY_ENABLED", False),
             patch.object(
                 agent_server,
                 "CURRENT_TURNS",
@@ -179,11 +159,6 @@ class ChatReferenceMentionTests(unittest.IsolatedAsyncioTestCase):
                 agent_server.CROSS_CHAT_CAPABILITIES,
                 {token_hash: capability},
                 clear=True,
-            ),
-            patch.object(
-                agent_server.SECURE_PEER_RUNTIME,
-                "submit_remote_handoff",
-                submit,
             ),
             self.assertRaises(HTTPException) as raised,
         ):
@@ -196,8 +171,7 @@ class ChatReferenceMentionTests(unittest.IsolatedAsyncioTestCase):
                     idempotency_key="legacy-secure-send",
                 ),
             )
-        self.assertEqual(raised.exception.status_code, 409)
-        self.assertIn("Team Network Inbox", str(raised.exception.detail))
+        self.assertEqual(raised.exception.status_code, 403)
         self.assertEqual(capability["consumed"], {})
         submit.assert_not_called()
 

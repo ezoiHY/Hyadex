@@ -21,8 +21,7 @@ HOME="$(mktemp -d)" PYTHONDONTWRITEBYTECODE=1 uv run --python 3.13 python -m uni
 
 Several modules read the home directory when `agent_server` is imported, so
 always use a temporary `HOME`; never point tests at installed services or real
-chat history. On macOS a few inherited suites (secure peer, installer and
-memory-admission checks) depend on Linux or on free memory and may fail
+chat history. On macOS a few inherited suites (installer and memory-admission checks) depend on Linux or on free memory and may fail
 locally; CI runs on Linux.
 
 Try changes against a real server with:

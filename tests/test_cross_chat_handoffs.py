@@ -25,9 +25,6 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
         self.original_current_turns = agent_server.CURRENT_TURNS
         self.original_queued_turns = agent_server.QUEUED_TURNS
         self.original_agent_token = agent_server.AGENT_TOKEN
-        self.original_agent_relay_enabled = (
-            agent_server.SECURE_PEER_AGENT_RELAY_ENABLED
-        )
         self.original_busy_sessions = set(agent_server.BUSY_SESSIONS)
         self.original_run_now_turns = agent_server.RUN_NOW_TURNS
         self.original_queue_start_tasks = agent_server.QUEUE_START_TASKS
@@ -69,9 +66,6 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         self.original_live_response_waiters = agent_server.CROSS_CHAT_LIVE_RESPONSE_WAITERS
         agent_server.AGENT_TOKEN = "test-admin-token"
-        # Retain explicit coverage of the legacy relay protocol while normal
-        # HyadexServer production keeps it disabled.
-        agent_server.SECURE_PEER_AGENT_RELAY_ENABLED = True
         agent_server.CROSS_CHAT = agent_server.CrossChatStore(self.root / "cross-chat.sqlite3")
         await agent_server.CROSS_CHAT.initialize()
         agent_server.CROSS_CHAT_AUTHORITY_ROOT = self.root / "authority"
@@ -150,9 +144,6 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
         agent_server.BUSY_SESSIONS.clear()
         agent_server.BUSY_SESSIONS.update(self.original_busy_sessions)
         agent_server.AGENT_TOKEN = self.original_agent_token
-        agent_server.SECURE_PEER_AGENT_RELAY_ENABLED = (
-            self.original_agent_relay_enabled
-        )
         self.temporary.cleanup()
 
     async def create_exchange(
@@ -4422,89 +4413,6 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
 
-    async def test_secure_peer_queue_promotion_owner_fences_reconcile(
-        self,
-    ) -> None:
-        envelope_id = "secure_peer_promotion_owner"
-        agent_server.QUEUED_TURNS["target"] = deque([{
-            "queued_id": "queued_secure_peer_promotion",
-            "prompt": "Encrypted delivery",
-            "file_ids": [],
-            "purpose": "secure_peer_handoff_delivery",
-            "source_session_id": "peer-server",
-            "target_session_id": "target",
-            "secure_peer_envelope_id": envelope_id,
-            "client_capabilities": [],
-        }])
-        promotion_entered = asyncio.Event()
-        release_promotion = asyncio.Event()
-        promotion: asyncio.Task | None = None
-        record = {
-            "envelope_id": envelope_id,
-            "target_chat_id": "target",
-            "state": "queued",
-            "queued_id": "queued_secure_peer_promotion",
-        }
-
-        async def pause_start(*_args, **_kwargs):
-            promotion_entered.set()
-            await release_promotion.wait()
-            return {"queued": False}
-
-        try:
-            with (
-                patch.object(
-                    agent_server,
-                    "reconcile_idle_queue_session",
-                    AsyncMock(),
-                ),
-                patch.object(
-                    agent_server,
-                    "_start_turn_locked",
-                    AsyncMock(side_effect=pause_start),
-                ),
-                patch.object(
-                    agent_server.SECURE_PEER_RUNTIME,
-                    "recover_prepared_deliveries",
-                    return_value=[],
-                ),
-                patch.object(
-                    agent_server.SECURE_PEER_RUNTIME,
-                    "recoverable_deliveries",
-                    return_value=[record],
-                ),
-                patch.object(
-                    agent_server.SECURE_PEER_RUNTIME,
-                    "finish_delivery",
-                ) as finish,
-            ):
-                promotion = asyncio.create_task(
-                    agent_server.start_next_queued_turn("target")
-                )
-                await asyncio.wait_for(promotion_entered.wait(), timeout=1)
-                self.assertNotIn("target", agent_server.QUEUED_TURNS)
-
-                recovered = await asyncio.wait_for(
-                    agent_server.reconcile_secure_peer_deliveries(),
-                    timeout=1,
-                )
-                self.assertEqual(recovered, 0)
-                terminal_recovered = await asyncio.wait_for(
-                    agent_server.reconcile_secure_peer_terminal_orphans(),
-                    timeout=1,
-                )
-                self.assertEqual(terminal_recovered, 0)
-                finish.assert_not_called()
-                self.assertFalse(promotion.done())
-
-                release_promotion.set()
-                await asyncio.wait_for(promotion, timeout=1)
-        finally:
-            release_promotion.set()
-            if promotion is not None and not promotion.done():
-                promotion.cancel()
-                await asyncio.gather(promotion, return_exceptions=True)
-
     async def test_exchange_recovery_preserves_explicit_child_after_parent_owner_loss(self) -> None:
         exchange, parent = await self.create_exchange("exchange_explicit_restart")
         parent = await agent_server.CROSS_CHAT.update_exchange_leg(
@@ -5329,11 +5237,11 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             capability["features"]["exact_queued_delivery_skip"]
         )
-        self.assertFalse(capability["features"]["secure_peer_fifo_barriers"])
-        self.assertFalse(capability["features"]["secure_peer_agent_relay"])
+        self.assertNotIn("secure_peer_fifo_barriers", capability["features"])
+        self.assertNotIn("secure_peer_agent_relay", capability["features"])
         self.assertEqual(
             capability["features"]["cross_server_delivery"],
-            "team_network_inbox_only",
+            False,
         )
         self.assertFalse(
             capability["features"]["agent_ambient_local_handoffs"]
@@ -5532,32 +5440,6 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
                     "run_live_heartbeat_owner",
                 )
             )
-
-    def test_secure_peer_request_authority_requires_async_response_mode(self) -> None:
-        reference = agent_server.ChatReference(
-            session_id="22222222-2222-4222-8222-222222222222",
-            display_title_snapshot="Remote",
-            source_text_start=0,
-            source_text_end=7,
-            action="request_reply",
-            target_kind="secure_peer",
-            target_server_identity="peer_" + "a" * 64,
-            target_connection_id="11111111-1111-4111-8111-111111111111",
-            target_route_id="22222222-2222-4222-8222-222222222222",
-            target_route_revision="rev_" + "d" * 32,
-        )
-        authority_copy = agent_server.cross_chat_provider_authority_block(
-            [reference],
-            self.root / "secure-request-authority.json",
-            "source",
-            {"secure_peer_request_reply"},
-        )
-        self.assertIn("secure peer server=", authority_copy)
-        self.assertIn("use --async-response", authority_copy)
-        self.assertIn(
-            "For a secure-peer action=request_reply, add `--async-response`",
-            authority_copy,
-        )
 
     async def test_request_reply_capability_uses_exact_exchange_generation(self) -> None:
         reference = agent_server.ChatReference(
@@ -8887,48 +8769,6 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(cancelled["status"], "cancelled")
         stop.assert_not_awaited()
-
-    async def test_secure_peer_ask_rejects_live_wait_before_outbound_side_effect(self) -> None:
-        token = "secure-live-wait-token"
-        token_hash = agent_server.hashlib.sha256(token.encode()).hexdigest()
-        handle = "secure-peer-handle"
-        agent_server.CURRENT_TURNS["source"] = {"run_id": "run_secure_wait"}
-        agent_server.CROSS_CHAT_CAPABILITIES[token_hash] = {
-            "server_identity": agent_server.server_identity(),
-            "source_session_id": "source",
-            "source_run_id": "run_secure_wait",
-            "source_user_instruction": "Ask the peer",
-            "native_transition_nonce": "",
-            "actions": {"secure_peer_request_reply"},
-            "secure_peer_grants": {
-                (handle, "request_reply"): {"opaque": "snapshot"},
-            },
-            "consumed": {},
-        }
-        prepare = Mock()
-        with patch.object(
-            agent_server.SECURE_PEER_RUNTIME,
-            "prepare_outbound_handoff",
-            prepare,
-        ):
-            with self.assertRaises(HTTPException) as raised:
-                await agent_server.create_authorized_cross_chat_instruction(
-                    token,
-                    agent_server.CrossChatHandoffRequest(
-                        target_session_id=handle,
-                        action="request_reply",
-                        body="Wait for the peer",
-                        idempotency_key="secure-live-wait",
-                        wait_for_response=True,
-                        response_timeout_seconds=75,
-                    ),
-                )
-        self.assertEqual(raised.exception.status_code, 400)
-        prepare.assert_not_called()
-        self.assertEqual(
-            agent_server.CROSS_CHAT_CAPABILITIES[token_hash]["consumed"],
-            {},
-        )
 
     async def test_non_live_followup_wait_rejects_before_response_commit(self) -> None:
         exchange, inbound = await self.create_exchange(

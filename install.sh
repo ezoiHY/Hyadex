@@ -228,6 +228,12 @@ USAGE
 
 SHOW_TOKEN="false"
 
+
+for argument in "$@"; do
+  case "$argument" in
+    *team-hub*) echo "Team Network installation controls were removed from Hyadex." >&2; exit 2 ;;
+  esac
+done
 while (($#)); do
   case "$1" in
     --instance) INSTANCE_NAME="${2:?--instance requires a name}"; INSTANCE_EXPLICIT="true"; shift 2 ;;
@@ -1670,7 +1676,11 @@ SERVER_NAME="$(canonical_server_name "$decoded_server_name")" || {
 
 read_persisted_team_hub_config
 EXISTING_TEAM_HUB_MODE="$RESOLVED_TEAM_HUB_MODE"
-TEAM_HUB_MODE="${TEAM_HUB_MODE_OVERRIDE:-${EXISTING_TEAM_HUB_MODE:-disabled}}"
+TEAM_HUB_MODE="disabled"
+if [[ "$EXISTING_TEAM_HUB_MODE" != "disabled" && -n "$EXISTING_TEAM_HUB_MODE" ]]; then
+  echo "This Hyadex build no longer supports a Team Hub host; existing Hub state was preserved." >&2
+  exit 2
+fi
 if [[ "$TEAM_HUB_MODE" != "host" && "$TEAM_HUB_MODE" != "disabled" ]]; then
   echo "HYADEX_TEAM_HUB_MODE must be host or disabled." >&2
   exit 2
@@ -1846,46 +1856,8 @@ if [[ "$TEAM_HUB_MODE" == "host" && "$TEAM_HUB_OPERATION_PENDING" != "true" \
   fi
 fi
 
-RELEASE_FILES=(activation_transaction.py execution_activation.py execution_legacy_runner.py execution_preparation.py update_preparation.py update_handoff.py update_recovery.py execution_update_status.py execution_uninstall.py execution_recovery.py execution_recovery_status.py execution_http.py execution_durability.py execution_control.py execution_install.py execution_maintenance.py execution_manage.py execution_ownership.py execution_service.py execution_transport.py agent_server.py local_session_ownership.py cursor_history.py workspace_git.py team_hub_host.py secure_peer_runtime.py team_mail_runtime.py team_mail_websocket.py team_mail_grants.py secure_peer_delivery.py hyadex_jobs.py hyadex_chats.py chat_mailbox.py hyadex_emergency.py hyadex_notify.py hyadex_publish.py hyadex_mail.py hyadex_team.py provider_commands.py provider_usage.py claude_sdk_client.py claude_model_catalog.py claude_goals.py claude_background_reconciliation.py codex_app_server.py codex_auth.py codex_provider.py provider_connections.py cursor_api_key.py side_questions.py group_chat.py autopilot.py title_generation.py codex_side_question.py claude_side_question.py cursor_agent_client.py cursor_provider_mcp.py opencode_agent_client.py gemini_acp_client.py gemini_history.py gemini_content.py gemini_import.py gemini_runtime.py gemini_runner.py gemini_permissions.py gemini_api.py cursor_process_guard.py transcript_reader.py claude_history_repair.py claude_history_provenance.py codex_history_repair.py public_chat_shares.py public_chat_transcript.py public_chat_share_routes.py interactive_chat_shares.py interactive_chat_share_routes.py interactive_chat_share_web.py interactive_chat_projection.py interactive_chat_runtime.py interactive_chat_native.py shared_chat_videos.py shared_chat_analytics_web.py shared_chat_video_stream.py interactive_chat_controls.py install.sh uninstall.sh instances.sh server_instances.py npm/hyadex/pair.cjs npm/hyadex/qr-renderer.cjs npm/hyadex/QR-NOTICES.txt update_runner.py pyproject.toml uv.lock VERSION release-public-key.pem LICENSE NOTICE)
-RELEASE_DIRECTORIES=(hyadex_team_hub)
-TEAM_HUB_RELEASE_FILES=(
-  __init__.py
-  auth.py
-  cli.py
-  database.py
-  mail_hints.py
-  mail_hint_streams.py
-  notification_hints.py
-  security.py
-  secure_peer.py
-  secure_peer_hub.py
-  service.py
-  store.py
-  migrations/__init__.py
-  migrations/0001_identity_auth.sql
-  migrations/0002_teamspace_ledger.sql
-  migrations/0003_service_runtime.sql
-  migrations/0004_managed_host_binding.sql
-  migrations/0005_tailnet_bootstrap_delegations.sql
-  migrations/0006_team_network_mailbox.sql
-  migrations/0007_local_agent_mail.sql
-  migrations/0008_managed_server_session.sql
-  migrations/0009_team_messages.sql
-  migrations/0010_team_attachment_orphan_reclamation.sql
-  migrations/0011_human_admin_paging.sql
-  migrations/0012_network_content_deletions.sql
-  migrations/0013_team_message_revisions.sql
-  migrations/0014_managed_network_owner.sql
-  migrations/0015_team_message_inbox_dismissals.sql
-  migrations/0016_team_message_all_servers.sql
-  migrations/0017_skill_announcement_deletions.sql
-  migrations/0018_team_mail_subjects.sql
-  migrations/0019_team_mailbox_state.sql
-  migrations/0020_team_mail_arrivals.sql
-  migrations/0021_team_mail_threads.sql
-  migrations/0022_team_bulletin_changes.sql
-  migrations/0023_team_message_search.sql
-)
+RELEASE_FILES=(activation_transaction.py execution_activation.py execution_legacy_runner.py execution_preparation.py update_preparation.py update_handoff.py update_recovery.py execution_update_status.py execution_uninstall.py execution_recovery.py execution_recovery_status.py execution_http.py execution_durability.py execution_control.py execution_install.py execution_maintenance.py execution_manage.py execution_ownership.py execution_service.py execution_transport.py agent_server.py local_session_ownership.py cursor_history.py workspace_git.py hyadex_jobs.py hyadex_chats.py chat_mailbox.py hyadex_emergency.py hyadex_notify.py hyadex_publish.py provider_commands.py provider_usage.py claude_sdk_client.py claude_model_catalog.py claude_goals.py claude_background_reconciliation.py codex_app_server.py codex_auth.py codex_provider.py provider_connections.py cursor_api_key.py side_questions.py group_chat.py autopilot.py title_generation.py codex_side_question.py claude_side_question.py cursor_agent_client.py cursor_provider_mcp.py opencode_agent_client.py gemini_acp_client.py gemini_history.py gemini_content.py gemini_import.py gemini_runtime.py gemini_runner.py gemini_permissions.py gemini_api.py cursor_process_guard.py transcript_reader.py claude_history_repair.py claude_history_provenance.py codex_history_repair.py public_chat_shares.py public_chat_transcript.py public_chat_share_routes.py interactive_chat_shares.py interactive_chat_share_routes.py interactive_chat_share_web.py interactive_chat_projection.py interactive_chat_runtime.py interactive_chat_native.py shared_chat_videos.py shared_chat_analytics_web.py shared_chat_video_stream.py interactive_chat_controls.py install.sh uninstall.sh instances.sh server_instances.py npm/hyadex/pair.cjs npm/hyadex/qr-renderer.cjs npm/hyadex/QR-NOTICES.txt update_runner.py pyproject.toml uv.lock VERSION release-public-key.pem LICENSE NOTICE)
+RELEASE_DIRECTORIES=()
 
 for directory in npm npm/hyadex; do
   if [[ ! -d "$SOURCE_DIR/$directory" || -L "$SOURCE_DIR/$directory" ]]; then
@@ -1899,42 +1871,6 @@ for name in "${RELEASE_FILES[@]}"; do
     exit 1
   fi
 done
-for name in "${RELEASE_DIRECTORIES[@]}"; do
-  if [[ ! -d "$SOURCE_DIR/$name" || -L "$SOURCE_DIR/$name" ]]; then
-    echo "$name is missing beside install.sh or is not a real directory." >&2
-    exit 1
-  fi
-  # Local Python runs create bytecode caches. Never copy those (staging uses
-  # the explicit manifest below), but still reject links/special files anywhere,
-  # including inside a cache directory.
-  if find "$SOURCE_DIR/$name" \( -type l -o \( ! -type d ! -type f \) \) -print -quit | grep -q .; then
-    echo "$name contains linked or special entries and cannot be installed." >&2
-    exit 1
-  fi
-done
-for name in "${TEAM_HUB_RELEASE_FILES[@]}"; do
-  if [[ ! -f "$SOURCE_DIR/hyadex_team_hub/$name" || -L "$SOURCE_DIR/hyadex_team_hub/$name" ]]; then
-    echo "hyadex_team_hub/$name is missing or is not a regular release file." >&2
-    exit 1
-  fi
-done
-# Installed/prepared runtimes contain compiler output. Their complete tree is
-# bound by the receipt or owned recovery journal before activation; raw source
-# archives continue to require the exact clean allowlist.
-if [[ -z "$ACTIVATE_PREPARED" && "$RECOVER_ONLY" != "true" ]]; then
-TEAM_HUB_RELEASE_FILE_COUNT="$(find "$SOURCE_DIR/hyadex_team_hub" -type d -name '__pycache__' -prune -o -type f ! -name '*.pyc' ! -name '*.pyo' -print | wc -l)"
-TEAM_HUB_RELEASE_FILE_COUNT="${TEAM_HUB_RELEASE_FILE_COUNT//[[:space:]]/}"
-if [[ "$TEAM_HUB_RELEASE_FILE_COUNT" != "${#TEAM_HUB_RELEASE_FILES[@]}" ]]; then
-  echo "hyadex_team_hub contains unexpected release files." >&2
-  exit 1
-fi
-TEAM_HUB_RELEASE_DIRECTORY_COUNT="$(find "$SOURCE_DIR/hyadex_team_hub" -type d -name '__pycache__' -prune -o -type d -print | wc -l)"
-TEAM_HUB_RELEASE_DIRECTORY_COUNT="${TEAM_HUB_RELEASE_DIRECTORY_COUNT//[[:space:]]/}"
-if [[ "$TEAM_HUB_RELEASE_DIRECTORY_COUNT" != "2" ]]; then
-  echo "hyadex_team_hub contains unexpected release directories." >&2
-  exit 1
-fi
-fi
 
 current_release_binding() {
   if [[ -L "$CURRENT_LINK" ]]; then
@@ -3631,20 +3567,12 @@ validate_staged_release_runtime() (
     "$STAGE_DIR/agent_server.py" \
     "$STAGE_DIR/local_session_ownership.py" \
     "$STAGE_DIR/cursor_history.py" \
-    "$STAGE_DIR/team_hub_host.py" \
-    "$STAGE_DIR/secure_peer_runtime.py" \
-    "$STAGE_DIR/team_mail_runtime.py" \
-    "$STAGE_DIR/team_mail_websocket.py" \
-    "$STAGE_DIR/team_mail_grants.py" \
-    "$STAGE_DIR/secure_peer_delivery.py" \
     "$STAGE_DIR/hyadex_jobs.py" \
     "$STAGE_DIR/hyadex_chats.py" \
     "$STAGE_DIR/chat_mailbox.py" \
     "$STAGE_DIR/hyadex_emergency.py" \
     "$STAGE_DIR/hyadex_notify.py" \
     "$STAGE_DIR/hyadex_publish.py" \
-    "$STAGE_DIR/hyadex_mail.py" \
-    "$STAGE_DIR/hyadex_team.py" \
     "$STAGE_DIR/provider_commands.py" \
     "$STAGE_DIR/provider_usage.py" \
     "$STAGE_DIR/claude_sdk_client.py" \
@@ -3693,8 +3621,7 @@ validate_staged_release_runtime() (
     "$STAGE_DIR/interactive_chat_controls.py" \
     "$STAGE_DIR/update_runner.py"
   "$STAGE_DIR/.venv/bin/python" -m py_compile "$STAGE_DIR/server_instances.py"
-  "$STAGE_DIR/.venv/bin/python" -m compileall -q "$STAGE_DIR/hyadex_team_hub"
-  PYTHONPATH="$STAGE_DIR" "$STAGE_DIR/.venv/bin/python" -c 'import execution_activation, execution_preparation, update_preparation, update_handoff, update_recovery, execution_update_status, execution_uninstall, execution_recovery, execution_recovery_status, execution_http, execution_durability, execution_control, execution_install, execution_maintenance, execution_manage, execution_ownership, execution_service, execution_transport; import workspace_git, claude_model_catalog, server_instances, local_session_ownership, cursor_history; import codex_auth, codex_provider, provider_connections, cursor_api_key, side_questions, title_generation, codex_side_question, claude_side_question, hyadex_team_hub, cursor_agent_client, cursor_provider_mcp, opencode_agent_client, gemini_acp_client, gemini_history, gemini_content, gemini_import, gemini_runtime, gemini_runner, gemini_permissions, gemini_api, cursor_process_guard, secure_peer_delivery, secure_peer_runtime, team_mail_runtime, team_mail_websocket, team_mail_grants, team_hub_host, hyadex_mail, hyadex_team, transcript_reader, claude_history_repair, claude_history_provenance, claude_goals, claude_background_reconciliation, codex_history_repair, public_chat_shares, public_chat_transcript, public_chat_share_routes, interactive_chat_shares, interactive_chat_share_routes, interactive_chat_share_web, interactive_chat_projection, interactive_chat_runtime, interactive_chat_native, shared_chat_videos, shared_chat_analytics_web, shared_chat_video_stream, interactive_chat_controls, chat_mailbox, provider_commands, provider_usage; from hyadex_team_hub import secure_peer, secure_peer_hub' >/dev/null
+  PYTHONPATH="$STAGE_DIR" "$STAGE_DIR/.venv/bin/python" -c 'import execution_activation, execution_preparation, update_preparation, update_handoff, update_recovery, execution_update_status, execution_uninstall, execution_recovery, execution_recovery_status, execution_http, execution_durability, execution_control, execution_install, execution_maintenance, execution_manage, execution_ownership, execution_service, execution_transport; import workspace_git, claude_model_catalog, server_instances, local_session_ownership, cursor_history; import codex_auth, codex_provider, provider_connections, cursor_api_key, side_questions, title_generation, codex_side_question, claude_side_question, cursor_agent_client, cursor_provider_mcp, opencode_agent_client, gemini_acp_client, gemini_history, gemini_content, gemini_import, gemini_runtime, gemini_runner, gemini_permissions, gemini_api, cursor_process_guard, transcript_reader, claude_history_repair, claude_history_provenance, claude_goals, claude_background_reconciliation, codex_history_repair, public_chat_shares, public_chat_transcript, public_chat_share_routes, interactive_chat_shares, interactive_chat_share_routes, interactive_chat_share_web, interactive_chat_projection, interactive_chat_runtime, interactive_chat_native, shared_chat_videos, shared_chat_analytics_web, shared_chat_video_stream, interactive_chat_controls, chat_mailbox, provider_commands, provider_usage' >/dev/null
 )
 
 abort_unclaimed_team_hub_reactivation() {
@@ -4015,21 +3942,13 @@ for name in "${RELEASE_FILES[@]}"; do
   mkdir -p "$(dirname -- "$STAGE_DIR/$name")"
   install -m 644 "$SOURCE_DIR/$name" "$STAGE_DIR/$name"
 done
-mkdir -p "$STAGE_DIR/hyadex_team_hub/migrations"
-chmod 755 "$STAGE_DIR/hyadex_team_hub" "$STAGE_DIR/hyadex_team_hub/migrations"
-for name in "${TEAM_HUB_RELEASE_FILES[@]}"; do
-  install -m 644 \
-    "$SOURCE_DIR/hyadex_team_hub/$name" \
-    "$STAGE_DIR/hyadex_team_hub/$name"
-done
-chmod 755 "$STAGE_DIR/agent_server.py" "$STAGE_DIR/hyadex_jobs.py" "$STAGE_DIR/hyadex_chats.py" "$STAGE_DIR/hyadex_emergency.py" "$STAGE_DIR/hyadex_notify.py" "$STAGE_DIR/hyadex_publish.py" "$STAGE_DIR/hyadex_mail.py" "$STAGE_DIR/hyadex_team.py" "$STAGE_DIR/install.sh" "$STAGE_DIR/uninstall.sh" "$STAGE_DIR/update_runner.py"
+chmod 755 "$STAGE_DIR/agent_server.py" "$STAGE_DIR/hyadex_jobs.py" "$STAGE_DIR/hyadex_chats.py" "$STAGE_DIR/hyadex_emergency.py" "$STAGE_DIR/hyadex_notify.py" "$STAGE_DIR/hyadex_publish.py" "$STAGE_DIR/install.sh" "$STAGE_DIR/uninstall.sh" "$STAGE_DIR/update_runner.py"
 chmod 755 "$STAGE_DIR/instances.sh"
 
 if [[ "$PREPARE_ONLY" == "true" ]]; then
   source_inventory="$(mktemp "$INSTALL_ROOT/.prepared-inventory.XXXXXXXX")" || exit 1
   chmod 600 "$source_inventory"
   source_members=("${RELEASE_FILES[@]}")
-  for name in "${TEAM_HUB_RELEASE_FILES[@]}"; do source_members+=("hyadex_team_hub/$name"); done
   source_python="$(install_lock_python)" || exit 1
   run_without_server_secrets "$source_python" -B - \
     "$SOURCE_DIR" "$source_inventory" "${source_members[@]}" <<'PYINVENTORY'
@@ -5894,167 +5813,7 @@ if not isinstance(server_identity, str) or re.fullmatch(r"[A-Za-z0-9_.:-]{8,240}
     raise SystemExit(1)
 if expected_server and server_identity != expected_server:
     raise SystemExit(1)
-capabilities = health.get("capabilities")
-capability = capabilities.get("team_hub_v1") if isinstance(capabilities, dict) else None
-if not isinstance(capability, dict):
-    raise SystemExit(1)
-try:
-    expected_client_binding = (
-        json.loads(expected_client_binding_json)
-        if expected_client_binding_json
-        else None
-    )
-except json.JSONDecodeError:
-    raise SystemExit(1)
-if expected_client_binding is not None and not isinstance(expected_client_binding, dict):
-    raise SystemExit(1)
-if hub_mode == "host":
-    required = {
-        "available": True,
-        "designated_host": True,
-        "version": 1,
-        "base_path": "/api/team-hub",
-        "host_server_identity": server_identity,
-    }
-    if any(capability.get(key) != value for key, value in required.items()):
-        raise SystemExit(1)
-    hub_id = capability.get("hub_id")
-    if not isinstance(hub_id, str) or re.fullmatch(r"[A-Za-z0-9_.:-]{8,240}", hub_id) is None:
-        raise SystemExit(1)
-    if expected_hub and hub_id != expected_hub:
-        raise SystemExit(1)
-    transport = capability.get("transport")
-    hub_url = capability.get("hub_url")
-    if (
-        allow_legacy_transport == "true"
-        and transport is None
-        and expected_transport == "loopback"
-        and not expected_hub_url
-    ):
-        transport = "loopback"
-    if transport != expected_transport or hub_url != (expected_hub_url or None):
-        raise SystemExit(1)
-    routes = capability.get("routes")
-    expected_routes = [{
-        "transport": expected_transport,
-        "hub_url": expected_hub_url or None,
-    }]
-    if expected_direct_ip_url and expected_transport != "direct_ip":
-        expected_routes.append({
-            "transport": "direct_ip",
-            "hub_url": expected_direct_ip_url,
-        })
-    if routes != expected_routes:
-        if not (allow_legacy_transport == "true" and routes is None):
-            raise SystemExit(1)
-elif hub_mode == "disabled":
-    binding_kind = (
-        expected_client_binding.get("kind")
-        if expected_client_binding is not None
-        else "disabled"
-    )
-    disabled_required = {
-        "available": False,
-        "designated_host": False,
-        "version": 1,
-        "base_path": None,
-        "hub_id": None,
-        "host_server_identity": None,
-        "transport": None,
-        "hub_url": None,
-    }
-    if binding_kind == "disabled":
-        required = disabled_required
-    elif binding_kind == "secure_peer_client":
-        connection_id = expected_client_binding.get("active_connection_id")
-        pairings = expected_client_binding.get("pairings")
-        if not isinstance(pairings, list) or not pairings:
-            raise SystemExit(1)
-        if connection_id is None:
-            required = disabled_required
-        else:
-            active = [
-                item
-                for item in pairings
-                if isinstance(item, dict)
-                and item.get("connection_id") == connection_id
-            ]
-            if len(active) != 1:
-                raise SystemExit(1)
-            hub_id = active[0].get("hub_id")
-            host_server_identity = active[0].get("host_server_identity")
-            identifier = re.compile(r"[A-Za-z0-9_.:-]{8,240}")
-            if not all(
-                isinstance(value, str) and identifier.fullmatch(value) is not None
-                for value in (connection_id, hub_id, host_server_identity)
-            ):
-                raise SystemExit(1)
-            expected_base_path = f"/api/team-hub-secure/{connection_id}"
-            expected_route = {
-                "transport": "secure_peer",
-                "hub_url": None,
-                "base_path": expected_base_path,
-                "connection_id": connection_id,
-                "host_server_identity": host_server_identity,
-                "hub_id": hub_id,
-            }
-            active_required = {
-                "available": True,
-                "designated_host": False,
-                "version": 1,
-                "base_path": expected_base_path,
-                "hub_id": hub_id,
-                "host_server_identity": host_server_identity,
-                "transport": "secure_peer",
-                "hub_url": None,
-                "connection_id": connection_id,
-                "routes": [expected_route],
-            }
-            # A paired client is intentionally omitted from health while its
-            # heartbeat is stale/offline. The authenticated status endpoint
-            # below remains the durable continuity proof.
-            required = (
-                disabled_required
-                if capability.get("available") is False
-                else active_required
-            )
-    else:
-        raise SystemExit(1)
-    if any(capability.get(key) != value for key, value in required.items()):
-        raise SystemExit(1)
-elif hub_mode == "failed_host":
-    required = {
-        "available": False,
-        "designated_host": True,
-        "version": 1,
-        "base_path": "/api/team-hub",
-        "hub_id": None,
-        "host_server_identity": server_identity,
-        "transport": expected_transport,
-        "hub_url": expected_hub_url or None,
-    }
-    if any(capability.get(key) != value for key, value in required.items()):
-        raise SystemExit(1)
-else:
-    raise SystemExit(1)
-secure_capability = capabilities.get("secure_peer_v1")
-if secure_capability is None and allow_legacy_transport == "true":
-    pass
-else:
-    secure_required = {
-        "available": True,
-        "state_available": True,
-        "state_error_code": None,
-        "required": False,
-        "version": 1,
-        "control_path": "/api/admin/secure-peers/v1/status",
-        "proxy_prefix": "/api/team-hub-secure",
-    }
-    if not isinstance(secure_capability, dict) or any(
-        secure_capability.get(key) != value
-        for key, value in secure_required.items()
-    ):
-        raise SystemExit(1)
+
 PY
   then
     result=0
@@ -6851,21 +6610,6 @@ if [[ "${EXECUTION_MODE:-legacy}" == "split" ]]; then
   execution_stop_services "$STAGE_DIR" preflight || exit 1
 fi
 backup_runtime_configuration
-if [[ -n "$EXPECTED_SERVER_IDENTITY" \
-  && "$PREVIOUS_TEAM_HUB_MODE" == "disabled" \
-  && "$TEAM_HUB_MODE" == "disabled" \
-  && -n "$OLD_TARGET" \
-  && -e "$OLD_TARGET" ]]; then
-  echo "      Binding current Teamspace client state before takeover"
-  if ! capture_managed_team_hub_client_binding \
-      "$PRIOR_PORT" \
-      "$STAGE_DIR" \
-      "$EXPECTED_SERVER_IDENTITY" \
-      "$PRIOR_BIND_ADDRESS"; then
-    echo "Could not bind the current authenticated Teamspace client before candidate activation." >&2
-    exit 1
-  fi
-fi
 if [[ "$TEAM_HUB_OPERATION_PENDING" == "true" ]]; then
   # Bind the externally-created update fence before the first link/service
   # mutation. A restart can then recover the exact operation without relying

@@ -17,9 +17,7 @@ import agent_server
 import hyadex_chats
 import hyadex_emergency
 import hyadex_jobs
-import hyadex_mail
 import hyadex_publish
-import hyadex_team
 
 
 def http_request(
@@ -123,8 +121,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 hyadex_emergency.build_parser(),
                 ["--auth", "evil", "alert", "--message", "x"],
             ),
-            (hyadex_mail.parser(), ["--auth", "evil", "list"]),
-            (hyadex_team.parser(), ["--auth", "evil", "inbox"]),
+
         )
         for parser, arguments in cases:
             with self.subTest(prog=parser.prog), patch.object(
@@ -149,18 +146,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 hyadex_emergency.build_parser(),
                 ["alert", "--m", "urgent"],
             ),
-            (
-                hyadex_mail.parser(),
-                ["send", "--r", "opaque"],
-            ),
-            (
-                hyadex_team.parser(),
-                ["inbox", "--l", "1"],
-            ),
-            (
-                hyadex_team.parser(),
-                ["skill", "get", "slug", "--v", "1"],
-            ),
+
         )
         for parser, arguments in cases:
             with self.subTest(prog=parser.prog, arguments=arguments), patch(
@@ -440,7 +426,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             )
         with self.assertRaises(agent_server.ProviderToolError):
             agent_server.validate_provider_tool_input({
-                "helper": "team",
+                "helper": "chats",
                 "arguments": [
                     "read",
                     "x" * (agent_server.PROVIDER_TOOL_MAX_ARGUMENT_CHARS + 1),
@@ -448,7 +434,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             })
         with self.assertRaises(agent_server.ProviderToolError):
             agent_server.validate_provider_tool_input({
-                "helper": "team",
+                "helper": "chats",
                 "arguments": ["send", "--route", "route"],
                 "stdin": "\U0001f4e6" * (
                     agent_server.PROVIDER_TOOL_MAX_STDIN_BYTES // 4 + 1
@@ -458,12 +444,12 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(malformed=repr(malformed)):
                 with self.assertRaises(agent_server.ProviderToolError):
                     agent_server.validate_provider_tool_input({
-                        "helper": "team",
+                        "helper": "chats",
                         "arguments": ["read", malformed],
                     })
                 with self.assertRaises(agent_server.ProviderToolError):
                     agent_server.validate_provider_tool_input({
-                        "helper": "team",
+                        "helper": "chats",
                         "arguments": ["send", "--route", "route"],
                         "stdin": malformed,
                     })
@@ -616,7 +602,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             "params": {
                 "name": "run",
                 "arguments": {
-                    "helper": "team",
+                    "helper": "chats",
                     "arguments": ["read", "\ud800"],
                 },
                 "_meta": {
@@ -2236,10 +2222,6 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 agent_server,
                 "SERVER_UPDATE_STATUS_FILE",
                 status_path,
-            ), patch.object(
-                agent_server,
-                "_reconcile_server_update_team_hub_fence",
-                return_value=None,
             ), patch.object(
                 agent_server,
                 "server_update_is_active",

@@ -212,191 +212,14 @@ manifest and the archive SHA-256, installs into a versioned directory, restarts
 the user service, and accepts the release only after authenticated health
 passes. The previous healthy release remains available for automatic rollback.
 
-### Team Hub preview
+### Supported communication
 
-HyadexServer `0.1.25-beta.3` and later can designate one installed server as the
-Team Hub host. Team Hub runs inside that HyadexServer process and listener;
-there is no second service or separate `uv` command to keep running. For
-same-machine use, enable it on exactly one development server with:
-
-```bash
-./install.sh --team-hub-host
-```
-
-For private remote access, expose only the existing listener through a
-tailnet-only Tailscale Serve HTTPS port that Tailscale Funnel cannot use, then
-bind the exact canonical URL during the host install. For example:
-
-```bash
-tailscale serve --bg --https=8444 http://127.0.0.1:7870
-
-./install.sh --non-interactive \
-  --team-hub-tailscale-serve-url \
-  https://my-server.my-tailnet.ts.net:8444/api/team-hub
-```
-
-The installer persists and verifies the exact Team Hub transport and URL but
-does not alter Tailscale configuration. Confirm separately that the exact 8444
-mapping appears under `Web` in `tailscale serve status --json`, and run
-`tailscale funnel status` to confirm Team Hub's `:8444` mapping is not public;
-unrelated mappings may remain untouched. Do not use Funnel, a generic reverse
-proxy, or one of Funnel's supported ports
-(`443`, `8443`, or `10000`).
-The ordinary HyadexServer endpoint and any unrelated Serve/Funnel mappings are
-unchanged.
-
-HyadexServer `0.1.25-beta.5` adds an optional bare-IP route. For a fresh host,
-the operator may additionally advertise the exact route used by its
-authenticated HyadexServer profile:
-
-```bash
-./install.sh --non-interactive \
-  --team-hub-tailscale-serve-url \
-  https://my-server.my-tailnet.ts.net:8444/api/team-hub \
-  --team-hub-direct-ip-url \
-  http://100.73.184.23:7870/api/team-hub
-```
-
-If Serve is not configured on a fresh/disabled host,
-`--team-hub-direct-ip-url` selects Direct IP as the primary route. Direct IP is
-advanced and unencrypted: the HyadexServer bearer, Teamspace credentials and
-messages are plaintext in transit. Literal IP shape is not proof of Tailscale
-or identity. The route must be canonical
-`http://<literal-ip>:<HyadexServer-port>/api/team-hub`; it cannot use a
-hostname, loopback, another port/path, credentials, query or fragment. The
-HyadexServer retains this legacy transport for manual host configuration and
-rollback continuity. The current desktop filters and refuses Direct-IP routes
-instead of offering them for selection; use secure pairing or private Tailscale
-Serve. Automatic selection continues to use the advertised Serve primary.
-
-If the host install fails or you abandon this setup, remove only that listener:
-
-```bash
-tailscale serve --https=8444 off
-```
-
-The host choice and exact primary/Direct-IP routes are preserved by managed
-updates and rollback. A fresh server with no Hub database may be designated
-directly.
-`--no-team-hub-host` stops serving an existing Hub but preserves its data and
-managed host binding. It is never silently reactivated. To bring that exact
-preserved host back on the same HyadexServer, request the guarded transition:
-
-```bash
-./install.sh --non-interactive --reactivate-team-hub-host
-```
-
-The installer requires disabled mode, verifies the stored Hub binding against
-this server's durable identity without migrating the source database, and
-writes and re-verifies a complete pre-reactivation snapshot before changing
-configuration or service state. A candidate failure restores that snapshot.
-Foreign, unbound, fenced, missing, or concurrently changed state is refused.
-The Tailscale Serve or Direct-IP options may be supplied with the explicit
-reactivation flag when retaining the corresponding supported origin; ordinary
-`--team-hub-host` remains the fresh-state path.
-
-Adding or changing Direct IP on an existing live Hub is intentionally rejected
-by the ordinary installer, including a same-version reinstall. That change
-needs an authenticated transaction that closes admission and journals the
-exact route before restart; do not edit the environment behind a running Hub
-and assume update continuity will adopt it.
-
-An existing beta.2 host remains loopback-only during a normal managed update;
-an origin change is never inferred from mutable environment state. The remote
-command above is for a fresh, disabled server with no Hub database. Do not use
-it to re-home existing Team Hub state: changing the origin of an existing Hub
-requires a separate signed, snapshot-protected migration. Leave every other
-server disabled.
-
-The desktop discovers the separate Hub URL through authenticated HyadexServer
-health. `Start Teamspace` asks the active HyadexServer for a short-lived,
-one-time enrollment grant and redeems it directly with Team Hub over the
-verified Serve origin. The HyadexServer bearer authorizes that one narrow
-parent bootstrap-grant endpoint, but it is never accepted as a Team Hub
-credential; Team Hub credentials likewise never authorize ordinary
-HyadexServer routes. Grant issuance additionally requires the exact configured
-private Serve origin and its verified Tailnet identity. Remote clients must
-select the designated host's server profile; switching profiles closes
-Teamspace instead of carrying its state to another server.
-
-For a loopback host, the equivalent installed command is:
-
-```bash
-~/.local/share/hyadex-server/current/install.sh \
-  --non-interactive --team-hub-host
-```
-
-The installed release also provides host operator controls; no repository
-checkout or separate service is needed. These commands print the path to an
-owner-only proof file, never the proof secret itself:
-
-```bash
-PYTHONPATH=~/.local/share/hyadex-server/current \
-  ~/.local/share/hyadex-server/current/.venv/bin/python -m hyadex_team_hub.cli \
-  bootstrap-proof --data-dir ~/.hyadex/team-hub
-
-PYTHONPATH=~/.local/share/hyadex-server/current \
-  ~/.local/share/hyadex-server/current/.venv/bin/python -m hyadex_team_hub.cli \
-  device-recovery --data-dir ~/.hyadex/team-hub \
-  --email member@example.com --device-label "Member Mac"
-```
-
-Issuing a device-recovery proof immediately revokes every existing device
-session and live refresh token for that person. Deliver and redeem the printed
-proof path on the replacement device within ten minutes.
-
-Authenticated human owners can list and revoke pending invitations and can
-change, suspend, reactivate, or permanently revoke non-owner human memberships;
-owner, automation, and self rows are not mutable through this API. Human users
-can list and revoke only their own device sessions. Device revocation takes
-effect on the next authenticated request and revokes every still-live refresh
-token for that device. These controls keep invitation, membership, session, and
-audit ledger rows rather than deleting security history. The member,
-pending-invitation, and device-session inventory endpoints use opaque,
-authenticated keyset cursors with a default page size of 50 and a maximum of
-100; callers follow `next_cursor` only while `has_more` is true.
-
-If you override the install or state directory, use the exact operator commands
-printed by `install.sh` at the end of a host-mode install.
-
-Team Hub keeps its own credentials and authorization boundary even though it
-shares the HyadexServer process. HyadexServer bearer tokens and Team Hub
-credentials are mutually non-interchangeable. Team posts and messages are
-passive in this preview: agent dispatch and wake-up are not available. Managed
-updates snapshot and verify the Hub database, signing key, and local enrollment
-proofs before replacement; if the candidate cannot prove the same server and
-Hub identities, the installer restores that snapshot before starting the
-previous server release.
-
-### Agent Team Network mail
-
-API contract v24 advertises `capabilities.agent_team_mail_v1`. Agent mail is
-default-deny: only an ordinary user prompt whose first token is exactly
-`/mail` receives a short-lived provider capability. The helper freezes at most
-512 currently visible destinations as opaque run-local routes, accepts at most
-four sends, and reads the UTF-8 body from stdin so message content does not
-appear in process arguments. Every listed destination is an active, non-owned
-server and every new item is addressed to that server's passive Team Network
-Inbox; `/mail` never targets, starts, or steers a remote agent. Scheduled jobs,
-synthetic handoffs, and near-matches such as `/mailbox` do not receive this
-authority. The provider mail harness creates message items only; it cannot
-create new Team Network requests. Legacy agent-addressed mail and request
-records remain readable through compatibility APIs, but provider and secure-
-peer mail paths cannot create new ones. The separate Team Hub request lifecycle
-also remains readable for backward data compatibility.
-
-The additive strict form `/mail server NAME MESSAGE` treats `NAME` as one
-case-sensitive token and the remainder as the exact normalized message body.
-HyadexServer filters the private route snapshot to active server destinations
-whose raw display name exactly equals `NAME`. Zero matches fail as not found;
-multiple matches, including equal names on different Team Networks, fail as
-ambiguous. A successful strict command exposes only that one opaque route and
-permits exactly one idempotent `kind=message` effect with the exact body. It
-cannot target an agent destination, use a case-insensitive name, create a request,
-rewritten content, or a second send. Legacy `/mail` remains available for
-older clients. Health advertises the strict syntax and feature flags inside
-`agent_team_mail_v1`, so clients can discover it without a global API-contract
-revision.
+Hyadex provides same-server chat routes and the local chat mailbox. Team Hub,
+Team Network mail, shared team skills, and secure-peer server pairing have been
+removed. These routes and capabilities are no longer advertised. Old saved
+Team references are rejected or paused for repair rather than executed as plain
+prompts; local `@Chat` references retain their existing authorization contract.
+Existing Team Hub and secure-peer state is not deleted by running this version.
 
 ## Manual Onboarding
 
@@ -553,7 +376,7 @@ service proof, and the exact `expected_server_identity` /
 
 - Cooldowns, a pending or stale restart record, an active managed update,
   safety-critical work (Codex maintenance, session deletions, in-flight HTTP
-  mutations, goal reconfiguration), and Team Hub snapshot failures are
+  mutations, goal reconfiguration) are
   overridden and recorded in `forced_audit` instead of rejected.
 - `expected_blocker_revision` is optional. A stale or omitted revision is
   audited (`blockers_changed_after_confirmation`, `blocker_revision_omitted`)
@@ -703,10 +526,8 @@ generated configuration (including the access token). It prompts before
 making changes unless `--yes` is passed. Chat history, jobs, files, and
 terminals under the state directory (`~/.hyadex` by default) are kept by
 default, so a later `./install.sh` picks the same ordinary HyadexServer history
-back up. Preserved Team Hub state is intentionally not auto-reactivated in this
-beta; re-enable an exact same-server preserved host explicitly with
-`./install.sh --reactivate-team-hub-host`, which verifies its durable binding
-and takes a rollback snapshot first.
+back up. Existing Team Hub state is preserved but cannot be reactivated by this
+version.
 Passing `--purge-state` permanently deletes that too, but always requires an
 interactive exact-path confirmation that `--yes` cannot bypass. Before any
 change, the uninstaller rejects root, home, broad system/user directories,
@@ -721,9 +542,8 @@ New installations should use `install.sh`. For a managed installation,
 `deploy.sh` copies the complete server runtime into the active release,
 compiles it, restarts the configured user service, and checks local health on
 the remote host. It is intended for development, not end-user upgrades. It
-refuses a designated Teamspace host or a paired secure-peer Teamspace client;
-use the signed managed updater for those servers so exact continuity and
-versioned rollback remain available.
+requires authenticated health with the same stable server identity before
+and after the restart.
 
 ```bash
 ./deploy.sh <ssh-host>
@@ -1114,11 +934,8 @@ CLI prints that receipt and exits nonzero. Retry that exact `wait`, never the
 original Ask: the answer may already be saved. Completed-answer delivery does
 not wait indefinitely for disconnect-watcher cleanup.
 
-Active agent messaging is strictly same-server: Studio chats can address only
-Studio chats, and Sonic chats can address only Sonic chats. Communication
-between servers uses passive Team Network Inbox messages (`server`, `human`,
-or `all` recipients); it never wakes an agent or creates an active cross-chat
-exchange.
+Active agent messaging is strictly same-server. Cross-server inbox messaging,
+Team Hub and secure-peer transport are no longer available.
 
 `/chat` is a composer alias for selecting the same structured hint.
 
@@ -1150,9 +967,8 @@ safe migration/recovery. They are quarantined from ordinary authority and can
 never mint a durable grant; queued v6 snapshots are narrowed against current
 persisted grants and cannot recreate a revoked route. Nonterminal legacy UI
 envelopes are failed/cancelled during upgrade before they can be resubmitted.
-Existing configured-route Send/Ask effects, action-specific secure-peer hints,
-and final-result obligations retain their separate exact authorization and
-lifecycle fences.
+Existing same-server configured-route Send/Ask effects and final-result
+obligations retain their exact authorization and lifecycle checks.
 
 For a current ordinary turn, the provider-authority block exposes only opaque
 route IDs. The agent lists the available routes, then sends or asks when the

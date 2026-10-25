@@ -324,7 +324,7 @@ class CursorProcessGuardTests(unittest.TestCase):
     def test_standalone_deploy_includes_the_guard(self) -> None:
         deploy = (Path(__file__).resolve().parents[1] / "deploy.sh").read_text(encoding="utf-8")
         self.assertGreaterEqual(deploy.count("cursor_process_guard.py"), 2)
-        self.assertIn("cursor_process_guard, secure_peer_delivery", deploy)
+        self.assertIn("cursor_process_guard", deploy)
 
 
 if __name__ == "__main__":

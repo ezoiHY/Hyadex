@@ -33,6 +33,9 @@ goals, terminals and file previews. Clients connect over your LAN or Tailscale.
   persistent terminals (tmux).
 - **Several servers per machine**: named instances with separate state.
 
+Same-server chat routes remain available. Team Hub, Team Network mail and
+secure-peer pairing have been removed; existing network state is preserved.
+
 Claude Code and Codex are enabled for new chats. The inherited Cursor,
 OpenCode and Gemini integrations remain in the code but are off unless you opt
 in with `HYADEX_ENABLED_BACKENDS`.

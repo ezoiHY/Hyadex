@@ -64,8 +64,7 @@ class NpmReleasePackageTests(unittest.TestCase):
     def test_published_payload_matches_actual_installer_required_inventory(self):
         installer = (ROOT / "install.sh").read_text()
         required = shlex.split(re.search(r"^RELEASE_FILES=\((.*?)\)", installer, re.M | re.S)[1])
-        hub = shlex.split(re.search(r"^TEAM_HUB_RELEASE_FILES=\((.*?)\)", installer, re.M | re.S)[1])
-        self.assertEqual(set(package.runtime_files()), {*required, *(f"hyadex_team_hub/{name}" for name in hub)})
+        self.assertEqual(set(package.runtime_files()), set(required))
 
     def test_exact_payload_no_tests_secrets_or_lifecycle_scripts(self):
         (self.root / ".env").write_text("must not ship")
@@ -111,7 +110,7 @@ class NpmReleasePackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "checkout root or its server directory"):
             package.stage_package(nested, Path(self.temporary.name) / "bad")
 
-    def test_rejects_linked_payload_and_unlisted_hub_members(self):
+    def test_rejects_linked_payload(self):
         target = self.root / "agent_server.py"
         target.unlink()
         target.symlink_to(self.root / "VERSION")
@@ -119,9 +118,6 @@ class NpmReleasePackageTests(unittest.TestCase):
             package.stage_package(self.root, Path(self.temporary.name) / "bad")
         target.unlink()
         target.write_text("API_CONTRACT_VERSION = 28\n")
-        (self.root / "hyadex_team_hub/unlisted.py").write_text("not reviewed")
-        with self.assertRaisesRegex(SystemExit, "unexpected files"):
-            package.stage_package(self.root, Path(self.temporary.name) / "bad")
 
     def test_minimum_contract_must_be_valid(self):
         for minimum in [0, 29, True]:

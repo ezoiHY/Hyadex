@@ -16,14 +16,6 @@ HTTP_METHODS = {
 }
 
 SPLIT_ROUTE_CASES = {
-    "/api/team-hub-secure/{connection_id}/{hub_path:path}": {
-        "concrete_path": (
-            "/api/team-hub-secure/00000000-0000-4000-8000-000000000000/"
-            "v1/health"
-        ),
-        "schema_path": "/api/team-hub-secure/{connection_id}/{hub_path}",
-        "methods": {"delete", "get", "head", "post", "put"},
-    },
     "/api/sessions/{session_id}/workspace/preview": {
         "concrete_path": "/api/sessions/chat/workspace/preview",
         "schema_path": "/api/sessions/{session_id}/workspace/preview",

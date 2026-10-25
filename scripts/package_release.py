@@ -38,20 +38,12 @@ FILES = (
     "local_session_ownership.py",
     "cursor_history.py",
     "workspace_git.py",
-    "team_hub_host.py",
-    "secure_peer_runtime.py",
-    "team_mail_runtime.py",
-    "team_mail_websocket.py",
-    "team_mail_grants.py",
-    "secure_peer_delivery.py",
     "hyadex_jobs.py",
     "hyadex_chats.py",
     "chat_mailbox.py",
     "hyadex_emergency.py",
     "hyadex_notify.py",
     "hyadex_publish.py",
-    "hyadex_mail.py",
-    "hyadex_team.py",
     "provider_commands.py",
     "provider_usage.py",
     "claude_sdk_client.py",
@@ -114,46 +106,7 @@ FILES = (
     "NOTICE",
 )
 
-DIRECTORY_FILES = {
-    "hyadex_team_hub": (
-        "__init__.py",
-        "auth.py",
-        "cli.py",
-        "database.py",
-        "mail_hints.py",
-        "mail_hint_streams.py",
-        "notification_hints.py",
-        "security.py",
-        "secure_peer.py",
-        "secure_peer_hub.py",
-        "service.py",
-        "store.py",
-        "migrations/__init__.py",
-        "migrations/0001_identity_auth.sql",
-        "migrations/0002_teamspace_ledger.sql",
-        "migrations/0003_service_runtime.sql",
-        "migrations/0004_managed_host_binding.sql",
-        "migrations/0005_tailnet_bootstrap_delegations.sql",
-        "migrations/0006_team_network_mailbox.sql",
-        "migrations/0007_local_agent_mail.sql",
-        "migrations/0008_managed_server_session.sql",
-        "migrations/0009_team_messages.sql",
-        "migrations/0010_team_attachment_orphan_reclamation.sql",
-        "migrations/0011_human_admin_paging.sql",
-        "migrations/0012_network_content_deletions.sql",
-        "migrations/0013_team_message_revisions.sql",
-        "migrations/0014_managed_network_owner.sql",
-        "migrations/0015_team_message_inbox_dismissals.sql",
-        "migrations/0016_team_message_all_servers.sql",
-        "migrations/0017_skill_announcement_deletions.sql",
-        "migrations/0018_team_mail_subjects.sql",
-        "migrations/0019_team_mailbox_state.sql",
-        "migrations/0020_team_mail_arrivals.sql",
-        "migrations/0021_team_mail_threads.sql",
-        "migrations/0022_team_bulletin_changes.sql",
-        "migrations/0023_team_message_search.sql",
-    ),
-}
+DIRECTORY_FILES = {}
 DIRECTORIES = tuple(DIRECTORY_FILES)
 
 
@@ -264,8 +217,6 @@ def main() -> int:
         (package_root / "hyadex_emergency.py").chmod(0o755)
         (package_root / "hyadex_notify.py").chmod(0o755)
         (package_root / "hyadex_publish.py").chmod(0o755)
-        (package_root / "hyadex_mail.py").chmod(0o755)
-        (package_root / "hyadex_team.py").chmod(0o755)
         (package_root / "update_runner.py").chmod(0o755)
         with tarfile.open(archive_path, "w:gz", format=tarfile.PAX_FORMAT) as archive:
             archive.add(package_root, arcname=package_root.name)

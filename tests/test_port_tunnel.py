@@ -743,11 +743,6 @@ class PortTunnelTests(unittest.IsolatedAsyncioTestCase):
              ), \
              patch.object(
                  agent_server,
-                 "fence_secure_peer_chat_retirement",
-                 AsyncMock(),
-             ), \
-             patch.object(
-                 agent_server,
                  "terminalize_archived_cross_chat_session",
                  AsyncMock(return_value=0),
              ), \
@@ -842,11 +837,6 @@ class PortTunnelTests(unittest.IsolatedAsyncioTestCase):
                  agent_server.JOBS,
                  "pause_for_session",
                  AsyncMock(return_value=0),
-             ), \
-             patch.object(
-                 agent_server,
-                 "fence_secure_peer_chat_retirement",
-                 AsyncMock(),
              ), \
              patch.object(
                  agent_server,

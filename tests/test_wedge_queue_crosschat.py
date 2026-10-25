@@ -86,7 +86,7 @@ class RebuiltDeliveryRowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(item["effort"])
         secure = agent_server.queued_turn_from_event(
             delivery_event(
-                purpose=agent_server.SECURE_PEER_DELIVERY_PURPOSE,
+                purpose="secure_peer_handoff_delivery",
                 cross_chat_envelope_id=None,
                 secure_peer_envelope_id="secure_rebuilt",
                 backend="codex",

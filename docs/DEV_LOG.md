@@ -3,6 +3,36 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Remove Team and cross-server networking
+
+- Removed Team Hub, Team mail, shared team skills and secure-peer transport,
+  their API routes, provider helpers, startup tasks and release payloads.
+- Same-server chat routes and mailbox delivery, group discussions, Autopilot,
+  durable queues and event catch-up remain available.
+- New requests reject removed network authority. Recovered network queue rows
+  are terminally discarded, and saved Team jobs are paused before either chat
+  or group dispatch. Existing network storage is preserved.
+- Installer and update health checks no longer require removed capabilities;
+  obsolete Team installation and recovery requests are rejected explicitly.
+
+**Validation.** The final isolated full suite ran 5,324 cases (62 skipped),
+with nine inherited failures and one parallel timing failure that passed the
+serial recheck. All 355 remaining Python sources compile, the dependency lock
+check passes, and shell syntax and release inventory checks pass. Default and
+named installer fixtures, actual worker/gateway startup, same-server routing,
+queue recovery, and removed-authority regressions were exercised.
+
+Real isolated server checks passed for token enforcement, HTTP, WebSocket
+reconnects, absent network routes/capabilities and native Claude/Codex replies.
+A mixed-provider run exercised file editing, handoff, contextual follow-up,
+parallel replies and Stop. A separate Codex run passed contextual follow-up and
+WebSocket reconnect. Complete repeated mixed-provider and automatic scheduled
+provider acceptance remains pending: intermittent native runs stalled, including
+in the pre-removal comparison, and later provider availability prevented the
+remaining checks. No desktop/mobile client acceptance is claimed.
+
+**Availability:** source only; full end-to-end acceptance remains pending.
+
 ## 2026-10-25 — Listener security and scheduled-job admission
 
 - Non-loopback listeners now require a nonempty server token, checked by both

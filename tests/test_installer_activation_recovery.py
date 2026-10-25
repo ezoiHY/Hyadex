@@ -523,24 +523,6 @@ wait_for_health() {{ return 99; }}
 {body}
 """
 
-    def test_prelink_quiescence_rollback_never_stops_incumbent_or_restores_hub_snapshot(self) -> None:
-        for phase in ("quiescing","quiesced"):
-            body = """
-set -e
-ACTIVATION_TRANSACTION_PHASE=rolling-back
-ACTIVATION_ROLLBACK_FROM=__PHASE__
-clear_team_hub_operation_fence() { log clear-fence; }
-restore_previous_release_transaction
-! grep -q '^suppress$' "$LOG"
-! grep -q '^stop$' "$LOG"
-! grep -q '^restore-hub$' "$LOG"
-test "$(grep -c '^clear-fence$' "$LOG")" = 1
-test "$(grep -c '^restore-service$' "$LOG")" = 1
-test "$(grep -c '^health$' "$LOG")" = 1
-""".replace("__PHASE__",phase)
-            result=subprocess.run(["/bin/bash","-c",self._rollback_script(body)],text=True,capture_output=True)
-            self.assertEqual(result.returncode,0,result.stderr)
-
     def test_pre_quiescence_failure_preserves_live_incumbent_and_clears_exact_fence(self) -> None:
         for phase in ("prepared", "guarded"):
             for resumed in (False, True):
@@ -564,69 +546,6 @@ test "$(grep -c '^finish$' "$LOG")" = 1
                     result = subprocess.run(["/bin/bash", "-c", self._rollback_script(body)],
                                             capture_output=True, text=True, check=False)
                     self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_durability_failure_rollback_uses_real_controls_with_live_hub_lease(self) -> None:
-        from hyadex_team_hub.store import HubStore
-        begin = self.installer_source.index('if [[ "${EXECUTION_MODE:-legacy}" == "split" ]]; then\n  if ! execution_activation_command durability')
-        end = self.installer_source.index('\nfi\n', begin) + len('\nfi\n')
-        controls = _between(self.installer_source, "clear_team_hub_operation_fence() {",
-                            "clear_team_hub_reactivation_fence() {")
-        controls += _between(self.installer_source, "restore_team_hub_snapshot() {", "port_has_listener() {")
-        for phase in ("prepared", "guarded"):
-            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary).resolve()
-                runtime = root / "runtime"
-                (runtime / ".venv/bin").mkdir(parents=True)
-                interpreter = runtime / ".venv/bin/python"
-                interpreter.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) + ' "$@"\n')
-                interpreter.chmod(0o755)
-                (runtime / "hyadex_team_hub").symlink_to(ROOT / "hyadex_team_hub", target_is_directory=True)
-                identity, operation = "a" * 24, "b" * 32
-                hub = HubStore(root / "hub", managed_host_identity=identity)
-                snapshot = hub.maintenance_snapshot_and_fence("server-update", operation_id=operation)
-                marker = hub.maintenance_fence_path.stat()
-                database_before = hub.database_path.read_bytes()
-                lease = HubStore.acquire_managed_runtime_lease(root / "hub")
-                self.addCleanup(HubStore.release_managed_runtime_lease, lease)
-                values = {
-                    "CANDIDATE_RUNTIME_ROOT": str(runtime), "STAGE_DIR": str(runtime),
-                    "TEAM_HUB_DATA_DIR": str(root / "hub"), "TEAM_HUB_SNAPSHOT": str(snapshot),
-                    "EXPECTED_SERVER_IDENTITY": identity, "EXPECTED_TEAM_HUB_ID": hub.hub_id,
-                    "TEAM_HUB_OPERATION_ID": operation, "TEAM_HUB_OPERATION_FENCE_DEVICE": str(marker.st_dev),
-                    "TEAM_HUB_OPERATION_FENCE_INODE": str(marker.st_ino), "EXECUTION_MODE": "split",
-                    "ACTIVATION_TRANSACTION_PHASE": phase, "ACTIVATION_ROLLBACK_FROM": "",
-                    "TEAM_HUB_STARTUP_AUTHORITY_PENDING": "false", "COLD_TEAM_HUB_HANDOFF": "false",
-                }
-                body = '\n'.join(name + '=' + shlex.quote(value) for name, value in values.items())
-                body += '\n' + controls + '\n'
-                body += "team_hub_control_runtime() { printf '%s\\n%s\\n' " + shlex.quote(sys.executable) + ' ' + shlex.quote(str(ROOT)) + "; }\n"
-                body += '''
-run_without_server_secrets() { "$@"; }
-rm -f "$SUPPRESSION" "$RECEIPT"
-record_activation_phase() {
-  if [[ "$1" = rolling-back ]]; then ACTIVATION_ROLLBACK_FROM="$ACTIVATION_TRANSACTION_PHASE"; fi
-  log "record:$1"; ACTIVATION_TRANSACTION_PHASE="$1"
-}
-execution_activation_command() { [[ "$1" != durability ]]; }
-execution_recovery_arm() { return 97; }
-execution_stop_services() { return 96; }
-cleanup_test() {
-  trap - EXIT
-  restore_previous_release_transaction || exit 95
-  test -z "$ACTIVATION_TRANSACTION_ID" || exit 94
-  ! grep -Eq '^(stop|restore-service|restore-hub)$' "$LOG" || exit 93
-  test "$(grep -c '^health$' "$LOG")" = 1 || exit 92
-  exit 0
-}
-trap cleanup_test EXIT
-'''
-                body += self.installer_source[begin:end]
-                result = subprocess.run(["/bin/bash", "-c", self._rollback_script(body)],
-                                        capture_output=True, text=True, check=False, timeout=10)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertFalse(hub.maintenance_fence_path.exists())
-                self.assertEqual(hub.database_path.read_bytes(), database_before)
-                self.assertFalse((root / "hub/.restore-completion.json").exists())
 
     def test_resuming_restored_files_never_reenters_rollback_or_reapplies_snapshot(self) -> None:
         body = """
@@ -994,45 +913,6 @@ test "$(grep -c '^record:rollback-healthy$' "$LOG")" = 1
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_settled_update_rollback_still_requires_the_exact_old_hub(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            previous = Path(temporary) / "previous"
-            previous.mkdir()
-            (previous / "VERSION").write_text("0.1.25-beta.31\n", encoding="ascii")
-            script = f"""
-set -u
-ROLLBACK_RELEASE_ROOT={previous!s}
-OLD_TARGET={previous!s}
-HEALTH_CHECK_ATTEMPTS=3
-ROLLBACK_HEALTH_CHECK_MAX_ATTEMPTS=45
-EXPECTED_TEAM_HUB_ID=hub_rollback_health_12345678
-EXPECTED_SERVER_IDENTITY=server_rollback_health_12345678
-PREVIOUS_TEAM_HUB_TRANSPORT=tailscale_serve
-PREVIOUS_TEAM_HUB_URL=https://hub.example.test/api/team-hub
-PREVIOUS_TEAM_HUB_DIRECT_IP_URL=
-PREVIOUS_TEAM_HUB_MODE=host
-PRIOR_PORT=7870
-PRIOR_BIND_ADDRESS=127.0.0.1
-TEAM_HUB_FAILED_HOST_REPAIR_REQUESTED=false
-TEAM_HUB_OPERATION_PENDING=false
-ACTIVATION_HUB_KIND=server-update
-wait_for_exact_release_health() {{
-  test "$4" = host
-  test "$5" = hub_rollback_health_12345678
-  test "$6" = tailscale_serve
-  test "$7" = https://hub.example.test/api/team-hub
-}}
-{self.previous_health_function}
-wait_for_previous_release_health
-"""
-            result = subprocess.run(
-                ["/bin/bash", "-c", script],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
 
     def _darwin_service_script(self, body: str) -> str:
         return f"""

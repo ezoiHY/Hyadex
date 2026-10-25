@@ -117,18 +117,9 @@ def run_recovery(args: argparse.Namespace) -> None:
         raise RuntimeError("activation recovery exited without finalizing its journal")
     identity = dict(token=token, expected_server_identity=args.expected_server_identity,
                     expected_server_version=version, expected_api_contract_version=api)
-    if status.get("team_hub_id"):
-        identity.update(expected_team_hub_id=status["team_hub_id"],
-            expected_team_hub_transport=status.get("team_hub_transport"),
-            expected_team_hub_url=status.get("team_hub_url"),
-            expected_team_hub_direct_ip_url=status.get("team_hub_direct_ip_url"))
+    if status.get("team_hub_id") or status.get("team_hub_repair_mode"):
+        raise RuntimeError("Team Hub recovery is no longer supported; existing data was preserved")
     updates.assert_post_update_identity(args.port, **identity)
-    if status.get("team_hub_repair_mode") == "failed_start":
-        updates.assert_repaired_team_hub_identity(args.port, token=token,
-            expected_server_identity=args.expected_server_identity,
-            expected_team_hub_transport=status.get("team_hub_transport") or "",
-            expected_team_hub_url=status.get("team_hub_url"),
-            expected_team_hub_direct_ip_url=status.get("team_hub_direct_ip_url") or "")
     updates.update_status(status_path, expected_update_id=args.update_id, phase="complete",
         installed_version=version, update_available=False, runner_pid=None, heartbeat_at=None,
         elapsed_seconds=None, error_code=None, error_action=None, retryable=None,

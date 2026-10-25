@@ -117,11 +117,6 @@ class CompactProviderAuthorityBlockTests(unittest.TestCase):
             exchange_response_grant=("exchange_abc", "leg_def"),
             exchange_response_followup_allowed=True,
         )
-        secure = compact_block(
-            {"secure_peer_response"},
-            exchange_response_grant=("exchange_abc", "leg_def"),
-            exchange_response_followup_allowed=True,
-        )
         local_async = compact_block(
             {"cross_chat_response"},
             exchange_response_grant=("exchange_abc", "leg_def"),
@@ -131,7 +126,6 @@ class CompactProviderAuthorityBlockTests(unittest.TestCase):
 
         self.assertIn("respond: exchange=exchange_abc inbound-leg=leg_def followup=none", terminal)
         self.assertIn("respond: exchange=exchange_abc inbound-leg=leg_def followup=allowed", open_followup)
-        self.assertIn("followup=allowed-async", secure)
         self.assertIn("followup=allowed-async", local_async)
         self.assertNotIn("--request-response", terminal)
 
@@ -147,27 +141,6 @@ class CompactProviderAuthorityBlockTests(unittest.TestCase):
         )
 
         self.assertIn("`--request-response --async-response`", block)
-
-    def test_block_marks_prebound_team_mail_and_team_send_mentions(self) -> None:
-        reference = agent_server.TeamReference(
-            kind="recipient",
-            recipient_kind="all",
-            team_id="team_private",
-            target_id="all",
-            display_name_snapshot="all",
-            source_text_start=0,
-            source_text_end=5,
-        )
-        block = compact_block(
-            {"team_mail", "team_send", "team_read"},
-            team_mail_command={"server": "SONIC", "message": "hello"},
-            team_references=[reference],
-        )
-
-        self.assertIn("team_mail=prebound", block)
-        self.assertIn("team-send mentions=the shared Bulletin", block)
-        self.assertNotIn("SONIC", block)
-        self.assertNotIn("hello", block)
 
     def test_handle_lines_are_projected_onto_the_compact_grammar(self) -> None:
         local = agent_server.compact_provider_authority_handle(

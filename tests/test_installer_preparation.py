@@ -83,7 +83,8 @@ migrate_legacy_state() {{ printf '%s\\n' "$STAGE_DIR" > {shlex.quote(str(self.ba
         self.assertEqual(check(False).returncode,0)
         self.assertEqual(check(True).returncode,0)
         self.assertEqual(check(False,True).returncode,0)
-        (cache/'link').symlink_to(self.source/'VERSION')
+        (self.source/'VERSION').unlink()
+        (self.source/'VERSION').symlink_to(cache/'cli.cpython.pyc')
         self.assertNotEqual(check(True).returncode,0)
         self.assertNotEqual(check(False,True).returncode,0)
 

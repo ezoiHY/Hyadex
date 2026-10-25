@@ -1117,60 +1117,6 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(queued)[0]["queued_id"], "kept")
         self.assertEqual(private["_source_instance_id"], SERVER_INSTANCE_ID)
 
-    async def test_restart_repair_admission_allows_failed_team_hub_startup(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            prepare = AsyncMock(return_value=None)
-            reopen = AsyncMock()
-            with restart_environment(root), \
-                 patch.object(
-                     agent_server.TEAM_HUB_RUNTIME,
-                     "prepare_maintenance",
-                     new=prepare,
-                 ), \
-                 patch.object(
-                     agent_server.TEAM_HUB_RUNTIME,
-                     "reopen_admission",
-                     new=reopen,
-                 ):
-                status = await agent_server.restart_server_endpoint(
-                    restart_body(),
-                    http_request(method="POST"),
-                    BackgroundTasks(),
-                )
-
-        self.assertEqual(status["phase"], "accepted")
-        prepare.assert_awaited_once_with(
-            "server-restart",
-            persistent_fence=False,
-            allow_unavailable_host=True,
-        )
-        reopen.assert_awaited_once_with()
-
-    async def test_forced_restart_repair_attempt_allows_failed_team_hub_startup(self):
-        prepare = AsyncMock(return_value=None)
-        reopen = AsyncMock()
-        with patch.object(
-            agent_server.TEAM_HUB_RUNTIME,
-            "prepare_maintenance",
-            new=prepare,
-        ), patch.object(
-            agent_server.TEAM_HUB_RUNTIME,
-            "reopen_admission",
-            new=reopen,
-        ):
-            succeeded = (
-                await agent_server.forced_server_restart_team_hub_snapshot_attempt()
-            )
-
-        self.assertTrue(succeeded)
-        prepare.assert_awaited_once_with(
-            "server-restart",
-            persistent_fence=False,
-            allow_unavailable_host=True,
-        )
-        reopen.assert_awaited_once_with()
-
     async def test_same_accepted_request_reattaches_one_recovery_worker(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1541,13 +1487,13 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 forced_signal.assert_not_called()
 
     async def test_force_update_and_cancel_are_serialized_force_wins(self):
-        entered_hub_snapshot = asyncio.Event()
-        release_hub_snapshot = asyncio.Event()
+        entered_snapshot = asyncio.Event()
+        release_snapshot = asyncio.Event()
 
-        async def slow_hub_snapshot() -> bool:
-            entered_hub_snapshot.set()
-            await release_hub_snapshot.wait()
-            return True
+        async def slow_snapshot(**_kwargs) -> dict:
+            entered_snapshot.set()
+            await release_snapshot.wait()
+            return {"revision": "test", "has_safety_blockers": False}
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1558,8 +1504,8 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 "1.0.0",
             ), patch.object(
                 agent_server,
-                "forced_server_restart_team_hub_snapshot_attempt",
-                side_effect=slow_hub_snapshot,
+                "current_server_restart_blocker_snapshot",
+                side_effect=slow_snapshot,
             ):
                 agent_server.write_fresh_server_update_status(
                     phase="pending",
@@ -1581,7 +1527,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                         BackgroundTasks(),
                     )
                 )
-                await entered_hub_snapshot.wait()
+                await entered_snapshot.wait()
                 cancel_task = asyncio.create_task(
                     agent_server.cancel_server_update(
                         agent_server.ServerUpdateCancelRequest(
@@ -1591,7 +1537,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 )
                 await asyncio.sleep(0)
                 self.assertFalse(cancel_task.done())
-                release_hub_snapshot.set()
+                release_snapshot.set()
                 accepted = await force_task
                 with self.assertRaises(HTTPException) as cancelled:
                     await cancel_task
@@ -2153,105 +2099,6 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status["phase"], "accepted")
         self.assertTrue(status["forced"])
-
-    async def test_force_restart_proceeds_when_team_hub_snapshot_fails(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            with restart_environment(root) as forced_signal, patch.object(
-                agent_server.TEAM_HUB_RUNTIME,
-                "prepare_maintenance",
-                AsyncMock(side_effect=RuntimeError("hub drain timed out")),
-            ):
-                status = await agent_server.restart_server_endpoint(
-                    restart_body(force=True),
-                    http_request(method="POST"),
-                    BackgroundTasks(),
-                )
-                forced_signal.assert_called_once_with(status["request_id"])
-
-        self.assertEqual(status["phase"], "accepted")
-        self.assertTrue(status["forced_audit"]["team_hub_snapshot_skipped"])
-
-    async def test_force_restart_hub_snapshot_deadline_retains_late_settlement(
-        self,
-    ) -> None:
-        snapshot_started = asyncio.Event()
-        release_snapshot = asyncio.Event()
-        snapshot_settled = asyncio.Event()
-        cancellation_seen = asyncio.Event()
-        reopened = asyncio.Event()
-        stragglers: set[asyncio.Task[object]] = set()
-
-        async def cancellation_resistant_snapshot(*_args, **_kwargs):
-            snapshot_started.set()
-            try:
-                await release_snapshot.wait()
-            except asyncio.CancelledError:
-                # This is the behavior that made asyncio.wait_for exceed its
-                # deadline: maintenance must finish its native worker first.
-                cancellation_seen.set()
-                await release_snapshot.wait()
-            snapshot_settled.set()
-
-        async def reopen_after_settlement() -> None:
-            self.assertTrue(snapshot_settled.is_set())
-            reopened.set()
-
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            with (
-                restart_environment(root) as forced_signal,
-                patch.object(
-                    agent_server.TEAM_HUB_RUNTIME,
-                    "prepare_maintenance",
-                    new=AsyncMock(side_effect=cancellation_resistant_snapshot),
-                ),
-                patch.object(
-                    agent_server.TEAM_HUB_RUNTIME,
-                    "reopen_admission",
-                    new=AsyncMock(side_effect=reopen_after_settlement),
-                ) as reopen_admission,
-                patch.object(
-                    agent_server,
-                    "SERVER_RESTART_FORCE_HUB_SNAPSHOT_TIMEOUT_SECONDS",
-                    0.01,
-                ),
-                patch.object(
-                    agent_server,
-                    "SERVER_RESTART_FORCE_HUB_STRAGGLERS",
-                    stragglers,
-                ),
-            ):
-                started_at = asyncio.get_running_loop().time()
-                status = await asyncio.wait_for(
-                    agent_server.restart_server_endpoint(
-                        restart_body(force=True),
-                        http_request(method="POST"),
-                        BackgroundTasks(),
-                    ),
-                    timeout=1,
-                )
-                elapsed = asyncio.get_running_loop().time() - started_at
-
-                self.assertLess(elapsed, 0.5)
-                self.assertTrue(snapshot_started.is_set())
-                self.assertFalse(cancellation_seen.is_set())
-                self.assertFalse(snapshot_settled.is_set())
-                self.assertFalse(reopened.is_set())
-                self.assertEqual(len(stragglers), 1)
-                forced_signal.assert_called_once_with(status["request_id"])
-
-                release_snapshot.set()
-                await asyncio.wait_for(reopened.wait(), 1)
-                for _ in range(100):
-                    if not stragglers:
-                        break
-                    await asyncio.sleep(0)
-                self.assertFalse(stragglers)
-                reopen_admission.assert_awaited_once_with()
-
-        self.assertEqual(status["phase"], "accepted")
-        self.assertTrue(status["forced_audit"]["team_hub_snapshot_skipped"])
 
     async def test_tmux_cgroup_risk_requires_force_and_is_privately_revision_bound(self):
         service_cgroup = (

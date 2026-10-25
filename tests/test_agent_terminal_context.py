@@ -39,10 +39,7 @@ class AgentTerminalContextTests(unittest.TestCase):
             env["HYADEX_CHATS_CLI"],
             str(agent_server.SERVER_ROOT / "hyadex_chats.py"),
         )
-        self.assertEqual(
-            env["HYADEX_MAIL_CLI"],
-            str(agent_server.SERVER_ROOT / "hyadex_mail.py"),
-        )
+        self.assertNotIn("HYADEX_MAIL_CLI", env)
         for name in agent_server.PROVIDER_SECRET_ENV_NAMES:
             self.assertNotIn(name, env)
 
@@ -53,10 +50,7 @@ class AgentTerminalContextTests(unittest.TestCase):
             env["HYADEX_PUBLISH_CLI"],
             str(agent_server.SERVER_ROOT / "hyadex_publish.py"),
         )
-        self.assertEqual(
-            env["HYADEX_MAIL_CLI"],
-            str(agent_server.SERVER_ROOT / "hyadex_mail.py"),
-        )
+        self.assertNotIn("HYADEX_MAIL_CLI", env)
         for name in agent_server.PROVIDER_SECRET_ENV_NAMES:
             self.assertNotIn(name, env)
 

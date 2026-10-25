@@ -2414,7 +2414,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             first_read = await handler({"helper": "jobs", "arguments": ["list"]})
             second_read = await handler({"helper": "jobs", "arguments": ["list"]})
             mutation = {
-                "helper": "team",
+                "helper": "chats",
                 "arguments": ["send", "--route", "route-1"],
                 "stdin": "same body",
             }

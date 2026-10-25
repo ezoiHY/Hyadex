@@ -198,7 +198,7 @@ class NpmUpdateRunnerTests(unittest.TestCase):
     def test_npm_acceptance_checks_actual_version_and_api_contract(self):
         health = {"ok": True, "server_identity": "test-server", "server_version": self.version,
                   "api_contract_version": 28,
-                  "capabilities": {"secure_peer_v1": dict(update_runner.SECURE_PEER_HEALTH_REQUIREMENTS)}}
+                  "capabilities": {}}
         arguments = {"token": "test-token", "expected_server_identity": "test-server",
                      "expected_server_version": self.version, "expected_api_contract_version": 28}
         with patch.object(update_runner, "server_health_snapshot", return_value=health):
