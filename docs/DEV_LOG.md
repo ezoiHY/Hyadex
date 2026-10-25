@@ -1,0 +1,137 @@
+# Hyadex development log
+
+Newest first. Hyadex started from the AgentsDock server source (see
+[NOTICE](../NOTICE)); its own history begins with the first version below.
+
+## 2026-10-25 — Autopilot
+
+**Feature.** Autopilot runs let one agent plan and another implement, with a
+reviewer checking every step ([design](AUTOPILOT.md)). The server drives a
+state machine: plan, optional approval, then execute, verify and review for
+each task, with revise and re-plan loops bounded by budgets. Agents return
+structured JSON only at those points.
+
+**Options.** These are per run:
+
+- `approval`: `plan`, `step` or `none`.
+- `isolation`: `worktree` (a branch with one commit per task) or `in_place`.
+- `reviewer`: `planner`, `fresh` or `none`.
+- `verify_sandbox`: `codex` or `none`.
+
+Each role's agent and permissions can also be overridden.
+
+**Review fixes.** An independent review found two high-severity and eight
+medium issues, all fixed before release:
+
+- Verification runs in the Codex sandbox (the executor's boundary) without
+  credential variables.
+- Approval commits exactly the reviewed tree, snapshotted after verification.
+- A failed verification can no longer be approved by a review.
+- Server sections and executor reports sit in fences the content cannot close.
+- Every autopilot Git command runs with hooks disabled.
+- Verification uses an async subprocess with a token: pause/resume never runs
+  it twice, and abort kills it.
+- A failing transition always ends in `needs_attention`. Resume then acts on
+  the recorded reason.
+- Re-plans discard rejected worktree edits and keep finished tasks.
+- Monorepo subdirectories are preserved.
+- There is no group brief, so long goals work.
+- Requests are written ahead and recovered by id.
+- Run-owned groups reject outside changes.
+
+**Token use.** Every request is now self-contained, and members skip
+everything else in the group. In the real run this cut prompt characters by
+29% (the executor's first request by 59%).
+
+**Group engine changes.** Runs are built on the group engine, which gained:
+
+- group kinds;
+- per-message audiences;
+- orchestrator messages;
+- event listeners;
+- `skip_backlog`;
+- an autopilot charter.
+
+`/api/health` advertises `autopilot_v1`.
+
+**Validation.**
+
+- 29 autopilot tests pass, including the real Codex sandbox and Git hook
+  suppression.
+- The full suite (6,331 tests) has no new failures against the baseline.
+- Real runs with Claude Code and Codex on an isolated `dev` instance:
+  - With the defaults and sandboxed `python3 -m unittest`, a two-task slugify
+    feature went from plan approval through two reviewed commits containing
+    only source files. Its tests pass, and the user's tree was untouched.
+  - A fully automatic, in-place run with a fresh reviewer completed.
+
+**Not yet exercised with real agents:** step approval, revise/replan loops,
+pause/resume and restart recovery (unit tests only).
+
+## 2026-10-25 — First backend version
+
+**Project.** Hyadex is now an independent project. The server source came
+from the AgentsDock monorepo's `server/` directory. It is not synced with
+upstream and starts with a fresh history. `NOTICE` keeps the original
+Apache-2.0 attribution.
+
+**Rename.** Product, modules, CLIs, environment variables (`HYADEX_*`), paths
+(`~/.hyadex`, `~/.config/hyadex-server`), service labels (`com.hyadex.server`,
+`hyadex-server.service`), wire identifiers and tests now use Hyadex. The
+default port is 7870 and tmux sessions use the `hx_`/`hxi_` prefixes, so a
+Hyadex server can run beside an AgentsDock server on the same machine.
+
+**Safer defaults.**
+
+- In-app updates are off (`HYADEX_MANAGED_UPDATES`). Previously they downloaded
+  upstream releases, which would have replaced Hyadex with AgentsDock.
+- Shared chat pages no longer load the bundled analytics script, which
+  reported viewers to the upstream project's Mixpanel account.
+- New chats are limited to Claude Code and Codex (`HYADEX_ENABLED_BACKENDS`).
+
+**Group discussions.** The user, Claude Code and Codex share one timeline
+([design](GROUP_DISCUSSIONS.md)). Each agent runs in a hidden native member
+chat. Only mentioned agents run, and each receives only unseen messages.
+Replies carry zero-token changed-file receipts. Agents hand off by mention
+within a hop budget. The feature also covers parallel and analysis-only
+rounds, stop, restart recovery, native goals and scheduled group jobs.
+`/api/health` advertises `group_discussions_v1`.
+
+An independent review of the feature led to these fixes before release:
+
+- Queued, force-sent and unqueued member turns are observed on the durable
+  event path.
+- Dispatches are written ahead and keyed by the turn's client request id, and
+  recovery never re-sends or re-records.
+- Stop handles turns that start mid-stop and member chats that are gone.
+- Cancelled dispatches roll back the member's cursor.
+- Torn timeline tails are repaired.
+- Agent text cannot forge message blocks.
+- Removing a member re-anchors the group's jobs.
+- A busy anchor chat no longer defers group jobs.
+
+**Tooling.** `scripts/dev_server.py` runs an isolated development instance. CI
+runs on pull requests to `main` and on manual dispatch.
+
+**Validation.**
+
+- Unit and wiring tests: 30 group-engine/route tests and 11 server wiring tests
+  pass.
+- Full suite, 6,301 tests on macOS with a temporary home: no new failures
+  compared with the unmodified upstream server on this machine. The remaining
+  failures are pre-existing macOS/environment cases. Load-sensitive tests
+  (memory admission, Codex runner timing) pass when rerun serially.
+- Real end-to-end run on an isolated `dev` instance with Claude Code 2.1.309 and
+  Codex 0.163.0-alpha.11.1, through the HTTP API and WebSocket:
+  - file-edit receipt and a Codex-to-Claude hand-off
+  - delta-only follow-up dispatch
+  - parallel analysis-only round
+  - stop
+  - a queued message to a busy member
+  - manually run group job
+  - hidden member chats
+  - ordered event stream
+
+**Not yet exercised with real agents:** approval prompts inside a group, group
+goals, and jobs firing on their schedule. No client exists for groups yet; the
+Mac and Android clients will be rewritten.

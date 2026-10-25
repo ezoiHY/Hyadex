@@ -1,0 +1,42 @@
+Hyadex
+Copyright 2026 Han Yu and contributors
+
+Hyadex is licensed under the Apache License, Version 2.0. See LICENSE.
+
+Hyadex is derived from the AgentsDock server (AgentsServer),
+https://github.com/ZhengyiLuo/AgentsDock, Copyright 2026 Zhengyi Luo and
+contributors, licensed under the Apache License, Version 2.0. The Hyadex
+project has modified the original files, including renaming the product,
+its identifiers, paths and environment variables, and adding new features
+such as group discussions. The original NOTICE is reproduced below.
+
+------------------------------------------------------------------------
+Original AgentsDock NOTICE
+------------------------------------------------------------------------
+
+AgentsDock
+Copyright 2026 Zhengyi Luo and contributors
+
+AgentsDock's original code is licensed under the Apache License, Version 2.0,
+except where a component explicitly states another license. See LICENSE.
+
+Third-party and separately licensed components retain their own copyrights,
+licenses, and attribution notices. In particular:
+
+- mobile-react/LICENSE preserves the Expo template's MIT license and
+  copyright notice for 650 Industries, Inc. (Expo).
+- The agentsdock-native-video, agentsdock-native-terminal, and
+  agentsdock-android-updater modules retain the MIT license declared in
+  their package metadata.
+- SwiftTerm retains its MIT license in
+  mobile-react/modules/agentsdock-native-terminal/ios/Vendor/SwiftTerm/LICENSE.
+- The Gemini product icon in electron/src/renderer/public/backend-gemini.svg
+  is an unmodified Google asset, not covered by AgentsDock's Apache license.
+  Gemini and its icon are trademarks of Google LLC. Used only to identify the
+  supported provider; no Google endorsement or affiliation is implied.
+  Source: https://www.gstatic.com/lamda/images/gemini_sparkle_aurora_33f86dc0c0257da337c63.svg
+  Referenced by https://gemini.google.com/ (retrieved 2026-10-15).
+  Brand guidance: https://about.google/brand-resource-center/guidance/apis/
+
+Dependencies and other bundled third-party materials remain subject to their
+respective license terms. This notice does not replace those licenses.

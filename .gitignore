@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.python-version
+.venv/
+venv/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime state
+.hyadex/
+.zenithbot-agent/
+state/
+files/
+*.log
+
+# Build/export noise
+dist/
+build/
+.DS_Store
+.test-state*/
+
+# Written to the working directory by tests/test_team_mail_pipeline_tls_isolated.py
+mail-pipeline-golden.json
