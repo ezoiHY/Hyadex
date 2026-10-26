@@ -3,6 +3,24 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Consolidate the current backend checkpoint
+
+- Stopped further decomposition and deletion at runtime commit `807214b`.
+  Added [the backend checkpoint](BACKEND_STATUS.md) with current behavior,
+  removed features, verified boundaries, the six open test failures and
+  deferred work. README links to it. No runtime behavior changed in this step.
+- Rechecked the current source through an isolated named development server
+  with actual Claude and Codex: file editing/receipt, handoff, contextual
+  follow-up, parallel replies, Stop, busy queue continuation, a manually
+  triggered group job and 47 ordered WebSocket events all passed. The fixture
+  server was stopped afterward; no installed user service was used.
+- The preceding runtime validation remains 4,226 full-suite cases with nine
+  skips and six inherited failures, plus 270 passing fast package tests and
+  46 passing Node tests. This checkpoint does not claim a fully green suite,
+  complete decomposition, Linux service acceptance or desktop/mobile parity.
+- Availability: source only. Version and API contract remain `1.0.7-beta.11`
+  and 29. No release, deployment or installed-service replacement occurred.
+
 ## 2026-10-26 — Manual source installation and shared runtime inventory
 
 - Replaced the large shell installer with a thin entrypoint and

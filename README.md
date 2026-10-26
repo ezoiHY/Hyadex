@@ -7,6 +7,7 @@ goals, terminals and file previews. Clients connect over your LAN or Tailscale.
 
 > **Status:** first backend version. The Mac and Android clients are being
 > rewritten; until then, use the HTTP/WebSocket API (see [API](#api)).
+> Current scope, verification and deferred work: [backend checkpoint](docs/BACKEND_STATUS.md).
 > Hyadex is derived from the AgentsDock server; see
 > [History and license](#history-and-license).
 
