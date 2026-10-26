@@ -919,6 +919,11 @@ class AutopilotEngine:
         entry = self._verifying.get(run_id)
         if entry is not None and entry.get("token") == token:
             entry["process"] = process
+        elif process.returncode is None:
+            # Abort/delete can retire the reservation while subprocess creation
+            # is awaiting the OS. Reap only this late process, never attach it
+            # to a newer verification or let it run after its owner is gone.
+            _kill_group(process.pid)
 
     def _kill_verification(self, run_id: str) -> None:
         entry = self._verifying.pop(run_id, None)

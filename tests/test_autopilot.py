@@ -380,6 +380,38 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         await self.engine._needs_attention(self.state(run), "error", "late failure")
         self.assertEqual(self.state(run)["status"], "aborted")  # never revived
 
+    async def test_abort_during_verification_spawn_kills_the_late_process(self) -> None:
+        run = await self.start(approval="none", verify_command="sleep 30")
+        await self.reply(run, "planner", plan_reply("a"))
+        spawning, release = asyncio.Event(), asyncio.Event()
+        create_process = asyncio.create_subprocess_exec
+        processes = []
+
+        async def gated_spawn(*args, **kwargs):
+            spawning.set()
+            await release.wait()
+            process = await create_process(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        with patch.object(autopilot.asyncio, "create_subprocess_exec", gated_spawn):
+            try:
+                self.finish_turn(run, "executor", DONE)
+                await asyncio.wait_for(spawning.wait(), 5)
+                await self.engine.abort(run["id"])
+                release.set()
+                await asyncio.wait_for(self.engine.drain(), 3)
+                self.assertEqual(self.state(run)["status"], "aborted")
+                self.assertEqual(len(processes), 1)
+                self.assertIsNotNone(processes[0].returncode)
+                self.assertNotIn(run["id"], self.engine._verifying)
+            finally:
+                release.set()
+                for process in processes:
+                    if process.returncode is None:
+                        autopilot._kill_group(process.pid)
+                        await asyncio.wait_for(process.wait(), 3)
+
     async def test_abort_stops_running_members(self) -> None:
         run = await self.start()
         planner_session = self.turn_for(run, "planner")["session_id"]

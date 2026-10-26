@@ -3,6 +3,26 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Abort verification during process startup
+
+A later fast-package run exposed an existing Autopilot race: Abort could retire
+its verification reservation while the OS was still creating the process. The
+late process was then left running until its command finished. Registration
+now kills a process whose exact reservation is gone or superseded, without
+attaching it to another verification.
+
+A deterministic regression gates the real subprocess launch: it times out
+before the fix and passes afterward. All 30 Autopilot cases and all 99 fast
+package cases pass. Real isolated native acceptance completed a Claude plan
+and Codex file edit, then aborted verification through HTTP, confirmed the
+verification process exited without completing its command, and repeated Abort
+without reviving the run. The disposable workspace was retained. Desktop/mobile
+clients were not exercised. The full suite ran 5,330 cases (62 skipped),
+with the same nine inherited failures and one concurrent WebSocket stress-test
+timeout; that complete stress test passed when rerun serially. Source compile
+and diff checks pass.
+**Availability:** source only.
+
 ## 2026-10-26 — Independent schedule calculation and fast package checks
 
 - Moved interval, cron, RRULE and timezone calculations into

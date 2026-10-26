@@ -117,7 +117,8 @@ reason:
 
 **Pause** lets the current step finish; a verification that completes while
 paused continues to review on resume and is never run twice. **Abort** stops
-running agents and kills a running verification; the worktree and branch are
+running agents and kills verification, including a process that finishes
+starting after Abort; the worktree and branch are
 kept. **Delete** removes the run and, with `remove_worktree=true`, its
 worktree (never an in-place directory). A run that failed to move between
 phases lands in `needs_attention`; it is never left half-moved.
