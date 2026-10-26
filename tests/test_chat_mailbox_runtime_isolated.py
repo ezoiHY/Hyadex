@@ -20,9 +20,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 import hyadex_chats
-import chat_mailbox
-
-
+from hyadex.store import mailbox as chat_mailbox
 TREE = ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text())
 ROUTE = "route_" + "a" * 32
 RETURN_ROUTE = "route_" + "b" * 32

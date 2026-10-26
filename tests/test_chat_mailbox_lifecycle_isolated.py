@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
 
-import chat_mailbox
+from hyadex.store import mailbox as chat_mailbox
 from tests import test_chat_mailbox_archived_sender_isolated as archived
 from tests import test_chat_mailbox_runtime_isolated as runtime
 

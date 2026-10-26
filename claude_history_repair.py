@@ -27,7 +27,7 @@ from claude_goals import ClaudeGoalHistoryNormalizer, is_claude_synthetic_no_res
 from claude_sdk_client import CLAUDE_SDK_LITERAL_MESSAGE_PREFIX
 
 
-from transcript_reader import jsonl_records, scan_check, CHUNK_BYTES, SCAN_SECONDS
+from hyadex.store.transcripts import jsonl_records, scan_check, CHUNK_BYTES, SCAN_SECONDS
 
 MAX_BYTES = 96 * 1024 * 1024
 MAX_EVENTS_BYTES = 32 * 1024 * 1024

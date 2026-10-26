@@ -10,9 +10,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-import transcript_reader as reader
-
-
+from hyadex.store import transcripts as reader
 class StreamingTranscriptTests(unittest.TestCase):
     def parse(self, raw, **kwargs):
         return list(reader.jsonl_records(io.BytesIO(raw), end=len(raw), **kwargs))
@@ -192,7 +190,7 @@ class StreamingTranscriptTests(unittest.TestCase):
         probe = """
 import json,resource,sys
 from pathlib import Path
-from transcript_reader import jsonl_records
+from hyadex.store.transcripts import jsonl_records
 p=Path(sys.argv[1])
 with p.open('rb') as stream:
     for event, _offset, _raw in jsonl_records(stream,end=p.stat().st_size):
@@ -209,6 +207,6 @@ print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*scale)
                     for _ in range(size): stream.write(b'x' * (1024*1024))
                     stream.write(b'"}}\n')
                 result=subprocess.run([sys.executable,'-c',probe,str(path)],
-                    cwd=Path(reader.__file__).parent,capture_output=True,text=True,check=True,timeout=30)
+                    cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,check=True,timeout=30)
                 peaks.append(int(result.stdout.strip()))
         self.assertLess(peaks[1]-peaks[0],32*1024*1024,peaks)

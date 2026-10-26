@@ -16,9 +16,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 import hyadex_chats as cli
-import chat_mailbox
-
-
+from hyadex.store import mailbox as chat_mailbox
 TREE = ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text())
 FUNCTIONS = {
     "is_async_route_message", "async_route_conversation_fields",

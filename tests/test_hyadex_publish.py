@@ -38,7 +38,7 @@ def request_for(
     if retry:
         headers.append((b"x-hyadex-publication-retry", b"1"))
     return Request({
-        "type": "http",
+        "type": "http", "app": agent_server.app,
         "method": "POST",
         "path": "/api/agent/sessions/sess/artifacts",
         "headers": headers,
@@ -637,7 +637,7 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
 
                 blocked_dispatch = AsyncMock()
                 unknown = Request({
-                    "type": "http",
+                    "type": "http", "app": agent_server.app,
                     "method": "POST",
                     "path": "/api/agent/future-unprotected-route",
                     "headers": [],

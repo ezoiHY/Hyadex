@@ -18,8 +18,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 
-import chat_mailbox
-
+from hyadex.store import mailbox as chat_mailbox
 from tests.test_async_route_transport_isolated import HTTPException, envelope, PAIR
 
 

@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 from datetime import datetime
 import io
 import os
-from transcript_reader import jsonl_records
+from hyadex.store.transcripts import jsonl_records
 import hashlib
 import hmac
 import json

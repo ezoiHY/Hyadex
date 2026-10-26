@@ -27,7 +27,7 @@ from claude_history_repair import (
 )
 
 
-from transcript_reader import jsonl_records
+from hyadex.store.transcripts import jsonl_records
 
 MAX_PRIOR_SOURCE_PATHS = 2
 MAX_AGGREGATE_SOURCE_BYTES = 96 * 1024 * 1024

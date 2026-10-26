@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 class ServerUpdateEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_update_endpoint_direct_invocation_repeats_native_auth(self):
         request = Request({
-            "type": "http",
+            "type": "http", "app": agent_server.app,
             "method": "POST",
             "path": "/api/admin/update/start",
             "headers": [(b"authorization", b"Bearer test-secret")],
@@ -2625,7 +2625,7 @@ class ServerUpdateEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_pending_waiter_defers_for_cancelled_mutation_then_transitions(self):
         def request(path: str):
             return agent_server.Request({
-                "type": "http",
+                "type": "http", "app": agent_server.app,
                 "asgi": {"version": "3.0"},
                 "method": "POST",
                 "scheme": "http",
@@ -2721,7 +2721,7 @@ class ServerUpdateEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancelled_http_mutation_holds_lease_until_thread_finishes(self):
         path = "/api/sessions/chat/unread"
         request = agent_server.Request({
-            "type": "http",
+            "type": "http", "app": agent_server.app,
             "asgi": {"version": "3.0"},
             "method": "POST",
             "scheme": "http",
@@ -3416,7 +3416,7 @@ class ServerUpdateEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_pending_allows_drain_safe_http_mutations(self):
         def request(method: str, path: str):
             return agent_server.Request({
-                "type": "http",
+                "type": "http", "app": agent_server.app,
                 "asgi": {"version": "3.0"},
                 "method": method,
                 "scheme": "http",

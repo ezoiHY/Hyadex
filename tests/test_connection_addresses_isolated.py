@@ -1,32 +1,25 @@
 """Native address discovery without starting providers or inspecting real networks."""
-import ast
-import asyncio
-from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter
 from fastapi.testclient import TestClient
-from tests import test_codex_subagents_admin_isolated as admin_fixture
+from hyadex.app import ApplicationBindings, create_app
+import agent_server
 import server_instances
-
-SOURCE = Path(__file__).resolve().parents[1] / "agent_server.py"
-NODE = next(node for node in ast.parse(SOURCE.read_text()).body
-            if isinstance(node, ast.AsyncFunctionDef) and node.name == "connection_addresses")
-CODE = compile(ast.Module(body=[NODE], type_ignores=[]), str(SOURCE), "exec")
 
 
 class ConnectionAddressTests(unittest.TestCase):
     def setUp(self):
-        fixture = admin_fixture.CodexSubagentsAdminTests()
-        fixture.addCleanup = self.addCleanup
-        fixture.setUp()
-        self.ns = fixture.ns
-        self.ns.update(app=FastAPI(), asyncio=asyncio, Request=Request, HTTPException=HTTPException,
-                       SERVER_BIND_ADDRESS="0.0.0.0", SERVER_PORT=7852,
-                       server_identity=lambda: "fixture-server")
-        exec(CODE, self.ns)
-        self.client = TestClient(self.ns["app"])
+        overrides = patch.multiple(agent_server, AGENT_TOKEN="synthetic-native-token",
+                                   SERVER_BIND_ADDRESS="0.0.0.0", SERVER_PORT=7852,
+                                   server_identity=lambda: "fixture-server")
+        overrides.start()
+        self.addCleanup(overrides.stop)
+        self.ns = agent_server.__dict__
+        router = APIRouter()
+        router.add_api_route("/api/connection-addresses", agent_server.connection_addresses)
+        self.client = TestClient(create_app(ApplicationBindings(router, agent_server.require_agent_token)))
         self.addCleanup(self.client.close)
         self.headers = {"X-Hyadex-Token": self.ns["AGENT_TOKEN"]}
 

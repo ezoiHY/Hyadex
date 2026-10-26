@@ -16,6 +16,7 @@ EXECUTION_MODULES = {
     "execution_manage.py", "execution_ownership.py", "execution_service.py", "execution_transport.py",
 }
 NEW_MODULES = {
+    "hyadex/app.py", "hyadex/store/__init__.py",
     "hyadex/__init__.py", "hyadex/groups.py", "hyadex/autopilot.py",
     "hyadex/routes/__init__.py", "hyadex/routes/groups.py", "hyadex/routes/autopilot.py",
     "local_session_ownership.py",
@@ -28,13 +29,13 @@ NEW_MODULES = {
     "side_questions.py", "codex_side_question.py", "claude_side_question.py",
     "title_generation.py",
     "server_instances.py",
-    "chat_mailbox.py",
+    "hyadex/store/mailbox.py",
     "claude_background_reconciliation.py",
     "claude_model_catalog.py",
     "claude_goals.py",
     "opencode_agent_client.py",
     "gemini_acp_client.py", "gemini_history.py", "gemini_runtime.py", "gemini_runner.py", "gemini_permissions.py", "gemini_api.py", "gemini_content.py", "gemini_import.py",
-    "transcript_reader.py", "claude_history_repair.py", "claude_history_provenance.py", "codex_history_repair.py", "public_chat_shares.py",
+    "hyadex/store/transcripts.py", "claude_history_repair.py", "claude_history_provenance.py", "codex_history_repair.py", "public_chat_shares.py",
     "public_chat_transcript.py", "public_chat_share_routes.py",
     "interactive_chat_shares.py", "interactive_chat_share_routes.py",
     "interactive_chat_share_web.py", "interactive_chat_projection.py", "interactive_chat_runtime.py",

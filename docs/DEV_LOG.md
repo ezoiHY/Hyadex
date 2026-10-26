@@ -3,6 +3,39 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Explicit application factory and storage package
+
+- Added `hyadex/app.py:create_app` with required HTTP authorization, a complete
+  route collection and an explicit runtime lifespan. Included-router lifecycles
+  and request state are retained; importing the factory initializes no runtime.
+- The production server now registers routes before constructing its app.
+  Request-body admission checks inspect the current request's application,
+  retaining the existing body-before-lease protection.
+- Moved the mailbox SQL and bounded transcript reader unchanged into
+  `hyadex/store/`, removing their old root files and updating every consumer and
+  runtime manifest. No stored schema or transcript format changed.
+- Converted two suites from AST-extracted handlers to real imported handlers
+  and application-factory fixtures; group/Autopilot route tests use the factory.
+
+**Validation.** The final isolated full suite ran 5,327 cases (62 skipped),
+with nine inherited failures and no new failures or errors. Focused application,
+transport, restart, update and storage checks pass. All 363 Python sources
+compile; dependency-lock, shell syntax and inventory checks pass. Production
+route metadata and the complete OpenAPI schema match the preceding commit.
+Independent Claude review identified old request fixtures and router-lifespan
+handling; both were corrected and covered by regressions.
+
+Real isolated server acceptance passed HTTP/WebSocket authorization and
+reconnects, the complete mixed Claude/Codex discussion/Stop/queue/job flow,
+47 ordered live events, and a fully automatic Autopilot run with a separate
+reviewer. Both Claude and Codex also completed timer-triggered group jobs
+exactly once, with `max_runs` disabling each job afterward. This completes the
+previous timer-triggered provider acceptance gap. Desktop/mobile clients were
+not exercised.
+
+**Availability:** source only. Production session/provider globals still belong
+to the legacy runtime and are not isolated merely by calling the new factory.
+
 ## 2026-10-26 — Package group discussions and Autopilot
 
 - Moved the group and Autopilot engines into `hyadex/` and their HTTP/WebSocket

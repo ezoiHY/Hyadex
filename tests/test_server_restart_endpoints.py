@@ -58,7 +58,7 @@ def http_request(
         for name, value in (extra_headers or {}).items()
     )
     return Request({
-        "type": "http",
+        "type": "http", "app": agent_server.app,
         "http_version": "1.1",
         "method": method,
         "scheme": "http",

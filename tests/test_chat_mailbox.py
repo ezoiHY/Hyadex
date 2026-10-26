@@ -5,9 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import chat_mailbox as mailbox
-
-
+from hyadex.store import mailbox as mailbox
 PAIR = "pair_" + "1" * 32
 OTHER_PAIR = "pair_" + "2" * 32
 NOW = "2026-01-01T00:00:00Z"

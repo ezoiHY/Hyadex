@@ -26,7 +26,7 @@ import importlib.util
 import inspect
 import io
 import json
-from transcript_reader import jsonl_records, scan_check, SCAN_SECONDS
+from hyadex.store.transcripts import jsonl_records, scan_check, SCAN_SECONDS
 import logging
 import logging.handlers
 import math
@@ -65,15 +65,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from croniter import CroniterBadDateError, CroniterError, croniter
 from dateutil.rrule import rrulestr
 from dateutil.tz import datetime_exists
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
+from hyadex.app import ApplicationBindings, create_app
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.routing import Match
 from starlette.datastructures import Headers
 import uvicorn
 import websockets
-import chat_mailbox
+from hyadex.store import mailbox as chat_mailbox
 import workspace_git
 import codex_auth
 import codex_provider
@@ -72469,7 +72469,7 @@ def release_unsafe_http_mutation(
 def request_route_parses_body(request: Request) -> bool:
     """Return whether FastAPI consumes the body before invoking the handler."""
 
-    for route in app.router.routes:
+    for route in request.app.router.routes:
         try:
             match, _child_scope = route.matches(request.scope)
         except Exception:
@@ -75379,13 +75379,7 @@ async def lifespan(app: FastAPI):
         )
 
 
-app = FastAPI(title="HyadexServer", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[],
-    allow_methods=[],
-    allow_headers=[],
-)
+router = APIRouter()
 
 AGENT_HELPER_ROUTE_RULES: tuple[tuple[str, re.Pattern[str], int], ...] = (
     ("POST", re.compile(r"^/api/agent/cross-chat/handoffs$"), 2 * 1024 * 1024),
@@ -75674,7 +75668,6 @@ def privileged_native_json_transport(
     return declared_size, None
 
 
-@app.middleware("http")
 async def require_agent_token(request: Request, call_next):
     server_update_admin_route = (
         request.url.path == "/api/admin/update"
@@ -76148,7 +76141,7 @@ def codex_provider_mcp_jsonrpc_error(
     })
 
 
-@app.post(CODEX_PROVIDER_MCP_PATH)
+@router.post(CODEX_PROVIDER_MCP_PATH)
 async def codex_provider_mcp(request: Request) -> Response:
     """Minimal Streamable-HTTP MCP endpoint for the static Codex tool."""
 
@@ -76290,7 +76283,7 @@ async def codex_provider_mcp(request: Request) -> Response:
     })
 
 
-@app.get("/api/connection-addresses")
+@router.get("/api/connection-addresses")
 async def connection_addresses(request: Request) -> dict[str, Any]:
     require_native_admin_control(request)
     # Discover only on explicit QR sharing, never on the frequently polled health path.
@@ -76306,7 +76299,7 @@ async def connection_addresses(request: Request) -> dict[str, Any]:
     return {"version": 1, "server_identity": server_identity(), "urls": await asyncio.to_thread(discover)}
 
 
-@app.get("/api/health")
+@router.get("/api/health")
 async def health() -> dict[str, Any]:
     await reconcile_idle_queued_turns_from_health_poll()
     # Health must answer even when an admission lock is wedged; the reads
@@ -77635,7 +77628,7 @@ async def reload_codex_login() -> bool:
                for manager in codex_app_server_managers())
 
 
-app.include_router(codex_auth.create_router(
+router.include_router(codex_auth.create_router(
     authorize=require_native_admin_control,
     operation=codex_auth_operation,
     available=lambda: CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC,
@@ -77717,7 +77710,7 @@ async def set_codex_default_model(model: str | None, expected_revision):
         return {"backend": "codex", "revision": current["credential_id"], "default_model": current["model"]}
 
 
-app.include_router(provider_connections.create_router(
+router.include_router(provider_connections.create_router(
     authorize=require_native_admin_control, store=PROVIDER_CONNECTION_STORE,
     cursor_catalog=lambda selected: cursor_api_key.catalog(selected, executable=resolve_cursor_executable(), env=runner_env()),
     codex_store=CODEX_PROVIDER_STORE, codex_set_model=set_codex_default_model,
@@ -77730,9 +77723,9 @@ app.include_router(provider_connections.create_router(
 ))
 
 from gemini_runner import router as gemini_router
-app.include_router(gemini_router(sys.modules[__name__]))
+router.include_router(gemini_router(sys.modules[__name__]))
 
-app.include_router(codex_provider.create_router(
+router.include_router(codex_provider.create_router(
     authorize=require_native_admin_control,
     store=CODEX_PROVIDER_STORE,
     mutate=mutate_codex_provider,
@@ -77916,7 +77909,7 @@ def require_side_question_admission():
 SIDE_QUESTIONS = side_questions.SideQuestions(native_factory=create_native_side_chat,
     storage_path=STATE_DIR / "side_chats.sqlite3", notify=lambda session_id, event: HUB.broadcast(session_id, event),
     admission_check=require_side_question_admission)
-app.include_router(side_questions.create_side_question_router(
+router.include_router(side_questions.create_side_question_router(
     authorize=require_native_admin_control,
     session_exists=public_chat_share_session_exists,
     runtime=SIDE_QUESTIONS,
@@ -78072,7 +78065,7 @@ class HyadexGroupRuntime:
 
 GROUPS = group_chat.GroupEngine(STATE_DIR / "groups", HyadexGroupRuntime())
 AUTOPILOT = autopilot.AutopilotEngine(STATE_DIR / "autopilot", GROUPS)
-app.include_router(create_autopilot_router(AUTOPILOT))
+router.include_router(create_autopilot_router(AUTOPILOT))
 
 
 async def start_group_job_run(group_id: str, job: dict[str, Any], job_id: str) -> dict[str, Any]:
@@ -78086,7 +78079,7 @@ async def start_group_job_run(group_id: str, job: dict[str, Any], job_id: str) -
             "targets": posted["targets"]}
 
 
-@app.post("/api/groups/{group_id}/jobs")
+@router.post("/api/groups/{group_id}/jobs")
 async def create_group_job(group_id: str, req: CreateScopedJobRequest) -> dict[str, Any]:
     """Schedule a message into a group. It is anchored to the default responder's chat."""
 
@@ -78106,13 +78099,13 @@ async def create_group_job(group_id: str, req: CreateScopedJobRequest) -> dict[s
     return {"job": public_job(job)}
 
 
-@app.get("/api/groups/{group_id}/jobs")
+@router.get("/api/groups/{group_id}/jobs")
 async def list_group_jobs(group_id: str) -> dict[str, Any]:
     GROUPS.require(group_id)
     return {"jobs": [public_job(job) for job in JOBS.jobs.values() if job.get("group_id") == group_id]}
 
 
-@app.delete("/api/groups/{group_id}/jobs/{job_id}")
+@router.delete("/api/groups/{group_id}/jobs/{job_id}")
 async def delete_group_job(group_id: str, job_id: str) -> dict[str, Any]:
     job = JOBS.jobs.get(job_id)
     if not job or job.get("group_id") != group_id:
@@ -78121,7 +78114,7 @@ async def delete_group_job(group_id: str, job_id: str) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         deleted = await JOBS.delete(job_id, expected_session_id=session_id)
     return {"deleted": bool(deleted), "id": job_id}
-app.include_router(create_group_router(
+router.include_router(create_group_router(
     GROUPS,
     websocket_authorized=websocket_authorized,
     reserve=HUB.reserve,
@@ -78607,7 +78600,7 @@ INTERACTIVE_CHAT_LIVE = InteractiveChatLiveState(
     native_snapshot=interactive_chat_native_snapshot,
 )
 
-app.include_router(create_interactive_chat_share_router(
+router.include_router(create_interactive_chat_share_router(
     storage_root=STATE_DIR / "interactive-chat-shares",
     authorize=require_native_admin_control,
     session_exists=interactive_chat_session_available,
@@ -78623,7 +78616,7 @@ app.include_router(create_interactive_chat_share_router(
 ))
 
 
-app.include_router(create_public_chat_share_router(
+router.include_router(create_public_chat_share_router(
     storage_root=STATE_DIR / "public-chat-shares",
     authorize=require_native_admin_control,
     session_exists=public_chat_share_session_exists,
@@ -78633,13 +78626,13 @@ app.include_router(create_public_chat_share_router(
 ))
 
 
-@app.get("/api/admin/codex/goals")
+@router.get("/api/admin/codex/goals")
 async def get_codex_goals_admin_endpoint(request: Request) -> dict[str, Any]:
     require_native_admin_control(request)
     return await get_codex_goals_admin()
 
 
-@app.put("/api/admin/codex/goals")
+@router.put("/api/admin/codex/goals")
 async def put_codex_goals_admin_endpoint(
     req: CodexGoalsAdminRequest,
     request: Request,
@@ -78648,13 +78641,13 @@ async def put_codex_goals_admin_endpoint(
     return await put_codex_goals_admin(req)
 
 
-@app.get("/api/admin/codex/subagents")
+@router.get("/api/admin/codex/subagents")
 async def get_codex_subagents_admin_endpoint(request: Request) -> dict[str, Any]:
     require_native_admin_control(request)
     return await get_codex_subagents_admin()
 
 
-@app.put("/api/admin/codex/subagents")
+@router.put("/api/admin/codex/subagents")
 async def put_codex_subagents_admin_endpoint(
     req: CodexSubagentsAdminRequest,
     request: Request,
@@ -79049,7 +79042,7 @@ async def accept_forced_server_restart(
     return public_server_restart_status(restart_status)
 
 
-@app.get("/api/admin/restart")
+@router.get("/api/admin/restart")
 async def server_restart_status_endpoint(request: Request) -> dict[str, Any]:
     require_server_restart_control(request)
     blocker_snapshot = await current_server_restart_blocker_snapshot()
@@ -79081,7 +79074,7 @@ def log_server_restart_denial(
     )
 
 
-@app.post("/api/admin/restart", status_code=202)
+@router.post("/api/admin/restart", status_code=202)
 async def restart_server_endpoint(
     body: ServerRestartRequest,
     request: Request,
@@ -80480,7 +80473,7 @@ async def cancel_server_update(
         return public_status
 
 
-@app.get("/api/admin/update")
+@router.get("/api/admin/update")
 async def server_update_status_endpoint(
     request: Request,
     expected_server_identity: str | None = None,
@@ -80493,7 +80486,7 @@ async def server_update_status_endpoint(
     )
 
 
-@app.post("/api/admin/update/check")
+@router.post("/api/admin/update/check")
 async def check_server_update_endpoint(
     request: Request,
     body: ServerUpdateCheckRequest | None = None,
@@ -80506,7 +80499,7 @@ async def check_server_update_endpoint(
     return await check_server_update(body)
 
 
-@app.post("/api/admin/update/start")
+@router.post("/api/admin/update/start")
 async def start_server_update_endpoint(
     body: ServerUpdateRequest,
     request: Request,
@@ -80519,7 +80512,7 @@ async def start_server_update_endpoint(
     return await start_server_update(body)
 
 
-@app.post("/api/admin/update/cancel")
+@router.post("/api/admin/update/cancel")
 async def cancel_server_update_endpoint(
     body: ServerUpdateCancelRequest,
     request: Request,
@@ -80528,7 +80521,7 @@ async def cancel_server_update_endpoint(
     return await cancel_server_update(body)
 
 
-@app.post("/api/admin/update/ensure")
+@router.post("/api/admin/update/ensure")
 async def ensure_server_update_endpoint(body: ServerUpdateEnsureRequest, request: Request) -> dict[str, Any]:
     require_native_admin_control(request)
     require_exact_server_update_target(body.expected_server_identity, body.expected_server_instance_id)
@@ -80732,7 +80725,7 @@ async def server_update_pending_waiter_loop() -> None:
         await asyncio.sleep(SERVER_UPDATE_PENDING_POLL_SECONDS)
 
 
-@app.get("/api/diagnostics/host")
+@router.get("/api/diagnostics/host")
 async def host_diagnostics(limit: int = 40) -> dict[str, Any]:
     latest = await host_health_record()
     records = await asyncio.to_thread(tail_jsonl_file, HOST_HEALTH_FILE, limit)
@@ -80743,7 +80736,7 @@ async def host_diagnostics(limit: int = 40) -> dict[str, Any]:
     }
 
 
-@app.get("/api/runtime/catalog")
+@router.get("/api/runtime/catalog")
 async def runtime_catalog(refresh: bool = False) -> dict[str, Any]:
     if refresh:
         await refresh_codex_app_server_binary(force=True)
@@ -80751,7 +80744,7 @@ async def runtime_catalog(refresh: bool = False) -> dict[str, Any]:
     return await asyncio.to_thread(discover_runtime_catalog, force_runtime_probe=refresh)
 
 
-@app.get("/api/runtime/usage")
+@router.get("/api/runtime/usage")
 async def runtime_provider_usage(
     request: Request, backend: str, session_id: str | None = None,
     codex_provider: str | None = None, refresh: bool = False,
@@ -80783,52 +80776,52 @@ async def runtime_provider_usage(
     return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
-@app.get("/api/sessions/{session_id}/terminal")
+@router.get("/api/sessions/{session_id}/terminal")
 async def get_session_terminal(session_id: str, lines: int = 240) -> dict[str, Any]:
     return await asyncio.to_thread(terminal_snapshot, session_id, lines=lines)
 
 
-@app.post("/api/sessions/{session_id}/terminal/open")
+@router.post("/api/sessions/{session_id}/terminal/open")
 async def open_session_terminal(session_id: str, req: TerminalOpenRequest) -> dict[str, Any]:
     return await asyncio.to_thread(ensure_terminal_session, session_id, req.cwd)
 
 
-@app.post("/api/sessions/{session_id}/terminal/input")
+@router.post("/api/sessions/{session_id}/terminal/input")
 async def input_session_terminal(session_id: str, req: TerminalInputRequest) -> dict[str, Any]:
     return await asyncio.to_thread(send_terminal_input, session_id, req.text, enter=req.enter, key=req.key)
 
 
-@app.post("/api/sessions/{session_id}/terminal/resize")
+@router.post("/api/sessions/{session_id}/terminal/resize")
 async def resize_session_terminal(session_id: str, req: TerminalResizeRequest) -> dict[str, Any]:
     return await asyncio.to_thread(resize_terminal_pane, session_id, req.columns, req.rows)
 
 
-@app.get("/api/sessions/{session_id}/terminal/windows")
+@router.get("/api/sessions/{session_id}/terminal/windows")
 async def get_session_terminal_windows(session_id: str) -> dict[str, Any]:
     return await asyncio.to_thread(terminal_windows_snapshot, session_id)
 
 
-@app.post("/api/sessions/{session_id}/terminal/action")
+@router.post("/api/sessions/{session_id}/terminal/action")
 async def run_session_terminal_action(session_id: str, req: TerminalActionRequest) -> dict[str, Any]:
     return await asyncio.to_thread(terminal_action, session_id, req.action, req.target)
 
 
-@app.delete("/api/sessions/{session_id}/terminal")
+@router.delete("/api/sessions/{session_id}/terminal")
 async def delete_session_terminal(session_id: str) -> dict[str, Any]:
     return await asyncio.to_thread(kill_terminal_session, session_id)
 
 
-@app.get("/api/sessions/{session_id}/tmux")
+@router.get("/api/sessions/{session_id}/tmux")
 async def get_session_tmux_panes(session_id: str, include_all: bool = False) -> dict[str, Any]:
     return await asyncio.to_thread(tmux_panes_snapshot, session_id, include_all=include_all)
 
 
-@app.get("/api/sessions/{session_id}/tmux/capture")
+@router.get("/api/sessions/{session_id}/tmux/capture")
 async def capture_session_tmux_pane(session_id: str, pane_id: str, lines: int = 500) -> dict[str, Any]:
     return await asyncio.to_thread(capture_tmux_pane, session_id, pane_id, lines=lines)
 
 
-@app.get("/api/sessions/{session_id}/processes")
+@router.get("/api/sessions/{session_id}/processes")
 async def get_session_processes(session_id: str) -> dict[str, Any]:
     if session_id not in STORE.sessions:
         raise HTTPException(status_code=404, detail="session not found")
@@ -80845,7 +80838,7 @@ async def get_session_processes(session_id: str) -> dict[str, Any]:
     return await asyncio.to_thread(active_process_snapshot, session_id, snapshot_input)
 
 
-@app.get("/api/sessions/{session_id}/processes/log")
+@router.get("/api/sessions/{session_id}/processes/log")
 async def tail_session_process_log(session_id: str, path: str, lines: int = 200) -> dict[str, Any]:
     if session_id not in STORE.sessions:
         raise HTTPException(status_code=404, detail="session not found")
@@ -80867,7 +80860,7 @@ async def tail_session_process_log(session_id: str, path: str, lines: int = 200)
     raise HTTPException(status_code=403, detail="log path is not attached to the live process")
 
 
-@app.get("/api/sessions")
+@router.get("/api/sessions")
 async def list_sessions(summary: bool = False, placeholder_client_id: str = "") -> dict[str, Any]:
     await STORE.ensure_sort_orders()
     sessions = [
@@ -80880,7 +80873,7 @@ async def list_sessions(summary: bool = False, placeholder_client_id: str = "") 
     return {"sessions": sessions}
 
 
-@app.get("/api/search")
+@router.get("/api/search")
 async def search_all_session_timelines(
     q: str = Query(min_length=2, max_length=500),
     limit: int = Query(default=40, ge=1, le=100),
@@ -80894,7 +80887,7 @@ async def search_all_session_timelines(
     )
 
 
-@app.get("/api/working-directories/complete")
+@router.get("/api/working-directories/complete")
 async def complete_working_directory(
     path: str = Query(default="", max_length=MAX_WORKSPACE_PATH_CHARS),
     limit: int = Query(default=24, ge=1, le=MAX_WORKING_DIRECTORY_COMPLETIONS),
@@ -80902,7 +80895,7 @@ async def complete_working_directory(
     return await asyncio.to_thread(complete_working_directory_sync, path, limit)
 
 
-@app.post("/api/sessions")
+@router.post("/api/sessions")
 async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
     require_enabled_backend(req.backend)
     provider_keys = local_session_ownership.provider_session_keys(req.model_dump(), DEFAULT_BACKEND)
@@ -80927,7 +80920,7 @@ async def create_session_with_history(req: CreateSessionRequest) -> dict[str, An
     return {"session": public_session(sess)}
 
 
-@app.get("/api/local-sessions")
+@router.get("/api/local-sessions")
 async def get_local_sessions(
     limit: int = Query(default=200, ge=1, le=MAX_LOCAL_SESSION_LIST_ITEMS),
     include_cursor: bool = False,
@@ -80988,7 +80981,7 @@ async def commit_staged_history_import(sess: dict[str, Any]) -> None:
         await STORE.save()
 
 
-@app.post("/api/sessions/bulk-import")
+@router.post("/api/sessions/bulk-import")
 async def bulk_import_sessions(req: BulkImportSessionsRequest) -> dict[str, Any]:
     if not req.items:
         raise HTTPException(status_code=400, detail="items must not be empty")
@@ -81170,14 +81163,14 @@ async def bulk_import_sessions_guarded(
         return {"results": results}
 
 
-@app.get("/api/sessions/{session_id}/timeline-index")
+@router.get("/api/sessions/{session_id}/timeline-index")
 async def get_timeline_index(session_id: str) -> dict[str, Any]:
     if session_id not in STORE.sessions:
         raise HTTPException(status_code=404, detail="session not found")
     return await asyncio.to_thread(build_timeline_index, session_id)
 
 
-@app.get("/api/sessions/{session_id}/subagents")
+@router.get("/api/sessions/{session_id}/subagents")
 async def get_session_subagents(
     session_id: str,
     limit: int = Query(default=64, ge=1, le=SUBAGENT_SNAPSHOT_STATE_LIMIT),
@@ -81200,7 +81193,7 @@ async def get_session_subagents(
     return await asyncio.to_thread(build_subagent_snapshot, session_id, limit)
 
 
-@app.get("/api/sessions/{session_id}/search")
+@router.get("/api/sessions/{session_id}/search")
 async def search_session_timeline(
     session_id: str,
     q: str = Query(min_length=2, max_length=500),
@@ -81246,7 +81239,7 @@ async def notify_timeline_pins_changed(
         )
 
 
-@app.get("/api/sessions/{session_id}/pins")
+@router.get("/api/sessions/{session_id}/pins")
 async def get_session_timeline_pins(session_id: str) -> JSONResponse:
     require_timeline_pin_session(session_id)
     try:
@@ -81260,7 +81253,7 @@ async def get_session_timeline_pins(session_id: str) -> JSONResponse:
     return timeline_pin_json_response(state)
 
 
-@app.put("/api/sessions/{session_id}/pins/{item_id}")
+@router.put("/api/sessions/{session_id}/pins/{item_id}")
 async def put_session_timeline_pin(
     request: Request,
     session_id: str,
@@ -81313,7 +81306,7 @@ async def put_session_timeline_pin(
     return timeline_pin_json_response(state)
 
 
-@app.delete("/api/sessions/{session_id}/pins/{item_id}")
+@router.delete("/api/sessions/{session_id}/pins/{item_id}")
 async def delete_session_timeline_pin(
     request: Request,
     session_id: str,
@@ -81347,7 +81340,7 @@ async def delete_session_timeline_pin(
     return timeline_pin_json_response(state)
 
 
-@app.get("/api/sessions/{session_id}")
+@router.get("/api/sessions/{session_id}")
 async def get_session(
     session_id: str,
     after: int = 0,
@@ -81436,7 +81429,7 @@ async def get_session(
     return response
 
 
-@app.post("/api/sessions/{session_id}/history/maintenance", status_code=202)
+@router.post("/api/sessions/{session_id}/history/maintenance", status_code=202)
 async def retry_history_maintenance(session_id: str) -> dict[str, Any]:
     """Explicit retry clears backoff, never provenance or lifecycle guards."""
     ensure_session_not_initializing(session_id)
@@ -81453,7 +81446,7 @@ async def retry_history_maintenance(session_id: str) -> dict[str, Any]:
             "history_maintenance": dict(history_maintenance_state(session_id))}
 
 
-@app.post("/api/sessions/{session_id}/import-history")
+@router.post("/api/sessions/{session_id}/import-history")
 async def import_history(session_id: str, req: ImportHistoryRequest) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         ensure_session_not_deleting(session_id)
@@ -81492,7 +81485,7 @@ class PruneImportedHistoryRequest(BaseModel):
     dry_run: bool = True
 
 
-@app.post("/api/sessions/{session_id}/history/prune-duplicates")
+@router.post("/api/sessions/{session_id}/history/prune-duplicates")
 async def prune_imported_history(
     session_id: str,
     req: PruneImportedHistoryRequest,
@@ -81598,7 +81591,7 @@ async def prune_imported_history(
     return {"ok": True, **summary}
 
 
-@app.post("/api/sessions/{session_id}/digest")
+@router.post("/api/sessions/{session_id}/digest")
 async def create_handoff_digest(session_id: str, req: HandoffDigestRequest) -> dict[str, Any]:
     return await build_handoff_digest(
         session_id,
@@ -81611,7 +81604,7 @@ async def create_handoff_digest(session_id: str, req: HandoffDigestRequest) -> d
     )
 
 
-@app.post("/api/sessions/{session_id}/digest/send")
+@router.post("/api/sessions/{session_id}/digest/send")
 async def send_handoff_digest_background(session_id: str, req: HandoffDigestSendRequest) -> dict[str, Any]:
     source = STORE.sessions.get(session_id)
     if not source:
@@ -81746,7 +81739,7 @@ async def ensure_backend_update_allowed(
             )
 
 
-@app.patch("/api/sessions/{session_id}")
+@router.patch("/api/sessions/{session_id}")
 async def update_session(session_id: str, req: UpdateSessionRequest) -> dict[str, Any]:
     if req.gemini_connect_api:
         if set(req.model_dump(exclude_unset=True)) != {"gemini_connect_api"}:
@@ -82392,12 +82385,12 @@ async def reload_session_provider(session_id: str) -> dict[str, Any]:
                     SERVER_MAINTENANCE_SESSIONS.discard(session_id)
 
 
-@app.post("/api/sessions/{session_id}/provider/reload")
+@router.post("/api/sessions/{session_id}/provider/reload")
 async def post_session_provider_reload(session_id: str) -> dict[str, Any]:
     return await reload_session_provider(session_id)
 
 
-@app.get("/api/sessions/{session_id}/provider-commands")
+@router.get("/api/sessions/{session_id}/provider-commands")
 async def get_session_provider_commands(
     session_id: str,
     refresh: bool = Query(default=False),
@@ -82415,12 +82408,12 @@ async def get_session_provider_commands(
     return snapshot
 
 
-@app.get("/api/sessions/{session_id}/codex/runtime")
+@router.get("/api/sessions/{session_id}/codex/runtime")
 async def get_codex_runtime(session_id: str) -> dict[str, Any]:
     return await codex_runtime_snapshot(session_id)
 
 
-@app.post("/api/sessions/{session_id}/codex/load")
+@router.post("/api/sessions/{session_id}/codex/load")
 async def load_codex_runtime(session_id: str) -> dict[str, Any]:
     """Resume a persisted Codex thread without creating provider state."""
 
@@ -82526,7 +82519,7 @@ def codex_rotation_handoff_reason(reason: str | None) -> str:
     )
 
 
-@app.post("/api/sessions/{session_id}/codex/rotate")
+@router.post("/api/sessions/{session_id}/codex/rotate")
 async def rotate_codex_thread(
     session_id: str,
     req: CodexRotateRequest | None = None,
@@ -82717,7 +82710,7 @@ async def rotate_codex_thread(
         return {**runtime, "rotated": True, "rotated_thread_id": provider_id}
 
 
-@app.post(
+@router.post(
     "/api/sessions/{session_id}/codex/interactions/{interaction_id}/resolve"
 )
 async def post_codex_interaction_response(
@@ -83243,7 +83236,7 @@ class ClaudeGoalRequest(BaseModel):
     condition: str = Field(min_length=1, max_length=4000)
 
 
-@app.put("/api/sessions/{session_id}/claude/goal")
+@router.put("/api/sessions/{session_id}/claude/goal")
 async def put_claude_goal(session_id: str, req: ClaudeGoalRequest) -> dict[str, Any]:
     require_claude_goal_session(session_id)
     condition = req.condition.strip()
@@ -83262,7 +83255,7 @@ async def put_claude_goal(session_id: str, req: ClaudeGoalRequest) -> dict[str, 
     return await claude_runtime_snapshot(session_id)
 
 
-@app.delete("/api/sessions/{session_id}/claude/goal")
+@router.delete("/api/sessions/{session_id}/claude/goal")
 async def delete_claude_goal(session_id: str) -> dict[str, Any]:
     require_claude_goal_session(session_id)
     cleared_live = False
@@ -83357,17 +83350,17 @@ async def claude_runtime_snapshot(session_id: str) -> dict[str, Any]:
     }
 
 
-@app.get("/api/sessions/{session_id}/claude/runtime")
+@router.get("/api/sessions/{session_id}/claude/runtime")
 async def get_claude_runtime(session_id: str) -> dict[str, Any]:
     return await claude_runtime_snapshot(session_id)
 
 
-@app.get("/api/sessions/{session_id}/claude/mcp")
+@router.get("/api/sessions/{session_id}/claude/mcp")
 async def get_claude_mcp(session_id: str) -> dict[str, Any]:
     return await manage_claude_mcp(session_id)
 
 
-@app.post("/api/sessions/{session_id}/claude/mcp")
+@router.post("/api/sessions/{session_id}/claude/mcp")
 async def post_claude_mcp(
     session_id: str,
     req: ClaudeMCPControlRequest,
@@ -83375,7 +83368,7 @@ async def post_claude_mcp(
     return await manage_claude_mcp(session_id, req)
 
 
-@app.post("/api/sessions/{session_id}/claude/context-usage/refresh")
+@router.post("/api/sessions/{session_id}/claude/context-usage/refresh")
 async def post_claude_context_usage_refresh(
     session_id: str,
 ) -> dict[str, Any]:
@@ -83391,7 +83384,7 @@ async def post_claude_context_usage_refresh(
     }
 
 
-@app.post(
+@router.post(
     "/api/sessions/{session_id}/claude/interactions/{interaction_id}/resolve"
 )
 async def post_claude_interaction_response(
@@ -83412,7 +83405,7 @@ async def post_claude_interaction_response(
         return {"interaction": interaction}
 
 
-@app.get("/api/sessions/{session_id}/codex/permission-profiles")
+@router.get("/api/sessions/{session_id}/codex/permission-profiles")
 async def get_codex_permission_profiles(session_id: str) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         ensure_session_not_deleting(session_id)
@@ -83477,7 +83470,7 @@ async def _get_codex_permission_profiles_locked(
     return {"profiles": profiles}
 
 
-@app.get("/api/sessions/{session_id}/codex/goal")
+@router.get("/api/sessions/{session_id}/codex/goal")
 async def get_codex_goal(session_id: str) -> dict[str, Any]:
     session = STORE.sessions.get(session_id)
     if not session:
@@ -83490,7 +83483,7 @@ async def get_codex_goal(session_id: str) -> dict[str, Any]:
     }
 
 
-@app.put("/api/sessions/{session_id}/codex/goal")
+@router.put("/api/sessions/{session_id}/codex/goal")
 async def put_codex_goal(
     session_id: str,
     req: CodexGoalRequest,
@@ -83845,7 +83838,7 @@ async def _put_codex_goal_locked(
                     })
 
 
-@app.delete("/api/sessions/{session_id}/codex/goal")
+@router.delete("/api/sessions/{session_id}/codex/goal")
 async def delete_codex_goal(session_id: str) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         ensure_session_not_deleting(session_id)
@@ -83941,7 +83934,7 @@ async def _delete_codex_goal_locked(session_id: str) -> dict[str, Any]:
         await release_codex_control_thread(session_id, manager, thread_id)
 
 
-@app.post("/api/sessions/{session_id}/codex/compact")
+@router.post("/api/sessions/{session_id}/codex/compact")
 async def post_codex_compact(session_id: str) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         ensure_session_not_deleting(session_id)
@@ -84020,7 +84013,7 @@ async def _post_codex_compact_locked(session_id: str) -> dict[str, Any]:
         raise codex_control_http_error(exc) from exc
 
 
-@app.post("/api/sessions/{session_id}/codex/rollback")
+@router.post("/api/sessions/{session_id}/codex/rollback")
 async def post_codex_rollback(
     session_id: str,
     req: CodexRollbackRequest,
@@ -84075,7 +84068,7 @@ async def _post_codex_rollback_locked(
         )
 
 
-@app.post("/api/sessions/{session_id}/codex/review")
+@router.post("/api/sessions/{session_id}/codex/review")
 async def post_codex_review(
     session_id: str,
     req: CodexReviewRequest,
@@ -84171,7 +84164,7 @@ async def _post_codex_review_locked(
         raise codex_control_http_error(exc) from exc
 
 
-@app.post("/api/sessions/{session_id}/codex/shell")
+@router.post("/api/sessions/{session_id}/codex/shell")
 async def post_codex_shell_command(
     session_id: str,
     req: CodexShellCommandRequest,
@@ -84255,7 +84248,7 @@ async def _post_codex_shell_command_locked(
         raise codex_control_http_error(exc) from exc
 
 
-@app.get("/api/sessions/{session_id}/codex/background-terminals")
+@router.get("/api/sessions/{session_id}/codex/background-terminals")
 async def get_codex_background_terminals(session_id: str) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         ensure_session_not_deleting(session_id)
@@ -84283,7 +84276,7 @@ async def _get_codex_background_terminals_locked(
         await release_codex_control_thread(session_id, manager, thread_id)
 
 
-@app.post(
+@router.post(
     "/api/sessions/{session_id}/codex/background-terminals/terminate"
 )
 async def post_codex_background_terminal_terminate(
@@ -84323,7 +84316,7 @@ async def _post_codex_background_terminal_terminate_locked(
         await release_codex_control_thread(session_id, manager, thread_id)
 
 
-@app.post("/api/sessions/{session_id}/codex/background-terminals/clean")
+@router.post("/api/sessions/{session_id}/codex/background-terminals/clean")
 async def post_codex_background_terminals_clean(
     session_id: str,
     req: CodexBackgroundTerminalsCleanRequest,
@@ -84358,7 +84351,7 @@ async def _post_codex_background_terminals_clean_locked(
         await release_codex_control_thread(session_id, manager, thread_id)
 
 
-@app.post("/api/sessions/{session_id}/order")
+@router.post("/api/sessions/{session_id}/order")
 async def reorder_session(session_id: str, req: ReorderSessionRequest) -> dict[str, Any]:
     ensure_session_not_initializing(session_id)
     sessions = await STORE.reorder(
@@ -84377,21 +84370,21 @@ async def reorder_session(session_id: str, req: ReorderSessionRequest) -> dict[s
     }
 
 
-@app.post("/api/sessions/{session_id}/read")
+@router.post("/api/sessions/{session_id}/read")
 async def mark_session_read(session_id: str, req: ReadSessionRequest) -> dict[str, Any]:
     ensure_session_not_initializing(session_id)
     sess = await STORE.mark_read(session_id, req.last_read_agent_event_seq)
     return {"session": public_session(sess)}
 
 
-@app.post("/api/sessions/{session_id}/unread")
+@router.post("/api/sessions/{session_id}/unread")
 async def mark_session_unread(session_id: str) -> dict[str, Any]:
     ensure_session_not_initializing(session_id)
     sess = await STORE.mark_unread(session_id)
     return {"session": public_session(sess)}
 
 
-@app.post("/api/sessions/{session_id}/emergency/acknowledge")
+@router.post("/api/sessions/{session_id}/emergency/acknowledge")
 async def acknowledge_session_emergency(
     session_id: str,
     req: AcknowledgeEmergencyRequest,
@@ -84532,7 +84525,7 @@ def empty_chat_dismissed_for(session: dict[str, Any], client_id: str) -> bool:
             and state["dismissed_by"].get(client_id) == empty_chat_revision(session))
 
 
-@app.post("/api/sessions/{session_id}/dismiss-empty")
+@router.post("/api/sessions/{session_id}/dismiss-empty")
 async def dismiss_empty_session(session_id: str, expected_updated_at: str,
                                 placeholder_client_id: str) -> dict[str, Any]:
     """Remove an unused row from one desktop's list without deleting its identity.
@@ -84574,7 +84567,7 @@ async def dismiss_empty_session(session_id: str, expected_updated_at: str,
             DELETING_SESSIONS.discard(session_id)
 
 
-@app.post("/api/sessions/{session_id}/discard-empty")
+@router.post("/api/sessions/{session_id}/discard-empty")
 async def discard_empty_session(session_id: str, expected_updated_at: str) -> dict[str, Any]:
     # A separate route makes old servers fail safely with 404, rather than
     # ignoring a conditional DELETE query and deleting a real conversation.
@@ -84582,7 +84575,7 @@ async def discard_empty_session(session_id: str, expected_updated_at: str) -> di
     return await delete_session(session_id, discard_updated_at=expected_updated_at)
 
 
-@app.delete("/api/sessions/{session_id}")
+@router.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str, discard_updated_at: str | None = None) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         ensure_session_not_initializing(session_id)
@@ -85218,7 +85211,7 @@ def claude_completed_fork_boundary(
     return next(iter(matches))
 
 
-@app.post("/api/sessions/{session_id}/fork")
+@router.post("/api/sessions/{session_id}/fork")
 async def fork_session(session_id: str, req: ForkSessionRequest) -> dict[str, Any]:
     cleanup_state: dict[str, str | None] = {}
     async with session_lifecycle_lock(session_id):
@@ -85747,7 +85740,7 @@ async def post_turn_with_receipt(session_id: str, req: TurnRequest) -> Any:
                             "acceptance": "pending", "retry_same_request": True})
 
 
-@app.post("/api/sessions/{session_id}/turns")
+@router.post("/api/sessions/{session_id}/turns")
 async def post_turn(session_id: str, req: TurnRequest) -> Any:
     if req.client_request_id is not None:
         return await post_turn_with_receipt(session_id, req)
@@ -85785,7 +85778,7 @@ async def post_turn_without_receipt(session_id: str, req: TurnRequest) -> dict[s
                 return await enqueue_turn(session_id, req, sess)
 
 
-@app.get("/api/chats/search")
+@router.get("/api/chats/search")
 async def search_chats(
     q: str = Query(default="", max_length=240),
     limit: int = Query(default=20, ge=1, le=100),
@@ -85910,7 +85903,7 @@ def reject_unavailable_route_target(
     )
 
 
-@app.get("/api/sessions/{source_session_id}/agent-handoff-routes")
+@router.get("/api/sessions/{source_session_id}/agent-handoff-routes")
 async def list_agent_handoff_routes(
     source_session_id: str,
     unlimited_routes: bool = False,
@@ -85932,7 +85925,7 @@ async def list_agent_handoff_routes(
     }
 
 
-@app.post("/api/sessions/{source_session_id}/agent-handoff-routes")
+@router.post("/api/sessions/{source_session_id}/agent-handoff-routes")
 async def create_agent_handoff_route(
     source_session_id: str,
     req: AgentHandoffRouteCreateRequest,
@@ -86025,7 +86018,7 @@ async def create_agent_handoff_route(
     return {"route": result}
 
 
-@app.patch("/api/sessions/{source_session_id}/agent-handoff-routes/{route_id}")
+@router.patch("/api/sessions/{source_session_id}/agent-handoff-routes/{route_id}")
 async def update_agent_handoff_route(
     source_session_id: str,
     route_id: str,
@@ -86136,7 +86129,7 @@ async def update_agent_handoff_route(
     return {"route": result}
 
 
-@app.delete("/api/sessions/{source_session_id}/agent-handoff-routes/{route_id}")
+@router.delete("/api/sessions/{source_session_id}/agent-handoff-routes/{route_id}")
 async def delete_agent_handoff_route(
     source_session_id: str,
     route_id: str,
@@ -86510,7 +86503,7 @@ async def maybe_notify_chat_mailbox_codex(session_id: str) -> None:
         logger.info("Chat mailbox hint was not confirmed; mail remains unread")
 
 
-@app.get("/api/sessions/{session_id}/inbox")
+@router.get("/api/sessions/{session_id}/inbox")
 async def get_chat_mailbox(session_id: str, cursor: str = "", limit: int = 25) -> dict[str, Any]:
     if session_id not in STORE.sessions or session_id in DELETING_SESSIONS:
         raise HTTPException(status_code=404, detail="chat was not found")
@@ -86531,7 +86524,7 @@ async def get_chat_mailbox(session_id: str, cursor: str = "", limit: int = 25) -
     }
 
 
-@app.get("/api/agent/cross-chat/inbox")
+@router.get("/api/agent/cross-chat/inbox")
 async def get_provider_chat_mailbox(request: Request) -> dict[str, Any]:
     session_id = await provider_route_capability_source(request)
     async with session_lifecycle_lock(session_id):
@@ -86548,7 +86541,7 @@ async def get_provider_chat_mailbox(request: Request) -> dict[str, Any]:
                 (STORE.sessions.get(str(row["source_session_id"])) or {}).get("title"))} for row in page["senders"]]}
 
 
-@app.post("/api/agent/cross-chat/inbox/read")
+@router.post("/api/agent/cross-chat/inbox/read")
 async def read_provider_chat_mailbox(req: ChatMailboxReadRequest, request: Request) -> dict[str, Any]:
     session_id = await provider_route_capability_source(request)
     async with session_lifecycle_lock(session_id):
@@ -86576,7 +86569,7 @@ async def read_provider_chat_mailbox(req: ChatMailboxReadRequest, request: Reque
             "reply_routes": reply_routes, "automatic_reply": False}
 
 
-@app.delete("/api/sessions/{session_id}/inbox/{message_id}")
+@router.delete("/api/sessions/{session_id}/inbox/{message_id}")
 async def delete_chat_mailbox_message(session_id: str, message_id: str) -> dict[str, Any]:
     async with STORE._lock:
         record = await CROSS_CHAT.get(message_id)
@@ -86590,7 +86583,7 @@ async def delete_chat_mailbox_message(session_id: str, message_id: str) -> dict[
     return {"ok": True, "session_id": session_id, "message_id": message_id, "state": "deleted"}
 
 
-@app.get("/api/agent/cross-chat/routes")
+@router.get("/api/agent/cross-chat/routes")
 async def list_provider_cross_chat_routes(request: Request) -> dict[str, Any]:
     source_session_id = await provider_route_capability_source(request)
     async with session_lifecycle_lock(source_session_id):
@@ -86970,7 +86963,7 @@ async def submit_provider_route_handoff(
     return accepted
 
 
-@app.post("/api/agent/cross-chat/routes/{route_id}/handoffs")
+@router.post("/api/agent/cross-chat/routes/{route_id}/handoffs")
 async def post_provider_route_handoff(
     route_id: str,
     req: AgentRouteHandoffRequest,
@@ -87140,7 +87133,7 @@ async def submit_authorized_cross_chat_handoff(
     return accepted
 
 
-@app.post("/api/cross-chat/handoffs")
+@router.post("/api/cross-chat/handoffs")
 async def post_cross_chat_handoff(
     req: CrossChatHandoffRequest,
     request: Request,
@@ -87557,7 +87550,7 @@ async def submit_authorized_cross_chat_exchange_response(
     return accepted
 
 
-@app.post("/api/cross-chat/exchanges/{exchange_id}/responses")
+@router.post("/api/cross-chat/exchanges/{exchange_id}/responses")
 async def post_cross_chat_exchange_response(
     exchange_id: str,
     req: CrossChatExchangeResponseRequest,
@@ -87566,7 +87559,7 @@ async def post_cross_chat_exchange_response(
     return await submit_authorized_cross_chat_exchange_response(exchange_id, req, request)
 
 
-@app.post("/api/agent/cross-chat/exchanges/{exchange_id}/responses")
+@router.post("/api/agent/cross-chat/exchanges/{exchange_id}/responses")
 async def post_agent_cross_chat_exchange_response(
     exchange_id: str,
     req: CrossChatExchangeResponseRequest,
@@ -87577,7 +87570,7 @@ async def post_agent_cross_chat_exchange_response(
     return await submit_authorized_cross_chat_exchange_response(exchange_id, req, request)
 
 
-@app.get(
+@router.get(
     "/api/agent/cross-chat/exchanges/{exchange_id}/legs/"
     "{inbound_leg_id}/live-response"
 )
@@ -87621,7 +87614,7 @@ async def get_agent_cross_chat_live_response(
     )
 
 
-@app.get("/api/cross-chat/exchanges/{exchange_id}")
+@router.get("/api/cross-chat/exchanges/{exchange_id}")
 async def get_cross_chat_exchange(exchange_id: str) -> dict[str, Any]:
     exchange = await CROSS_CHAT.get_exchange(exchange_id)
     if exchange is None:
@@ -87629,7 +87622,7 @@ async def get_cross_chat_exchange(exchange_id: str) -> dict[str, Any]:
     return {"exchange": await public_cross_chat_exchange(exchange, include_body=True)}
 
 
-@app.post("/api/cross-chat/exchanges/{exchange_id}/cancel")
+@router.post("/api/cross-chat/exchanges/{exchange_id}/cancel")
 async def post_cancel_cross_chat_exchange(exchange_id: str) -> dict[str, Any]:
     completion = asyncio.create_task(cancel_cross_chat_exchange(exchange_id))
     try:
@@ -87641,7 +87634,7 @@ async def post_cancel_cross_chat_exchange(exchange_id: str) -> dict[str, Any]:
     return {"exchange": await public_cross_chat_exchange(exchange, include_body=True)}
 
 
-@app.post("/api/agent/cross-chat/handoffs")
+@router.post("/api/agent/cross-chat/handoffs")
 async def post_agent_cross_chat_handoff(
     req: CrossChatHandoffRequest,
     request: Request,
@@ -87651,7 +87644,7 @@ async def post_agent_cross_chat_handoff(
     return await submit_authorized_cross_chat_handoff(req, request)
 
 
-@app.get("/api/cross-chat/handoffs/{envelope_id}")
+@router.get("/api/cross-chat/handoffs/{envelope_id}")
 async def get_cross_chat_handoff(envelope_id: str) -> dict[str, Any]:
     record = await CROSS_CHAT.get(envelope_id)
     if record is None:
@@ -87668,18 +87661,18 @@ async def get_cross_chat_handoff(envelope_id: str) -> dict[str, Any]:
     return {"handoff": public_cross_chat_envelope(record, include_body=True)}
 
 
-@app.post("/api/cross-chat/handoffs/{envelope_id}/cancel")
+@router.post("/api/cross-chat/handoffs/{envelope_id}/cancel")
 async def cancel_cross_chat_handoff(envelope_id: str) -> dict[str, Any]:
     record = await cancel_queued_cross_chat_handoff(envelope_id)
     return {"handoff": public_cross_chat_envelope(record)}
 
 
-@app.delete("/api/sessions/{session_id}/queue/{queued_id}")
+@router.delete("/api/sessions/{session_id}/queue/{queued_id}")
 async def delete_queued_turn(session_id: str, queued_id: str) -> dict[str, Any]:
     return await unqueue_turn(session_id, queued_id)
 
 
-@app.post("/api/sessions/{session_id}/queue/{queued_id}/skip-cross-chat-delivery")
+@router.post("/api/sessions/{session_id}/queue/{queued_id}/skip-cross-chat-delivery")
 async def post_skip_queued_cross_chat_delivery(
     session_id: str,
     queued_id: str,
@@ -87688,17 +87681,17 @@ async def post_skip_queued_cross_chat_delivery(
     return await skip_queued_cross_chat_delivery(session_id, queued_id, req)
 
 
-@app.patch("/api/sessions/{session_id}/queue/{queued_id}")
+@router.patch("/api/sessions/{session_id}/queue/{queued_id}")
 async def patch_queued_turn(session_id: str, queued_id: str, req: UpdateQueuedTurnRequest) -> dict[str, Any]:
     return await update_queued_turn(session_id, queued_id, req)
 
 
-@app.post("/api/sessions/{session_id}/queue/{queued_id}/move")
+@router.post("/api/sessions/{session_id}/queue/{queued_id}/move")
 async def post_move_queued_turn(session_id: str, queued_id: str, req: MoveQueuedTurnRequest) -> dict[str, Any]:
     return await move_queued_turn(session_id, queued_id, req)
 
 
-@app.post("/api/sessions/{session_id}/queue/{queued_id}/run-now")
+@router.post("/api/sessions/{session_id}/queue/{queued_id}/run-now")
 async def post_run_queued_turn_now(
     session_id: str,
     queued_id: str,
@@ -87849,7 +87842,7 @@ async def run_explicit_stop_operation(
         if stop_task.done():
             wake_queue_once()
 
-@app.post("/api/sessions/{session_id}/stop")
+@router.post("/api/sessions/{session_id}/stop")
 async def stop_turn_endpoint(session_id: str) -> dict[str, Any]:
     # Serialize only Stop admission with turn admission. Provider interrupts,
     # subagent teardown, and bounded terminal confirmation continue under the
@@ -89130,7 +89123,7 @@ async def stop_turn(
     }
 
 
-@app.get("/api/jobs")
+@router.get("/api/jobs")
 async def list_jobs(session_id: str | None = None) -> dict[str, Any]:
     jobs = sorted(
         (
@@ -89144,7 +89137,7 @@ async def list_jobs(session_id: str | None = None) -> dict[str, Any]:
     return {"jobs": jobs}
 
 
-@app.get("/api/sessions/{session_id}/jobs")
+@router.get("/api/sessions/{session_id}/jobs")
 async def list_session_jobs(session_id: str) -> dict[str, Any]:
     if session_id not in STORE.sessions:
         raise HTTPException(status_code=404, detail="session not found")
@@ -89156,7 +89149,7 @@ async def list_session_jobs(session_id: str) -> dict[str, Any]:
     return {"jobs": jobs}
 
 
-@app.get("/api/agent/sessions/{session_id}/jobs")
+@router.get("/api/agent/sessions/{session_id}/jobs")
 async def list_agent_session_jobs(request: Request, session_id: str) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         await authorize_provider_jobs_operation(
@@ -89175,7 +89168,7 @@ async def list_agent_session_jobs(request: Request, session_id: str) -> dict[str
         }
 
 
-@app.get("/api/sessions/{session_id}/jobs/{job_id}/runs")
+@router.get("/api/sessions/{session_id}/jobs/{job_id}/runs")
 async def get_session_job_runs(
     session_id: str,
     job_id: str,
@@ -89202,7 +89195,7 @@ async def get_session_job_runs(
         raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
 
 
-@app.get("/api/agent/sessions/{session_id}/jobs/{job_id}/runs")
+@router.get("/api/agent/sessions/{session_id}/jobs/{job_id}/runs")
 async def get_agent_session_job_runs(
     request: Request,
     session_id: str,
@@ -89238,7 +89231,7 @@ async def get_agent_session_job_runs(
         }
 
 
-@app.get("/api/sessions/{session_id}/runs/{run_id}/trace")
+@router.get("/api/sessions/{session_id}/runs/{run_id}/trace")
 async def get_session_run_trace(
     session_id: str,
     run_id: str,
@@ -89261,14 +89254,14 @@ async def get_session_run_trace(
         raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
 
 
-@app.post("/api/jobs")
+@router.post("/api/jobs")
 async def create_job(req: CreateJobRequest) -> dict[str, Any]:
     async with session_lifecycle_lock(req.session_id):
         job = await JOBS.create(req)
     return {"job": public_job(job)}
 
 
-@app.post("/api/sessions/{session_id}/jobs")
+@router.post("/api/sessions/{session_id}/jobs")
 async def create_session_job(session_id: str, req: CreateScopedJobRequest) -> dict[str, Any]:
     # Keep omission metadata intact so legacy scoped clients that select an
     # alternate backend (but predate context_mode) retain standalone behavior.
@@ -89280,7 +89273,7 @@ async def create_session_job(session_id: str, req: CreateScopedJobRequest) -> di
     return {"job": public_job(job)}
 
 
-@app.post("/api/agent/sessions/{session_id}/jobs")
+@router.post("/api/agent/sessions/{session_id}/jobs")
 async def create_agent_session_job(
     request: Request,
     session_id: str,
@@ -89335,7 +89328,7 @@ async def create_agent_session_job(
         return {"job": provider_public_job(job)}
 
 
-@app.patch("/api/jobs/{job_id}")
+@router.patch("/api/jobs/{job_id}")
 async def update_job(job_id: str, req: UpdateJobRequest) -> dict[str, Any]:
     snapshot = await JOBS.snapshot(job_id)
     session_id = str(snapshot.get("session_id") or "")
@@ -89348,7 +89341,7 @@ async def update_job(job_id: str, req: UpdateJobRequest) -> dict[str, Any]:
     return {"job": public_job(job)}
 
 
-@app.patch("/api/sessions/{session_id}/jobs/{job_id}")
+@router.patch("/api/sessions/{session_id}/jobs/{job_id}")
 async def update_session_job(session_id: str, job_id: str, req: UpdateJobRequest) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         job = await JOBS.update(
@@ -89359,7 +89352,7 @@ async def update_session_job(session_id: str, job_id: str, req: UpdateJobRequest
     return {"job": public_job(job)}
 
 
-@app.patch("/api/agent/sessions/{session_id}/jobs/{job_id}")
+@router.patch("/api/agent/sessions/{session_id}/jobs/{job_id}")
 async def update_agent_session_job(
     request: Request,
     session_id: str,
@@ -89443,7 +89436,7 @@ async def update_agent_session_job(
         return {"job": provider_public_job(job)}
 
 
-@app.delete("/api/jobs/{job_id}")
+@router.delete("/api/jobs/{job_id}")
 async def delete_job(job_id: str) -> dict[str, Any]:
     snapshot = await JOBS.snapshot(job_id)
     session_id = str(snapshot.get("session_id") or "")
@@ -89455,14 +89448,14 @@ async def delete_job(job_id: str) -> dict[str, Any]:
     return {"ok": True, "deleted": deleted}
 
 
-@app.delete("/api/sessions/{session_id}/jobs/{job_id}")
+@router.delete("/api/sessions/{session_id}/jobs/{job_id}")
 async def delete_session_job(session_id: str, job_id: str) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         deleted = await JOBS.delete(job_id, expected_session_id=session_id)
     return {"ok": True, "deleted": deleted}
 
 
-@app.delete("/api/agent/sessions/{session_id}/jobs/{job_id}")
+@router.delete("/api/agent/sessions/{session_id}/jobs/{job_id}")
 async def delete_agent_session_job(
     request: Request,
     session_id: str,
@@ -89478,7 +89471,7 @@ async def delete_agent_session_job(
         return {"ok": True, "deleted": deleted}
 
 
-@app.post("/api/jobs/{job_id}/run")
+@router.post("/api/jobs/{job_id}/run")
 async def run_job(job_id: str) -> dict[str, Any]:
     return await JOBS.request_manual_run(job_id)
 
@@ -89546,7 +89539,7 @@ async def bridge_port_tunnel(
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-@app.websocket("/api/sessions/{session_id}/ports/{port}/tunnel/ws")
+@router.websocket("/api/sessions/{session_id}/ports/{port}/tunnel/ws")
 async def session_port_tunnel(
     session_id: str,
     port: str,
@@ -89729,7 +89722,7 @@ async def session_port_tunnel(
             await PORT_TUNNELS.release(session_id, ws)
 
 
-@app.websocket("/api/sessions/{session_id}/terminal/ws")
+@router.websocket("/api/sessions/{session_id}/terminal/ws")
 async def session_terminal(
     session_id: str,
     ws: WebSocket,
@@ -89874,7 +89867,7 @@ async def send_event_stream_status(ws: WebSocket, session_id: str, phase: str) -
     }), timeout=WEBSOCKET_SEND_TIMEOUT_SECONDS)
 
 
-@app.websocket("/api/sessions/{session_id}/events")
+@router.websocket("/api/sessions/{session_id}/events")
 async def session_events(
     session_id: str,
     ws: WebSocket,
@@ -89990,7 +89983,7 @@ async def session_events(
         await HUB.unsubscribe(session_id, ws)
 
 
-@app.websocket("/api/emergency-alerts/events")
+@router.websocket("/api/emergency-alerts/events")
 async def emergency_alert_events(ws: WebSocket) -> None:
     selected_subprotocol = websocket_endpoint_subprotocol(
         ws,
@@ -90038,7 +90031,7 @@ async def emergency_alert_events(ws: WebSocket) -> None:
         await HUB.unsubscribe(EMERGENCY_HUB_KEY, ws)
 
 
-@app.get("/api/sessions/{session_id}/diffs/{run_id}")
+@router.get("/api/sessions/{session_id}/diffs/{run_id}")
 async def get_turn_code_diff(session_id: str, run_id: str) -> FileResponse:
     if session_id not in STORE.sessions:
         raise HTTPException(status_code=404, detail="session not found")
@@ -90055,12 +90048,12 @@ async def get_turn_code_diff(session_id: str, run_id: str) -> FileResponse:
     )
 
 
-@app.get("/api/sessions/{session_id}/workspace")
+@router.get("/api/sessions/{session_id}/workspace")
 async def get_session_workspace(session_id: str) -> dict[str, Any]:
     return await asyncio.to_thread(workspace_info_sync, session_id)
 
 
-@app.get("/api/sessions/{session_id}/workspace/entries")
+@router.get("/api/sessions/{session_id}/workspace/entries")
 async def get_session_workspace_entries(
     session_id: str,
     path: str = Query(default="", max_length=MAX_WORKSPACE_PATH_CHARS),
@@ -90070,7 +90063,7 @@ async def get_session_workspace_entries(
     return await asyncio.to_thread(list_workspace_entries_sync, session_id, path, offset, limit)
 
 
-@app.get("/api/sessions/{session_id}/workspace/search")
+@router.get("/api/sessions/{session_id}/workspace/search")
 async def search_session_workspace(
     session_id: str,
     q: str = Query(default="", max_length=500),
@@ -90079,7 +90072,7 @@ async def search_session_workspace(
     return await asyncio.to_thread(search_workspace_files_sync, session_id, q, limit)
 
 
-@app.get("/api/sessions/{session_id}/workspace/file")
+@router.get("/api/sessions/{session_id}/workspace/file")
 async def get_session_workspace_file(
     session_id: str,
     path: str = Query(min_length=1, max_length=MAX_WORKSPACE_PATH_CHARS),
@@ -90087,7 +90080,7 @@ async def get_session_workspace_file(
     return await asyncio.to_thread(read_workspace_file_sync, session_id, path)
 
 
-@app.get("/api/sessions/{session_id}/workspace/absolute-file")
+@router.get("/api/sessions/{session_id}/workspace/absolute-file")
 async def get_session_absolute_file(
     session_id: str,
     path: str = Query(min_length=1, max_length=MAX_WORKSPACE_PATH_CHARS),
@@ -90095,9 +90088,9 @@ async def get_session_absolute_file(
     return await asyncio.to_thread(read_absolute_file_sync, session_id, path)
 
 
-@app.get("/api/sessions/{session_id}/workspace/preview")
-@app.head("/api/sessions/{session_id}/workspace/preview")
-@app.api_route(
+@router.get("/api/sessions/{session_id}/workspace/preview")
+@router.head("/api/sessions/{session_id}/workspace/preview")
+@router.api_route(
     "/api/sessions/{session_id}/workspace/preview",
     methods=["GET", "HEAD"],
     include_in_schema=False,
@@ -90149,9 +90142,9 @@ async def get_session_workspace_preview(
             os.close(file_fd)
 
 
-@app.get("/api/sessions/{session_id}/workspace/download")
-@app.head("/api/sessions/{session_id}/workspace/download")
-@app.api_route(
+@router.get("/api/sessions/{session_id}/workspace/download")
+@router.head("/api/sessions/{session_id}/workspace/download")
+@router.api_route(
     "/api/sessions/{session_id}/workspace/download",
     methods=["GET", "HEAD"],
     include_in_schema=False,
@@ -90195,7 +90188,7 @@ async def get_session_workspace_download(
             os.close(file_fd)
 
 
-@app.put("/api/sessions/{session_id}/workspace/file")
+@router.put("/api/sessions/{session_id}/workspace/file")
 async def put_session_workspace_file(session_id: str, req: WorkspaceWriteRequest) -> dict[str, Any]:
     return await asyncio.to_thread(
         write_workspace_file_sync,
@@ -90207,11 +90200,11 @@ async def put_session_workspace_file(session_id: str, req: WorkspaceWriteRequest
 
 
 workspace_git.register_workspace_git_routes(
-    app, authorize=require_native_admin_control, workspace_root=session_workspace_root,
+    router, authorize=require_native_admin_control, workspace_root=session_workspace_root,
 )
 
 
-@app.put("/api/sessions/{session_id}/workspace/absolute-file")
+@router.put("/api/sessions/{session_id}/workspace/absolute-file")
 async def put_session_absolute_file(session_id: str, req: WorkspaceWriteRequest) -> dict[str, Any]:
     return await asyncio.to_thread(
         write_absolute_file_sync,
@@ -90222,7 +90215,7 @@ async def put_session_absolute_file(session_id: str, req: WorkspaceWriteRequest)
     )
 
 
-@app.post("/api/sessions/{session_id}/workspace/entry")
+@router.post("/api/sessions/{session_id}/workspace/entry")
 async def post_session_workspace_entry(session_id: str, req: WorkspaceCreateRequest) -> dict[str, Any]:
     return await asyncio.to_thread(
         create_workspace_entry_sync,
@@ -90232,7 +90225,7 @@ async def post_session_workspace_entry(session_id: str, req: WorkspaceCreateRequ
     )
 
 
-@app.patch("/api/sessions/{session_id}/workspace/entry")
+@router.patch("/api/sessions/{session_id}/workspace/entry")
 async def patch_session_workspace_entry(session_id: str, req: WorkspaceRenameRequest) -> dict[str, Any]:
     return await asyncio.to_thread(
         rename_workspace_entry_sync,
@@ -90243,7 +90236,7 @@ async def patch_session_workspace_entry(session_id: str, req: WorkspaceRenameReq
     )
 
 
-@app.delete("/api/sessions/{session_id}/workspace/entry")
+@router.delete("/api/sessions/{session_id}/workspace/entry")
 async def delete_session_workspace_entry(
     session_id: str,
     path: str = Query(min_length=1, max_length=MAX_WORKSPACE_PATH_CHARS),
@@ -90297,7 +90290,7 @@ def publication_response(
     }
 
 
-@app.post("/api/agent/sessions/{session_id}/artifacts")
+@router.post("/api/agent/sessions/{session_id}/artifacts")
 async def publish_agent_artifacts(
     request: Request,
     session_id: str,
@@ -90400,7 +90393,7 @@ async def publish_agent_artifacts(
     return publication_response(session_id, publication_id, events)
 
 
-@app.post("/api/agent/sessions/{session_id}/emergency-alerts")
+@router.post("/api/agent/sessions/{session_id}/emergency-alerts")
 async def raise_agent_emergency_alert(
     request: Request,
     session_id: str,
@@ -90512,7 +90505,7 @@ async def raise_agent_emergency_alert(
         )
 
 
-@app.post("/api/agent/sessions/{session_id}/notifications")
+@router.post("/api/agent/sessions/{session_id}/notifications")
 async def raise_agent_notification(
     request: Request,
     session_id: str,
@@ -90658,7 +90651,7 @@ async def commit_staged_upload(
             raise
 
 
-@app.post("/api/sessions/{session_id}/files")
+@router.post("/api/sessions/{session_id}/files")
 async def upload_file(session_id: str, file: UploadFile = File(...)) -> dict[str, Any]:
     session = STORE.sessions.get(session_id)
     if not session:
@@ -90840,7 +90833,7 @@ def resolve_session_file_event(
     raise HTTPException(status_code=404, detail="file event not found")
 
 
-@app.get("/api/sessions/{session_id}/files")
+@router.get("/api/sessions/{session_id}/files")
 async def list_session_files(
     session_id: str,
     limit: int | None = Query(default=None, ge=1, le=200),
@@ -90875,7 +90868,7 @@ async def list_session_files(
     }
 
 
-@app.get("/api/sessions/{session_id}/files/{file_id}/event")
+@router.get("/api/sessions/{session_id}/files/{file_id}/event")
 async def get_session_file_event(session_id: str, file_id: str) -> dict[str, Any]:
     if session_id not in STORE.sessions:
         raise HTTPException(status_code=404, detail="session not found")
@@ -90887,8 +90880,8 @@ async def get_session_file_event(session_id: str, file_id: str) -> dict[str, Any
     return {"event": event}
 
 
-@app.get("/api/sessions/{session_id}/links/file")
-@app.head("/api/sessions/{session_id}/links/file")
+@router.get("/api/sessions/{session_id}/links/file")
+@router.head("/api/sessions/{session_id}/links/file")
 async def get_session_linked_file(session_id: str, target: str) -> FileResponse:
     if session_id not in STORE.sessions:
         raise HTTPException(status_code=404, detail="session not found")
@@ -90901,8 +90894,8 @@ async def get_session_linked_file(session_id: str, target: str) -> FileResponse:
     )
 
 
-@app.get("/api/sessions/{session_id}/files/{file_id}")
-@app.head("/api/sessions/{session_id}/files/{file_id}")
+@router.get("/api/sessions/{session_id}/files/{file_id}")
+@router.head("/api/sessions/{session_id}/files/{file_id}")
 async def get_session_file(session_id: str, file_id: str) -> FileResponse:
     if session_id not in STORE.sessions:
         raise HTTPException(status_code=404, detail="session not found")
@@ -90919,8 +90912,8 @@ async def get_session_file(session_id: str, file_id: str) -> FileResponse:
     )
 
 
-@app.get("/api/files/{file_id}")
-@app.head("/api/files/{file_id}")
+@router.get("/api/files/{file_id}")
+@router.head("/api/files/{file_id}")
 async def get_file(
     file_id: str,
     session_id: str | None = Query(default=None, min_length=1),
@@ -91250,6 +91243,10 @@ def main() -> int:
 def uvicorn_graceful_shutdown_seconds() -> int:
     return max(1, int(configured_uvicorn_graceful_shutdown_seconds()))
 
+
+app = create_app(ApplicationBindings(
+    router=router, authorize_http=require_agent_token, lifespan=lifespan,
+))
 
 if __name__ == "__main__":
     raise SystemExit(main())

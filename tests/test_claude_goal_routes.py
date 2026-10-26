@@ -1,7 +1,6 @@
 """Production goal routes with isolated store/transport; no live provider I/O."""
 from __future__ import annotations
 
-import ast
 import asyncio
 import json
 from pathlib import Path
@@ -9,9 +8,11 @@ import tempfile
 from types import SimpleNamespace
 from typing import Any
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, HTTPException
+from hyadex.app import ApplicationBindings, create_app
+import agent_server
 import httpx
 from pydantic import BaseModel, Field
 
@@ -19,16 +20,10 @@ from claude_goals import ClaudeGoalProjection
 from claude_sdk_client import ClaudeSDKSupervisorError
 
 
-def load_routes():
-    names = {"refresh_claude_goal", "require_claude_goal_session",
-             "start_claude_goal_command", "put_claude_goal", "delete_claude_goal"}
-    source = (Path(__file__).resolve().parents[1] / "agent_server.py")
-    tree = ast.parse(source.read_text(), filename=str(source))
-    selected = [node for node in tree.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names
-                or isinstance(node, ast.ClassDef) and node.name == "ClaudeGoalRequest"]
+def load_routes(add_cleanup):
+    # Patch explicit dependencies of the real production handlers. This fixture
+    # no longer compiles function fragments from the monolithic source.
     ns = {
-        "__name__": __name__, "app": FastAPI(), "Any": Any, "Path": Path,
         "asyncio": asyncio, "BaseModel": BaseModel, "Field": Field,
         "HTTPException": HTTPException, "ClaudeSDKSupervisorError": ClaudeSDKSupervisorError,
         "ClaudeGoalProjection": ClaudeGoalProjection,
@@ -55,13 +50,23 @@ def load_routes():
         {"support": {"available": True}}, inventory))
     ns["claude_runtime_snapshot"] = AsyncMock(return_value={"available": True, "goal": None})
     ns["claude_sdk_manager"] = AsyncMock(return_value=SimpleNamespace(clear_goal=AsyncMock()))
-    exec(compile(ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])), str(source), "exec"), ns)
-    return ns
+    overrides = patch.dict(agent_server.__dict__, ns)
+    overrides.start()
+    add_cleanup(overrides.stop)
+    router = APIRouter()
+    router.add_api_route("/api/sessions/{session_id}/claude/goal", agent_server.put_claude_goal, methods=["PUT"])
+    router.add_api_route("/api/sessions/{session_id}/claude/goal", agent_server.delete_claude_goal, methods=["DELETE"])
+
+    async def authorize(request, call_next):
+        return await call_next(request)
+
+    agent_server.app = create_app(ApplicationBindings(router, authorize))
+    return agent_server.__dict__
 
 
 class ClaudeGoalRouteTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.ns = load_routes()
+        self.ns = load_routes(self.addCleanup)
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.ns["app"]), base_url="http://isolated")
 
     async def asyncTearDown(self):

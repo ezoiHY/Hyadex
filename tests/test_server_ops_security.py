@@ -28,7 +28,7 @@ def http_request(
     receive=None,
 ) -> agent_server.Request:
     scope = {
-        "type": "http",
+        "type": "http", "app": agent_server.app,
         "asgi": {"version": "3.0"},
         "http_version": "1.1",
         "method": method,

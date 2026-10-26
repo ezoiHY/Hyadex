@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, HTTPException
+from hyadex.app import ApplicationBindings, create_app
 from fastapi.testclient import TestClient
 
 from hyadex import autopilot
@@ -533,7 +534,7 @@ class AutopilotRouteTests(unittest.TestCase):
             groups = GroupEngine(root / "groups", runtime)
             runtime.engine = groups
             engine = AutopilotEngine(root / "autopilot", groups)
-            app = FastAPI()
+            router = APIRouter()
 
             async def allow(*_):
                 return True
@@ -541,9 +542,13 @@ class AutopilotRouteTests(unittest.TestCase):
             async def nothing(*_):
                 return None
 
-            app.include_router(create_group_router(groups, websocket_authorized=lambda ws: True, reserve=allow,
+            router.include_router(create_group_router(groups, websocket_authorized=lambda ws: True, reserve=allow,
                                                    register=allow, unsubscribe=nothing))
-            app.include_router(create_autopilot_router(engine))
+            router.include_router(create_autopilot_router(engine))
+            async def authorize_http(request, call_next):
+                return await call_next(request)
+
+            app = create_app(ApplicationBindings(router, authorize_http))
             with TestClient(app) as client:
                 client.portal.call(groups.load)
                 client.portal.call(engine.load)

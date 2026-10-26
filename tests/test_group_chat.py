@@ -10,7 +10,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, HTTPException
+from hyadex.app import ApplicationBindings, create_app
 from fastapi.testclient import TestClient
 
 from hyadex import groups as group_chat
@@ -560,10 +561,14 @@ class GroupRouteTests(unittest.TestCase):
                 await ws.send_json(event)
 
         self.runtime.broadcast = broadcast
-        app = FastAPI()
-        app.include_router(create_group_router(
+        router = APIRouter()
+        router.include_router(create_group_router(
             self.engine, websocket_authorized=lambda ws: ws.query_params.get("token") == "ok",
             reserve=reserve, register=register, unsubscribe=unsubscribe))
+        async def authorize_http(request, call_next):
+            return await call_next(request)
+
+        app = create_app(ApplicationBindings(router, authorize_http))
         self.client = TestClient(app)
         self.client.__enter__()
         self.client.portal.call(self.engine.load)
