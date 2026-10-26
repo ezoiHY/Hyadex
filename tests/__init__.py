@@ -7,4 +7,4 @@ import os
 os.environ.setdefault("HYADEX_MANAGED_UPDATES", "1")
 
 # Inherited provider suites cover every backend; Hyadex enables two by default.
-os.environ.setdefault("HYADEX_ENABLED_BACKENDS", "claude,codex,cursor,gemini,opencode")
+os.environ.setdefault("HYADEX_ENABLED_BACKENDS", "claude,codex,cursor,opencode")

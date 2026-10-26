@@ -1,7 +1,7 @@
 # Automatic session titles
 
 Unnamed new chats immediately show their first prompt line. Existing native
-provider titles are adopted when available. If Cursor, Codex or a Gemini API chat still has no
+provider titles are adopted when available. If a Cursor or Codex chat still has no
 native title after a successful ordinary user turn, HyadexServer makes one
 independent background request for a short summarized title.
 
@@ -100,7 +100,7 @@ work, and opens SQLite read-only. It never reads/decrypts conversation blobs or
 returns other metadata. This is a best-effort private-format adapter, not a
 guarantee for all future Cursor versions or the separate Cursor IDE history.
 
-## Background generation: Cursor, Codex and Gemini API
+## Background generation: Cursor and Codex
 
 - Uses the chat's provider/model and existing connection. Custom provider
   bindings remain isolated; no separate title API key is required.
@@ -108,8 +108,7 @@ guarantee for all future Cursor versions or the separate Cursor IDE history.
   It consumes additional provider usage. Failures/timeouts keep the fallback;
   automatic retries do not accumulate usage.
 - Sends at most 1,600 characters of the initial user prompt and 800 of
-  the successful reply, quoted as data. Codex/Cursor use the prompt's beginning;
-  Gemini keeps its beginning and end so a question after pasted logs survives.
+  the successful reply, quoted as data, using the prompt's beginning.
   No attachments, separately collected tool output, or full
   transcript is sent. Output must be a single-line title of at most 72 characters.
 - At most two requests run concurrently, with a queue cap of 16. A request has
@@ -151,17 +150,6 @@ access-token format skips optional naming; it is not used to repair or refresh
 the user's login. Credentials are never logged, and the disposable profile is
 removed after success, error, timeout, or cancellation.
 
-**Gemini API:** one tool-free `generateContent` request uses this chat's exact
-saved endpoint, API key and selected model. No CLI, native session, hooks, MCP,
-tools or account fallback are involved. For CLI Auto, the concrete model is
-read from this exact chat's native transcript in its private API profile; an
-unavailable model keeps the prompt fallback rather than guessing another model.
-The request has a 1,024-token output budget and a 64 KiB response limit, follows
-no redirects, and never retries. Thought parts are not used as the title.
-Native summary metadata is checked again before generation and adoption, so a
-late native title wins. Forgetting the bound connection discards pending output.
-Manual names and the common ownership/opt-out safeguards still take precedence.
-
 ### When the new title appears
 
 Generation starts after the main reply finishes, without delaying that reply.
@@ -177,7 +165,6 @@ mobile push of title-only updates would be a separate client improvement.
 | Claude | Bounded exact-session transcript head/tail reads of `custom-title` / `ai-title` records. No additional generation request. SDK sessions may not produce these records. |
 | Codex | App-server start/resume/read names, `thread/name/updated`, and existing `session_index.jsonl`. Custom providers use their own manager cache. Native names take precedence over generated fallback names. |
 | Cursor | Exact-workspace, exact-ID read-only CLI naming metadata (see above). Stream-json exposes no supported title event. Conversation blobs are not decoded; the independent request above remains the fallback when no usable native name exists. |
-| Gemini | Bounded exact-workspace/UUID transcript `summary`, including the chat's private API profile. If absent after a successful ordinary turn, the independent tool-free API request above supplies a fallback. |
 | OpenCode | Fixture-tested read-only exact-ID SQLite metadata reader only. This beta.9 runtime does not expose OpenCode as a provider. |
 
 Native metadata is checked before normal terminal events and when idle history

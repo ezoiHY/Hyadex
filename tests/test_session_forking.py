@@ -729,7 +729,6 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 "codex_approvals_reviewer",
                 "cursor_permission_mode",
                 "opencode_permission_mode",
-                "gemini_permission_mode",
                 "provider_jobs_access",
                 "archived",
             }),

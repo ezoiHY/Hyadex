@@ -175,7 +175,7 @@ class GroupEngineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_disabled_backend_and_reserved_handle_are_rejected(self) -> None:
         with self.assertRaises(HTTPException):
-            await self.engine.create(CreateGroupRequest(participants=[ParticipantSpec(backend="gemini")]))
+            await self.engine.create(CreateGroupRequest(participants=[ParticipantSpec(backend="cursor")]))
         with self.assertRaises(HTTPException):
             await self.engine.create(CreateGroupRequest(participants=[ParticipantSpec(backend="claude", handle="all")]))
         self.assertEqual(self.engine.groups, {})

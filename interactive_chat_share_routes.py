@@ -41,7 +41,7 @@ CONTROL_ACTIONS = frozenset({
 })
 CONTROL_READ_ACTIONS = frozenset({"timeline.older", "timeline.around", "timeline.trace", "timeline.index", "jobs.runs", "runtime.catalog", "handoffs.get"})
 NATIVE_STATE_FIELDS = frozenset({"revision", "session", "events", "queue", "active", "goal", "jobs",
-    "codex_runtime", "claude_runtime", "gemini_runtime", "health", "runtime_catalog", "hasMoreEvents", "nextTimelineBefore", "eventsTotal"})
+    "codex_runtime", "claude_runtime", "health", "runtime_catalog", "hasMoreEvents", "nextTimelineBefore", "eventsTotal"})
 COOKIE = "__Secure-Hyadex-Chat"
 HTTP_COOKIE = "Hyadex-Chat"
 HEADERS = {

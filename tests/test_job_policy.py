@@ -6,6 +6,15 @@ from hyadex.jobs.context import resolve_job_context_contract
 
 
 class JobContextPolicyTests(unittest.TestCase):
+    def test_retired_parent_never_falls_back_to_another_backend(self):
+        for mode, backend in (("chat", None), ("standalone", "codex")):
+            with self.subTest(mode=mode), self.assertRaises(HTTPException) as raised:
+                resolve_job_context_contract(
+                    {"backend": "gemini"}, mode, backend, context_mode_explicit=True,
+                    enabled_backends={"claude", "codex"}, default_backend="claude",
+                )
+            self.assertEqual(raised.exception.status_code, 410)
+
     def test_different_runtime_policies_do_not_share_default_or_allowlist(self):
         def resolve(default, enabled, backend=None):
             return resolve_job_context_contract(

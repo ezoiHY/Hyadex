@@ -3,6 +3,39 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Retire the Gemini runtime
+
+- Removed Gemini ACP/API execution, import, permission, skill and title modules,
+  their routes and runtime advertising, and the Gemini-only process-guard mode.
+  Runtime inventories no longer ship these modules. Native profiles and stored
+  connection credentials are retained without executing or migrating them.
+- Existing Gemini chat histories remain readable and can be renamed, moved,
+  pinned or archived. Runtime edits, turns, forks and native imports reject the
+  retired provider. Saved scheduled/manual-pending jobs are durably paused with
+  `provider_removed`; they cannot silently run with another provider.
+- Retained native-identity/redaction fields and the existing uncertain-cleanup
+  fence. Stop and Delete do not claim cleanup of a removed runtime. Timeline,
+  queue and event-storage formats are unchanged.
+
+**Validation.** Focused retirement, session, job, connection and guard checks
+pass, as do 258 fast-package cases. The final isolated full suite ran 5,195
+cases (15 skipped), retaining eight inherited failures. It also exposed an
+existing Git snapshot deadline exception-construction defect, queued for a
+separate correction. All 349 Python sources compile; dependency-lock and
+shell checks pass. Independent Claude static review identified metadata edits,
+old timers and import side effects; these were corrected and covered. Two
+older AST fixtures were updated for the new retirement dependencies and their
+21 cases pass.
+
+Real isolated HTTP acceptance loaded native/custom saved chats, read unchanged
+event bytes, edited metadata, rejected execution/import/fork and job launch,
+then restarted the same named instance and verified identity and job-pause
+persistence. Native Claude/Codex acceptance passed file edits, handoff,
+contextual follow-up, parallel replies, Stop, queued messages, group-job
+execution and ordered WebSocket events. Both native providers separately
+completed timer-triggered jobs exactly once. Desktop/mobile clients and a live
+Gemini runtime were not exercised. **Availability:** source only.
+
 ## 2026-10-26 — Native provider package and shared runtime contract
 
 - Moved the Claude SDK actor client and Codex app-server transport unchanged

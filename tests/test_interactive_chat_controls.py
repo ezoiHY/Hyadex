@@ -31,7 +31,7 @@ class InteractiveChatControlTests(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         self.callbacks = {name: AsyncMock(return_value={"native": name}) for name in
-                          ACTIONS | {"approval.codex", "approval.claude", "approval.gemini"}}
+                          ACTIONS | {"approval.codex", "approval.claude"}}
         self.adapter = InteractiveChatControls(self.callbacks, self.models)
         self.trusted = {"share_id": "interactive_" + "a" * 32, "request_id": "request_0000000001"}
 
@@ -57,8 +57,6 @@ class InteractiveChatControlTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.callbacks[key].await_args.args[0], "owner-chat")
         await self.adapter.dispatch("owner-chat", "approval.respond", {"id": "approval-two", "backend": "claude", "response": {"decision": "decline"}})
         self.callbacks["approval.claude"].assert_awaited_once()
-        await self.adapter.dispatch("owner-chat", "approval.respond", {"id": "approval-three", "backend": "gemini", "response": {"decision": "decline"}})
-        self.callbacks["approval.gemini"].assert_awaited_once_with("owner-chat", "approval-three", {"decision": "decline"})
         self.assertEqual(self.callbacks["turn.steer"].await_args.kwargs, self.trusted)
         self.assertTrue(self.callbacks["queue.run_now"].await_args.args[2].accept_deferred_queue_response)
 

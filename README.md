@@ -36,9 +36,10 @@ goals, terminals and file previews. Clients connect over your LAN or Tailscale.
 Same-server chat routes remain available. Team Hub, Team Network mail and
 secure-peer pairing have been removed; existing network state is preserved.
 
-Claude Code and Codex are enabled for new chats. The inherited Cursor,
-OpenCode and Gemini integrations remain in the code but are off unless you opt
-in with `HYADEX_ENABLED_BACKENDS`.
+Claude Code and Codex are enabled for new chats. The inherited Cursor and
+OpenCode integrations remain opt-in with `HYADEX_ENABLED_BACKENDS` during the
+package migration. Gemini support has been removed; saved Gemini chats remain
+readable, and sending or forking them is rejected without changing provider.
 
 ## Requirements
 

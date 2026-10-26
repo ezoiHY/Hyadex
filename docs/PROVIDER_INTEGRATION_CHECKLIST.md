@@ -4,8 +4,9 @@ Use this when adding a provider or upgrading its CLI/SDK. A successful text repl
 is not enough: verify the server contract and the behavior exposed by that
 provider's native runtime/client. This is a review template, not a support claim.
 
-Provider-specific implementation and validation records:
-[Gemini](GEMINI_PROVIDER_PREVIEW.md) (built in; API-only, with documented limits).
+Current package ownership is documented in [architecture](ARCHITECTURE.md).
+Gemini integration was removed; historical validation records are not a current
+support claim.
 
 Record: **provider · transport · CLI/SDK versions · model/endpoint · server commit
 · OS/client versions · reviewer/date**.

@@ -140,17 +140,11 @@ class InteractiveChatControls:
         elif action == "approval.respond":
             _fields(payload, {"id", "backend", "response"}, {"id", "backend", "response"})
             backend = payload["backend"]
-            if backend not in ("codex", "claude", "gemini") or not isinstance(payload["response"], dict):
+            if backend not in ('codex', 'claude') or not isinstance(payload["response"], dict):
                 raise ChatControlError()
             args.append(_identity(payload["id"]))
-            if backend == "gemini":
-                response = payload["response"]
-                if set(response) != {"decision"} or response["decision"] not in ("accept", "decline", "cancel"):
-                    raise ChatControlError()
-                args.append(response)
-            else:
-                args.append(self._model("CodexInteractionResponseRequest" if backend == "codex" else "ClaudeInteractionResponseRequest",
-                                        {"response": payload["response"]}))
+            args.append(self._model("CodexInteractionResponseRequest" if backend == "codex" else "ClaudeInteractionResponseRequest",
+                                    {"response": payload["response"]}))
             callback_key = "approval." + backend
 
         callback = self.callbacks.get(callback_key)

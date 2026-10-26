@@ -35,11 +35,12 @@ def load_native_glue():
         node.decorator_list = []
     job_store = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "JobStore")
     manual = next(node for node in job_store.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "request_manual_run")
+    retired = next(node for node in job_store.body if isinstance(node, ast.FunctionDef) and node.name == "_retired_provider")
     namespace.update(native_models())
     namespace.update(asyncio=asyncio, time=time, json=json, hashlib=hashlib, Response=Response,
         shared_events=shared_events, shared_native_value=shared_native_value, shared_session=shared_session,
         ChatControlError=ChatControlError, InteractiveChatControls=InteractiveChatControls)
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[*nodes, manual], type_ignores=[])), "<isolated-native-chat-adapters>", "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[*nodes, retired, manual], type_ignores=[])), "<isolated-native-chat-adapters>", "exec"), namespace)
     return namespace
 
 
@@ -62,6 +63,7 @@ class InteractiveChatNativeGlueTests(unittest.IsolatedAsyncioTestCase):
             "read_semantic_timeline_page": Mock(return_value={"events": [self.row, {"id": "file-one", "session_id": "chat-one", "type": "file_uploaded", "seq": 2}], "semantic_total": 2, "semantic_omitted_before": 1, "next_semantic_before": 1}),
             "public_session": lambda value: dict(value), "DEFAULT_BACKEND": "codex",
             "BACKEND_CODEX": "codex", "BACKEND_CLAUDE": "claude", "BACKEND_CURSOR": "cursor",
+            "VALID_BACKENDS": {"claude", "codex", "cursor", "opencode"},
             "CURSOR_PERMISSION_MODES": ("default", "full_access", "plan"),
             "CURSOR_DEFAULT_PERMISSION_MODE": "default",
             "RUNTIME_DIAGNOSTICS": {}, "RUNTIME_DIAGNOSTICS_LOCK": threading.RLock(),
@@ -324,6 +326,7 @@ class InteractiveChatNativeGlueTests(unittest.IsolatedAsyncioTestCase):
         jobs = SimpleNamespace(jobs={"job-own": {"id": "job-own", "session_id": "chat-one"}}, _lock=asyncio.Lock(),
             save=AsyncMock(), _dispatch_pending_manual_run=dispatch, pause_for_session=AsyncMock())
         jobs.request_manual_run = MethodType(self.native["request_manual_run"], jobs)
+        jobs._retired_provider = MethodType(self.native["_retired_provider"], jobs)
         self.native.update(JOBS=jobs, now_iso=lambda: "2026-09-12T00:00:00Z", new_job_revision=lambda: "revision",
                            event_job=lambda row: dict(row), append_event=AsyncMock())
         result = await asyncio.wait_for(self.native["run_interactive_chat_job"]("chat-one", "job-own"), 1)

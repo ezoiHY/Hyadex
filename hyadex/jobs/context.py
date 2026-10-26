@@ -40,7 +40,10 @@ def resolve_job_context_contract(
         parent_session.get("backend") or default_backend
     ).strip().lower()
     if parent_backend not in enabled_backends:
-        parent_backend = default_backend
+        raise HTTPException(
+            status_code=410,
+            detail="This chat's provider was removed; create a job in a supported chat.",
+        )
     if (
         not context_mode_explicit
         and normalized_backend is not None
