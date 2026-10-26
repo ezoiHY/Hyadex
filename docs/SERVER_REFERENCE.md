@@ -1289,9 +1289,13 @@ subsequent reads use the observed snapshot, and `refresh=true` requests a fresh
 native snapshot. Native rate-limit events update it without polling. Custom
 endpoints and API-key accounts do not expose a ChatGPT allowance.
 
-Claude reports only windows observed through native Agent SDK rate-limit
-events. Missing percentages stay unknown; no model request is made to obtain
-usage. Responses include observation times, reset times when reported, and
+Claude answers from Claude Code's own `/usage` data: a short-lived Agent SDK
+connection sends the native `get_usage` control request without a prompt,
+settings, hooks or the local transcript scan, and only plan windows are kept,
+titled as Claude Code titles them. Answers are cached for two minutes and
+refreshed after a native rate-limit event; windows observed through rate-limit
+events are the fallback. Missing percentages stay unknown; no model request is
+made to obtain usage. Responses include observation times, reset times when reported, and
 Codex credit balance when supplied. Credits have no inferred currency. Caches
 are scoped to the provider connection and invalidated when its account or
 generation changes. A `provider_usage_changed` socket notification tells the

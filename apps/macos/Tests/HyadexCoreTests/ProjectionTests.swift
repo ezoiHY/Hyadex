@@ -40,11 +40,34 @@ struct ProjectionTests {
             case .changes: "changes"
             case .thinking: "thinking"
             case .divider: "divider"
+            case .media: "media"
             }
         }
         #expect(kinds == ["user", "tool:edit:ok", "approval:resolved", "tool:command:ok", "agent", "changes"])
         #expect(projection.lastAssistantText?.contains("hello.txt") == true)
         #expect(projection.diffsToLoad.count == 1)
+    }
+
+    @Test func turnTimingAndAcceptedRequests() throws {
+        let events = try Self.events("claude-turn")
+        var projection = SessionProjection(backend: .claude, cwd: "/tmp/hyadex-mac-e2e")
+        let startIndex = try #require(events.firstIndex { $0["type"].string == "turn_started" })
+        projection.apply(Array(events[...startIndex]))
+        #expect(projection.turnStartedAt != nil)
+        #expect(projection.acceptedRequests.contains("mac-e2e-1"))
+        projection.apply(Array(events[(startIndex + 1)...]))
+        #expect(projection.turnStartedAt == nil)
+        let userID = try #require(events[startIndex]["id"].string)
+        #expect((projection.turnSeconds[userID] ?? -1) >= 0)
+    }
+
+    @Test func homePathsAreAbbreviatedInCommands() {
+        let tool: JSON = ["name": "Bash", "input": ["command": .string("cat \(NSHomeDirectory())/.codex/skills/a.md")]]
+        #expect(SessionProjection.describe(tool: tool, cwd: "/tmp").title == "cat ~/.codex/skills/a.md")
+    }
+
+    @Test func sidebarPreviewDropsMarkdown() {
+        #expect(LiveController.preview("I created [a.txt](a.txt), see `b` and $$x$$") == "I created a.txt, see b and x")
     }
 
     @Test func diffIsSplitPerFileAndAttached() throws {
@@ -123,7 +146,7 @@ struct ProjectionTests {
         let chat = LiveMapping.chat(running, previous: nil)
         #expect(chat?.state == .running)
         #expect(chat?.unread == true)
-        #expect(chat?.permission == "工作区可写 · 免批准")
+        #expect(chat?.permission == "Custom (workspace-write, never)")
         let waiting: JSON = ["id": "s2", "backend": "claude", "latest_event_type": "claude_interaction_requested",
                              "claude_needs_user_action": true]
         #expect(LiveMapping.chat(waiting, previous: nil)?.state == .needsAction)
@@ -165,5 +188,108 @@ struct AutopilotMappingTests {
         #expect(run?.tasks[0].acceptance == "x\ny")
         #expect(run?.tasks[1].revisions == 1)
         #expect(run?.tasks[1].verification?.passed == false)
+    }
+}
+
+/// The native catalog recorded from a real server (`GET /api/runtime/catalog`).
+struct CatalogTests {
+    static func catalog(_ backend: AgentBackend) throws -> RuntimeCatalog {
+        let url = try #require(Bundle.module.url(forResource: "runtime-catalog", withExtension: "json",
+                                                 subdirectory: "Fixtures"))
+        let json = try JSONDecoder().decode(JSON.self, from: Data(contentsOf: url))
+        return try #require(RuntimeCatalog.parse(json["backends"][backend.rawValue]))
+    }
+
+    @Test func codexUsesNativeModelsAndPerModelEfforts() throws {
+        let codex = try Self.catalog(.codex)
+        #expect(codex.models.first?.value == "")
+        #expect(codex.models.first?.label.hasPrefix("Server default") == true)
+        #expect(codex.models.contains { $0.value == "gpt-6-astra" && $0.label == "GPT-6-Astra" })
+        #expect(codex.modelName("") == "GPT-6.1-Sol")
+        #expect(codex.effortName("", model: "") == "XHigh")
+        let efforts = codex.effortOptions(model: "gpt-6-astra", current: "").map(\.label)
+        #expect(efforts.first?.hasPrefix("Server default") == true)
+        #expect(efforts.contains("XHigh"))
+        #expect(!codex.supports(effort: "ultracode", model: "gpt-6-astra"))
+    }
+
+    @Test func claudeDefaultIsLabelledAsDefault() throws {
+        let claude = try Self.catalog(.claude)
+        #expect(claude.models.first?.label == "Server default (Sonnet)")
+        #expect(claude.efforts.first?.label == "Server default (High)")
+        #expect(claude.modelName("haiku") == "Haiku")
+        #expect(claude.effortName("max", model: "") == "Max")
+        #expect(claude.modelOptions(current: "custom-model").last?.value == "custom-model")
+    }
+}
+
+struct UsageAndPermissionTests {
+    @Test func providerUsageKeepsNativeWindowNames() {
+        let claude: JSON = ["status": "available", "plan": "max", "observed_at": "2030-01-01T00:00:00Z", "windows": [
+            ["id": "five_hour", "label": "Current session", "used_percent": 77, "resets_at": 1893474000, "window_minutes": 300],
+            ["id": "seven_day", "label": "Current week (all models)", "used_percent": 21, "window_minutes": 10080],
+        ]]
+        let usage = ProviderUsage.parse(claude, backend: .claude)
+        #expect(usage.available)
+        #expect(usage.windows.map(\.label) == ["Current session", "Current week (all models)"])
+        #expect(usage.tightest?.id == "five_hour")
+        #expect(usage.windows[0].resetsAt == Date(timeIntervalSince1970: 1893474000))
+        // Codex leaves windows unnamed; they get Codex's own `/status` names.
+        let codex: JSON = ["status": "available", "windows": [
+            ["id": "codex:primary", "label": .null, "used_percent": 4, "window_minutes": 10080]]]
+        #expect(ProviderUsage.parse(codex, backend: .codex).windows.first?.label == "Weekly limit")
+        let missing = ProviderUsage.parse(["status": "unavailable", "reason": "account_usage_unavailable"], backend: .claude)
+        #expect(!missing.available)
+        #expect(missing.unavailableText.contains("API key"))
+    }
+
+    @Test func contextUsageFromBothProviders() throws {
+        let codex: JSON = ["context_tokens": 38164, "context_window": 475000, "effective_context_window": 463000,
+                           "context_percent": .number(5.65)]
+        let parsed = try #require(ContextUsage.parse(codex))
+        #expect(parsed.window == 463000)
+        #expect(parsed.percent == 5.65)
+        let claude: JSON = ["totalTokens": 28286, "maxTokens": 1000000, "percentage": .number(3.0)]
+        #expect(ContextUsage.parse(claude)?.tokens == 28286)
+        #expect(ContextUsage.parse([:]) == nil)
+    }
+
+    @Test func permissionLabelsAreTheProvidersOwn() {
+        func chat(_ fields: [String: JSON], _ backend: String) -> ChatSummary? {
+            var json: [String: JSON] = ["id": "s", "backend": .string(backend), "title": "t", "cwd": "/tmp"]
+            json.merge(fields) { $1 }
+            return LiveMapping.chat(.object(json), previous: nil)
+        }
+        #expect(chat(["claude_permission_mode": "acceptEdits"], "claude")?.permission == "Accept edits")
+        #expect(chat(["claude_permission_mode": "dontAsk"], "claude")?.permission == "Don't Ask")
+        #expect(chat([:], "claude")?.permission == "Manual")
+        #expect(PermissionPreset.presets(for: .claude).count == 6)
+        #expect(chat(["codex_sandbox_mode": "workspace-write", "codex_approval_policy": "on-request"], "codex")?.permission == "Default")
+        #expect(chat(["codex_sandbox_mode": "danger-full-access", "codex_approval_policy": "never"], "codex")?.permission == "Full Access")
+        #expect(chat(["codex_sandbox_mode": "workspace-write", "codex_approval_policy": "untrusted"], "codex")?.permission
+                == "Custom (workspace-write, untrusted)")
+    }
+
+    @Test func attachmentsAndPublishedFilesBecomeMedia() {
+        var projection = SessionProjection(backend: .codex, cwd: "/tmp")
+        projection.apply([
+            ["seq": 1, "type": "file_uploaded", "file": ["id": "f1", "filename": "shot.png", "content_type": "image/png"]],
+            ["seq": 2, "type": "turn_started", "id": "u1", "prompt": "看看这张图", "file_ids": ["f1"]],
+            ["seq": 3, "type": "artifact_created", "id": "a1", "publication_id": "p",
+             "artifact": ["id": "f2", "filename": "plot.png", "content_type": "image/png"]],
+            ["seq": 4, "type": "artifact_created", "id": "a2", "publication_id": "p",
+             "artifact": ["id": "f3", "filename": "report.pdf", "content_type": "application/pdf"]],
+        ])
+        let media = projection.items.compactMap { item -> (Author, [MediaFile])? in
+            if case .media(_, let author, let files) = item { return (author, files) }
+            return nil
+        }
+        #expect(media.count == 2)
+        #expect(media[0].0.kind == .user)
+        #expect(media[0].1.first?.name == "shot.png")
+        #expect(media[0].1.first?.isImage == true)
+        #expect(media[1].0.kind == .agent)
+        #expect(media[1].1.map(\.name) == ["plot.png", "report.pdf"])
+        #expect(media[1].1.last?.isImage == false)
     }
 }

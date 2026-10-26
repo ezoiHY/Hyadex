@@ -428,7 +428,7 @@ class RuntimeDiagnosticTests(unittest.TestCase):
         ):
             result = agent_server.parse_claude_help_catalog()
         self.assertEqual(result["models"], [
-            {"value": "", "label": "Sonnet 5"},
+            {"value": "", "label": "Server default (Sonnet 5)"},
             {"value": "opus[1m]", "label": "Opus 5.5 (1M context)"},
             {"value": "sonnet", "label": "Sonnet 5"},
         ])

@@ -14,26 +14,25 @@ public struct RootView: View {
             SidebarView(model: model)
         } detail: {
             // Split-view columns must not take their minimum size from their
-            // content: when sidebar + detail + inspector minimums exceed the
-            // window width (wide Autopilot content in a narrow window), Auto
-            // Layout loops and AppKit aborts. Zero-minimum frames keep each
-            // column's minimum fixed; the window's minimum size is set below.
+            // content: when column minimums exceed the window width, Auto
+            // Layout loops and AppKit aborts. The changes panel is an overlay,
+            // not a column, so it never changes the layout underneath.
             detail
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 .overlay(alignment: .top) { ErrorBanner(model: model) }
-                .inspector(isPresented: $model.showInspector) {
-                    InspectorView(model: model)
-                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .overlay(alignment: .trailing) {
+                    if model.showChanges {
+                        ChangesPanel(model: model)
+                            .containerRelativeFrame(.horizontal) { width, _ in min(max(width * 0.55, 380), 760) }
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
                 }
+                .animation(.snappy(duration: 0.25), value: model.showChanges)
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    model.showInspector.toggle()
-                } label: {
-                    Label("检查器", systemImage: "sidebar.trailing")
-                }
-                .help("显示或隐藏检查器（⌥⌘I）")
+            ToolbarItemGroup(placement: .primaryAction) {
+                DetailsButton(model: model)
+                ChangesButton(model: model)
             }
         }
         .sheet(item: $model.sheet) { sheet in
@@ -55,6 +54,46 @@ public struct RootView: View {
         case .autopilot(let id): AutopilotView(model: model, runID: id).id(id)
         case .jobs: JobsView(model: model)
         case nil: EmptyDetail(model: model)
+        }
+    }
+}
+
+/// Shows how many files the selection changed and opens the changes panel.
+/// Disabled when there is nothing to show.
+private struct ChangesButton: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        let count = model.selectedChanges.files.count
+        Button {
+            model.showChanges.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "doc.on.doc")
+                if count > 0 { Text("\(count)").monospacedDigit() }
+            }
+        }
+        .disabled(count == 0 && !model.showChanges)
+        .help(count == 0 ? "还没有改动" : "查看 \(count) 个文件的改动（⌥⌘I）")
+        .accessibilityLabel(count == 0 ? "没有改动" : "改动，\(count) 个文件")
+    }
+}
+
+/// Settings and usage of the selection, on demand.
+private struct DetailsButton: View {
+    @Bindable var model: AppModel
+    @State private var showing = false
+
+    var body: some View {
+        Button {
+            showing.toggle()
+        } label: {
+            Label("详情", systemImage: "info.circle")
+        }
+        .disabled(model.selection == nil || model.selection == .jobs)
+        .help("详情")
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+            DetailsPopover(model: model)
         }
     }
 }

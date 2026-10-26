@@ -81,28 +81,28 @@ public enum SampleData {
 
     public static func chats(now: Date) -> [ChatSummary] {
         [
-            ChatSummary(id: "c1", title: "重构 WebSocket 断线续传", backend: .claude, model: "Opus 5.5",
-                        permission: "自动接受编辑", cwd: "~/Code/Hyadex/apps/macos",
+            ChatSummary(id: "c1", title: "重构 WebSocket 断线续传", backend: .claude, model: "opus",
+                        permission: "Accept edits", cwd: "~/Code/Hyadex/apps/macos",
                         preview: "已改成按 seq 续传，并加了退避和测试。", lastActivity: ago(2, from: now),
                         pinned: true, tokensUsed: 48_210),
-            ChatSummary(id: "c2", title: "Android 推送偶发丢失", backend: .codex, model: "gpt-5.5-codex",
-                        permission: "工作区可写 · 需批准", cwd: "~/Code/hyadex-android",
+            ChatSummary(id: "c2", title: "Android 推送偶发丢失", backend: .codex, model: "",
+                        permission: "Default", cwd: "~/Code/hyadex-android",
                         preview: "Codex 请求运行 ./gradlew connectedCheck", lastActivity: ago(1, from: now),
                         state: .needsAction, tokensUsed: 21_904),
-            ChatSummary(id: "c3", title: "发布前检查清单", backend: .claude, model: "Sonnet 5.5",
-                        permission: "只读", cwd: "~/Code/Hyadex",
+            ChatSummary(id: "c3", title: "发布前检查清单", backend: .claude, model: "sonnet",
+                        permission: "Plan", cwd: "~/Code/Hyadex",
                         preview: "正在运行完整测试…", lastActivity: ago(0.2, from: now),
                         state: .running, tokensUsed: 9_380),
-            ChatSummary(id: "c4", title: "README 中英双语", backend: .claude, model: "Sonnet 5.5",
-                        permission: "自动接受编辑", cwd: "~/Code/Hyadex",
+            ChatSummary(id: "c4", title: "README 中英双语", backend: .claude, model: "sonnet",
+                        permission: "Accept edits", cwd: "~/Code/Hyadex",
                         preview: "两份 README 已对齐，等你确认措辞。", lastActivity: ago(46, from: now),
                         unread: true, tokensUsed: 12_044),
-            ChatSummary(id: "c5", title: "7871 端口内存占用排查", backend: .codex, model: "gpt-5.5",
-                        permission: "只读", cwd: "~/Code/Hyadex",
+            ChatSummary(id: "c5", title: "7871 端口内存占用排查", backend: .codex, model: "",
+                        permission: "Read Only", cwd: "~/Code/Hyadex",
                         preview: "峰值来自事件回放时一次性读入整个 jsonl。", lastActivity: ago(60 * 5, from: now),
                         tokensUsed: 33_617),
-            ChatSummary(id: "c6", title: "SwiftUI 列表滚动卡顿", backend: .claude, model: "Opus 5.5",
-                        permission: "自动接受编辑", cwd: "~/Code/playground",
+            ChatSummary(id: "c6", title: "SwiftUI 列表滚动卡顿", backend: .claude, model: "opus",
+                        permission: "Accept edits", cwd: "~/Code/playground",
                         preview: "改用 LazyVStack + 稳定 ID 后流畅了。", lastActivity: ago(60 * 26, from: now),
                         tokensUsed: 15_502),
         ]
@@ -185,14 +185,14 @@ public enum SampleData {
         [
             GroupSummary(id: "g1", title: "讨论组游标设计评审", cwd: "~/Code/Hyadex",
                          participants: [
-                            Participant(handle: "claude", backend: .claude, role: "架构", model: "Opus 5.5"),
-                            Participant(handle: "codex", backend: .codex, role: "实现", model: "gpt-5.5-codex", state: .running),
+                            Participant(handle: "claude", backend: .claude, role: "架构", model: "opus"),
+                            Participant(handle: "codex", backend: .codex, role: "实现", model: "", state: .running),
                          ],
                          defaultResponder: "claude", preview: "@codex 正在补测试…", lastActivity: ago(0.5, from: now),
                          promptChars: 4_812, dispatches: 5),
             GroupSummary(id: "g2", title: "周报整理", cwd: "~/Documents/weekly",
                          participants: [
-                            Participant(handle: "claude", backend: .claude, role: "写作", model: "Sonnet 5.5"),
+                            Participant(handle: "claude", backend: .claude, role: "写作", model: "sonnet"),
                          ],
                          defaultResponder: "claude", preview: "第 43 周周报已生成。", lastActivity: ago(60 * 20, from: now),
                          promptChars: 1_204, dispatches: 1),
@@ -315,5 +315,29 @@ public enum SampleData {
                          target: "Codex · 7871 端口内存占用排查", schedule: "每月 1 日 03:00",
                          nextRun: nil, lastResult: nil, lastRun: nil, enabled: false),
         ]
+    }
+
+    static func usage(chats: [ChatSummary], now: Date) -> ([AgentBackend: ProviderUsage], [String: ContextUsage]) {
+        let usage: [AgentBackend: ProviderUsage] = [
+            .claude: ProviderUsage(available: true, windows: [
+                UsageWindow(id: "five_hour", label: "Current session", usedPercent: 38,
+                            resetsAt: now.addingTimeInterval(2.4 * 3600), windowMinutes: 300),
+                UsageWindow(id: "seven_day", label: "Current week (all models)", usedPercent: 21,
+                            resetsAt: now.addingTimeInterval(3.2 * 86400), windowMinutes: 10080),
+            ], plan: "max", observedAt: now),
+            .codex: ProviderUsage(available: true, windows: [
+                UsageWindow(id: "codex:primary", label: "5h limit", usedPercent: 12,
+                            resetsAt: now.addingTimeInterval(3.6 * 3600), windowMinutes: 300),
+                UsageWindow(id: "codex:secondary", label: "Weekly limit", usedPercent: 46,
+                            resetsAt: now.addingTimeInterval(4.5 * 86400), windowMinutes: 10080),
+            ], observedAt: now),
+        ]
+        var context: [String: ContextUsage] = [:]
+        for chat in chats where chat.tokensUsed > 0 {
+            let window = chat.backend == .claude ? 200_000 : 258_400
+            context[chat.id] = ContextUsage(tokens: chat.tokensUsed, window: window,
+                                            percent: Double(chat.tokensUsed) * 100 / Double(window))
+        }
+        return (usage, context)
     }
 }

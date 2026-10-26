@@ -63,11 +63,9 @@ struct NewChatSheet: View {
     @State private var backend: AgentBackend = .claude
     @State private var modelName = ""
     @State private var cwd = ""
-    @State private var permission = "自动接受编辑"
+    @State private var permission = "Manual"
 
-    private var models: [String] {
-        model.isLive ? (backend == .claude ? ["默认模型", "opus", "sonnet", "haiku"] : ["默认模型"]) : backend.defaultModels
-    }
+    private var models: [RuntimeOption] { model.catalog(for: backend).models }
 
     private var permissions: [String] { PermissionPreset.presets(for: backend).map(\.label) }
 
@@ -80,11 +78,11 @@ struct NewChatSheet: View {
             }
             .pickerStyle(.segmented)
             .onChange(of: backend, initial: true) {
-                modelName = models[0]
-                permission = backend == .claude ? "自动接受编辑" : "工作区可写 · 需批准"
+                modelName = ""
+                permission = backend == .claude ? "Manual" : "Default"
             }
             Picker("模型", selection: $modelName) {
-                ForEach(models, id: \.self) { Text($0).tag($0) }
+                ForEach(models) { Text($0.label).tag($0.value) }
             }
             FolderField(path: $cwd)
             Picker("权限", selection: $permission) {
@@ -109,8 +107,8 @@ struct NewGroupSheet: View {
     var body: some View {
         SheetScaffold(title: "新建讨论组", primary: "创建", canSubmit: includeClaude || includeCodex) {
             var members: [Participant] = []
-            if includeClaude { members.append(Participant(handle: "claude", backend: .claude, role: "规划", model: "Opus 5.5")) }
-            if includeCodex { members.append(Participant(handle: "codex", backend: .codex, role: "实现", model: "gpt-5.5-codex")) }
+            if includeClaude { members.append(Participant(handle: "claude", backend: .claude, role: "规划", model: "")) }
+            if includeCodex { members.append(Participant(handle: "codex", backend: .codex, role: "实现", model: "")) }
             members.sort { $0.handle == defaultResponder && $1.handle != defaultResponder }
             model.createGroup(title: title, cwd: cwd, participants: members)
         } content: {

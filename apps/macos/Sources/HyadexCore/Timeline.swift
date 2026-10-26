@@ -48,6 +48,18 @@ public struct FileChangeSet: Hashable, Sendable {
 public enum ToolKind: String, Hashable, Sendable {
     case command, read, edit, search, mcp, web
 
+    /// Present-tense label for the live status line.
+    public var activeVerb: String {
+        switch self {
+        case .command: "正在运行"
+        case .read: "正在读取"
+        case .edit: "正在编辑"
+        case .search: "正在搜索"
+        case .mcp: "正在调用"
+        case .web: "正在访问"
+        }
+    }
+
     public var symbol: String {
         switch self {
         case .command: "terminal"
@@ -68,6 +80,24 @@ public enum ApprovalDecision: Hashable, Sendable {
     case resolved
 }
 
+/// A file attached to a turn or published by an agent, served by the server.
+public struct MediaFile: Identifiable, Hashable, Sendable {
+    public var id: String
+    public var name: String
+    public var contentType: String
+
+    public init(id: String, name: String, contentType: String) {
+        self.id = id
+        self.name = name
+        self.contentType = contentType
+    }
+
+    public var isImage: Bool {
+        contentType.hasPrefix("image/")
+            || ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp"].contains((name as NSString).pathExtension.lowercased())
+    }
+}
+
 /// Something the timeline shows. The server's raw events are projected into
 /// these items; the views never look at raw events.
 public enum TimelineItem: Identifiable, Hashable, Sendable {
@@ -79,11 +109,13 @@ public enum TimelineItem: Identifiable, Hashable, Sendable {
     case approval(id: String, author: Author, title: String, command: String, reason: String,
                   decision: ApprovalDecision, allowsSession: Bool = true)
     case divider(id: String, text: String)
+    /// Images and files: a user's attachments or an agent's published artifacts.
+    case media(id: String, author: Author, files: [MediaFile])
 
     public var id: String {
         switch self {
         case .message(let id, _, _, _, _, _, _), .thinking(let id, _, _), .tool(let id, _, _, _, _, _),
-             .changes(let id, _), .approval(let id, _, _, _, _, _, _), .divider(let id, _):
+             .changes(let id, _), .approval(let id, _, _, _, _, _, _), .divider(let id, _), .media(let id, _, _):
             id
         }
     }

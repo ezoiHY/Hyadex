@@ -1,7 +1,8 @@
 """Read-only provider allowance observations, separate from chat token usage.
 
-Codex exposes an account snapshot and update notifications. Claude exposes
-individual rate-limit events only; an omitted percentage never means zero.
+Codex exposes an account snapshot and update notifications. Claude Code answers
+its native ``/usage`` request with plan windows, and also emits individual
+rate-limit events during turns; an omitted percentage never means zero.
 No credentials or provider payloads are persisted by this module.
 """
 from __future__ import annotations
@@ -138,6 +139,59 @@ def claude_window(message: Any, observed_at: str) -> dict | None:
             "used_percent": round(utilization * 100, 6) if utilization is not None else None,
             "resets_at": reset, "window_minutes": minutes, "observed_at": observed_at,
             **({"status": status} if status is not None else {})}
+
+
+def _iso_epoch(value: Any) -> float | None:
+    if not isinstance(value, str) or len(value) > 64:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return round(parsed.timestamp(), 3)
+
+
+def claude_account_snapshot(response: Any, observed_at: str) -> dict:
+    """Project the native ``get_usage`` answer onto the shared window shape.
+
+    The windows, their titles and their order are the ones Claude Code's own
+    ``/usage`` screen shows; windows without a reported utilization are
+    omitted there and here. Costs, local transcript behaviors and spend
+    details are discarded.
+    """
+    if not isinstance(response, dict):
+        return unavailable("claude", "temporarily_unavailable")
+    plan = _text(response.get("subscription_type"), 40)
+    limits = response.get("rate_limits")
+    if response.get("rate_limits_available") is not True or not isinstance(limits, dict):
+        return unavailable("claude", "account_usage_unavailable",
+                           account_kind="subscription" if plan else "api_key")
+    rows: list[tuple[str, str, Any, int | None]] = [
+        ("five_hour", "Current session", limits.get("five_hour"), 300),
+        ("seven_day", "Current week (all models)", limits.get("seven_day"), 10080),
+    ]
+    if plan in {"max", "team", None}:
+        rows.append(("seven_day_sonnet", "Current week (Sonnet only)", limits.get("seven_day_sonnet"), 10080))
+    scoped = limits.get("model_scoped")
+    for index, item in enumerate(scoped[:16] if isinstance(scoped, list) else []):
+        name = _text(item.get("display_name"), 80) if isinstance(item, dict) else None
+        if name:
+            rows.append((f"model:{index}", f"Current week ({name})", item, 10080))
+    windows = []
+    for key, title, value, minutes in rows:
+        used = _number(value.get("utilization")) if isinstance(value, dict) else None
+        if used is None:
+            continue
+        windows.append({"id": key, "label": title, "used_percent": used,
+                        "resets_at": _iso_epoch(value.get("resets_at")),
+                        "window_minutes": minutes, "observed_at": observed_at})
+    if not windows:
+        return unavailable("claude", "not_reported", account_kind="subscription")
+    return {"backend": "claude", "status": "available", "source": "claude-usage",
+            "account_kind": "subscription", "observed_at": observed_at, "windows": windows,
+            **({"plan": plan} if plan else {})}
 
 
 @dataclass

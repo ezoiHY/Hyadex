@@ -135,6 +135,7 @@ from hyadex.providers.claude import (
     claude_nondurable_scheduler_reason,
     create_claude_agent_options,
     create_claude_sdk_mcp_server,
+    default_claude_sdk_client_factory,
 )
 from provider_commands import (
     MAX_PROVIDER_COMMANDS,
@@ -48896,7 +48897,69 @@ async def observe_claude_provider_usage(session_id: str, generation: str, messag
     if (CLAUDE_SDK_MANAGER is not None
             and CLAUDE_SDK_MANAGER.usage_generation(session_id) == generation
             and PROVIDER_USAGE.observe_claude(session_id, generation, message)):
+        # A native rate-limit event means the account allowance moved.
+        CLAUDE_ACCOUNT_USAGE["stale"] = True
         await broadcast_provider_usage_changed(session_id, BACKEND_CLAUDE)
+
+
+CLAUDE_ACCOUNT_USAGE_TTL_SECONDS = 120.0
+CLAUDE_ACCOUNT_USAGE_FAILURE_TTL_SECONDS = 30.0
+CLAUDE_ACCOUNT_USAGE_TIMEOUT_SECONDS = 30.0
+CLAUDE_ACCOUNT_USAGE: dict[str, Any] = {"at": 0.0, "value": None, "stale": False}
+CLAUDE_ACCOUNT_USAGE_LOCK = asyncio.Lock()
+
+
+async def probe_claude_account_usage() -> dict[str, Any]:
+    """Ask Claude Code for its own ``/usage`` data through the Agent SDK.
+
+    A short-lived CLI connection answers the native ``get_usage`` control
+    request from the user's existing login. It sends no prompt, makes no
+    model request, loads no project or user settings (so no hooks run), and
+    skips the local transcript scan. Only plan windows are kept.
+    """
+    env = runner_env()
+    for inherited_name in tuple(os.environ):
+        if inherited_name in PROVIDER_SECRET_ENV_NAMES or is_provider_runtime_env_name(inherited_name):
+            env[inherited_name] = ""
+    cli_path = claude_sdk_cli_path(env)
+    options = create_claude_agent_options(
+        cwd=str(Path.home()), cli_path=cli_path, env=env, setting_sources=[],
+        max_buffer_size=PROCESS_STREAM_LIMIT, stderr=lambda _line: None,
+    )
+    client = default_claude_sdk_client_factory(options)
+    await client.connect()
+    try:
+        query = getattr(client, "_query", None)
+        if query is None:
+            raise ClaudeSDKUnavailable("Claude SDK client did not connect")
+        response = await query._send_control_request(
+            {"subtype": "get_usage", "skip_behaviors": True},
+            timeout=CLAUDE_ACCOUNT_USAGE_TIMEOUT_SECONDS,
+        )
+    finally:
+        with suppress(Exception):
+            await client.disconnect()
+    return provider_usage.claude_account_snapshot(response, provider_usage.timestamp())
+
+
+async def read_claude_account_usage(*, refresh: bool = False) -> dict[str, Any]:
+    async with CLAUDE_ACCOUNT_USAGE_LOCK:
+        cached = CLAUDE_ACCOUNT_USAGE.get("value")
+        age = time.monotonic() - float(CLAUDE_ACCOUNT_USAGE.get("at") or 0.0)
+        ttl = (CLAUDE_ACCOUNT_USAGE_TTL_SECONDS
+               if isinstance(cached, dict) and cached.get("status") == "available"
+               else CLAUDE_ACCOUNT_USAGE_FAILURE_TTL_SECONDS)
+        if cached is not None and not refresh and not CLAUDE_ACCOUNT_USAGE.get("stale") and age < ttl:
+            return copy.deepcopy(cached)
+        try:
+            result = await asyncio.wait_for(
+                probe_claude_account_usage(), CLAUDE_ACCOUNT_USAGE_TIMEOUT_SECONDS + 10,
+            )
+        except Exception:
+            # Never surface provider diagnostics; an old value is not current.
+            result = provider_usage.unavailable(BACKEND_CLAUDE, "temporarily_unavailable")
+        CLAUDE_ACCOUNT_USAGE.update(at=time.monotonic(), value=result, stale=False)
+        return copy.deepcopy(result)
 
 
 async def codex_app_server_manager(sess: dict[str, Any] | None = None, *, allow_retired_login: bool = False) -> CodexAppServerManager:
@@ -52245,9 +52308,14 @@ def parse_claude_help_catalog() -> dict[str, Any]:
         (option["label"] for option in model_options if option["value"] == default_model),
         title_model_label(default_model),
     )
+    # Label the "" option as the server default, like Codex, so it is not
+    # mistaken for the explicit model or effort of the same name.
     return {
-        "models": unique_runtime_options(model_options, default_model_label),
-        "efforts": unique_runtime_options(effort_options, title_effort_label(default_effort) if default_effort else ""),
+        "models": unique_runtime_options(model_options, f"Server default ({default_model_label})"),
+        "efforts": unique_runtime_options(
+            effort_options,
+            f"Server default ({title_effort_label(default_effort)})" if default_effort else "Server default",
+        ),
         "model_source": " + ".join(model_sources),
         "effort_source": effort_source,
         "default_model": default_model,
@@ -68853,10 +68921,16 @@ async def runtime_provider_usage(
                 result = await PROVIDER_USAGE.read_codex(manager, refresh=refresh)
             except Exception:
                 result = provider_usage.unavailable(backend, "temporarily_unavailable")
+    elif session is not None and session.get("provider_connection") == "custom":
+        result = provider_usage.unavailable(backend, "custom_endpoint", account_kind="custom")
     else:
-        generation = (CLAUDE_SDK_MANAGER.usage_generation(session_id)
-                      if session_id and CLAUDE_SDK_MANAGER is not None else None)
-        result = PROVIDER_USAGE.read_claude(session_id or "", generation)
+        result = await read_claude_account_usage(refresh=refresh)
+        if result.get("status") != "available":
+            generation = (CLAUDE_SDK_MANAGER.usage_generation(session_id)
+                          if session_id and CLAUDE_SDK_MANAGER is not None else None)
+            observed = PROVIDER_USAGE.read_claude(session_id or "", generation)
+            if observed.get("status") == "available":
+                result = observed
     return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 

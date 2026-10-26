@@ -14,9 +14,14 @@ final class LiveController {
     private var chatProjections: [String: SessionProjection] = [:]
     private var groupProjections: [String: GroupProjection] = [:]
     private var runGroups: [String: String] = [:]  // run id → group id
+    /// Member-chat records (model, effort, permissions) by session id.
+    private var memberSessions: [String: JSON] = [:]
     private var socket: (key: String, socket: EventSocket)?
     private var pollTask: Task<Void, Never>?
     private var runPollTask: Task<Void, Never>?
+    private var usageTask: Task<Void, Never>?
+    /// Chats whose turn was running at the last publish (to notice a turn end).
+    private var runningChats: Set<String> = []
     private var loadingDiffs: Set<String> = []
 
     /// Opt in to native approvals and questions for both providers.
@@ -30,6 +35,15 @@ final class LiveController {
     func start() async throws {
         health = try await client.health()
         try await refreshLists()
+        // Probing the native CLIs can take a few seconds; do not hold up the lists.
+        Task { await loadCatalogs() }
+        // Plan usage changes slowly; native events also prompt a reread.
+        usageTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshUsage()
+                try? await Task.sleep(for: .seconds(90))
+            }
+        }
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(4))
@@ -47,11 +61,58 @@ final class LiveController {
     func stop() {
         pollTask?.cancel()
         runPollTask?.cancel()
+        usageTask?.cancel()
         socket?.socket.stop()
         socket = nil
     }
 
     var connectedState: ConnectionState { .connected(version: health?.version ?? "?") }
+
+    /// Native models and efforts per backend, as the server discovered them.
+    func loadCatalogs(refresh: Bool = false) async {
+        guard let catalog = try? await client.runtimeCatalog(refresh: refresh) else { return }
+        var result: [AgentBackend: RuntimeCatalog] = [:]
+        for backend in AgentBackend.allCases {
+            if let parsed = RuntimeCatalog.parse(catalog["backends"][backend.rawValue]) { result[backend] = parsed }
+        }
+        if !result.isEmpty { model.catalogs = result }
+    }
+
+    // MARK: Usage
+
+    /// Plan usage of both provider accounts.
+    func refreshUsage(refresh: Bool = false, only: AgentBackend? = nil) async {
+        await withTaskGroup(of: (AgentBackend, ProviderUsage?).self) { group in
+            for backend in AgentBackend.allCases where only == nil || only == backend {
+                let client = self.client
+                group.addTask {
+                    guard let json = try? await client.providerUsage(backend: backend.rawValue, refresh: refresh) else {
+                        return (backend, nil)
+                    }
+                    return (backend, ProviderUsage.parse(json, backend: backend))
+                }
+            }
+            for await (backend, usage) in group {
+                // Keep the last reading when the server cannot be reached.
+                if let usage, model.usage[backend] != usage { model.usage[backend] = usage }
+            }
+        }
+    }
+
+    /// The chat's context-window fill, as its provider last reported it.
+    func refreshContext(_ id: String) async {
+        guard let chat = model.chat(id), let runtime = try? await client.runtime(id, backend: chat.backend.rawValue) else { return }
+        applyContext(runtime, to: id)
+    }
+
+    private func applyContext(_ json: JSON, to id: String) {
+        let snapshot = json["context_usage"].isNull ? json["context_usage_snapshot"] : json["context_usage"]
+        if let usage = ContextUsage.parse(snapshot) {
+            if model.contextUsage[id] != usage { model.contextUsage[id] = usage }
+        } else if json["context_usage_state"].string.map({ $0 != "available" }) ?? false {
+            model.contextUsage[id] = nil
+        }
+    }
 
     // MARK: Lists
 
@@ -74,7 +135,9 @@ final class LiveController {
         if chats != model.chats { model.chats = chats }
 
         let previousGroups = Dictionary(model.groups.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
-        let mappedGroups = groups.compactMap { LiveMapping.group($0, previous: previousGroups[$0["id"].string ?? ""]) }
+        let mappedGroups = groups.compactMap {
+            LiveMapping.group($0, previous: previousGroups[$0["id"].string ?? ""], members: memberSessions)
+        }
         if mappedGroups != model.groups { model.groups = mappedGroups }
 
         for run in runs {
@@ -90,6 +153,7 @@ final class LiveController {
         if mappedJobs != model.jobs { model.jobs = mappedJobs }
 
         await loadMissingPreviews()
+        if case .group(let id) = model.selection { await refreshMemberApprovals(id) }
     }
 
     /// The list has no message text, so fetch a short tail for chats without a preview.
@@ -114,8 +178,13 @@ final class LiveController {
         }
     }
 
-    static func preview(_ text: String) -> String {
-        String(text.replacingOccurrences(of: "\n", with: " ").prefix(120))
+    /// One plain line for the sidebar: Markdown links, code marks, emphasis and
+    /// math delimiters removed.
+    nonisolated static func preview(_ text: String) -> String {
+        var plain = text.replacingOccurrences(of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+        for mark in ["**", "__", "`", "$$", "$", "#"] { plain = plain.replacingOccurrences(of: mark, with: "") }
+        plain = plain.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        return String(plain.trimmingCharacters(in: .whitespaces).prefix(120))
     }
 
     // MARK: Selection
@@ -154,23 +223,41 @@ final class LiveController {
             }
         }
         publishChat(id)
+        Task { await refreshContext(id) }
         // The user may have moved on while the history loaded; only the
         // conversation that is still selected gets the live stream.
         guard model.selection == .chat(id) else { return }
         try? await client.markRead(id)
         guard model.selection == .chat(id) else { return }
-        subscribe(key: id, path: "api/sessions/\(id)/events", after: chatProjections[id]?.lastSeq ?? 0) { controller, event in
+        // The reasoning lane carries the provider's live reasoning summary (not durable).
+        subscribe(key: id, path: "api/sessions/\(id)/events", after: chatProjections[id]?.lastSeq ?? 0,
+                  query: ["reasoning_stream": "true", "reasoning_text": "true"]) { controller, event in
             controller.chatProjections[id]?.apply(event)
             controller.publishChat(id)
+        } control: { controller, frame in
+            switch frame["type"].string {
+            case "reasoning_summary_stream":
+                let text = frame["items"].array.reversed().compactMap { $0["text"].text }.first
+                controller.model.liveReasoning[id] = text.map { String($0.suffix(400)) }
+            case "provider_runtime_changed" where frame["runtime"].string == "context_usage":
+                controller.applyContext(frame, to: id)
+            case "provider_usage_changed":
+                let backend = frame["backend"].string.flatMap(AgentBackend.named)
+                Task { await controller.refreshUsage(only: backend) }
+            default:
+                break
+            }
         }
     }
 
     private func openGroup(_ id: String) async {
         guard let group = model.group(id) else { return }
+        await loadMemberSessions(of: group)
         await loadGroupEvents(id, backends: Dictionary(group.participants.map { ($0.handle, $0.backend) },
                                                        uniquingKeysWith: { $1 }))
         publishGroup(id)
         guard model.selection == .group(id) else { return }
+        await refreshMemberApprovals(id)
         subscribe(key: id, path: "api/groups/\(id)/events/stream", after: groupProjections[id]?.lastSeq ?? 0) { controller, event in
             controller.groupProjections[id]?.apply(event)
             controller.publishGroup(id)
@@ -219,17 +306,20 @@ final class LiveController {
         groupProjections[id] = projection
     }
 
-    private func subscribe(key: String, path: String, after: Int,
-                           apply: @escaping @MainActor (LiveController, JSON) -> Void) {
+    private func subscribe(key: String, path: String, after: Int, query: [String: String] = [:],
+                           apply: @escaping @MainActor (LiveController, JSON) -> Void,
+                           control: @escaping @MainActor (LiveController, JSON) -> Void = { _, _ in }) {
         guard socket?.key != key else { return }
         socket?.socket.stop()
-        let stream = EventSocket(client: client, path: path, after: after)
+        let stream = EventSocket(client: client, path: path, after: after, query: query)
         socket = (key, stream)
         stream.start { [weak self] frame in
-            guard case .event(let event) = frame else { return }
             await MainActor.run {
                 guard let self, self.socket?.key == key else { return }
-                apply(self, event)
+                switch frame {
+                case .event(let event): apply(self, event)
+                case .control(let json): control(self, json)
+                }
             }
         }
     }
@@ -238,6 +328,21 @@ final class LiveController {
         guard let projection = chatProjections[id] else { return }
         model.timelines[id] = projection.items
         model.queues[id] = projection.queued
+        if let pending = model.pendingSends[id], pending.contains(where: { projection.acceptedRequests.contains($0.id) }) {
+            model.pendingSends[id] = pending.filter { !projection.acceptedRequests.contains($0.id) }
+        }
+        if model.turnStartedAt[id] != projection.turnStartedAt { model.turnStartedAt[id] = projection.turnStartedAt }
+        if model.turnSeconds[id] != projection.turnSeconds { model.turnSeconds[id] = projection.turnSeconds }
+        if !projection.running, model.liveReasoning[id] != nil { model.liveReasoning[id] = nil }
+        if projection.running {
+            runningChats.insert(id)
+        } else if runningChats.remove(id) != nil {
+            // A finished turn moved the context fill and the plan usage.
+            Task {
+                await refreshContext(id)
+                await refreshUsage()
+            }
+        }
         if let index = model.chats.firstIndex(where: { $0.id == id }) {
             let state: ActivityState = projection.needsAction ? .needsAction : projection.running ? .running : .idle
             if model.chats[index].state != state { model.chats[index].state = state }
@@ -278,14 +383,19 @@ final class LiveController {
     // MARK: Chat actions
 
     func send(_ text: String, toChat id: String) async {
+        // Show the message and a "starting" status at once; the server's
+        // turn_started (matched by client_request_id) replaces it.
+        let requestID = "mac-" + UUID().uuidString
+        let isBusy = model.chat(id).map { $0.state == .running || $0.state == .needsAction } ?? false
+        if !isBusy { model.pendingSends[id, default: []].append(PendingSend(id: requestID, text: text)) }
         do {
-            _ = try await client.sendTurn(id, prompt: text, requestID: "mac-" + UUID().uuidString,
-                                          capabilities: Self.capabilities)
+            _ = try await client.sendTurn(id, prompt: text, requestID: requestID, capabilities: Self.capabilities)
             if let index = model.chats.firstIndex(where: { $0.id == id }) {
                 model.chats[index].preview = Self.preview(text)
                 model.chats[index].lastActivity = .now
             }
         } catch {
+            model.pendingSends[id]?.removeAll { $0.id == requestID }
             model.drafts[id] = text
             model.report(error)
         }
@@ -387,6 +497,79 @@ final class LiveController {
                 model.groups.insert(mapped, at: 0)
                 model.select(.group(mapped.id))
             }
+        } catch {
+            model.report(error)
+        }
+    }
+
+    /// Reads each member chat's current settings (they decide how its turns run).
+    private func loadMemberSessions(of group: GroupSummary) async {
+        for member in group.participants {
+            guard let sessionID = member.sessionID,
+                  let session = try? await client.sessionTail(sessionID, limit: 1)["session"], !session.isNull else { continue }
+            memberSessions[sessionID] = session
+        }
+        applyMemberSessions(to: group.id)
+    }
+
+    private func applyMemberSessions(to groupID: String) {
+        guard let index = model.groups.firstIndex(where: { $0.id == groupID }) else { return }
+        for member in model.groups[index].participants.indices {
+            let participant = model.groups[index].participants[member]
+            guard let session = participant.sessionID.flatMap({ memberSessions[$0] }) else { continue }
+            var updated = participant
+            updated.model = session["model"].text ?? ""
+            updated.effort = session["effort"].text ?? ""
+            updated.permission = PermissionPreset.label(for: session, backend: participant.backend)
+            if updated != participant { model.groups[index].participants[member] = updated }
+        }
+    }
+
+    /// Finds approvals that members of the open group are waiting for. Only
+    /// members marked as needing action are read.
+    func refreshMemberApprovals(_ groupID: String) async {
+        guard let group = model.group(groupID) else { return }
+        var found: [GroupApproval] = []
+        for member in group.participants where member.state == .needsAction {
+            guard let sessionID = member.sessionID,
+                  let page = try? await client.sessionTail(sessionID, limit: 120) else { continue }
+            var projection = SessionProjection(backend: member.backend, cwd: LiveMapping.expand(group.cwd))
+            projection.apply(page["events"].array)
+            for item in projection.items {
+                guard case .approval(let id, _, let title, let detail, let reason, .pending, let allowsSession) = item,
+                      projection.pending[id] != nil else { continue }
+                found.append(GroupApproval(interactionID: id, handle: member.handle, backend: member.backend,
+                                           sessionID: sessionID, title: title, detail: detail, reason: reason,
+                                           allowsSession: allowsSession))
+            }
+        }
+        if model.groupApprovals[groupID] != found { model.groupApprovals[groupID] = found }
+    }
+
+    func decide(_ approval: GroupApproval, _ decision: ApprovalDecision, inGroup groupID: String) async {
+        let value = switch decision {
+        case .allowed: "accept"
+        case .allowedForSession: "acceptForSession"
+        default: "decline"
+        }
+        do {
+            try await client.resolveInteraction(approval.sessionID, backend: approval.backend.rawValue,
+                                                interactionID: approval.interactionID, decision: value)
+        } catch {
+            model.report(error)
+        }
+        await refreshMemberApprovals(groupID)
+    }
+
+    /// Changes one member's model, effort or permissions. Applies from its next turn.
+    func updateMember(_ handle: String, inGroup groupID: String, fields: JSON) async {
+        guard let sessionID = model.group(groupID)?.participants.first(where: { $0.handle == handle })?.sessionID else {
+            model.errorMessage = "找不到 @\(handle) 的成员聊天"
+            return
+        }
+        do {
+            memberSessions[sessionID] = try await client.updateSession(sessionID, fields)
+            applyMemberSessions(to: groupID)
         } catch {
             model.report(error)
         }

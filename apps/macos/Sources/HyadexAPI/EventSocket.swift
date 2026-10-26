@@ -13,6 +13,7 @@ public final class EventSocket: @unchecked Sendable {
     private let client: HyadexClient
     private let path: String
     private let protocolName: String
+    private let extraQuery: [String: String]
     private let lock = NSLock()
     private var lastSeq: Int
     private var task: Task<Void, Never>?
@@ -20,10 +21,12 @@ public final class EventSocket: @unchecked Sendable {
     /// - Parameters:
     ///   - path: e.g. `api/sessions/<id>/events` or `api/groups/<id>/events/stream`.
     ///   - after: the last `seq` already applied by the caller.
-    public init(client: HyadexClient, path: String, after: Int, protocolName: String = "hyadex-events-v1") {
+    public init(client: HyadexClient, path: String, after: Int, query: [String: String] = [:],
+                protocolName: String = "hyadex-events-v1") {
         self.client = client
         self.path = path
         self.lastSeq = after
+        self.extraQuery = query
         self.protocolName = protocolName
     }
 
@@ -58,6 +61,7 @@ public final class EventSocket: @unchecked Sendable {
         var components = URLComponents(url: client.endpoint.baseURL.appending(path: path), resolvingAgainstBaseURL: false)!
         components.scheme = components.scheme == "https" ? "wss" : "ws"
         components.queryItems = [URLQueryItem(name: "after", value: String(resumeSeq))]
+            + extraQuery.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
         var request = URLRequest(url: components.url!)
         if let token = client.token, !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

@@ -22,30 +22,29 @@ enum Snapshotter {
 
     static let scenes: [Scene] = [
         Scene(name: "01-chat", dark: false) { model in
-            model.select(.chat("c1")); model.showInspector = true; model.inspectorTab = .changes
-            model.selectedFilePath = "Sources/HyadexAPI/EventStream.swift"
+            model.select(.chat("c1")); model.openFile("Sources/HyadexAPI/EventStream.swift")
         },
         Scene(name: "02-approval", dark: false) { model in
-            model.select(.chat("c2")); model.inspectorTab = .details
+            model.select(.chat("c2"))
         },
         Scene(name: "03-group", dark: false) { model in
-            model.select(.group("g1")); model.inspectorTab = .changes
+            model.select(.group("g1"))
             model.drafts["g1"] = "@co"
         },
         Scene(name: "04-autopilot-running", dark: false) { model in
-            model.select(.autopilot("r1")); model.showInspector = false
+            model.select(.autopilot("r1"))
         },
         Scene(name: "05-autopilot-approval", dark: true) { model in
-            model.select(.autopilot("r2")); model.showInspector = false
+            model.select(.autopilot("r2"))
         },
         Scene(name: "06-jobs", dark: false) { model in
             model.select(.jobs)
         },
         Scene(name: "07-chat-dark", dark: true) { model in
-            model.select(.chat("c3")); model.showInspector = true; model.inspectorTab = .details
+            model.select(.chat("c3"))
         },
         Scene(name: "08-new-autopilot", dark: false) { model in
-            model.select(.chat("c1")); model.showInspector = false; model.sheet = .newAutopilot
+            model.select(.chat("c1")); model.sheet = .newAutopilot
         },
         Scene(name: "09-command-palette", dark: false) { model in
             model.sheet = .commandPalette
@@ -56,10 +55,10 @@ enum Snapshotter {
         Scene(name: "15-tab-stress", dark: true, stress: true) { _ in },
         // Last: entering full screen moves the window to its own Space.
         Scene(name: "10-fullscreen-dark", dark: true, fullscreen: true) { model in
-            model.select(.chat("c1")); model.showInspector = true; model.inspectorTab = .changes
+            model.select(.chat("c1"))
         },
         Scene(name: "11-fullscreen-light", dark: false, fullscreen: true) { model in
-            model.select(.chat("c1")); model.showInspector = true; model.inspectorTab = .changes
+            model.select(.chat("c1"))
         },
     ]
 
@@ -96,7 +95,7 @@ enum Snapshotter {
                 let modes = SidebarMode.allCases
                 for round in 0..<36 {
                     model.switchSidebar(to: modes[round % modes.count])
-                    model.showInspector = round % 4 != 3
+                    model.showChanges = round % 4 == 1
                     try? await Task.sleep(for: .milliseconds(round % 2 == 0 ? 60 : 350))
                 }
                 print("[snapshot] stress survived")

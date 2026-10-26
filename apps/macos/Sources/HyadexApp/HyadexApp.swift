@@ -64,7 +64,8 @@ struct AppCommands: Commands {
                     .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: [.command, .control])
             }
             Divider()
-            Button("显示/隐藏检查器") { model.showInspector.toggle() }
+            Button(model.showChanges ? "隐藏改动" : "显示改动") { model.showChanges.toggle() }
+                .disabled(!model.showChanges && model.selectedChanges.files.isEmpty)
                 .keyboardShortcut("i", modifiers: [.command, .option])
             Divider()
         }

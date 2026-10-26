@@ -12,12 +12,6 @@ public enum AgentBackend: String, CaseIterable, Codable, Hashable, Sendable {
         }
     }
 
-    public var defaultModels: [String] {
-        switch self {
-        case .claude: ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5"]
-        case .codex: ["gpt-5.5-codex", "gpt-5.5", "gpt-5.5-mini"]
-        }
-    }
 }
 
 /// One state vocabulary for every chat, member, run and step, so the
@@ -107,7 +101,7 @@ public struct ChatSummary: Identifiable, Hashable, Sendable {
     public var unread: Bool
     public var tokensUsed: Int
 
-    public init(id: String, title: String, backend: AgentBackend, model: String, effort: String = "高",
+    public init(id: String, title: String, backend: AgentBackend, model: String, effort: String = "",
                 permission: String, cwd: String, preview: String, lastActivity: Date,
                 state: ActivityState = .idle, pinned: Bool = false, unread: Bool = false, tokensUsed: Int = 0) {
         self.id = id
@@ -135,13 +129,21 @@ public struct Participant: Identifiable, Hashable, Sendable {
     public var role: String
     public var model: String
     public var state: ActivityState
+    /// The member chat that runs this agent's turns (live servers only).
+    public var sessionID: String?
+    public var effort: String
+    public var permission: String
 
-    public init(handle: String, backend: AgentBackend, role: String, model: String, state: ActivityState = .idle) {
+    public init(handle: String, backend: AgentBackend, role: String, model: String, state: ActivityState = .idle,
+                sessionID: String? = nil, effort: String = "", permission: String? = nil) {
         self.handle = handle
         self.backend = backend
         self.role = role
         self.model = model
         self.state = state
+        self.sessionID = sessionID
+        self.effort = effort
+        self.permission = permission ?? (backend == .claude ? "Manual" : "Custom (workspace-write, never)")
     }
 }
 
@@ -401,5 +403,62 @@ public struct QueuedMessage: Identifiable, Hashable, Sendable {
     public init(id: String = UUID().uuidString, text: String) {
         self.id = id
         self.text = text
+    }
+}
+
+/// An approval a group member is waiting for. Members run in hidden member
+/// chats, so the group view surfaces their requests.
+public struct GroupApproval: Identifiable, Hashable, Sendable {
+    public var id: String { interactionID }
+    public let interactionID: String
+    public let handle: String
+    public let backend: AgentBackend
+    public let sessionID: String
+    public let title: String
+    public let detail: String
+    public let reason: String
+    public let allowsSession: Bool
+
+    public init(interactionID: String, handle: String, backend: AgentBackend, sessionID: String,
+                title: String, detail: String, reason: String, allowsSession: Bool) {
+        self.interactionID = interactionID
+        self.handle = handle
+        self.backend = backend
+        self.sessionID = sessionID
+        self.title = title
+        self.detail = detail
+        self.reason = reason
+        self.allowsSession = allowsSession
+    }
+}
+
+/// A message the user sent that the server has not acknowledged yet.
+public struct PendingSend: Identifiable, Hashable, Sendable {
+    public let id: String  // the turn's client_request_id
+    public let text: String
+    public let time: Date
+
+    public init(id: String, text: String, time: Date = .now) {
+        self.id = id
+        self.text = text
+        self.time = time
+    }
+}
+
+/// What the agent is doing right now, for the live status line.
+public struct LiveActivity: Hashable, Sendable {
+    public enum Kind: Hashable, Sendable { case starting, thinking, tool, waiting }
+
+    public let kind: Kind
+    public let label: String
+    /// Live reasoning text or the running command, when known.
+    public let detail: String?
+    public let since: Date
+
+    public init(kind: Kind, label: String, detail: String? = nil, since: Date) {
+        self.kind = kind
+        self.label = label
+        self.detail = detail
+        self.since = since
     }
 }

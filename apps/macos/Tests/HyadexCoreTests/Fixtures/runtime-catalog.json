@@ -1,0 +1,569 @@
+{
+ "generated_at": "2026-10-26T08:22:06Z",
+ "backends": {
+  "claude": {
+   "models": [
+    {
+     "value": "",
+     "label": "Server default (Sonnet)"
+    },
+    {
+     "value": "fable",
+     "label": "Fable"
+    },
+    {
+     "value": "opus",
+     "label": "Opus"
+    },
+    {
+     "value": "sonnet",
+     "label": "Sonnet"
+    },
+    {
+     "value": "haiku",
+     "label": "Haiku"
+    },
+    {
+     "value": "opus[1m]",
+     "label": "Opus 1M"
+    },
+    {
+     "value": "claude-fable-5-1",
+     "label": "Fable 5.1"
+    },
+    {
+     "value": "claude-mythos-5-1",
+     "label": "Mythos 5.1 (limited access)",
+     "availability": "limited"
+    },
+    {
+     "value": "claude-opus-5",
+     "label": "Opus 5"
+    },
+    {
+     "value": "claude-sonnet-5",
+     "label": "Sonnet 5"
+    },
+    {
+     "value": "claude-haiku-4-5-20251001",
+     "label": "Haiku 4.5"
+    },
+    {
+     "value": "claude-fable-5",
+     "label": "Fable 5"
+    },
+    {
+     "value": "claude-mythos-5",
+     "label": "Mythos 5 (limited access)",
+     "availability": "limited"
+    },
+    {
+     "value": "claude-opus-4-8",
+     "label": "Opus 4.8"
+    },
+    {
+     "value": "claude-opus-4-8[1m]",
+     "label": "Opus 4.8 1M"
+    }
+   ],
+   "efforts": [
+    {
+     "value": "",
+     "label": "Server default (High)"
+    },
+    {
+     "value": "low",
+     "label": "Low"
+    },
+    {
+     "value": "medium",
+     "label": "Medium"
+    },
+    {
+     "value": "high",
+     "label": "High"
+    },
+    {
+     "value": "xhigh",
+     "label": "XHigh"
+    },
+    {
+     "value": "max",
+     "label": "Max"
+    },
+    {
+     "value": "ultracode",
+     "label": "Ultracode"
+    }
+   ],
+   "model_source": "claude --help + current fallback",
+   "effort_source": "claude --help",
+   "default_model": "sonnet",
+   "default_effort": "high",
+   "available": false,
+   "native_credentials_present": true,
+   "custom_provider": {
+    "configured": false,
+    "available": false,
+    "models": [],
+    "efforts": [],
+    "default_model": null,
+    "model": null,
+    "default_effort": null,
+    "base_url": null
+   }
+  },
+  "codex": {
+   "models": [
+    {
+     "value": "",
+     "label": "Server default (GPT-6.1-Sol)"
+    },
+    {
+     "value": "gpt-6.1-sol",
+     "label": "GPT-6.1-Sol",
+     "efforts": [
+      {
+       "value": "low",
+       "label": "Low"
+      },
+      {
+       "value": "medium",
+       "label": "Medium"
+      },
+      {
+       "value": "high",
+       "label": "High"
+      },
+      {
+       "value": "xhigh",
+       "label": "XHigh"
+      },
+      {
+       "value": "max",
+       "label": "Max"
+      },
+      {
+       "value": "ultra",
+       "label": "Ultra"
+      }
+     ],
+     "service_tier": null
+    },
+    {
+     "value": "gpt-6-astra",
+     "label": "GPT-6-Astra",
+     "efforts": [
+      {
+       "value": "low",
+       "label": "Low"
+      },
+      {
+       "value": "medium",
+       "label": "Medium"
+      },
+      {
+       "value": "high",
+       "label": "High"
+      },
+      {
+       "value": "xhigh",
+       "label": "XHigh"
+      },
+      {
+       "value": "max",
+       "label": "Max"
+      },
+      {
+       "value": "ultra",
+       "label": "Ultra"
+      }
+     ],
+     "service_tier": null
+    },
+    {
+     "value": "gpt-6-sol",
+     "label": "GPT-6-Sol",
+     "efforts": [
+      {
+       "value": "low",
+       "label": "Low"
+      },
+      {
+       "value": "medium",
+       "label": "Medium"
+      },
+      {
+       "value": "high",
+       "label": "High"
+      },
+      {
+       "value": "xhigh",
+       "label": "XHigh"
+      },
+      {
+       "value": "max",
+       "label": "Max"
+      },
+      {
+       "value": "ultra",
+       "label": "Ultra"
+      }
+     ],
+     "service_tier": null
+    },
+    {
+     "value": "gpt-6-luna",
+     "label": "GPT-6-Luna",
+     "efforts": [
+      {
+       "value": "low",
+       "label": "Low"
+      },
+      {
+       "value": "medium",
+       "label": "Medium"
+      },
+      {
+       "value": "high",
+       "label": "High"
+      },
+      {
+       "value": "xhigh",
+       "label": "XHigh"
+      },
+      {
+       "value": "max",
+       "label": "Max"
+      }
+     ],
+     "service_tier": null
+    },
+    {
+     "value": "gpt-5.6-sol",
+     "label": "GPT-5.6-Sol",
+     "efforts": [
+      {
+       "value": "low",
+       "label": "Low"
+      },
+      {
+       "value": "medium",
+       "label": "Medium"
+      },
+      {
+       "value": "high",
+       "label": "High"
+      },
+      {
+       "value": "xhigh",
+       "label": "XHigh"
+      },
+      {
+       "value": "max",
+       "label": "Max"
+      },
+      {
+       "value": "ultra",
+       "label": "Ultra"
+      }
+     ],
+     "service_tier": null
+    },
+    {
+     "value": "gpt-5.6-terra",
+     "label": "GPT-5.6-Terra",
+     "efforts": [
+      {
+       "value": "low",
+       "label": "Low"
+      },
+      {
+       "value": "medium",
+       "label": "Medium"
+      },
+      {
+       "value": "high",
+       "label": "High"
+      },
+      {
+       "value": "xhigh",
+       "label": "XHigh"
+      },
+      {
+       "value": "max",
+       "label": "Max"
+      },
+      {
+       "value": "ultra",
+       "label": "Ultra"
+      }
+     ],
+     "service_tier": null
+    },
+    {
+     "value": "gpt-5.6-luna",
+     "label": "GPT-5.6-Luna",
+     "efforts": [
+      {
+       "value": "low",
+       "label": "Low"
+      },
+      {
+       "value": "medium",
+       "label": "Medium"
+      },
+      {
+       "value": "high",
+       "label": "High"
+      },
+      {
+       "value": "xhigh",
+       "label": "XHigh"
+      },
+      {
+       "value": "max",
+       "label": "Max"
+      }
+     ],
+     "service_tier": null
+    }
+   ],
+   "efforts": [
+    {
+     "value": "",
+     "label": "Server default (XHigh)"
+    },
+    {
+     "value": "low",
+     "label": "Low"
+    },
+    {
+     "value": "medium",
+     "label": "Medium"
+    },
+    {
+     "value": "high",
+     "label": "High"
+    },
+    {
+     "value": "xhigh",
+     "label": "XHigh"
+    },
+    {
+     "value": "max",
+     "label": "Max"
+    },
+    {
+     "value": "ultra",
+     "label": "Ultra"
+    }
+   ],
+   "model_efforts": {
+    "gpt-6.1-sol": [
+     {
+      "value": "low",
+      "label": "Low"
+     },
+     {
+      "value": "medium",
+      "label": "Medium"
+     },
+     {
+      "value": "high",
+      "label": "High"
+     },
+     {
+      "value": "xhigh",
+      "label": "XHigh"
+     },
+     {
+      "value": "max",
+      "label": "Max"
+     },
+     {
+      "value": "ultra",
+      "label": "Ultra"
+     }
+    ],
+    "gpt-6-astra": [
+     {
+      "value": "low",
+      "label": "Low"
+     },
+     {
+      "value": "medium",
+      "label": "Medium"
+     },
+     {
+      "value": "high",
+      "label": "High"
+     },
+     {
+      "value": "xhigh",
+      "label": "XHigh"
+     },
+     {
+      "value": "max",
+      "label": "Max"
+     },
+     {
+      "value": "ultra",
+      "label": "Ultra"
+     }
+    ],
+    "gpt-6-sol": [
+     {
+      "value": "low",
+      "label": "Low"
+     },
+     {
+      "value": "medium",
+      "label": "Medium"
+     },
+     {
+      "value": "high",
+      "label": "High"
+     },
+     {
+      "value": "xhigh",
+      "label": "XHigh"
+     },
+     {
+      "value": "max",
+      "label": "Max"
+     },
+     {
+      "value": "ultra",
+      "label": "Ultra"
+     }
+    ],
+    "gpt-6-luna": [
+     {
+      "value": "low",
+      "label": "Low"
+     },
+     {
+      "value": "medium",
+      "label": "Medium"
+     },
+     {
+      "value": "high",
+      "label": "High"
+     },
+     {
+      "value": "xhigh",
+      "label": "XHigh"
+     },
+     {
+      "value": "max",
+      "label": "Max"
+     }
+    ],
+    "gpt-5.6-sol": [
+     {
+      "value": "low",
+      "label": "Low"
+     },
+     {
+      "value": "medium",
+      "label": "Medium"
+     },
+     {
+      "value": "high",
+      "label": "High"
+     },
+     {
+      "value": "xhigh",
+      "label": "XHigh"
+     },
+     {
+      "value": "max",
+      "label": "Max"
+     },
+     {
+      "value": "ultra",
+      "label": "Ultra"
+     }
+    ],
+    "gpt-5.6-terra": [
+     {
+      "value": "low",
+      "label": "Low"
+     },
+     {
+      "value": "medium",
+      "label": "Medium"
+     },
+     {
+      "value": "high",
+      "label": "High"
+     },
+     {
+      "value": "xhigh",
+      "label": "XHigh"
+     },
+     {
+      "value": "max",
+      "label": "Max"
+     },
+     {
+      "value": "ultra",
+      "label": "Ultra"
+     }
+    ],
+    "gpt-5.6-luna": [
+     {
+      "value": "low",
+      "label": "Low"
+     },
+     {
+      "value": "medium",
+      "label": "Medium"
+     },
+     {
+      "value": "high",
+      "label": "High"
+     },
+     {
+      "value": "xhigh",
+      "label": "XHigh"
+     },
+     {
+      "value": "max",
+      "label": "Max"
+     }
+    ]
+   },
+   "model_source": "codex debug models",
+   "effort_source": "codex debug models",
+   "default_model": "gpt-6.1-sol",
+   "default_effort": "xhigh",
+   "default_service_tier": "default",
+   "model_replacements": {
+    "gpt-5.2": "gpt-6.1-sol",
+    "gpt-5.2-codex": "gpt-6.1-sol",
+    "gpt-5.3-codex": "gpt-6.1-sol",
+    "gpt-5.3-codex-spark": "gpt-6.1-sol",
+    "gpt-5.4": "gpt-6.1-sol",
+    "gpt-5.4-mini": "gpt-6.1-sol",
+    "gpt-5.5": "gpt-6.1-sol"
+   },
+   "custom_provider": {
+    "configured": false,
+    "available": false,
+    "model": null,
+    "base_url": null,
+    "credential_id": null,
+    "models": [],
+    "efforts": [],
+    "model_efforts": {},
+    "model_capabilities": {},
+    "default_model": "",
+    "default_effort": ""
+   },
+   "available": true,
+   "native_credentials_present": true
+  }
+ }
+}

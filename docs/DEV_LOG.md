@@ -3,6 +3,70 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Usage, context and native permissions in the Mac app
+
+- Server: `GET /api/runtime/usage?backend=claude` now answers from Claude
+  Code's own `/usage` data. A short-lived Agent SDK connection sends the native
+  `get_usage` control request (no prompt, no model request, no settings or
+  hooks loaded, no transcript scan) and keeps only the plan windows, with the
+  titles and order Claude Code shows ("Current session", "Current week (all
+  models)", Sonnet-only for Max and Team, per-model weeks). Answers are cached
+  for two minutes and refreshed after a native rate-limit event. Chats on a
+  custom provider connection never read the native account. Rate-limit events
+  remain the fallback.
+- The Mac app shows both providers' plan usage at the bottom of the sidebar
+  (the window closest to its limit; the popover lists every window and its
+  reset time), and each chat's context-window fill next to the composer
+  controls, updated live from the server's context-usage signals.
+- Permission choices use the providers' own modes and names: Claude Code's
+  Manual, Accept edits, Plan, Auto, Don't Ask and Bypass Permissions; Codex's
+  Read Only, Default and Full Access, with other Codex combinations shown as
+  "Custom (sandbox, approval)" as Codex does. Each choice explains what it allows.
+- Provider marks are drawn as vectors (Claude's spark, Codex's cloud) instead
+  of generic symbols. One-agent chats no longer label every reply with the
+  agent's name; group discussions still do.
+- Agent replies render GitHub-flavoured Markdown (headings, nested and task
+  lists, tables, quotes, highlighted code) and TeX math, inline and display,
+  laid out natively with the system's math font; no third-party packages are
+  added. Links to files open their diff, the local file, or the server's copy.
+  Your own messages show as typed, as in the native apps.
+- Images and files attached to a turn or published by an agent appear in the
+  conversation (thumbnails for images); clicking opens them.
+- Verified on an isolated development server with real Claude Code and Codex:
+  usage for both accounts, context fill before and after a turn for both
+  chats, a Claude approval in Manual mode, a Codex turn in Default mode, and a
+  group reply; a live Codex answer with a heading, display and inline math, a
+  table, a list and Python code rendered in the app. 30 app tests and the
+  provider usage suites pass.
+
+## 2026-10-26 — Native model and effort choices in the Mac app
+
+- The Mac app now offers the models and reasoning efforts the server discovers
+  from the native CLIs (`GET /api/runtime/catalog`: `claude --help`, `codex debug
+  models`) with their native names, for chats and for each group member. Codex
+  shows only the efforts the selected model supports, and an effort the new
+  model cannot use falls back to the server default. Group member cards change
+  that member's chat settings, which apply from its next turn.
+- Group members waiting for an approval now show it above the group composer,
+  where it can be allowed or denied; previously the request was only in the
+  hidden member chat and the member stayed blocked.
+- Chats show a sent message immediately with a live status line (starting,
+  thinking, the running command or edited file, elapsed time, and the live
+  reasoning summary when the provider streams one). Each turn's thinking, tool
+  calls and answered approvals fold into one summary row. Commands show `~`
+  instead of the home path, and sidebar previews drop Markdown syntax. Checked
+  live: the status line appears within 2 seconds of sending for Claude and Codex.
+- Replaced the permanent inspector column with an on-demand changes panel that
+  slides over the conversation, and a details popover. The conversation keeps
+  its full width, and group members scroll instead of being clipped.
+- Server: the Claude catalog labels its default entries "Server default
+  (Sonnet)" and "Server default (High)", as Codex already did, instead of
+  repeating the name of the explicit option.
+- Verified on an isolated development server: a Codex chat switched to
+  `gpt-6-astra`/`high` ran its next turn with those values, and a Claude group
+  member switched to `haiku`/`low` answered with them. The fast suite (270
+  tests) and 17 app tests pass.
+
 ## 2026-10-26 — First macOS client
 
 - Added `apps/macos`, a native SwiftUI client built with SwiftPM: a sidebar with

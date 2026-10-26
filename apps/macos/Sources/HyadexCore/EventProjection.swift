@@ -20,9 +20,19 @@ public struct SessionProjection: Sendable {
     public private(set) var lastActivity: Date?
     /// `code_diff` items whose unified diff has not been fetched yet: item id → run id.
     public private(set) var diffsToLoad: [String: String] = [:]
+    /// When the running turn started (nil when idle).
+    public private(set) var turnStartedAt: Date?
+    /// How long each finished turn took, keyed by the id of its user message.
+    public private(set) var turnSeconds: [String: Int] = [:]
+    /// `client_request_id`s the server has accepted (turn started or queued).
+    public private(set) var acceptedRequests: Set<String> = []
+    private var turnUserItem: String?
 
     private var index: [String: Int] = [:]
     private var toolStarts: [String: Date] = [:]
+    /// Uploaded files by id, to name a turn's attachments.
+    private var uploads: [String: MediaFile] = [:]
+    private var lastPublication: String?
     private var decided: [String: ApprovalDecision] = [:]
 
     public init(backend: AgentBackend, cwd: String) {
@@ -47,9 +57,32 @@ public struct SessionProjection: Sendable {
         case "turn_started":
             running = true
             lastActivity = time
+            turnStartedAt = time
+            turnUserItem = id
+            if let request = event["client_request_id"].string { acceptedRequests.insert(request) }
             if let queuedID = event["queued_id"].string { queued.removeAll { $0.id == queuedID } }
             let prompt = event["display_prompt"].text ?? event["prompt"].text ?? ""
             if !prompt.isEmpty { append(.message(id: id, author: .user, text: prompt, time: time)) }
+            let attached = (event["display_file_ids"].array.isEmpty ? event["file_ids"] : event["display_file_ids"])
+                .array.compactMap(\.string)
+            if !attached.isEmpty {
+                append(.media(id: id + "-files", author: .user, files: attached.map {
+                    uploads[$0] ?? MediaFile(id: $0, name: $0, contentType: "")
+                }))
+            }
+        case "file_uploaded":
+            if let file = Self.mediaFile(event["file"]) { uploads[file.id] = file }
+        case "artifact_created":
+            guard let file = Self.mediaFile(event["artifact"]) else { return }
+            lastActivity = time
+            // One publication of several files shows as one group.
+            if case .media(let previousID, let author, let files)? = items.last, author.kind == .agent,
+               let publication = event["publication_id"].string, publication == lastPublication {
+                replace(previousID, with: .media(id: previousID, author: author, files: files + [file]))
+            } else {
+                append(.media(id: id, author: agent, files: [file]))
+            }
+            lastPublication = event["publication_id"].string
         case "assistant_text":
             guard let text = event["text"].text else { return }
             lastAssistantText = text
@@ -102,21 +135,25 @@ public struct SessionProjection: Sendable {
             if let runID = event["run_id"].string { diffsToLoad[id] = runID }
         case "turn_finished":
             running = false
+            closeTurn(at: time)
             pending.removeAll()
             lastActivity = time
             if lastAssistantText == nil, let text = event["result_text"].text { lastAssistantText = text }
             settleRunningTools(as: .succeeded)
         case "turn_stopped", "turn_aborted":
             running = false
+            closeTurn(at: time)
             pending.removeAll()
             settleRunningTools(as: .failed)
             append(.divider(id: id, text: "已停止"))
         case "turn_failed", "error":
             running = false
+            closeTurn(at: time)
             settleRunningTools(as: .failed)
             let message = event["message"].text ?? event["error"].text ?? "运行出错"
             append(.divider(id: id, text: "出错：" + String(message.prefix(160))))
         case "turn_queued":
+            if let request = event["client_request_id"].string { acceptedRequests.insert(request) }
             guard let queuedID = event["queued_id"].string, !queued.contains(where: { $0.id == queuedID }) else { return }
             queued.append(QueuedMessage(id: queuedID, text: event["display_prompt"].text ?? event["prompt"].text ?? ""))
         case "turn_unqueued":
@@ -124,6 +161,12 @@ public struct SessionProjection: Sendable {
         default:
             break
         }
+    }
+
+    static func mediaFile(_ record: JSON) -> MediaFile? {
+        guard let id = record["id"].string else { return nil }
+        let name = record["filename"].text ?? record["title"].text ?? id
+        return MediaFile(id: id, name: name, contentType: record["content_type"].string ?? "")
     }
 
     /// Replaces the queue with the server's current list (from `GET /api/sessions/{id}`).
@@ -151,6 +194,14 @@ public struct SessionProjection: Sendable {
     }
 
     // MARK: Helpers
+
+    private mutating func closeTurn(at time: Date) {
+        if let start = turnStartedAt, let item = turnUserItem {
+            turnSeconds[item] = max(0, Int(time.timeIntervalSince(start).rounded()))
+        }
+        turnStartedAt = nil
+        turnUserItem = nil
+    }
 
     private mutating func append(_ item: TimelineItem) {
         if let position = index[item.id] {
@@ -200,6 +251,10 @@ public struct SessionProjection: Sendable {
         return path
     }
 
+    static func abbreviateHome(_ text: String) -> String {
+        text.replacingOccurrences(of: NSHomeDirectory() + "/", with: "~/")
+    }
+
     /// Codex wraps commands as `/bin/zsh -lc "…"`; show the command itself.
     static func unwrapShell(_ command: String) -> String {
         for prefix in ["/bin/zsh -lc ", "/bin/bash -lc ", "bash -lc ", "zsh -lc ", "/bin/sh -c "] where command.hasPrefix(prefix) {
@@ -219,7 +274,7 @@ public struct SessionProjection: Sendable {
             .map { relative($0, to: cwd) }
         switch name {
         case "Bash", "shell", "exec_command", "local_shell", "BashOutput":
-            let command = unwrapShell(input["command"].string ?? input["cmd"].string ?? name)
+            let command = abbreviateHome(unwrapShell(input["command"].string ?? input["cmd"].string ?? name))
             return (.command, command.components(separatedBy: "\n").first ?? command)
         case "Read", "NotebookRead":
             return (.read, path ?? name)
@@ -247,7 +302,7 @@ public struct SessionProjection: Sendable {
         let params = interaction["params"]
         let reason = params["reason"].text ?? ""
         if method.contains("commandExecution") || params["kind"].string == "command" {
-            let command = unwrapShell(params["command"].string ?? "")
+            let command = abbreviateHome(unwrapShell(params["command"].string ?? ""))
             return ("运行命令", command, reason.isEmpty ? "在 \(relative(params["cwd"].string ?? cwd, to: cwd)) 中运行" : reason)
         }
         if method.contains("fileChange") {

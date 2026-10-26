@@ -231,7 +231,8 @@ private struct ChatRow: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            AgentAvatar(backend: chat.backend, size: 24)
+            AgentAvatar(backend: chat.backend, size: 18)
+                .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(chat.title)
@@ -339,6 +340,11 @@ private struct ServerFooter: View {
     var body: some View {
         VStack(spacing: 0) {
             Divider()
+            if !model.usage.isEmpty {
+                UsageMeter(model: model)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 9)
+            }
             Menu {
                 ForEach(model.servers) { server in
                     Button {
@@ -392,3 +398,119 @@ private struct ServerFooter: View {
         }
     }
 }
+
+/// Plan usage of each provider account, as its own CLI reports it (Claude
+/// Code's `/usage`, Codex's rate limits). Each row shows the window closest
+/// to its limit; the popover lists every window.
+private struct UsageMeter: View {
+    @Bindable var model: AppModel
+    @State private var showing = false
+
+    var body: some View {
+        Button {
+            showing.toggle()
+        } label: {
+            VStack(spacing: 5) {
+                ForEach(AgentBackend.allCases, id: \.self) { backend in
+                    if let usage = model.usage[backend] { row(backend, usage) }
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("套餐用量")
+        .popover(isPresented: $showing, arrowEdge: .trailing) {
+            UsageDetails(model: model)
+        }
+    }
+
+    private func row(_ backend: AgentBackend, _ usage: ProviderUsage) -> some View {
+        HStack(spacing: 7) {
+            AgentAvatar(backend: backend, size: 12)
+            if let window = usage.tightest {
+                UsageBar(percent: window.usedPercent)
+                Text("\(Int(window.usedPercent.rounded()))%")
+                    .font(.caption2.monospacedDigit())
+                    .frame(width: 30, alignment: .trailing)
+                Text(window.shortLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 18, alignment: .leading)
+            } else {
+                Text("—").font(.caption2).foregroundStyle(.tertiary)
+                Spacer()
+            }
+        }
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(backend.displayName) 用量 \(usage.tightest.map { "\(Int($0.usedPercent.rounded()))%" } ?? "未知")")
+    }
+}
+
+struct UsageBar: View {
+    let percent: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.secondary.opacity(0.18))
+                Capsule().fill(tint).frame(width: max(3, proxy.size.width * percent / 100))
+            }
+        }
+        .frame(height: 4)
+    }
+
+    private var tint: Color { percent >= 90 ? .red : percent >= 70 ? .orange : .secondary.opacity(0.75) }
+}
+
+private struct UsageDetails: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(AgentBackend.allCases, id: \.self) { backend in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        AgentAvatar(backend: backend, size: 14)
+                        Text(backend.displayName).font(.headline)
+                        if let plan = model.usage[backend]?.plan {
+                            Text(plan.capitalized).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if let usage = model.usage[backend], usage.available {
+                        ForEach(usage.windows) { window in
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack {
+                                    Text(window.label).font(.callout)
+                                    Spacer()
+                                    Text("\(Int(window.usedPercent.rounded()))% used").font(.callout.monospacedDigit())
+                                }
+                                UsageBar(percent: window.usedPercent)
+                                if let reset = window.resetsAt {
+                                    Text("\(reset.formatted(.relative(presentation: .named))) 重置 · \(reset.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    } else {
+                        Text(model.usage[backend]?.unavailableText ?? "暂时读不到用量")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Divider()
+            HStack {
+                Text("数据来自各自 CLI 的原生用量接口").font(.caption).foregroundStyle(.tertiary)
+                Spacer()
+                Button("刷新") { model.refreshUsage() }
+                    .controlSize(.small)
+                    .disabled(!model.isLive)
+            }
+        }
+        .padding(16)
+        .frame(width: 300)
+    }
+}
+

@@ -1,20 +1,24 @@
 import HyadexCore
 import SwiftUI
 
-/// Round avatar for an agent or the user.
+/// An agent's provider mark, or a round placeholder for the user.
 struct AgentAvatar: View {
     let backend: AgentBackend?
     var size: CGFloat = 22
 
     var body: some View {
-        ZStack {
-            Circle().fill(backend == nil ? Color.secondary.opacity(0.18) : Theme.color(for: backend).opacity(0.16))
-            Image(systemName: backend.map(Theme.symbol(for:)) ?? "person.fill")
-                .font(.system(size: size * 0.48, weight: .semibold))
-                .foregroundStyle(backend == nil ? Color.secondary : Theme.color(for: backend))
+        if let backend {
+            ProviderMark(backend: backend, size: size)
+        } else {
+            ZStack {
+                Circle().fill(Color.secondary.opacity(0.18))
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.48, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
         }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 
@@ -24,7 +28,7 @@ struct AvatarStack: View {
     var size: CGFloat = 22
 
     var body: some View {
-        HStack(spacing: -size * 0.4) {
+        HStack(spacing: -size * 0.25) {
             ForEach(Array(backends.prefix(3).enumerated()), id: \.offset) { _, backend in
                 AgentAvatar(backend: backend, size: size)
                     .background(Circle().fill(Color(nsColor: .windowBackgroundColor)).padding(-1.5))
@@ -172,101 +176,6 @@ struct CodeBlock: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 10)
             .padding(.top, 2)
-    }
-}
-
-/// Renders the small Markdown subset agents use: paragraphs with inline
-/// styles, bullet and numbered lists, and fenced code blocks.
-struct MarkdownText: View {
-    let text: String
-    var mentionHandles: Set<String> = []
-
-    private enum Block: Hashable {
-        case paragraph(String)
-        case code(String, String?)
-    }
-
-    private var blocks: [Block] {
-        var result: [Block] = []
-        var paragraph: [String] = []
-        var code: [String]? = nil
-        var language: String? = nil
-        func flush() {
-            let joined = paragraph.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !joined.isEmpty { result.append(.paragraph(joined)) }
-            paragraph = []
-        }
-        for line in text.components(separatedBy: "\n") {
-            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                if let lines = code {
-                    result.append(.code(lines.joined(separator: "\n"), language))
-                    code = nil
-                } else {
-                    flush()
-                    let tag = line.trimmingCharacters(in: .whitespaces).dropFirst(3)
-                    language = tag.isEmpty ? nil : String(tag)
-                    code = []
-                }
-            } else if code != nil {
-                code?.append(line)
-            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                flush()
-            } else {
-                paragraph.append(line)
-            }
-        }
-        if let lines = code { result.append(.code(lines.joined(separator: "\n"), language)) }
-        flush()
-        return result
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .paragraph(let source):
-                    Text(attributed(source))
-                        .lineSpacing(3)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                case .code(let source, let language):
-                    CodeBlock(code: source, language: language)
-                }
-            }
-        }
-    }
-
-    private func attributed(_ source: String) -> AttributedString {
-        let prepared = source
-            .components(separatedBy: "\n")
-            .map { line -> String in
-                let trimmed = line.drop { $0 == " " }
-                if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") { return "•  " + trimmed.dropFirst(2) }
-                return line
-            }
-            .joined(separator: "\n")
-        var string = (try? AttributedString(
-            markdown: prepared,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? AttributedString(prepared)
-        for run in string.runs where run.inlinePresentationIntent?.contains(.code) == true {
-            string[run.range].font = .system(.body, design: .monospaced)
-            string[run.range].backgroundColor = Color.secondary.opacity(0.12)
-        }
-        highlightMentions(in: &string)
-        return string
-    }
-
-    private func highlightMentions(in string: inout AttributedString) {
-        guard !mentionHandles.isEmpty else { return }
-        for handle in mentionHandles.union(["all"]) {
-            var searchRange = string.startIndex..<string.endIndex
-            while let range = string[searchRange].range(of: "@" + handle) {
-                string[range].foregroundColor = Color.accentColor
-                string[range].font = .body.weight(.semibold)
-                searchRange = range.upperBound..<string.endIndex
-            }
-        }
     }
 }
 

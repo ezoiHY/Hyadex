@@ -56,7 +56,7 @@ public struct HyadexClient: Sendable {
     // MARK: Transport
 
     public func request(_ method: String, _ path: String, query: [String: String] = [:],
-                        body: JSON? = nil, timeout: TimeInterval = 20) async throws -> JSON {
+                        body: JSON? = nil, timeout: TimeInterval = 20, nativeToken: Bool = false) async throws -> JSON {
         var components = URLComponents(url: endpoint.baseURL.appending(path: path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty {
             components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
@@ -65,7 +65,12 @@ public struct HyadexClient: Sendable {
         request.httpMethod = method
         request.timeoutInterval = timeout
         if let token, !token.isEmpty {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            // Privileged native controls accept only their own header, never a bearer.
+            if nativeToken {
+                request.setValue(token, forHTTPHeaderField: "X-Hyadex-Token")
+            } else {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
         }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -102,7 +107,45 @@ public struct HyadexClient: Sendable {
         HealthResponse(raw: try await get("api/health"))
     }
 
+    /// Native models and reasoning efforts per backend (probes the CLIs; may take seconds).
+    public func runtimeCatalog(refresh: Bool = false) async throws -> JSON {
+        try await request("GET", "api/runtime/catalog", query: refresh ? ["refresh": "true"] : [:], timeout: 90)
+    }
+
+    /// The provider account's plan usage. Claude's first read starts a short
+    /// native CLI connection, so allow it some time.
+    public func providerUsage(backend: String, refresh: Bool = false) async throws -> JSON {
+        var query = ["backend": backend]
+        if refresh { query["refresh"] = "true" }
+        return try await request("GET", "api/runtime/usage", query: query, timeout: 60, nativeToken: true)
+    }
+
     // MARK: Chats
+
+    /// Provider runtime state of a chat (context usage, permission modes …).
+    public func runtime(_ id: String, backend: String) async throws -> JSON {
+        try await get("api/sessions/\(id)/\(backend)/runtime")
+    }
+
+    /// Bytes of a file the chat uploaded or published (`file_id`), or of a
+    /// registered artifact a message links to (`target`).
+    public func fileData(_ id: String, fileID: String? = nil, target: String? = nil) async throws -> Data {
+        var components: URLComponents
+        if let fileID {
+            components = URLComponents(url: endpoint.baseURL.appending(path: "api/sessions/\(id)/files/\(fileID)"),
+                                       resolvingAgainstBaseURL: false)!
+        } else {
+            components = URLComponents(url: endpoint.baseURL.appending(path: "api/sessions/\(id)/links/file"),
+                                       resolvingAgainstBaseURL: false)!
+            components.queryItems = [URLQueryItem(name: "target", value: target ?? "")]
+        }
+        var request = URLRequest(url: components.url!)
+        request.timeoutInterval = 30
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        let (data, response) = try await session.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw HyadexClientError.invalidResponse }
+        return data
+    }
 
     public func sessions() async throws -> [JSON] {
         try await get("api/sessions")["sessions"].array

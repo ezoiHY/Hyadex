@@ -18,12 +18,6 @@ public enum ConnectionState: Hashable, Sendable {
     }
 }
 
-public enum InspectorTab: String, CaseIterable, Hashable, Sendable {
-    case changes, details
-
-    public var label: String { self == .changes ? "改动" : "详情" }
-}
-
 public enum SheetKind: String, Identifiable, Hashable, Sendable {
     case newChat, newGroup, newAutopilot, commandPalette, feedback
 
@@ -45,6 +39,22 @@ public final class AppModel {
     public var jobs: [ScheduledJob]
     public var timelines: [String: [TimelineItem]]
     public var queues: [String: [QueuedMessage]] = [:]
+    /// Sent messages awaiting the server's acknowledgement, by chat id.
+    public var pendingSends: [String: [PendingSend]] = [:]
+    /// The provider's live reasoning summary, by chat id (non-durable stream).
+    public var liveReasoning: [String: String] = [:]
+    /// When each chat's running turn started.
+    public var turnStartedAt: [String: Date] = [:]
+    /// Finished turn durations per chat, keyed by the user message id.
+    public var turnSeconds: [String: [String: Int]] = [:]
+    /// Native model and effort catalogs from the server, by backend.
+    public var catalogs: [AgentBackend: RuntimeCatalog] = [:]
+    /// Approvals group members are waiting for, by group id.
+    public var groupApprovals: [String: [GroupApproval]] = [:]
+    /// Plan usage of each provider account, as the native CLI reports it.
+    public var usage: [AgentBackend: ProviderUsage] = [:]
+    /// How full each chat's context window is, by chat id.
+    public var contextUsage: [String: ContextUsage] = [:]
     public var drafts: [String: String] = [:]
 
     public var selection: SidebarItem?
@@ -52,8 +62,9 @@ public final class AppModel {
     public private(set) var sidebarMode: SidebarMode =
         UserDefaults.standard.string(forKey: "sidebarMode").flatMap(SidebarMode.init(rawValue:)) ?? .work
     @ObservationIgnored private var lastSelection: [SidebarMode: SidebarItem] = [:]
-    public var showInspector = true
-    public var inspectorTab: InspectorTab = .changes
+    /// The changes panel slides over the conversation on demand (a change card,
+    /// a receipt, "查看 diff", or the toolbar). It is not a permanent column.
+    public var showChanges = false
     public var selectedFilePath: String?
     public var sheet: SheetKind?
     public var searchText = ""
@@ -79,6 +90,7 @@ public final class AppModel {
         jobs = SampleData.jobs(now: now)
         timelines = SampleData.chatTimelines(now: now).merging(SampleData.groupTimelines(now: now)) { $1 }
         queues["c3"] = [QueuedMessage(text: "测试跑完后把 CHANGELOG 也检查一下。")]
+        (usage, contextUsage) = SampleData.usage(chats: chats, now: now)
         select(firstItem(in: sidebarMode))
     }
 
@@ -145,6 +157,7 @@ public final class AppModel {
     public func select(_ item: SidebarItem?) {
         selection = item
         selectedFilePath = nil
+        showChanges = false
         if let item {
             lastSelection[item.mode] = item
             if item.mode != sidebarMode { setSidebarMode(item.mode) }
@@ -209,8 +222,7 @@ public final class AppModel {
 
     public func openFile(_ path: String) {
         selectedFilePath = path
-        inspectorTab = .changes
-        showInspector = true
+        showChanges = true
     }
 
     // MARK: Chats
@@ -294,11 +306,60 @@ public final class AppModel {
         }
     }
 
-    /// Model choices offered for a chat. Live servers accept provider aliases.
-    public func modelChoices(for chat: ChatSummary) -> [String] {
-        guard isLive else { return chat.backend.defaultModels }
-        let base = chat.backend == .claude ? ["默认模型", "opus", "sonnet", "haiku"] : ["默认模型"]
-        return base.contains(chat.model) ? base : base + [chat.model]
+    // MARK: Live activity
+
+    /// The status line for a busy chat: starting, thinking (with the live
+    /// reasoning summary), running a tool, or waiting for an approval.
+    public func activity(forChat id: String) -> LiveActivity? {
+        guard let chat = chat(id) else { return nil }
+        let pending = pendingSends[id] ?? []
+        guard chat.state == .running || chat.state == .needsAction || !pending.isEmpty else { return nil }
+        let since = turnStartedAt[id] ?? pending.first?.time ?? .now
+        let items = timeline(id)
+        if items.pendingApproval != nil {
+            return LiveActivity(kind: .waiting, label: "等待你批准", since: since)
+        }
+        if turnStartedAt[id] == nil, !pending.isEmpty {
+            return LiveActivity(kind: .starting, label: "正在启动 \(chat.backend.displayName)", since: since)
+        }
+        for item in items.reversed() {
+            if case .tool(_, let kind, let title, _, .running, _) = item {
+                return LiveActivity(kind: .tool, label: kind.activeVerb, detail: title, since: since)
+            }
+            if case .message(_, let author, _, _, _, _, _) = item, author.kind == .user { break }
+        }
+        if let reasoning = liveReasoning[id], !reasoning.isEmpty {
+            return LiveActivity(kind: .thinking, label: "正在思考", detail: reasoning, since: since)
+        }
+        return LiveActivity(kind: .thinking, label: "正在思考", since: since)
+    }
+
+    // MARK: Usage and media
+
+    /// Rereads both providers' plan usage from the server.
+    public func refreshUsage() {
+        if let live { Task { await live.refreshUsage(refresh: true) } }
+    }
+
+    @ObservationIgnored private var mediaCache: [String: Data] = [:]
+
+    /// Bytes of an image a chat uploaded or published (`fileID`), or of an
+    /// artifact a message links to by path (`target`). Cached per session.
+    public func media(chat id: String, fileID: String? = nil, target: String? = nil) async -> Data? {
+        let key = "\(id)|\(fileID ?? "")|\(target ?? "")"
+        if let cached = mediaCache[key] { return cached }
+        guard let live, let data = try? await live.client.fileData(id, fileID: fileID, target: target) else { return nil }
+        mediaCache[key] = data
+        return data
+    }
+
+    // MARK: Models and reasoning effort
+    //
+    // Chats and members store the server's raw values ("" = server default);
+    // names and choices come from the native catalog the server discovers.
+
+    public func catalog(for backend: AgentBackend) -> RuntimeCatalog {
+        catalogs[backend] ?? .fallback(for: backend)
     }
 
     public func permissionChoices(for chat: ChatSummary) -> [String] {
@@ -306,32 +367,84 @@ public final class AppModel {
         return labels.contains(chat.permission) ? labels : labels + [chat.permission]
     }
 
+    public func permissionPreset(_ label: String, backend: AgentBackend) -> PermissionPreset? {
+        PermissionPreset.preset(label, for: backend)
+    }
+
     public func setModel(_ value: String, forChat id: String) {
         guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
         chats[index].model = value
-        if let live { Task { await live.updateChat(id, fields: ["model": value == "默认模型" ? .null : .string(value)]) } }
+        var fields: [String: JSON] = ["model": value.isEmpty ? .null : .string(value)]
+        // A Codex model only accepts its own efforts; fall back to the default.
+        if !catalog(for: chats[index].backend).supports(effort: chats[index].effort, model: value) {
+            chats[index].effort = ""
+            fields["effort"] = .null
+        }
+        if let live { Task { await live.updateChat(id, fields: .object(fields)) } }
     }
 
-    public func setEffort(_ label: String, forChat id: String) {
+    public func setEffort(_ value: String, forChat id: String) {
         guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
-        chats[index].effort = label
-        let value = EffortPreset.labels.first { $0.label == label }?.value
-        if let live { Task { await live.updateChat(id, fields: ["effort": value.map(JSON.string) ?? .null]) } }
+        chats[index].effort = value
+        if let live { Task { await live.updateChat(id, fields: ["effort": value.isEmpty ? .null : .string(value)]) } }
     }
 
     public func setPermission(_ label: String, forChat id: String) {
         guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
         chats[index].permission = label
-        guard let live, let preset = PermissionPreset.presets(for: chats[index].backend).first(where: { $0.label == label })
-        else { return }
+        guard let live, let preset = PermissionPreset.preset(label, for: chats[index].backend) else { return }
         Task { await live.updateChat(id, fields: .object(preset.fields.mapValues(JSON.string))) }
+    }
+
+    // MARK: Group members
+
+    public func decide(_ approval: GroupApproval, _ decision: ApprovalDecision, inGroup groupID: String) {
+        groupApprovals[groupID]?.removeAll { $0.id == approval.id }
+        if let live { Task { await live.decide(approval, decision, inGroup: groupID) } }
+    }
+
+    public func permissionChoices(for member: Participant) -> [String] {
+        let labels = PermissionPreset.presets(for: member.backend).map(\.label)
+        return labels.contains(member.permission) ? labels : labels + [member.permission]
+    }
+
+    /// Changes a group member's model, effort or permissions. A running turn
+    /// keeps its settings; the change applies from the member's next turn.
+    public func updateMember(_ handle: String, inGroup groupID: String,
+                             model newModel: String? = nil, effort: String? = nil, permission: String? = nil) {
+        guard let index = groups.firstIndex(where: { $0.id == groupID }),
+              let member = groups[index].participants.firstIndex(where: { $0.handle == handle }) else { return }
+        let backend = groups[index].participants[member].backend
+        var fields: [String: JSON] = [:]
+        if let newModel {
+            groups[index].participants[member].model = newModel
+            fields["model"] = newModel.isEmpty ? .null : .string(newModel)
+            let current = groups[index].participants[member].effort
+            if effort == nil, !catalog(for: backend).supports(effort: current, model: newModel) {
+                groups[index].participants[member].effort = ""
+                fields["effort"] = .null
+            }
+        }
+        if let effort {
+            groups[index].participants[member].effort = effort
+            fields["effort"] = effort.isEmpty ? .null : .string(effort)
+        }
+        if let permission {
+            groups[index].participants[member].permission = permission
+            for (key, value) in PermissionPreset.presets(for: backend).first(where: { $0.label == permission })?.fields ?? [:] {
+                fields[key] = .string(value)
+            }
+        }
+        if let live, !fields.isEmpty {
+            Task { await live.updateMember(handle, inGroup: groupID, fields: .object(fields)) }
+        }
     }
 
     @discardableResult
     public func createChat(backend: AgentBackend, model: String, cwd: String, permission: String) -> String {
         if let live {
             let preset = PermissionPreset.presets(for: backend).first { $0.label == permission }
-            Task { await live.createChat(backend: backend, model: model == "默认模型" ? nil : model, cwd: cwd, permission: preset) }
+            Task { await live.createChat(backend: backend, model: model.isEmpty ? nil : model, cwd: cwd, permission: preset) }
             return ""
         }
         let id = "c" + UUID().uuidString.prefix(6)
@@ -527,7 +640,9 @@ public final class AppModel {
         do {
             if !isLive {
                 chats = []; groups = []; runs = []; jobs = []; timelines = [:]; queues = [:]; drafts = [:]
+                usage = [:]; contextUsage = [:]
             }
+            mediaCache = [:]
             live = controller
             isLive = true
             try await controller.start()
@@ -568,6 +683,7 @@ public final class AppModel {
         jobs = SampleData.jobs(now: now)
         timelines = SampleData.chatTimelines(now: now).merging(SampleData.groupTimelines(now: now)) { $1 }
         queues = ["c3": [QueuedMessage(text: "测试跑完后把 CHANGELOG 也检查一下。")]]
+        (usage, contextUsage) = SampleData.usage(chats: chats, now: now)
         select(firstItem(in: sidebarMode))
     }
 
@@ -588,6 +704,7 @@ public final class AppModel {
     private func simulateReply(in id: String, author: Author) {
         guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
         chats[index].state = .running
+        turnStartedAt[id] = .now
         simulations[id]?.cancel()
         simulations[id] = Task { [weak self] in
             guard let self else { return }
@@ -598,6 +715,7 @@ public final class AppModel {
             await self.stream(reply: Self.demoReply(for: author), as: author, in: id)
             guard !Task.isCancelled, let index = self.chats.firstIndex(where: { $0.id == id }) else { return }
             self.chats[index].state = .idle
+            self.turnStartedAt[id] = nil
             self.chats[index].lastActivity = .now
             self.drainQueue(of: id)
         }

@@ -47,7 +47,9 @@ class UsageRoutesTests(unittest.IsolatedAsyncioTestCase):
             "codex_provider": SimpleNamespace(session_choice=lambda value: value or "default"),
             "codex_app_server_manager": AsyncMock(return_value=self.manager),
             "existing_codex_app_server_manager": lambda session: self.manager,
-            "append_event": AsyncMock(), "broadcast_provider_runtime_changed": AsyncMock()})
+            "append_event": AsyncMock(), "broadcast_provider_runtime_changed": AsyncMock(),
+            "CLAUDE_ACCOUNT_USAGE": {"stale": False},
+            "read_claude_account_usage": AsyncMock(return_value=provider_usage.unavailable("claude"))})
         exec(CODE, self.ns)
         app = FastAPI()
         app.get("/api/runtime/usage")(self.ns["runtime_provider_usage"])
@@ -86,17 +88,35 @@ class UsageRoutesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.read("backend=codex&session_id=missing").status_code, 404)
         self.ns["codex_app_server_manager"].assert_not_awaited()
 
-    def test_claude_without_event_is_unavailable_and_never_starts_provider(self):
+    def test_claude_without_account_usage_or_event_is_unavailable(self):
         result = self.read("backend=claude&session_id=claude&refresh=true")
         self.assertEqual(result.json()["status"], "unavailable")
         self.ns["codex_app_server_manager"].assert_not_awaited()
+        self.ns["read_claude_account_usage"].assert_awaited_once_with(refresh=True)
         self.claude.usage_generation.assert_called_once_with("claude")
+
+    def test_claude_account_usage_is_preferred_and_needs_no_chat(self):
+        account = provider_usage.claude_account_snapshot({
+            "subscription_type": "max", "rate_limits_available": True,
+            "rate_limits": {"five_hour": {"utilization": 41, "resets_at": "2030-01-01T05:00:00Z"}}}, "2030-01-01T00:00:00Z")
+        self.ns["read_claude_account_usage"].return_value = account
+        result = self.read("backend=claude").json()
+        self.assertEqual(result["source"], "claude-usage")
+        self.assertEqual(result["windows"][0]["label"], "Current session")
+        self.claude.usage_generation.assert_not_called()
+
+    def test_custom_claude_chat_never_reads_the_native_account(self):
+        self.ns["STORE"].sessions["claude-custom"] = {"id": "claude-custom", "backend": "claude", "provider_connection": "custom"}
+        result = self.read("backend=claude&session_id=claude-custom").json()
+        self.assertEqual(result["account_kind"], "custom")
+        self.ns["read_claude_account_usage"].assert_not_awaited()
 
     async def test_typed_claude_event_is_metadata_only_and_visible_to_http_read(self):
         RateLimitEvent = type("RateLimitEvent", (), {})
         message = RateLimitEvent()
         message.rate_limit_info = SimpleNamespace(rate_limit_type="five_hour", utilization=.3, status="allowed", resets_at=2000000000)
         await self.ns["observe_claude_provider_usage"]("claude", "claude-owner:1", message)
+        self.assertTrue(self.ns["CLAUDE_ACCOUNT_USAGE"]["stale"])
         self.ns["append_event"].assert_not_awaited()
         self.ns["broadcast_provider_runtime_changed"].assert_awaited_once_with("claude", {
             "type": "provider_usage_changed", "backend": "claude", "ephemeral": True})

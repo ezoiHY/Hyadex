@@ -9,18 +9,14 @@ enum Theme {
     static let smallRadius: CGFloat = 6
     static let timelineSpacing: CGFloat = 14
 
+    /// Claude's terracotta.
+    static let claudeOrange = Color(red: 0.851, green: 0.467, blue: 0.341)
+
     static func color(for backend: AgentBackend?) -> Color {
         switch backend {
-        case .claude: Color(red: 0.85, green: 0.47, blue: 0.34)
-        case .codex: Color(red: 0.25, green: 0.52, blue: 0.96)
+        case .claude: claudeOrange
+        case .codex: Color(red: 0.36, green: 0.43, blue: 0.99)
         case nil: .secondary
-        }
-    }
-
-    static func symbol(for backend: AgentBackend) -> String {
-        switch backend {
-        case .claude: "sparkle"
-        case .codex: "chevron.left.forwardslash.chevron.right"
         }
     }
 }

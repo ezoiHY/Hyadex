@@ -44,16 +44,36 @@ the app shows built-in demo data.
   creates an item of the current tab. Each tab remembers its last selection, and
   an orange dot marks a tab with something waiting for you. ⌃⌘1–3 switch tabs,
   ⌘K jumps anywhere.
-- **Conversation.** Messages, thinking, tool calls with output, changed files,
-  queued messages (editable, withdrawable) and inline approvals (Allow, Always
-  allow for this chat, Deny). Return sends, Shift-Return adds a line, Esc stops.
-  Model, effort and permissions are set per chat from the composer.
+- **Conversation.** A sent message appears at once with a live status line
+  (starting, thinking with the provider's live reasoning summary when it sends
+  one, running a command or editing a file, with elapsed time). Each turn's work
+  (thinking, tool calls, answered approvals) folds into one "已处理 12 秒 · 运行 2
+  条命令" row that expands to the steps, so answers, changed files and pending
+  approvals stay in view. Queued messages are editable and withdrawable;
+  approvals are inline (Allow, Always allow for this chat, Deny). Return sends, Shift-Return adds a line, Esc stops.
+  Model, effort and permissions are set per chat from the composer, with the
+  providers' own names (Claude Code's Manual / Accept edits / Plan / Auto /
+  Don't Ask / Bypass Permissions; Codex's Read Only / Default / Full Access).
+  A ring next to them shows how full the chat's context window is.
+- **Usage.** The bottom of the sidebar shows each provider account's plan usage
+  as its CLI reports it; click it for every window and its reset time.
+- **Messages.** Agent replies render GitHub-flavoured Markdown (headings,
+  nested and task lists, tables, quotes, highlighted code with copy), TeX math
+  (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) and images. Your own messages show as typed.
+  Everything is native: the `HyadexRichText` target has its own parsers and
+  lays math out with CoreText in the system's STIX Two Math font, with no
+  third-party packages.
+- **Media.** Images and files attached to a turn or published by an agent show
+  in the conversation; click to open them.
 - **Groups.** Member status, `@` completion, sequential or parallel answers,
   analysis-only rounds, file receipts and Stop.
 - **Autopilot.** Create a run with its approval, isolation and reviewer options;
   follow the phase, the plan and each task's verification; approve, give
   feedback, pause, resume or abort.
-- **Inspector.** Changed files with diffs, and details of the selection.
+- **Changes and details.** There is no permanent side column. A change card, a
+  group receipt or a task's "查看 diff" slides a changes panel over the
+  conversation (Esc closes it); the toolbar button shows the file count and is
+  disabled when nothing changed. ⓘ shows the selection's settings and usage.
 
 ## How the client uses the server
 
@@ -72,6 +92,7 @@ the app shows built-in demo data.
 | --- | --- |
 | `HyadexAPI` | REST client, WebSocket event stream, keychain token store, JSON values. |
 | `HyadexCore` | `AppModel` (@Observable), live controller, event projections, models, demo data. |
+| `HyadexRichText` | Message rendering: Markdown and TeX parsers, math layout, syntax highlighting. |
 | `HyadexUI` | SwiftUI views and design tokens. |
 | `HyadexApp` | Entry point: window, settings, menu bar extra, commands, development checks. |
 
@@ -108,6 +129,9 @@ logs recorded from that server.
 - Opening a chat loads its latest 400 events; older history is not paged yet.
 - Autopilot and group receipts list changed files without diffs in the inspector.
 - Assistant text arrives as whole messages (the server does not stream tokens).
+- Math covers the LaTeX agents usually write (fractions, roots, scripts, big
+  operators, delimiters, accents, matrices, cases, aligned); an unsupported
+  command shows the formula's source instead.
 - Not exercised end to end yet: connecting through the Settings form (keychain),
   creating chats or groups from their sheets, Stop and queued-message editing
   on a live server, and reconnection after a server restart.

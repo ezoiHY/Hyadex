@@ -66,32 +66,55 @@ struct JobsView: View {
     }
 }
 
-// MARK: - Inspector
+// MARK: - Changes panel and details
 
-struct InspectorView: View {
+/// Changed files and their diffs, sliding over the conversation from the
+/// right. It opens from a change card, a receipt, a task's "查看 diff" or the
+/// toolbar, and closes with Esc; the conversation keeps its full width.
+struct ChangesPanel: View {
     @Bindable var model: AppModel
 
     var body: some View {
+        let changes = model.selectedChanges
         VStack(spacing: 0) {
-            Picker("", selection: $model.inspectorTab) {
-                ForEach(InspectorTab.allCases, id: \.self) { Text($0.label).tag($0) }
+            HStack(spacing: 8) {
+                Text("改动").font(.headline)
+                if !changes.files.isEmpty {
+                    Text("\(changes.files.count) 个文件").foregroundStyle(.secondary)
+                    DiffStat(added: changes.added, removed: changes.removed)
+                }
+                Spacer()
+                Button {
+                    model.showChanges = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Color.primary.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("关闭（Esc）")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
-            switch model.inspectorTab {
-            case .changes: ChangesInspector(model: model)
-            case .details: DetailsInspector(model: model)
-            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            Divider()
+            ChangesInspector(model: model)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        // Same opaque surface as the conversation, so the two read as one
-        // workspace instead of a floating translucent panel.
-        .background(Color(nsColor: .windowBackgroundColor).ignoresSafeArea())
-        .inspectorColumnWidth(min: 260, ideal: 340, max: 560)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .leading) { Divider() }
+        .shadow(color: .black.opacity(0.18), radius: 18, x: -4)
+    }
+}
+
+/// Settings and usage of the selection, in a toolbar popover.
+struct DetailsPopover: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        DetailsInspector(model: model)
+            .frame(width: 320)
     }
 }
 
@@ -118,7 +141,7 @@ private struct InspectorEmptyNote: View {
     }
 }
 
-private struct ChangesInspector: View {
+struct ChangesInspector: View {
     @Bindable var model: AppModel
 
     var body: some View {
@@ -147,16 +170,11 @@ private struct ChangesInspector: View {
                             }
                             .tag(file.path)
                         }
-                    } header: {
-                        HStack {
-                            Text("\(changes.files.count) 个文件")
-                            Spacer()
-                            DiffStat(added: changes.added, removed: changes.removed)
-                        }
                     }
                 }
                 .listStyle(.plain)
-                .frame(height: min(CGFloat(changes.files.count) * 40 + 40, 200))
+                .scrollContentBackground(.hidden)
+                .frame(height: min(CGFloat(changes.files.count) * 44 + 8, 200))
                 Divider()
                 if let file = changes.files.first(where: { $0.path == selectedPath }) {
                     HStack {
@@ -189,15 +207,16 @@ private struct DetailsInspector: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        ScrollView {
+        VStack {
             VStack(alignment: .leading, spacing: 18) {
             switch model.selection {
             case .chat(let id):
                 if let chat = model.chat(id) {
                     InfoSection("会话") {
                         LabeledContent("代理", value: chat.backend.displayName)
-                        LabeledContent("模型", value: chat.model)
-                        LabeledContent("推理强度", value: chat.effort)
+                        LabeledContent("模型", value: model.catalog(for: chat.backend).modelName(chat.model))
+                        LabeledContent("推理强度",
+                                       value: model.catalog(for: chat.backend).effortName(chat.effort, model: chat.model))
                         LabeledContent("权限", value: chat.permission)
                         LabeledContent("状态") { StatePill(state: chat.state) }
                     }

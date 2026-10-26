@@ -3,7 +3,7 @@ import asyncio
 from types import SimpleNamespace
 import unittest
 
-from provider_usage import ProviderUsage, claude_window, codex_buckets, codex_snapshot
+from provider_usage import ProviderUsage, claude_account_snapshot, claude_window, codex_buckets, codex_snapshot
 from hyadex.providers.codex import CodexAppServerClient
 from hyadex.providers.claude import ClaudeSDKSupervisorManager, _ReceivedMessage
 from tests.test_claude_sdk_client import FakeFactory
@@ -29,6 +29,31 @@ class FakeManager:
 
 
 class ParsingTests(unittest.TestCase):
+    def test_claude_account_usage_matches_native_usage_screen(self):
+        week = {"utilization": 12.5, "resets_at": "2030-01-07T00:00:00+00:00"}
+        response = {"session": {"total_cost_usd": 3.2}, "subscription_type": "max", "rate_limits_available": True,
+                    "rate_limits": {"five_hour": {"utilization": 72, "resets_at": "2030-01-01T05:00:00Z"},
+                                    "seven_day": week, "seven_day_sonnet": {"utilization": None},
+                                    "model_scoped": [{"display_name": "Fable", "utilization": 3, "resets_at": None}],
+                                    "extra_usage": {"is_enabled": True, "used_credits": 9}},
+                    "behaviors": {"day": {"request_count": 4}}}
+        result = claude_account_snapshot(response, AT)
+        self.assertEqual([w["label"] for w in result["windows"]],
+                         ["Current session", "Current week (all models)", "Current week (Fable)"])
+        self.assertEqual(result["windows"][0]["resets_at"], 1893474000.0)
+        self.assertEqual(result["windows"][0]["window_minutes"], 300)
+        self.assertEqual(result["plan"], "max")
+        self.assertNotIn("session", result)
+        self.assertNotIn("behaviors", result)
+
+    def test_claude_account_usage_without_plan_limits_is_unavailable(self):
+        self.assertEqual(claude_account_snapshot({"subscription_type": None, "rate_limits_available": False,
+                                                  "rate_limits": None}, AT)["account_kind"], "api_key")
+        # Sonnet-only weekly is shown only for Max and Team plans, as natively.
+        pro = claude_account_snapshot({"subscription_type": "pro", "rate_limits_available": True,
+                                       "rate_limits": {"seven_day_sonnet": {"utilization": 5}}}, AT)
+        self.assertEqual(pro["status"], "unavailable")
+
     def test_multiple_buckets_have_distinct_windows_and_no_duplicate_legacy_view(self):
         first = {"limitId": "codex", "primary": {"usedPercent": 25, "windowDurationMins": 300},
                  "secondary": {"usedPercent": 14, "windowDurationMins": 10080}}

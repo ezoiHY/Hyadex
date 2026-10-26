@@ -1,65 +1,65 @@
 import Foundation
 import HyadexAPI
 
-/// Permission presets per backend: the label the UI shows and the session
-/// fields that implement it.
+/// Permission choices per backend, with the provider's own names: Claude
+/// Code's permission modes (as its mode switcher names them) and Codex's
+/// permission presets (as its `/permissions` picker names them).
 public struct PermissionPreset: Hashable, Sendable {
     public let label: String
+    /// One line on what the agent may do without asking.
+    public let detail: String
+    public let symbol: String
     public let fields: [String: String]
 
     public static func presets(for backend: AgentBackend) -> [PermissionPreset] {
         switch backend {
         case .claude:
             [
-                PermissionPreset(label: "每次询问", fields: ["claude_permission_mode": "default"]),
-                PermissionPreset(label: "自动接受编辑", fields: ["claude_permission_mode": "acceptEdits"]),
-                PermissionPreset(label: "只规划", fields: ["claude_permission_mode": "plan"]),
-                PermissionPreset(label: "全部允许", fields: ["claude_permission_mode": "bypassPermissions"]),
+                PermissionPreset(label: "Manual", detail: "编辑文件、运行命令前先问你（遵循 Claude Code 的允许/拒绝规则）",
+                                 symbol: "hand.raised", fields: ["claude_permission_mode": "default"]),
+                PermissionPreset(label: "Accept edits", detail: "直接改文件，运行命令前仍会问你",
+                                 symbol: "pencil.and.outline", fields: ["claude_permission_mode": "acceptEdits"]),
+                PermissionPreset(label: "Plan", detail: "只读分析并给出计划，不改任何东西",
+                                 symbol: "list.bullet.clipboard", fields: ["claude_permission_mode": "plan"]),
+                PermissionPreset(label: "Auto", detail: "由 Claude 的分类器自动批准或拒绝每次工具调用",
+                                 symbol: "wand.and.sparkles", fields: ["claude_permission_mode": "auto"]),
+                PermissionPreset(label: "Don't Ask", detail: "从不询问；没有预先允许的操作一律拒绝",
+                                 symbol: "nosign", fields: ["claude_permission_mode": "dontAsk"]),
+                PermissionPreset(label: "Bypass Permissions", detail: "跳过所有权限检查，谨慎使用",
+                                 symbol: "exclamationmark.shield", fields: ["claude_permission_mode": "bypassPermissions"]),
             ]
         case .codex:
             [
-                PermissionPreset(label: "只读", fields: ["codex_sandbox_mode": "read-only", "codex_approval_policy": "on-request"]),
-                PermissionPreset(label: "工作区可写 · 需批准",
-                                 fields: ["codex_sandbox_mode": "workspace-write", "codex_approval_policy": "untrusted"]),
-                PermissionPreset(label: "工作区可写 · 免批准",
-                                 fields: ["codex_sandbox_mode": "workspace-write", "codex_approval_policy": "never"]),
-                PermissionPreset(label: "完全访问",
+                PermissionPreset(label: "Read Only", detail: "可读取工作区文件；改文件或联网需要你批准",
+                                 symbol: "eye", fields: ["codex_sandbox_mode": "read-only", "codex_approval_policy": "on-request"]),
+                PermissionPreset(label: "Default", detail: "可读写工作区、运行命令；联网或改工作区外的文件需要你批准",
+                                 symbol: "folder.badge.gearshape",
+                                 fields: ["codex_sandbox_mode": "workspace-write", "codex_approval_policy": "on-request"]),
+                PermissionPreset(label: "Full Access", detail: "可改工作区外的文件、联网，都不再询问，谨慎使用",
+                                 symbol: "exclamationmark.shield",
                                  fields: ["codex_sandbox_mode": "danger-full-access", "codex_approval_policy": "never"]),
             ]
         }
     }
 
+    public static func preset(_ label: String, for backend: AgentBackend) -> PermissionPreset? {
+        presets(for: backend).first { $0.label == label }
+    }
+
     static func label(for session: JSON, backend: AgentBackend) -> String {
         switch backend {
         case .claude:
-            switch session["claude_permission_mode"].string {
-            case "acceptEdits": return "自动接受编辑"
-            case "plan": return "只规划"
-            case "bypassPermissions": return "全部允许"
-            case "dontAsk": return "不询问"
-            case "auto": return "自动"
-            default: return "每次询问"
-            }
+            let mode = session["claude_permission_mode"].string ?? "default"
+            return presets(for: .claude).first { $0.fields["claude_permission_mode"] == mode }?.label ?? "Manual"
         case .codex:
-            let sandbox = session["codex_sandbox_mode"].string
-            let policy = session["codex_approval_policy"].string
-            switch sandbox {
-            case "read-only": return "只读"
-            case "danger-full-access": return policy == "never" ? "完全访问" : "完全访问 · 需批准"
-            default: return policy == "never" ? "工作区可写 · 免批准" : "工作区可写 · 需批准"
-            }
+            let sandbox = session["codex_sandbox_mode"].string ?? "workspace-write"
+            let policy = session["codex_approval_policy"].string ?? "on-request"
+            if let preset = presets(for: .codex).first(where: {
+                $0.fields["codex_sandbox_mode"] == sandbox && $0.fields["codex_approval_policy"] == policy
+            }) { return preset.label }
+            // Codex names any other combination the same way.
+            return "Custom (\(sandbox), \(policy))"
         }
-    }
-}
-
-/// Reasoning effort as shown in the UI and as the server expects it.
-public enum EffortPreset {
-    public static let labels: [(label: String, value: String?)] = [
-        ("默认", nil), ("低", "low"), ("中", "medium"), ("高", "high"), ("极高", "xhigh"),
-    ]
-
-    static func label(_ value: String?) -> String {
-        labels.first { $0.value == value }?.label ?? (value ?? "默认")
     }
 }
 
@@ -97,8 +97,8 @@ enum LiveMapping {
             id: id,
             title: json["title"].text ?? "未命名聊天",
             backend: backend,
-            model: json["model"].text ?? "默认模型",
-            effort: EffortPreset.label(json["effort"].string),
+            model: json["model"].text ?? "",
+            effort: json["effort"].text ?? "",
             permission: PermissionPreset.label(for: json, backend: backend),
             cwd: abbreviate(json["cwd"].string ?? "~"),
             preview: previous?.preview ?? "",
@@ -110,7 +110,9 @@ enum LiveMapping {
         )
     }
 
-    static func group(_ json: JSON, previous: GroupSummary?) -> GroupSummary? {
+    /// `members` holds member-chat records by session id. Turns run with the member
+    /// chat's settings, so those are authoritative over the group's own copy.
+    static func group(_ json: JSON, previous: GroupSummary?, members: [String: JSON] = [:]) -> GroupSummary? {
         guard let id = json["id"].string, json["archived"].bool != true, json["kind"].string != "autopilot" else { return nil }
         let participants = json["participants"].array.compactMap { item -> Participant? in
             guard let handle = item["handle"].string, let backend = item["backend"].string.flatMap(AgentBackend.named) else {
@@ -119,8 +121,13 @@ enum LiveMapping {
             let status = item["status"]
             var state = GroupProjection.state(status["state"].string)
             if status["needs_action"].bool == true { state = .needsAction }
+            let sessionID = item["session_id"].string
+            let member = sessionID.flatMap { members[$0] }
             return Participant(handle: handle, backend: backend, role: item["role"].text ?? item["label"].text ?? "",
-                               model: item["model"].text ?? "默认模型", state: state)
+                               model: (member?["model"] ?? item["model"]).text ?? "", state: state,
+                               sessionID: sessionID,
+                               effort: (member?["effort"] ?? item["effort"]).text ?? "",
+                               permission: member.map { PermissionPreset.label(for: $0, backend: backend) })
         }
         let stats = json["stats"]
         return GroupSummary(
