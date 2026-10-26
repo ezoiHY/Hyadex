@@ -123,16 +123,6 @@ class UsageStateTests(unittest.IsolatedAsyncioTestCase):
         await usage.read_codex(manager, refresh=True)
         self.assertEqual(len(manager.calls), 4)
 
-    async def test_custom_and_native_api_key_accounts_never_fetch_chatgpt_quota(self):
-        usage, manager = ProviderUsage(), FakeManager()
-        manager._hyadex_provider_revision = "custom-credential-revision"
-        self.assertEqual((await usage.read_codex(manager))["account_kind"], "custom")
-        self.assertEqual(manager.calls, [])
-        del manager._hyadex_provider_revision
-        manager.account = {"account": {"type": "apiKey"}}
-        self.assertEqual((await usage.read_codex(manager))["account_kind"], "api_key")
-        self.assertEqual([call[0] for call in manager.calls], ["account/read"])
-
     async def test_native_custom_provider_with_retained_chatgpt_login_has_no_chatgpt_quota(self):
         usage, manager = ProviderUsage(), FakeManager()
         manager.account["requiresOpenaiAuth"] = False

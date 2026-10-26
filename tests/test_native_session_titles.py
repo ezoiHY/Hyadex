@@ -204,28 +204,6 @@ class NativeTitleOwnership(unittest.IsolatedAsyncioTestCase):
                 await server.refresh_native_session_title("title-chat")
             self.assertEqual(self.sess["title"], "First request")
 
-    async def test_custom_codex_uses_its_own_manager_cache(self):
-        self.sess.update(backend="codex", codex_thread_id="provider-title",
-                         codex_provider="custom", codex_provider_revision="custom-revision")
-        ordinary = SimpleNamespace(
-            cached_thread_name=Mock(return_value="Wrong title"),
-            is_thread_loaded=Mock(return_value=False),
-        )
-        custom = SimpleNamespace(
-            cached_thread_name=Mock(return_value="Custom title"),
-            is_thread_loaded=Mock(return_value=True),
-            _hyadex_provider_revision="custom-revision",
-        )
-        with patch.object(server, "CODEX_APP_SERVER_MANAGER", ordinary), patch.object(
-            server, "CODEX_CUSTOM_APP_SERVER_MANAGERS", {"custom-revision": custom},
-        ), patch.object(server, "read_native_session_title") as reader:
-            self.assertIs(server.existing_codex_app_server_manager(self.sess), custom)
-            await server.refresh_native_session_title("title-chat")
-        self.assertEqual(self.sess["title"], "Custom title")
-        custom.cached_thread_name.assert_called_once_with("provider-title")
-        ordinary.cached_thread_name.assert_not_called()
-        reader.assert_not_called()
-
     async def test_manual_titles_do_not_even_read_provider_store(self):
         self.sess["_title_source"] = "manual"
         with patch.object(server, "read_native_session_title") as reader:

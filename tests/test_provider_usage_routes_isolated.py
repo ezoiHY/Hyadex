@@ -40,7 +40,6 @@ class UsageRoutesTests(unittest.IsolatedAsyncioTestCase):
             "provider_usage": provider_usage, "PROVIDER_USAGE": provider_usage.ProviderUsage(),
             "STORE": SimpleNamespace(sessions={
                 "native": {"id": "native", "backend": "codex"},
-                "custom": {"id": "custom", "backend": "codex", "codex_provider": "custom"},
                 "claude": {"id": "claude", "backend": "claude"}}),
             "BACKEND_CODEX": "codex", "BACKEND_CLAUDE": "claude", "DEFAULT_BACKEND": "codex",
             "CLAUDE_SDK_MANAGER": self.claude,
@@ -75,14 +74,6 @@ class UsageRoutesTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.read(headers=headers).status_code, expected)
         self.ns["codex_app_server_manager"].assert_not_awaited()
 
-    def test_custom_session_and_draft_never_fall_back_to_native_account(self):
-        for query in ("backend=codex&session_id=custom", "backend=codex&codex_provider=custom"):
-            result = self.read(query)
-            self.assertEqual(result.status_code, 200)
-            self.assertEqual(result.json()["account_kind"], "custom")
-        self.ns["codex_app_server_manager"].assert_not_awaited()
-        self.assertEqual(self.manager.calls, [])
-
     def test_wrong_backend_or_unknown_session_never_reads_other_account(self):
         self.assertEqual(self.read("backend=codex&session_id=claude").json()["reason"], "selection_changed")
         self.assertEqual(self.read("backend=codex&session_id=missing").status_code, 404)
@@ -104,12 +95,6 @@ class UsageRoutesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["source"], "claude-usage")
         self.assertEqual(result["windows"][0]["label"], "Current session")
         self.claude.usage_generation.assert_not_called()
-
-    def test_custom_claude_chat_never_reads_the_native_account(self):
-        self.ns["STORE"].sessions["claude-custom"] = {"id": "claude-custom", "backend": "claude", "provider_connection": "custom"}
-        result = self.read("backend=claude&session_id=claude-custom").json()
-        self.assertEqual(result["account_kind"], "custom")
-        self.ns["read_claude_account_usage"].assert_not_awaited()
 
     async def test_typed_claude_event_is_metadata_only_and_visible_to_http_read(self):
         RateLimitEvent = type("RateLimitEvent", (), {})

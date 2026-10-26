@@ -9,7 +9,6 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 import codex_side_question as adapter
-import codex_provider
 from hyadex.providers.claude import CLAUDE_PROVIDER_MCP_SERVER_NAME
 from side_questions import SideQuestionError
 
@@ -105,8 +104,6 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.factory = Mock(return_value=self.client)
         self.verify = AsyncMock()
-        self.prepare_catalog = AsyncMock(side_effect=lambda executable, env, path: str(path))
-        self.enterContext(patch.object(codex_provider, "prepare_native_catalog", self.prepare_catalog))
         async def start():
             callback = self.factory.call_args.kwargs.get("before_start")
             if callback:
@@ -174,7 +171,6 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_forks_native_history_with_parent_workspace_and_permissions(self):
         self.assertEqual(await self.answer(), "Answer")
         args, options = self.factory.call_args
-        self.prepare_catalog.assert_not_awaited()
         self.assertNotIn("before_start", options)
         self.assertEqual(args, ("synthetic-codex",))
         self.assertEqual(options["env_factory"](), {"HOME": "/synthetic/auth", "PATH": "/bin"})
@@ -245,31 +241,6 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(SideQuestionError):
             await self.answer()
         self.factory.assert_not_called()
-
-    async def test_custom_provider_key_survives_isolation_without_normal_login_credentials(self):
-        from codex_provider import ENV_KEY, PROVIDER_ID
-        selected = {"base_url": "https://example.invalid/v1", "model": "custom/model", "api_key": "synthetic-provider-key"}
-        chat = adapter.NativeCodexSideChat("parent-thread", executable="synthetic-codex", model=selected["model"],
-            env={"OPENAI_API_KEY": "unrelated-key", "HYADEX_TOKEN": "server-token"}, provider_selection=selected)
-        self.assertEqual(await chat.ask("question"), "Answer")
-        options = self.factory.call_args.kwargs
-        self.assertEqual(options["env_factory"]()[ENV_KEY], selected["api_key"])
-        self.assertNotIn("OPENAI_API_KEY", options["env_factory"]())
-        self.assertNotIn("HYADEX_TOKEN", options["env_factory"]())
-        self.assertNotIn(selected["api_key"], str(options["app_server_args"]))
-        self.assertEqual(options["protected_env_keys"], (ENV_KEY,))
-        params = self.client.fork_thread.await_args.args[1]
-        self.prepare_catalog.assert_awaited_once()
-        self.assertEqual(params["config"]["model_catalog_json"], str(Path(options["cwd"]) / "models.json"))
-        self.assertIn('model_catalog_json=' + json.dumps(params["config"]["model_catalog_json"]), options["app_server_args"])
-        self.assertEqual(params["modelProvider"], PROVIDER_ID)
-        self.assertFalse(params["config"]["model_providers"][PROVIDER_ID]["requires_openai_auth"])
-        self.assertEqual(params["config"]["model_reasoning_summary"], "none")
-        overrides = self.client.start_turn.await_args.kwargs["overrides"]
-        self.assertNotIn("environments", overrides)
-        self.assertNotIn("effort", overrides)
-        self.assertIsNone(overrides["collaborationMode"]["settings"]["reasoning_effort"])
-        await chat.close()
 
     async def test_followups_reuse_provider_history_until_explicit_close(self):
         chat = adapter.NativeCodexSideChat("parent-thread", executable="synthetic-codex",

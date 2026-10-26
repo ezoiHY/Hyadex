@@ -22,7 +22,6 @@ class ResumeTitleCreation(unittest.IsolatedAsyncioTestCase):
         self.ensure_dirs = self.enterContext(patch.object(server, "ensure_dirs"))
         self.enterContext(patch.object(server, "append_event", new_callable=AsyncMock))
         self.enterContext(patch.object(server, "ensure_codex_thread_not_pending_fork_cleanup"))
-        self.enterContext(patch.object(server.CODEX_PROVIDER_STORE, "require_thread"))
         self.native_reader = server.read_native_session_title
         self.reader = self.enterContext(patch.object(server, "read_native_session_title", return_value="Existing native title"))
         self.generator = self.enterContext(patch.object(server.title_generation, "generate_title", new_callable=AsyncMock))

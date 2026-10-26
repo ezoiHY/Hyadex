@@ -11,7 +11,6 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 import agent_server as server
-import provider_connections
 from hyadex.groups import ParticipantSpec
 
 
@@ -62,13 +61,13 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
     async def test_metadata_edits_work_without_rebinding_or_rewriting_history(self):
         with patch.object(server, "kill_terminal_session"), patch.object(
             server, "terminalize_archived_cross_chat_session", new_callable=AsyncMock,
-        ), patch.object(server.PROVIDER_CONNECTION_STORE, "bind", side_effect=AssertionError("No runtime binding")):
+        ):
             for changes in ({"title": "Renamed", "folder": "Saved", "pinned": True},
                             {"archived": True}, {"archived": False}):
                 response = await self.client.patch(f"/api/sessions/{self.session_id}", json=changes)
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertEqual(response.json()["session"]["backend"], self.backend)
-            for changes in ({"backend": "codex"}, {"provider_connection": "default"}, {"model": "new"}):
+            for changes in ({"backend": "codex"}, {"effort": "high"}, {"model": "new"}):
                 response = await self.client.patch(f"/api/sessions/{self.session_id}", json=changes)
                 self.assertEqual(response.status_code, 410, response.text)
         self.assertEqual(self.store.sessions[self.session_id]["provider_connection_revision"], "a" * 32)
@@ -161,13 +160,10 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(self.backend, server.enabled_backends())
             response = await self.client.post("/api/sessions", json={"backend": self.backend})
             self.assertEqual(response.status_code, 400, response.text)
-        response = await self.client.get("/api/admin/provider-connections/" + self.backend)
-        self.assertEqual(response.status_code, 400, response.text)
         response = await self.client.get(f"/api/sessions/{self.session_id}/{self.backend}/runtime")
         self.assertEqual(response.status_code, 404, response.text)
         with self.assertRaises(ValidationError):
             ParticipantSpec(backend=self.backend)
-        self.assertNotIn(self.backend, provider_connections.PROTOCOLS)
 
     def test_direct_retired_runtime_probe_cannot_select_a_replacement_executable(self):
         with patch.object(server.shutil, "which", side_effect=AssertionError("Must not resolve a replacement runtime")):
@@ -183,22 +179,6 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
                 await server.ensure_runtime_available(self.backend, session=self.session)
             self.assertEqual(raised.exception.status_code, 410)
             probe.assert_not_called()
-
-    async def test_native_identity_cannot_be_imported_into_a_custom_connection(self):
-        before = set(self.store.sessions)
-        with patch.dict(os.environ, {"HYADEX_ENABLED_BACKENDS": "claude,codex"}), patch.object(
-            server.PROVIDER_CONNECTION_STORE, "bind", side_effect=AssertionError("Must reject before endpoint binding"),
-        ):
-            for backend in ("claude",):
-                for field in ("provider_session_id", "session_id", backend + "_session_id"):
-                    with self.subTest(backend=backend, field=field):
-                        response = await self.client.post("/api/sessions", json={
-                            "backend": backend, "provider_connection": "custom", field: "old-native-id",
-                        })
-                        self.assertEqual(response.status_code, 409, response.text)
-        self.assertEqual(set(self.store.sessions), before)
-        self.assertEqual(server.events_path(self.session_id).read_bytes(), self.original_events)
-
 
 class RetiredOpenCodeTests(RetiredProviderTests):
     backend = "opencode"

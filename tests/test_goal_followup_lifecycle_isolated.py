@@ -15,7 +15,6 @@ import unittest
 from hyadex.providers.runtime import validate_provider_runtime_env
 from unittest.mock import AsyncMock, Mock
 
-import codex_provider
 from hyadex.providers.codex import CodexAppServerDisconnected
 from tests.test_goal_followup_admission_isolated import AdmissionHTTPException, saved_route_snapshots
 from tests import test_goal_native_steer_isolated as native_goal_fixture
@@ -136,8 +135,6 @@ class GoalFollowupLifecycleTests(unittest.IsolatedAsyncioTestCase):
             return await real_wait(*args, **kwargs)
 
         self.ns.update({
-            "codex_provider": codex_provider,
-            "CODEX_PROVIDER_STORE": SimpleNamespace(for_session=lambda session: None),
             "Path": Path, "CodexAppServerDisconnected": CodexAppServerDisconnected,
             "HTTPException": AdmissionHTTPException, "BACKEND_CLAUDE": "claude",
             "DEFAULT_BACKEND": "claude", "CODEX_TRANSPORT_APP_SERVER": "app_server",

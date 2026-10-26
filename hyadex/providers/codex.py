@@ -12,6 +12,7 @@ import asyncio
 import inspect
 import json
 import os
+import re
 import signal
 import time
 from collections import deque
@@ -136,6 +137,25 @@ class _OmittedType:
 
 
 _OMITTED = _OmittedType()
+
+
+def config_args(config: dict) -> tuple[str, ...]:
+    # CLI overrides consume TOML, not JSON objects. Primitive and array JSON
+    # values are TOML-compatible; maps require separate dotted keys.
+    result = []
+    def add(name, value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", key):
+                    raise ValueError("unsupported native configuration key")
+                # Codex's override parser splits paths itself and retains
+                # quotes literally; our fixed schema uses bare safe keys.
+                add(name + "." + key, child)
+        else:
+            result.extend(("-c", name + "=" + json.dumps(value)))
+    for name, value in config.items():
+        add(name, value)
+    return tuple(result)
 
 
 def _require_nonempty_string(value: Any, field: str) -> str:

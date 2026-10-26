@@ -74,8 +74,8 @@ def supports_codex_titles(schema: dict) -> bool:
 
 
 async def generate_codex_title(prompt: str, *, executable: str, model: str | None,
-                               env: dict, provider_selection: dict | None = None) -> str | None:
-    from codex_provider import config_args, native_config, native_environment, prepare_native_catalog
+                               env: dict) -> str | None:
+    from hyadex.providers.codex import config_args
 
     env = isolated_environment(env)
     # Fresh ephemeral thread, never a fork/resume: only the bounded excerpt is sent.
@@ -92,19 +92,10 @@ async def generate_codex_title(prompt: str, *, executable: str, model: str | Non
         config = isolated_config()
         config.update({'developer_instructions': INSTRUCTIONS, 'history.persistence': 'none',
                        'log_dir': str(root / 'logs')})
-        sensitive = ()
-        if provider_selection:
-            env = native_environment(env, provider_selection)
-            config.update(native_config(provider_selection))
-            catalog = root / 'models.json'
-            await prepare_native_catalog(executable, env, catalog)
-            config['model_catalog_json'] = str(catalog)
-            sensitive = (provider_selection['api_key'],)
         client = CodexAppServerClient(
             executable, cwd=directory, env_factory=lambda: env,
             app_server_args=config_args(config), request_timeout=15, lifecycle_timeout=5,
             process_stream_limit=1024 * 1024, notification_queue_limit=64,
-            sensitive_values=sensitive,
         )
         turn = None
         try:
@@ -119,8 +110,6 @@ async def generate_codex_title(prompt: str, *, executable: str, model: str | Non
                       'config': config}
             if model:
                 params['model'] = model
-            if provider_selection:
-                params['modelProvider'] = config['model_provider']
             thread_id = await client.start_thread(params)
             metadata = await client.read_thread(thread_id, include_turns=False)
             if metadata.get('ephemeral') is not True or metadata.get('path') is not None:

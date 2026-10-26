@@ -14,7 +14,6 @@ import weakref
 
 from fastapi import HTTPException
 from hyadex.providers.codex import CodexAppServerClient, CodexAppServerRequestError
-import codex_provider
 import codex_auth
 
 
@@ -71,8 +70,8 @@ class BinaryRefreshTests(unittest.IsolatedAsyncioTestCase):
         self.locks = {}
         self.ns = ns = {"asyncio": asyncio, "time": time, "weakref": weakref,
             "HTTPException": HTTPException, "CodexAppServerRequestError": CodexAppServerRequestError,
-            "logger": logging.getLogger(__name__), "codex_provider": codex_provider,
-            "CODEX_APP_SERVER_MANAGER": None, "CODEX_CUSTOM_APP_SERVER_MANAGERS": {},
+            "logger": logging.getLogger(__name__),
+            "CODEX_APP_SERVER_MANAGER": None,
             "CODEX_RETIRED_APP_SERVER_MANAGERS": [], "CODEX_SESSION_APP_SERVER_MANAGERS": {},
             "CODEX_BINARY_IDENTITY": None, "CODEX_BINARY_CHECKED_AT": 0,
             "CODEX_LOGIN_REVISION": None,
@@ -89,8 +88,7 @@ class BinaryRefreshTests(unittest.IsolatedAsyncioTestCase):
             "CodexAppServerManager": Manager, "existing_cwd": lambda value: value,
             "codex_app_server_env": lambda *_args: {}, "codex_binary_identity": lambda: self.identity,
             "ensure_provider_manager_factory_admission": lambda **_kwargs: None,
-            "STORE": SimpleNamespace(sessions={}), "CODEX_PROVIDER_STORE": SimpleNamespace(
-                for_session=lambda session, **_kwargs: None, for_thread=lambda thread: None),
+            "STORE": SimpleNamespace(sessions={}),
             "SIDE_QUESTIONS": SimpleNamespace(active_session_ids=lambda: set()),
             "session_provider_id": lambda session: session.get("codex_thread_id"),
             "session_lifecycle_lock": lambda session: self.locks.setdefault(session, asyncio.Lock()),
@@ -103,7 +101,7 @@ class BinaryRefreshTests(unittest.IsolatedAsyncioTestCase):
             "codex_request_is_interactive": lambda *_args: True,
             "reset_codex_ephemeral_runtime_metadata": AsyncMock(),
             "CODEX_SESSION_CLEANUP_TIMEOUT_SECONDS": .1}
-        for name in ("CODEX_BINARY_PROBE_LOCK", "CODEX_LOGIN_PROBE_LOCK", "CODEX_GOALS_CONFIG_LOCK", "CODEX_AUTH_LOCK",
+        for name in ("CODEX_BINARY_PROBE_LOCK", "CODEX_LOGIN_PROBE_LOCK", "CODEX_GOALS_CONFIG_LOCK",
                      "CODEX_APP_SERVER_MANAGER_LOCK", "CODEX_APP_SERVER_THREAD_LRU_LOCK"):
             ns[name] = asyncio.Lock()
         for name in ("ACTIVE", "CURRENT_TURNS", "SESSION_TURN_TASKS", "CODEX_NATIVE_ACTION_TASKS",
@@ -179,15 +177,6 @@ class BinaryRefreshTests(unittest.IsolatedAsyncioTestCase):
         await self.refresh()
         self.assertIs(await self.manager("third"), old)
         self.assertEqual(self.ns["CODEX_RETIRED_APP_SERVER_MANAGERS"], [])
-
-    async def test_first_refresh_compares_process_started_during_auth_to_installed_cli(self):
-        async with self.ns["CODEX_AUTH_LOCK"]:
-            old = await self.manager("old")
-            await old.options["before_start"]()
-        self.assertIsNone(self.ns["CODEX_BINARY_IDENTITY"])
-        await self.upgrade()
-        self.assertIsNot(await self.manager("new"), old)
-        self.assertIn(old, self.ns["CODEX_RETIRED_APP_SERVER_MANAGERS"])
 
     async def test_idle_thread_migrates_without_changing_native_thread_id(self):
         old = await self.manager("old")

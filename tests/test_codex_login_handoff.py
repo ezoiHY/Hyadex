@@ -124,7 +124,7 @@ class LoginHandoffTests(binary.BinaryRefreshTests):
     def catalog_app(self):
         source = Path(__file__).resolve().parents[1] / "agent_server.py"
         nodes = [node for node in ast.parse(source.read_text()).body
-                 if isinstance(node, ast.AsyncFunctionDef) and node.name in {"runtime_catalog", "reload_codex_login"}]
+                 if isinstance(node, ast.AsyncFunctionDef) and node.name == "runtime_catalog"]
         for node in nodes:
             node.decorator_list = []
         module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *nodes], type_ignores=[])
@@ -149,31 +149,6 @@ class LoginHandoffTests(binary.BinaryRefreshTests):
         self.assertFalse(getattr(old, "_hyadex_login_superseded", False))
         self.assertFalse(old.closed)
         self.ns["evict_codex_app_server_thread"].assert_not_awaited()
-
-    async def test_explicit_reload_logs_origin_and_preserves_background_work_until_idle(self):
-        self.login = None
-        old = await self.manager("training")
-        thread = self.load("training", old)
-        old.terminals = [{"id": "synthetic-background-training"}]
-        self.catalog_app()
-        with self.assertLogs(self.ns["logger"], level="INFO") as logs:
-            self.assertTrue(await self.ns["reload_codex_login"]())
-            for _ in range(2):
-                with self.assertRaises(HTTPException) as blocked:
-                    await self.preflight("training")
-                self.assertEqual(blocked.exception.status_code, 409)
-            self.assertFalse(old.closed)
-            self.ns["evict_codex_app_server_thread"].assert_not_awaited()
-            self.assertIsNot(await self.manager("new-chat"), old)
-            old.terminals = []
-            await self.preflight("training")
-        output = "\n".join(logs.output)
-        self.assertIn("source=manual_login_reload", output)
-        self.assertIn("reason=explicit_reload_opaque_login", output)
-        self.assertEqual(output.count("reason=background_terminals"), 1)
-        self.assertIn("handoff released", output)
-        self.assertNotIn("synthetic-background-training", output)
-        self.assertEqual(self.ns["STORE"].sessions["training"]["codex_thread_id"], thread)
 
     async def test_catalog_still_detects_real_login_change_with_attributed_reason(self):
         old = await self.manager("training")
@@ -376,23 +351,12 @@ class LoginHandoffTests(binary.BinaryRefreshTests):
         await self.manager("working")
         self.load("working", old)
         self.ns["BUSY_SESSIONS"].add("working")
-        await self.ns["refresh_codex_app_server_login"](request_handoff=True)
+        await self.ns["refresh_codex_app_server_login"]()
         await self.preflight("idle")
         self.assertIs(await self.manager("idle"), old)
         self.assertFalse(old._hyadex_login_superseded)
         self.assertNotIn(old, self.ns["CODEX_RETIRED_APP_SERVER_MANAGERS"])
         self.ns["evict_codex_app_server_thread"].assert_not_awaited()
-
-    async def test_explicit_recheck_handles_opaque_store_without_touching_custom_manager(self):
-        self.login = None
-        old = await self.manager("idle")
-        custom = binary.Manager()
-        custom._hyadex_provider_revision = "custom-revision"
-        self.ns["CODEX_CUSTOM_APP_SERVER_MANAGERS"]["custom-revision"] = custom
-        await self.ns["refresh_codex_app_server_login"](request_handoff=True)
-        self.assertIs(self.ns["CODEX_CUSTOM_APP_SERVER_MANAGERS"]["custom-revision"], custom)
-        self.assertFalse(custom.closed)
-        self.assertIn(old, self.ns["CODEX_RETIRED_APP_SERVER_MANAGERS"])
 
     async def test_failed_replacement_does_not_reassign_stale_owner(self):
         old = await self.manager("idle")
@@ -411,13 +375,6 @@ class LoginHandoffTests(binary.BinaryRefreshTests):
         self.ns["CODEX_MANAGER_CLOSING"] = True
         await self.relogin()
         self.assertIs(self.ns["CODEX_APP_SERVER_MANAGER"], old)
-
-    async def test_explicit_recheck_preserves_unsupported_process_only_login(self):
-        old = await self.manager("idle")
-        self.ns["codex_auth"].native_login_handoff_supported = lambda *_args, **_kwargs: False
-        await self.ns["refresh_codex_app_server_login"](request_handoff=True)
-        self.assertIs(self.ns["CODEX_APP_SERVER_MANAGER"], old)
-        self.assertFalse(old.closed)
 
     async def test_login_also_fences_an_older_binary_generation(self):
         old = await self.manager("idle")

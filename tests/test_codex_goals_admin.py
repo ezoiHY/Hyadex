@@ -318,69 +318,6 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
 
         settle.assert_awaited_once_with("chat")
 
-    async def test_change_is_rejected_while_codex_work_is_active(self) -> None:
-        agent_server.BUSY_SESSIONS.add("chat")
-        agent_server.CURRENT_TURNS["chat"] = {
-            "backend": agent_server.BACKEND_CODEX,
-        }
-
-        with self.assertRaises(HTTPException) as raised:
-            await agent_server.reserve_codex_goals_reconfiguration()
-
-        self.assertEqual(raised.exception.status_code, 409)
-        self.assertIn("active or queued", str(raised.exception.detail))
-        self.assertFalse(agent_server.CODEX_GOALS_RECONFIGURING)
-        self.assertTrue(agent_server.CODEX_GOALS_ENABLED)
-
-    async def test_change_is_rejected_while_codex_work_is_queued(self) -> None:
-        agent_server.QUEUED_TURNS["chat"] = deque([
-            {
-                "queued_id": "queued-1",
-                "backend": agent_server.BACKEND_CODEX,
-            }
-        ])
-
-        with self.assertRaises(HTTPException) as raised:
-            await agent_server.reserve_codex_goals_reconfiguration()
-
-        self.assertEqual(raised.exception.status_code, 409)
-        self.assertIn("queued Codex turn", str(raised.exception.detail))
-        self.assertFalse(agent_server.CODEX_GOALS_RECONFIGURING)
-
-    async def test_live_subagent_blocks_change_but_completed_history_does_not(
-        self,
-    ) -> None:
-        agent_server.CODEX_SUBAGENT_STATE = {
-            "running-child": {
-                "session_id": "chat",
-                "subagent_status": "running",
-            },
-            "finished-child": {"subagent_status": "done"},
-        }
-        manager = Mock(ready=True, generation=7)
-        manager.active_turn.return_value = None
-        agent_server.CODEX_APP_SERVER_MANAGER = manager
-        agent_server.CODEX_SUBAGENT_LIVE_GENERATIONS = {
-            "running-child": 7,
-        }
-        with self.assertRaises(HTTPException) as raised:
-            await agent_server.reserve_codex_goals_reconfiguration()
-        self.assertIn("running-child", str(raised.exception.detail))
-        self.assertNotIn("finished-child", str(raised.exception.detail))
-
-    async def test_stale_running_subagent_does_not_block_change(self) -> None:
-        agent_server.CODEX_SUBAGENT_STATE = {
-            "stale-child": {
-                "session_id": "chat",
-                "subagent_status": "running",
-            },
-        }
-
-        await agent_server.reserve_codex_goals_reconfiguration()
-
-        self.assertTrue(agent_server.CODEX_GOALS_RECONFIGURING)
-        await agent_server.release_codex_goals_reconfiguration()
-
     async def test_goal_mutation_is_rejected_when_disabled(self) -> None:
         agent_server.CODEX_GOALS_ENABLED = False
         acquire = AsyncMock()

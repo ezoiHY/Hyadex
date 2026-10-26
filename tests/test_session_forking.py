@@ -717,8 +717,6 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             frozenset({
                 "cwd",
                 "backend",
-                "codex_provider",
-                "provider_connection",
                 "model",
                 "effort",
                 "system_prompt",

@@ -141,7 +141,7 @@ class NativeCodexSideChat:
 
     def __init__(self, parent_thread_id: str, *, executable: str, model: str | None,
                  env: dict, parent_rollout_path: str | None = None,
-                 provider_selection: dict | None = None, cwd: str | None = None,
+                 cwd: str | None = None,
                  fork_overrides: dict | None = None, turn_overrides: dict | None = None,
                  server_request_handler=None, durable: bool = False,
                  resume_state: dict | None = None, persist_state=None):
@@ -159,19 +159,6 @@ class NativeCodexSideChat:
         self.resume_state = deepcopy(resume_state)
         self.persist_state = persist_state
         self.env = isolated_environment(env)
-        self.provider_config = {}
-        self.provider_turn_overrides = {}
-        self.sensitive_values = ()
-        self.protected_env_keys = ()
-        if provider_selection:
-            # Lazy import avoids the provider probe/isolated-config cycle.
-            from codex_provider import ENV_KEY, native_config, native_environment, turn_overrides as provider_turn_overrides
-            self.env = native_environment(self.env, provider_selection)
-            self.provider_config = native_config(provider_selection)
-            self.provider_turn_overrides = provider_turn_overrides(provider_selection["model"], provider_selection.get("effort") or "",
-                summary=provider_selection.get("reasoning_summary") or "none")
-            self.sensitive_values = (provider_selection["api_key"],)
-            self.protected_env_keys = (ENV_KEY,)
         self.thread_id: str | None = None
         self._client: CodexAppServerClient | None = None
         self._temporary: tempfile.TemporaryDirectory | None = None
@@ -202,37 +189,17 @@ class NativeCodexSideChat:
         if self._closed:
             raise SideQuestionError(409, "Side chat was closed; open a new side chat")
         config = side_chat_config(self.fork_overrides.get("config"))
-        config.update(self.provider_config)
         # Preserve Codex's auth/runtime location. Overriding sqlite_home while
         # retaining the user's history root can trigger a complete reindex.
         config.update({"log_dir": str(Path(temporary) / "log"), "history.persistence": "none"})
-        from codex_provider import config_args
-        client_options = {}
-        if self.provider_config:
-            from codex_provider import prepare_native_catalog
-            catalog_path = Path(temporary) / "models.json"
-            config["model_catalog_json"] = str(catalog_path)
-
-            async def prepare_catalog():
-                if self._closed:
-                    raise SideQuestionError(409, "Side chat was closed; open a new side chat")
-                try:
-                    await prepare_native_catalog(self.executable, self.env, catalog_path)
-                except Exception:
-                    raise SideQuestionError(503, "Codex could not prepare custom model compatibility settings") from None
-                if self._closed:
-                    raise SideQuestionError(409, "Side chat was closed; open a new side chat")
-            client_options["before_start"] = prepare_catalog
+        from hyadex.providers.codex import config_args
         args = config_args(config)
         self._client = CodexAppServerClient(
             self.executable, cwd=self.cwd or temporary, env_factory=lambda: self.env,
             app_server_args=args,
             process_stream_limit=MAX_OUTPUT_BYTES, notification_queue_limit=512,
-            sensitive_values=self.sensitive_values,
-            protected_env_keys=self.protected_env_keys,
             server_request_handler=self._handle_server_request,
             on_process_started=lambda _pid, _group: self._process_started.set(),
-            **client_options,
         )
         await self._client.start()
         if self._closed:
@@ -248,8 +215,6 @@ class NativeCodexSideChat:
             params["cwd"] = self.cwd
         if self.model:
             params["model"] = self.model
-        if self.provider_config:
-            params["modelProvider"] = self.provider_config["model_provider"]
         if self.parent_rollout_path:
             params["path"] = self.parent_rollout_path
         if self.durable:
@@ -302,7 +267,7 @@ class NativeCodexSideChat:
                     raise SideQuestionError(409, "Side chat was closed; open a new side chat")
                 turn = await self._client.start_turn(
                     self.thread_id, [{"type": "text", "text": question}],
-                    overrides={**self.turn_overrides, **self.provider_turn_overrides},
+                    overrides=dict(self.turn_overrides),
                 )
                 answers: dict[str, str] = {}
                 while True:

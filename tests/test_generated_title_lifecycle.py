@@ -28,12 +28,11 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.store.sessions = {'title-chat': self.sess}
         self.tasks = {}
         self.generator = AsyncMock(return_value='Song About Two Cats')
-        self.provider_store = SimpleNamespace(for_session=Mock(return_value=None), require_thread=Mock())
         for target, value in (
             ('STORE', self.store), ('GENERATED_TITLE_TASKS', self.tasks),
             ('GENERATED_TITLE_SLOTS', asyncio.Semaphore(2)), ('SERVER_SHUTTING_DOWN', False),
             ('DELETING_SESSIONS', set()), ('DELETED_SESSION_TOMBSTONES', set()),
-            ('HISTORY_SEARCH_DIRTY', set()), ('CODEX_PROVIDER_STORE', self.provider_store),
+            ('HISTORY_SEARCH_DIRTY', set()),
         ):
             self.enterContext(patch.object(server, target, value))
         self.enterContext(patch.dict(os.environ, {'HYADEX_AUTO_TITLES': '1'}))
@@ -66,26 +65,10 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.sess['_title_generation_attempted'])
         self.assertNotIn('_title_seed', self.sess)
         self.generator.assert_awaited_once_with('codex', 'Write a song about cats', 'A playful song',
-            executable=server.CODEX_BIN, model='selected-model', env={'PATH': '/synthetic'}, provider_selection=None)
+            executable=server.CODEX_BIN, model='selected-model', env={'PATH': '/synthetic'})
         self.append.assert_not_awaited()
         self.schedule()
         self.assertFalse(self.tasks)
-
-    async def test_codex_uses_same_explicit_provider_binding(self):
-        self.sess.update(backend='codex', codex_provider='custom', codex_provider_revision='revision')
-        self.provider_store.for_session.return_value = {'api_key': 'synthetic'}
-        self.schedule()
-        await self.drain()
-        self.assertEqual(self.generator.call_args.args[0], 'codex')
-        self.assertEqual(self.generator.call_args.kwargs['provider_selection'], {'api_key': 'synthetic'})
-        self.assertTrue(self.provider_store.for_session.call_args.kwargs['include_key'])
-
-
-
-
-
-
-
 
     async def test_codex_server_default_model_is_not_replaced_by_cli_default(self):
         self.sess.update(backend='codex', model=None)
@@ -176,7 +159,7 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_late_result_cannot_overwrite_manual_name_provider_or_model(self):
         for fields in (
             {'_title_source': 'manual'}, {'session_id': 'replacement'}, {'backend': 'claude'},
-            {'model': 'different'}, {'codex_provider_revision': 'replacement'},
+            {'model': 'different'},
             {'auto_title_enabled': False}, {'archived': True},
         ):
             original = dict(self.sess)
@@ -215,9 +198,6 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
                         _title_source='prompt', _title_auto_value='Write a song',
                         _title_seed='Write a song about cats')
                     self.sess.pop('_title_generation_attempted', None)
-                    # Also cover old sessions without explicit default bindings.
-                    self.sess.pop('codex_provider', None)
-                    self.sess.pop('provider_connection', None)
                     started, release = asyncio.Event(), asyncio.Event()
                     async def pending(*args, **kwargs):
                         started.set()
@@ -229,9 +209,8 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.wait_for(started.wait(), 1)
                     task = self.tasks['title-chat']
                     # start_turn re-saves backend even when unchanged; other
-                    # clients can repeat model/default-provider selections too.
+                    # clients can repeat model selections too.
                     for fields in ({'backend': backend}, {'model': model},
-                            {'codex_provider': 'default'}, {'provider_connection': 'default'},
                             {'backend': backend, 'model': f' {model} ' if model else ''}):
                         await self.store.update('title-chat', fields)
                         await asyncio.sleep(0)
@@ -265,31 +244,6 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(self.sess['_title_generation_attempted'])
             self.sess.clear()
             self.sess.update(original)
-
-    async def test_reselected_custom_connection_cancels_only_if_credentials_change(self):
-        self.sess.update(codex_provider='custom', codex_provider_revision='original',
-            codex_provider_binding=server.codex_provider.binding({'base_url': 'https://fixture.invalid'}))
-        connections = SimpleNamespace(
-            for_session=Mock(return_value={'credential_id': 'original', 'model': 'selected-model', 'base_url': 'https://fixture.invalid'}),
-            cached_catalog=Mock(return_value={}), require_thread=Mock(),
-        )
-        self.enterContext(patch.object(server, 'CODEX_PROVIDER_STORE', connections))
-        started = asyncio.Event()
-        async def pending(*args, **kwargs):
-            started.set()
-            await asyncio.Event().wait()
-        self.generator.side_effect = pending
-        self.schedule()
-        await asyncio.wait_for(started.wait(), 1)
-        task = self.tasks['title-chat']
-        await self.store.update('title-chat', {'codex_provider': 'custom'})
-        await asyncio.sleep(0)
-        self.assertFalse(task.done())
-        connections.for_session.return_value = {'credential_id': 'replacement', 'model': 'selected-model', 'base_url': 'https://fixture.invalid'}
-        await self.store.update('title-chat', {'codex_provider': 'custom'})
-        await asyncio.gather(task, return_exceptions=True)
-        self.assertTrue(task.cancelled())
-        self.assertEqual(self.sess['title'], 'Write a song')
 
     async def test_opt_out_cancels_pending_generation(self):
         started = asyncio.Event()
@@ -418,7 +372,7 @@ print(json.dumps({{'type': 'result', 'subtype': 'success', 'result': 'Song About
             ('AGENT_TOKEN', ''),
             ('BUSY_SESSIONS', set()), ('SERVER_MAINTENANCE_SESSIONS', set()),
             ('QUEUED_TURNS', {}), ('RUN_NOW_TURNS', {}), ('CLAUDE_SDK_MANAGER', None),
-            ('CODEX_APP_SERVER_MANAGER', None), ('CODEX_CUSTOM_APP_SERVER_MANAGERS', {}),
+            ('CODEX_APP_SERVER_MANAGER', None),
         ):
             self.enterContext(patch.object(server, target, value))
         self.enterContext(patch.object(server, 'server_lifecycle_admission_blocker', REAL_AUTONOMOUS_ADMISSION))

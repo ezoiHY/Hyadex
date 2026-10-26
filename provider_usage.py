@@ -218,8 +218,6 @@ class ProviderUsage:
             state.binding, state.snapshot, state.buckets, state.account_id = (), None, {}, None
 
     async def read_codex(self, manager: Any, *, refresh: bool = False) -> dict:
-        if getattr(manager, "_hyadex_provider_revision", None):
-            return unavailable("codex", "custom_endpoint", account_kind="custom")
         state = self._codex.setdefault(manager, _CodexState())
         async with state.lock:
             if not refresh and state.snapshot is not None and state.binding == self._binding(manager):
@@ -257,7 +255,7 @@ class ProviderUsage:
         state = self._codex.get(manager)
         if state is None or state.snapshot is None or state.snapshot.get("account_kind") != "chatgpt":
             return False
-        if getattr(manager, "_hyadex_provider_revision", None) or state.binding != self._binding(manager):
+        if state.binding != self._binding(manager):
             self.invalidate_codex(manager)
             return True
         payload = notification.get("params")

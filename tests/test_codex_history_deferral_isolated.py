@@ -25,7 +25,7 @@ FUNCTIONS = {
     "filter_codex_history_for_import",
     "normalized_history_sync_cursor", "history_sync_checkpoint", "persist_history_sync_cursor",
     "history_cursor_matches_source_stamp", "imported_history_terminal_event",
-    "prepare_codex_native_history_repair",
+    "prepare_codex_native_history_repair", "retired_session_runtime_message",
 }
 
 

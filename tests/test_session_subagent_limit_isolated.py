@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from tests.test_codex_provider_sessions_isolated import make_namespace
+from tests.session_store_fixture import make_namespace
 
 
 class SessionSubagentLimitTests(unittest.IsolatedAsyncioTestCase):

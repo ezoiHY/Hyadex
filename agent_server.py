@@ -98,8 +98,6 @@ import uvicorn
 import websockets
 from hyadex.store import mailbox as chat_mailbox
 import codex_auth
-import codex_provider
-import provider_connections
 import server_instances
 import local_session_ownership
 import provider_usage
@@ -375,8 +373,6 @@ SERVER_ADMIN_ROOT = STATE_DIR / "admin"
 SERVER_IDENTITY_FILE = STATE_DIR / "server-identity"
 SERVER_RESTART_STATUS_FILE = SERVER_ADMIN_ROOT / "server-restart.json"
 CODEX_SETTINGS_FILE = SERVER_ADMIN_ROOT / "codex-settings.json"
-CODEX_PROVIDER_STORE = codex_provider.ProviderStore(SERVER_ADMIN_ROOT / "codex-provider")
-PROVIDER_CONNECTION_STORE = provider_connections.ConnectionStore(SERVER_ADMIN_ROOT / "provider-connections")
 ABANDONED_FORK_THREADS_FILE = SERVER_ADMIN_ROOT / "abandoned-fork-threads.json"
 # Process-group ids of provider children this server spawned in their own
 # session (``start_new_session=True``). A SIGKILL of the server cannot reach
@@ -3484,8 +3480,6 @@ class CreateSessionRequest(BaseModel):
     folder: str | None = None
     cwd: str | None = None
     backend: str | None = None
-    codex_provider: Literal["default", "custom"] | None = None
-    provider_connection: Literal["default", "custom"] | None = None
     model: str | None = None
     effort: str | None = None
     subagent_limit: int | None = Field(default=None, strict=True, ge=1)
@@ -3524,8 +3518,6 @@ class UpdateSessionRequest(BaseModel):
     folder: str | None = None
     cwd: str | None = None
     backend: str | None = None
-    codex_provider: Literal["default", "custom"] | None = None
-    provider_connection: Literal["default", "custom"] | None = None
     model: str | None = None
     effort: str | None = None
     subagent_limit: int | None = Field(default=None, strict=True, ge=1)
@@ -3550,8 +3542,6 @@ class UpdateSessionRequest(BaseModel):
 SESSION_LIFECYCLE_UPDATE_FIELDS = frozenset({
     "cwd",
     "backend",
-    "codex_provider",
-    "provider_connection",
     "model",
     "effort",
     "system_prompt",
@@ -4095,6 +4085,23 @@ def clamp_codex_runtime_effort(model: str, effort: Any) -> str:
     return clamped
 
 
+REMOVED_PROVIDER_MESSAGE = "This provider was removed. Its saved chat history remains readable."
+REMOVED_ENDPOINT_MESSAGE = "Custom API endpoints were removed. This chat's saved history remains readable."
+
+
+def retired_session_runtime_message(sess: dict[str, Any]) -> str | None:
+    """Chats whose runtime no longer exists keep readable history but never run.
+
+    A chat saved against a removed custom endpoint must not silently continue
+    on the native login: that would send its history to another account.
+    """
+    if str(sess.get("backend") or DEFAULT_BACKEND).lower() not in VALID_BACKENDS:
+        return REMOVED_PROVIDER_MESSAGE
+    if "custom" in (sess.get("codex_provider"), sess.get("provider_connection")):
+        return REMOVED_ENDPOINT_MESSAGE
+    return None
+
+
 def preview_session_runtime_update(
     sess: dict[str, Any],
     patch: dict[str, Any],
@@ -4102,17 +4109,13 @@ def preview_session_runtime_update(
     """Validate and preview provider runtime fields without mutating state."""
 
     current_backend = str(sess.get("backend") or DEFAULT_BACKEND).lower()
-    if current_backend not in VALID_BACKENDS:
+    retired = retired_session_runtime_message(sess)
+    if retired:
         if set(patch) - {"title", "folder", "pinned", "archived", "auto_title_enabled"}:
-            raise HTTPException(410, "This provider was removed. Its saved chat history remains readable.")
+            raise HTTPException(410, retired)
         # Organizing saved history must not bind credentials, migrate the
         # provider or validate settings for a runtime that no longer exists.
-        return {
-            **sess,
-            "codex_provider": codex_provider.session_choice(sess.get("codex_provider")),
-            "provider_connection": sess.get("provider_connection") or "default",
-            "model": sess.get("model"), "effort": sess.get("effort"),
-        }
+        return {**sess, "model": sess.get("model"), "effort": sess.get("effort")}
     prospective_backend = (
         str(patch["backend"]).lower()
         if patch.get("backend") is not None
@@ -4133,38 +4136,18 @@ def preview_session_runtime_update(
             ),
         )
 
-    current_provider = codex_provider.session_choice(sess.get("codex_provider"))
-    prospective_provider = codex_provider.session_choice(
-        patch.get("codex_provider") if "codex_provider" in patch
-        else "default" if backend_changed else current_provider
-    )
-    provider_changed = prospective_provider != current_provider
-    if prospective_provider == "custom" and prospective_backend != BACKEND_CODEX:
-        raise HTTPException(400, "A custom Codex provider requires the Codex backend.")
-    if provider_changed and session_backend_locked(sess):
-        raise HTTPException(409, "Codex provider is locked after the chat starts; create a new chat to use another provider.")
-
-    current_connection = sess.get("provider_connection") or "default"
-    connection = (patch.get("provider_connection") or "default") if "provider_connection" in patch else "default" if backend_changed else current_connection
-    if connection not in {"default", "custom"} or connection == "custom" and prospective_backend not in {BACKEND_CLAUDE}:
-        raise HTTPException(400, "This backend does not support that API connection.")
-    connection_changed = current_connection != connection
-    if connection_changed and session_backend_locked(sess):
-        raise HTTPException(409, "API connection is locked after the chat starts; create a new chat to change it.")
-    provider_changed = provider_changed or connection_changed
-
     prospective_model = (
         str(patch.get("model") or "").strip() or None
         if "model" in patch
-        else None if backend_changed or provider_changed else sess.get("model")
+        else None if backend_changed else sess.get("model")
     )
     previous_model = prospective_model
-    if prospective_backend == BACKEND_CODEX and prospective_provider == "default" and prospective_model:
+    if prospective_backend == BACKEND_CODEX and prospective_model:
         prospective_model = codex_available_model(str(prospective_model))
     prospective_effort = (
         patch.get("effort")
         if "effort" in patch
-        else None if backend_changed or provider_changed else sess.get("effort")
+        else None if backend_changed else sess.get("effort")
     )
     if prospective_model != previous_model and prospective_effort:
         # Saved/queued settings may contain a level unsupported by the new
@@ -4173,39 +4156,14 @@ def preview_session_runtime_update(
             str(prospective_model),
             normalize_runtime_effort(BACKEND_CODEX, prospective_effort, strict="effort" in patch),
         )
-    normalized_effort = (
-        normalize_runtime_effort(prospective_backend, prospective_effort, strict="effort" in patch)
-        if prospective_provider == "custom" else
-        normalize_runtime_effort_for_model(
-            prospective_backend, prospective_model, prospective_effort, strict="effort" in patch,
-        )
+    normalized_effort = normalize_runtime_effort_for_model(
+        prospective_backend, prospective_model, prospective_effort, strict="effort" in patch,
     )
 
     preview = dict(sess)
     preview["backend"] = prospective_backend
-    preview["codex_provider"] = prospective_provider
-    if provider_changed or prospective_provider == "default":
-        preview.pop("codex_provider_binding", None)
-        preview.pop("codex_provider_revision", None)
     preview["model"] = prospective_model
     preview["effort"] = normalized_effort
-    preview["provider_connection"] = connection
-    if backend_changed or connection_changed or connection == "default":
-        preview.pop("provider_connection_revision", None)
-    if connection == "custom":
-        selected_connection = PROVIDER_CONNECTION_STORE.bind(preview)
-        preview["provider_connection_revision"] = selected_connection["credential_id"]
-        preview["model"] = selected_connection.get("model")
-    if prospective_provider == "custom" and {"backend", "codex_provider", "model", "effort"}.intersection(patch):
-        if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC:
-            raise HTTPException(409, "Custom endpoints require native Codex app-server transport.")
-        selected = CODEX_PROVIDER_STORE.for_session(preview)
-        preview["model"] = selected.get("model")
-        preview["effort"] = codex_provider.runtime_effort(
-            selected, CODEX_PROVIDER_STORE.cached_catalog(selected), normalized_effort,
-        ) or None
-        preview["codex_provider_binding"] = codex_provider.binding(selected)
-        preview["codex_provider_revision"] = selected["credential_id"]
     if backend_changed:
         provider_id_field = {
             BACKEND_CLAUDE: "claude_session_id",
@@ -6919,21 +6877,7 @@ class SessionStore:
             raise HTTPException(status_code=400, detail=f"backend must be one of {sorted(VALID_BACKENDS)}")
         validate_session_subagent_limit({"backend": backend}, req.subagent_limit)
         runtime_source = {"backend": backend}
-        if initializing_fork and parent_id and req.codex_provider == "custom":
-            parent = self.sessions.get(parent_id) or {}
-            runtime_source.update({name: parent.get(name) for name in (
-                "codex_provider", "codex_provider_binding", "codex_provider_revision",
-            )})
-        if initializing_fork and parent_id and req.provider_connection == "custom":
-            parent = self.sessions.get(parent_id) or {}
-            runtime_source.update({name: parent.get(name) for name in ("provider_connection", "provider_connection_revision")})
-        if (req.provider_connection == "custom" and not initializing_fork
-                and any((req.provider_session_id, req.session_id,
-                         req.claude_session_id))):
-            raise HTTPException(409, "Import native conversations with their native login. Create a new chat for a custom API.")
-        runtime = preview_session_runtime_update(runtime_source, {
-            "codex_provider": req.codex_provider, "provider_connection": req.provider_connection, "model": req.model, "effort": req.effort,
-        })
+        runtime = preview_session_runtime_update(runtime_source, {"model": req.model, "effort": req.effort})
         model, effort = runtime["model"], runtime["effort"]
         session_cwd = req.cwd or DEFAULT_CWD
         provider_id = req.provider_session_id or req.session_id
@@ -6947,8 +6891,6 @@ class SessionStore:
         # switching, so validate every supplied Codex thread, not only the
         # currently active provider identity.
         ensure_codex_thread_not_pending_fork_cleanup(codex_thread_id)
-        if backend == BACKEND_CODEX:
-            CODEX_PROVIDER_STORE.require_thread(codex_thread_id, CODEX_PROVIDER_STORE.for_session(runtime))
         resume_placeholder = f"Resumed {backend.title()} {str(active_provider_id)[:8]}"
         # Older clients explicitly send this generated resume label. Recognize
         # it only at creation; PATCH renames (even identical wording) stay manual.
@@ -6995,11 +6937,6 @@ class SessionStore:
             "folder": req.folder or "General",
             "cwd": session_cwd,
             "backend": backend,
-            "codex_provider": runtime["codex_provider"],
-            "codex_provider_binding": runtime.get("codex_provider_binding"),
-            "codex_provider_revision": runtime.get("codex_provider_revision"),
-            "provider_connection": runtime["provider_connection"],
-            "provider_connection_revision": runtime.get("provider_connection_revision"),
             "model": model,
             "effort": effort,
             "system_prompt": clean_session_system_prompt(req.system_prompt),
@@ -7108,7 +7045,7 @@ class SessionStore:
                 raise HTTPException(status_code=404, detail="session not found")
             if "subagent_limit" in patch:
                 validate_session_subagent_limit({**sess, "backend": patch.get("backend") or sess.get("backend")}, patch["subagent_limit"])
-            previous_provider_runtime = dict(sess) if {"codex_provider", "provider_connection", "subagent_limit"}.intersection(patch) else None
+            previous_provider_runtime = dict(sess) if "subagent_limit" in patch else None
             previous_title_runtime = title_runtime_key(sess)
             missing_policy = object()
             previous_provider_jobs_access = sess.get(
@@ -7121,8 +7058,6 @@ class SessionStore:
                 runtime_preview.get("backend") or DEFAULT_BACKEND
             ).lower()
             backend_changed = prospective_backend != current_backend
-            provider_changed = runtime_preview["codex_provider"] != codex_provider.session_choice(sess.get("codex_provider"))
-            provider_changed = provider_changed or runtime_preview["provider_connection"] != (sess.get("provider_connection") or "default")
             prospective_effort = (
                 patch.get("effort")
                 if "effort" in patch
@@ -7160,16 +7095,6 @@ class SessionStore:
                     if "effort" not in patch:
                         sess["effort"] = None
                     await append_event(sid, "backend_changed", {"old": old, "new": backend})
-            if "codex_provider" in patch or backend_changed:
-                sess["codex_provider"] = runtime_preview["codex_provider"]
-                sess["codex_provider_binding"] = runtime_preview.get("codex_provider_binding")
-                sess["codex_provider_revision"] = runtime_preview.get("codex_provider_revision")
-            if "provider_connection" in patch or backend_changed:
-                sess["provider_connection"] = runtime_preview["provider_connection"]
-                sess["provider_connection_revision"] = runtime_preview.get("provider_connection_revision")
-            if provider_changed:
-                sess["model"] = runtime_preview["model"]
-                sess["effort"] = runtime_preview["effort"]
             for key in ("title", "folder", "cwd"):
                 if key in patch and patch[key] is not None:
                     sess[key] = patch[key]
@@ -7248,11 +7173,6 @@ class SessionStore:
                 # which value was retained, and a following effort PATCH can
                 # choose any supported value.
                 sess["effort"] = normalized_prospective_effort
-            if runtime_preview["codex_provider"] == "custom" and {"backend", "codex_provider", "model", "effort"}.intersection(patch):
-                sess["model"] = runtime_preview["model"]
-                sess["effort"] = runtime_preview["effort"]
-                sess["codex_provider_binding"] = runtime_preview.get("codex_provider_binding")
-                sess["codex_provider_revision"] = runtime_preview.get("codex_provider_revision")
             if "pinned" in patch and patch["pinned"] is not None:
                 pinned = bool(patch["pinned"])
                 if pinned and not sess.get("pinned"):
@@ -10114,7 +10034,6 @@ RUN_NOW_COMPLETED_RESULTS: OrderedDict[
 RUN_METADATA: dict[str, dict[str, Any]] = {}
 CODEX_APP_SERVER_MANAGER: CodexAppServerManager | None = None
 CODEX_APP_SERVER_MANAGER_LOCK = asyncio.Lock()
-CODEX_CUSTOM_APP_SERVER_MANAGERS: dict[str, CodexAppServerManager] = {}
 CODEX_RETIRED_APP_SERVER_MANAGERS: list[CodexAppServerManager] = []
 CODEX_SESSION_APP_SERVER_MANAGERS: dict[str, CodexAppServerManager] = {}
 CODEX_BINARY_IDENTITY: tuple[Any, ...] | None = None
@@ -10131,7 +10050,6 @@ CLAUDE_SDK_MANAGER: ClaudeSDKSupervisorManager | None = None
 CLAUDE_SDK_MANAGER_LOCK = asyncio.Lock()
 CODEX_GOALS_CONFIG_LOCK = asyncio.Lock()
 CODEX_GOALS_RECONFIGURING = False
-CODEX_AUTH_LOCK = asyncio.Lock()
 CODEX_APP_SERVER_THREAD_LRU: OrderedDict[str, float] = OrderedDict()
 CODEX_APP_SERVER_PINNED_THREADS: set[str] = set()
 CODEX_APP_SERVER_THREAD_PIN_COUNTS: dict[str, int] = {}
@@ -10669,9 +10587,6 @@ async def append_event(
     event_type: str,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    connection_session = STORE.sessions.get(session_id) or {}
-    if connection_session.get("provider_connection") == "custom" and payload:
-        payload = PROVIDER_CONNECTION_STORE.redact(connection_session, payload)
     def discarded_event() -> dict[str, Any]:
         return {
             "seq": 0,
@@ -38039,10 +37954,7 @@ def active_generated_title_work_labels() -> list[str]:
 
 
 def title_runtime_key(sess: dict[str, Any]) -> tuple:
-    return (sess.get("backend") or DEFAULT_BACKEND, session_provider_id(sess),
-            sess.get("model"), codex_provider.session_choice(sess.get("codex_provider")),
-            sess.get("codex_provider_revision"), sess.get("provider_connection") or "default",
-            sess.get("provider_connection_revision"))
+    return (sess.get("backend") or DEFAULT_BACKEND, session_provider_id(sess), sess.get("model"))
 
 
 def generated_title_eligible(sess: dict[str, Any], *, allow_attempted: bool = False) -> bool:
@@ -38100,7 +38012,6 @@ async def generate_session_title(session_id: str, snapshot: dict, reply: str) ->
         options = {"model": snapshot.get("model"), "env": runner_env()}
         options["model"] = codex_runtime_settings(snapshot)[0]
         options["executable"] = CODEX_BIN
-        options["provider_selection"] = CODEX_PROVIDER_STORE.for_session(snapshot, include_key=True)
         result = await title_generation.generate_title(
             snapshot["backend"], snapshot["_title_seed"], reply, **options,
         )
@@ -40130,8 +40041,8 @@ async def import_session_history(sess: dict[str, Any], *, force: bool = False, l
     session_id = sess["id"]
     provider_id = session_provider_id(sess)
     backend = (sess.get("backend") or DEFAULT_BACKEND).lower()
-    if backend not in VALID_BACKENDS:
-        raise HTTPException(410, "This provider was removed. Its saved chat history remains readable.")
+    if retired := retired_session_runtime_message(sess):
+        raise HTTPException(410, retired)
     if not provider_id:
         return {"imported": 0, "source_path": None, "message": "No provider session ID set."}
     if not force and any(event.get("type") == "history_imported" for event in read_events(session_id, limit=10000)):
@@ -41209,7 +41120,7 @@ def public_session(sess: dict[str, Any], *, summary: bool = False) -> dict[str, 
     public = {
         k: sess.get(k)
         for k in (
-            "id", "title", "folder", "cwd", "backend", "model", "effort", "codex_provider",
+            "id", "title", "folder", "cwd", "backend", "model", "effort",
             *detail_fields,
             "codex_thread_status",
             "codex_pending_interaction_count", "codex_needs_user_action",
@@ -41257,23 +41168,10 @@ def public_session(sess: dict[str, Any], *, summary: bool = False) -> dict[str, 
     # Capability, not proof of emptiness: dismiss-empty repeats the full proof.
     if sess.get("title") == "New chat" and not public["backend_locked"]:
         public["empty_chat_cleanup"] = "client-v1"
-    public["codex_provider"] = codex_provider.session_choice(sess.get("codex_provider"))
     if summary and "codex_goal" in sess:
         goal = sess.get("codex_goal")
         public["codex_goal_status"] = goal.get("status") if isinstance(goal, dict) else None
         public["codex_goal_updated_at"] = goal.get("updatedAt") if isinstance(goal, dict) else None
-    connection = sess.get("provider_connection") or "default"
-    # Keep legacy native summaries sparse, but retain a stored default as the
-    # tombstone that clears a previously selected custom API in client caches.
-    if not summary or "provider_connection" in sess:
-        public["provider_connection"] = connection
-    if connection == "custom":
-        public["provider_connection_catalog"] = PROVIDER_CONNECTION_STORE.catalog(sess["backend"], session=sess, summary=summary)
-    public.pop("provider_connection_revision", None)
-    if public["codex_provider"] == "custom":
-        public["codex_provider_catalog"] = CODEX_PROVIDER_STORE.catalog(
-            available=CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC, session=sess, summary=summary,
-        )
     emergency_alert, emergency_count = emergency_summary(sess)
     # Ordinary session-list summaries are a high-volume payload. Keep the
     # emergency keys sparse when there is nothing to report; the dedicated
@@ -41701,7 +41599,7 @@ def agent_runner_env(
     return env
 
 
-def codex_app_server_env(selected: dict | None = None) -> dict[str, str]:
+def codex_app_server_env() -> dict[str, str]:
     """Process-wide environment; chat scope is supplied explicitly per thread."""
     env = runner_env()
     codex_dir = os.path.dirname(os.path.abspath(CODEX_BIN))
@@ -41719,8 +41617,6 @@ def codex_app_server_env(selected: dict | None = None) -> dict[str, str]:
     env["HYADEX_EMERGENCY_CLI"] = str(SERVER_ROOT / "hyadex_emergency.py")
     env["HYADEX_NOTIFY_CLI"] = str(SERVER_ROOT / "hyadex_notify.py")
     scrub_provider_runtime_environment(env)
-    if selected:
-        env = codex_provider.native_environment(env, selected)
     return env
 
 
@@ -44612,8 +44508,7 @@ def ensure_provider_manager_factory_admission(*, codex: bool = False) -> None:
 
 def codex_app_server_managers() -> tuple[CodexAppServerManager, ...]:
     managers: list[CodexAppServerManager] = []
-    for manager in (CODEX_APP_SERVER_MANAGER, *CODEX_CUSTOM_APP_SERVER_MANAGERS.values(),
-                    *CODEX_RETIRED_APP_SERVER_MANAGERS):
+    for manager in (CODEX_APP_SERVER_MANAGER, *CODEX_RETIRED_APP_SERVER_MANAGERS):
         if manager is not None and not any(manager is item for item in managers):
             managers.append(manager)
     return tuple(managers)
@@ -44715,7 +44610,7 @@ def schedule_codex_manager_drain(_notification: Any = None) -> None:
 async def refresh_codex_app_server_binary(*, force: bool = False) -> None:
     """Change admission, never interrupt a process that still owns work."""
     global CODEX_BINARY_IDENTITY, CODEX_BINARY_CHECKED_AT, CODEX_APP_SERVER_MANAGER
-    if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC or CODEX_AUTH_LOCK.locked() or CODEX_MANAGER_CLOSING:
+    if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC or CODEX_MANAGER_CLOSING:
         return
     async with CODEX_BINARY_PROBE_LOCK:
         if not force and time.monotonic() - CODEX_BINARY_CHECKED_AT < 30.0:
@@ -44726,33 +44621,30 @@ async def refresh_codex_app_server_binary(*, force: bool = False) -> None:
             return  # A failed/mid-install probe must not disturb working clients.
         async with CODEX_GOALS_CONFIG_LOCK:
             async with CODEX_APP_SERVER_MANAGER_LOCK:
-                if CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH is not None or CODEX_AUTH_LOCK.locked() or CODEX_MANAGER_CLOSING:
+                if CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH is not None or CODEX_MANAGER_CLOSING:
                     return
                 previous = CODEX_BINARY_IDENTITY
                 CODEX_BINARY_IDENTITY = identity
-                for revision, manager in ((None, CODEX_APP_SERVER_MANAGER), *tuple(CODEX_CUSTOM_APP_SERVER_MANAGERS.items())):
-                    launched = getattr(manager, "_hyadex_binary_identity", None) or previous
-                    if manager is not None and launched is not None and launched != identity:
-                        CODEX_RETIRED_APP_SERVER_MANAGERS.append(manager)
-                        if revision is None:
-                            CODEX_APP_SERVER_MANAGER = None
-                        else:
-                            CODEX_CUSTOM_APP_SERVER_MANAGERS.pop(revision, None)
+                manager = CODEX_APP_SERVER_MANAGER
+                launched = getattr(manager, "_hyadex_binary_identity", None) or previous
+                if manager is not None and launched is not None and launched != identity:
+                    CODEX_RETIRED_APP_SERVER_MANAGERS.append(manager)
+                    CODEX_APP_SERVER_MANAGER = None
     schedule_codex_manager_drain()
 
 
-async def refresh_codex_app_server_login(*, request_handoff: bool = False, source: str = "manager_lookup") -> bool:
+async def refresh_codex_app_server_login(*, source: str = "manager_lookup") -> bool:
     """Change normal-Codex admission; never kill a credential-owning process.
 
-    Ordinary lookups/catalog refreshes only observe native file revisions.
-    Explicit native-admin login reload also covers opaque credential stores.
-    This is not a token refresh or login operation.
+    Lookups, turn admission and catalog refreshes observe the native login
+    files, so a `codex login` in the user's terminal moves new turns to a fresh
+    app-server once the old one is idle. This is not a token refresh or login.
     """
     global CODEX_APP_SERVER_MANAGER, CODEX_LOGIN_REVISION
-    if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC or CODEX_AUTH_LOCK.locked() or CODEX_MANAGER_CLOSING:
+    if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC or CODEX_MANAGER_CLOSING:
         return False
     # Sources are server-owned labels, never request text, account IDs or keys.
-    if source not in {"manager_lookup", "turn_admission", "account_status", "catalog_refresh", "manual_login_reload"}:
+    if source not in {"manager_lookup", "turn_admission", "catalog_refresh"}:
         source = "manager_lookup"
     async with CODEX_LOGIN_PROBE_LOCK:
         if not await asyncio.to_thread(codex_auth.native_login_handoff_supported,
@@ -44762,15 +44654,13 @@ async def refresh_codex_app_server_login(*, request_handoff: bool = False, sourc
             codex_app_server_env(), cwd=existing_cwd(DEFAULT_CWD))
         async with CODEX_GOALS_CONFIG_LOCK:
             async with CODEX_APP_SERVER_MANAGER_LOCK:
-                if CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH is not None or CODEX_AUTH_LOCK.locked() or CODEX_MANAGER_CLOSING:
+                if CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH is not None or CODEX_MANAGER_CLOSING:
                     return False
                 observed_change = revision is not None and revision != CODEX_LOGIN_REVISION
                 CODEX_LOGIN_REVISION = revision
-                if observed_change or request_handoff:
+                if observed_change:
                     expire_codex_login_diagnostic()
                 for manager in codex_app_server_managers():
-                    if getattr(manager, "_hyadex_provider_revision", None):
-                        continue
                     previous = getattr(manager, "_hyadex_login_revision", None)
                     changed = revision is not None and revision != previous
                     # Recheck CLIs is observational when the native sign-in
@@ -44778,7 +44668,7 @@ async def refresh_codex_app_server_login(*, request_handoff: bool = False, sourc
                     # strands its chats behind an unnecessary login handoff.
                     if revision is not None and revision == previous:
                         manager._hyadex_login_superseded = False
-                    if changed or (request_handoff and revision is None):
+                    if changed:
                         if getattr(manager, "_hyadex_login_superseded", False) is not True:
                             reason = "login_revision_changed" if changed else "explicit_reload_opaque_login"
                             manager._hyadex_login_handoff_source = source
@@ -44884,7 +44774,7 @@ async def release_idle_codex_manager_session(manager: CodexAppServerManager, ses
 
 async def prepare_codex_login_turn(session: dict[str, Any]) -> None:
     """Pre-admission handoff under the chat lock, before message acceptance."""
-    if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC or codex_provider.session_choice(session.get("codex_provider")) == "custom":
+    if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC:
         return
     await refresh_codex_app_server_login(source="turn_admission")
     session_id = str(session.get("id") or "")
@@ -44905,7 +44795,7 @@ async def drain_retired_codex_managers() -> None:
     global CODEX_MANAGER_DRAIN_REQUESTED
     while CODEX_MANAGER_DRAIN_REQUESTED:
         CODEX_MANAGER_DRAIN_REQUESTED = False
-        if CODEX_AUTH_LOCK.locked() or CODEX_GOALS_RECONFIGURING or CODEX_MANAGER_CLOSING:
+        if CODEX_GOALS_RECONFIGURING or CODEX_MANAGER_CLOSING:
             return
         if CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH is not None:
             return
@@ -44938,35 +44828,20 @@ async def drain_retired_codex_managers() -> None:
 
 
 def existing_codex_app_server_manager(sess: dict[str, Any] | None = None) -> CodexAppServerManager | None:
-    revision = None
-    if sess is not None and codex_provider.session_choice(sess.get("codex_provider")) == "custom":
-        revision = sess.get("codex_provider_revision")
-        if not revision:
-            try:
-                revision = CODEX_PROVIDER_STORE.for_session(sess)["credential_id"]
-            except HTTPException:
-                return None
     session_id = str((sess or {}).get("id") or "")
     owner = CODEX_SESSION_APP_SERVER_MANAGERS.get(session_id)
-    if not (owner is not None and any(owner is item for item in codex_app_server_managers())
-            and getattr(owner, "_hyadex_provider_revision", None) == revision):
+    if not (owner is not None and any(owner is item for item in codex_app_server_managers())):
         thread_id = str(session_provider_id(sess) or "") if sess else ""
         owner = next((item for item in codex_app_server_managers()
-                      if thread_id and item.is_thread_loaded(thread_id)
-                      and getattr(item, "_hyadex_provider_revision", None) == revision), None)
-    manager = owner or (CODEX_CUSTOM_APP_SERVER_MANAGERS.get(revision) if revision else CODEX_APP_SERVER_MANAGER)
-    return manager
+                      if thread_id and item.is_thread_loaded(thread_id)), None)
+    return owner or CODEX_APP_SERVER_MANAGER
 
 
 def existing_codex_app_server_manager_for_thread(thread_id: str) -> CodexAppServerManager | None:
     session_id = codex_session_id_for_thread(thread_id)
     if session_id and session_id in STORE.sessions:
         return existing_codex_app_server_manager(STORE.sessions[session_id])
-    manager = next((item for item in codex_app_server_managers() if item.is_thread_loaded(thread_id)), None)
-    if manager is not None:
-        return manager
-    selected = CODEX_PROVIDER_STORE.for_thread(thread_id)
-    return CODEX_CUSTOM_APP_SERVER_MANAGERS.get(selected["credential_id"]) if selected else None
+    return next((item for item in codex_app_server_managers() if item.is_thread_loaded(thread_id)), None)
 
 
 async def codex_app_server_manager_for_thread(thread_id: str) -> CodexAppServerManager:
@@ -44977,20 +44852,13 @@ async def codex_app_server_manager_for_thread(thread_id: str) -> CodexAppServerM
     if owner is not None:
         retain_codex_manager_caller(owner, "")
         return owner
-    selected = CODEX_PROVIDER_STORE.for_thread(thread_id)
-    return await codex_app_server_manager({"codex_provider": "custom",
-        "codex_provider_revision": selected["credential_id"],
-        "codex_provider_binding": codex_provider.binding(selected)} if selected else None)
+    return await codex_app_server_manager(None)
 
 
-async def prepare_codex_app_server_process(manager: CodexAppServerManager, selected: dict | None) -> None:
+async def prepare_codex_app_server_process(manager: CodexAppServerManager) -> None:
     manager._hyadex_binary_identity = await asyncio.to_thread(codex_binary_identity)
-    if not selected:
-        manager._hyadex_login_revision = await asyncio.to_thread(codex_auth.native_login_revision,
-            codex_app_server_env(), cwd=existing_cwd(DEFAULT_CWD))
-    if selected:
-        await codex_provider.prepare_native_catalog(
-            CODEX_BIN, codex_app_server_env(), CODEX_PROVIDER_STORE.root / "native-models.json")
+    manager._hyadex_login_revision = await asyncio.to_thread(codex_auth.native_login_revision,
+        codex_app_server_env(), cwd=existing_cwd(DEFAULT_CWD))
 
 
 PROVIDER_USAGE = provider_usage.ProviderUsage()
@@ -45005,7 +44873,6 @@ async def broadcast_provider_usage_changed(session_id: str, backend: str) -> Non
 async def broadcast_codex_usage_changed(manager: CodexAppServerManager) -> None:
     for session_id, session in tuple(STORE.sessions.items()):
         if (str(session.get("backend") or DEFAULT_BACKEND).lower() == BACKEND_CODEX
-                and codex_provider.session_choice(session.get("codex_provider")) != "custom"
                 and existing_codex_app_server_manager(session) is manager):
             await broadcast_provider_usage_changed(session_id, BACKEND_CODEX)
 
@@ -45013,8 +44880,6 @@ async def broadcast_codex_usage_changed(manager: CodexAppServerManager) -> None:
 def project_codex_usage_notification(manager: CodexAppServerManager, notification: dict[str, Any]):
     # This synchronous cache update happens before the following account RPC
     # can resolve. Only a content-free invalidation goes to session sockets.
-    if getattr(manager, "_hyadex_provider_revision", None):
-        return None
     method = notification.get("method")
     if method == "account/changed":
         PROVIDER_USAGE.invalidate_codex(manager)
@@ -45099,19 +44964,16 @@ async def codex_app_server_manager(sess: dict[str, Any] | None = None, *, allow_
     ensure_provider_manager_factory_admission(codex=True)
     await refresh_codex_app_server_binary()
     await refresh_codex_app_server_login()
-    selected = CODEX_PROVIDER_STORE.for_session(sess, include_key=True) if sess is not None else None
-    revision = selected["credential_id"] if selected else None
     session_id = str((sess or {}).get("id") or "")
     # Manager lookup shares the provider reconfiguration barrier, including the
     # fast path, so a sign-in reload cannot race a retained/created generation.
     async with CODEX_GOALS_CONFIG_LOCK:
         ensure_provider_manager_factory_admission(codex=True)
         manager = existing_codex_app_server_manager(sess) if sess is not None else None
-        if manager is not None and (not any(manager is item for item in codex_app_server_managers())
-                                   or getattr(manager, "_hyadex_provider_revision", None) != revision):
+        if manager is not None and not any(manager is item for item in codex_app_server_managers()):
             CODEX_SESSION_APP_SERVER_MANAGERS.pop(session_id, None)
             manager = None
-        manager = manager or (CODEX_CUSTOM_APP_SERVER_MANAGERS.get(revision) if revision else CODEX_APP_SERVER_MANAGER)
+        manager = manager or CODEX_APP_SERVER_MANAGER
         if manager is not None:
             if (getattr(manager, "_hyadex_login_superseded", False) is True and not allow_retired_login
                     and getattr(manager, "_hyadex_callers", {}).get(asyncio.current_task()) != session_id):
@@ -45124,21 +44986,14 @@ async def codex_app_server_manager(sess: dict[str, Any] | None = None, *, allow_
             return manager
         async with CODEX_APP_SERVER_MANAGER_LOCK:
             ensure_provider_manager_factory_admission(codex=True)
-            manager = CODEX_CUSTOM_APP_SERVER_MANAGERS.get(revision) if revision else CODEX_APP_SERVER_MANAGER
+            manager = CODEX_APP_SERVER_MANAGER
             if manager is None:
                 manager = CodexAppServerManager(
                     CODEX_BIN,
                     cwd=existing_cwd(DEFAULT_CWD),
-                    env_factory=(lambda selected=selected: codex_app_server_env(selected)) if selected else codex_app_server_env,
-                    app_server_args=(
-                        (() if CODEX_GOALS_ENABLED else ("--disable", "goals"))
-                        + (codex_provider.registration_args(selected) + codex_provider.config_args({
-                            "model_provider": codex_provider.PROVIDER_ID,
-                            "cli_auth_credentials_store": "ephemeral",
-                            "model_catalog_json": str(CODEX_PROVIDER_STORE.root / "native-models.json"),
-                        }) if selected else ())
-                    ),
-                    before_start=lambda: prepare_codex_app_server_process(manager, selected),
+                    env_factory=codex_app_server_env,
+                    app_server_args=() if CODEX_GOALS_ENABLED else ("--disable", "goals"),
+                    before_start=lambda: prepare_codex_app_server_process(manager),
                     request_timeout=CODEX_APP_SERVER_TIMEOUT_SECONDS,
                     lifecycle_timeout=CODEX_APP_SERVER_LIFECYCLE_TIMEOUT_SECONDS,
                     process_stream_limit=CODEX_APP_SERVER_JSONL_LIMIT_BYTES,
@@ -45161,24 +45016,16 @@ async def codex_app_server_manager(sess: dict[str, Any] | None = None, *, allow_
                     },
                     on_process_started=register_codex_app_server_child,
                     on_process_exited=unregister_codex_app_server_child,
-                    sensitive_values=(selected["api_key"],) if selected else (),
-                    protected_env_keys=(codex_provider.ENV_KEY,) if selected else (),
                 )
                 manager.add_notification_handler(project_codex_notification)
                 usage_handler = lambda notification, manager=manager: project_codex_usage_notification(manager, notification)
                 manager.client.add_account_usage_handler(usage_handler)
-                if selected:
-                    manager.client._authentication_submitted = True
                 manager.add_notification_handler(cache_codex_approval_item)
                 manager.add_notification_handler(schedule_codex_manager_drain)
                 manager._hyadex_binary_identity = CODEX_BINARY_IDENTITY
-                manager._hyadex_provider_revision = revision
-                manager._hyadex_login_revision = CODEX_LOGIN_REVISION if not selected else None
+                manager._hyadex_login_revision = CODEX_LOGIN_REVISION
                 CODEX_APP_SERVER_MANAGER_EPOCH += 1
-                if revision:
-                    CODEX_CUSTOM_APP_SERVER_MANAGERS[revision] = manager
-                else:
-                    CODEX_APP_SERVER_MANAGER = manager
+                CODEX_APP_SERVER_MANAGER = manager
             if session_id:
                 CODEX_SESSION_APP_SERVER_MANAGERS[session_id] = manager
             retain_codex_manager_caller(manager, session_id)
@@ -45664,7 +45511,6 @@ async def close_codex_app_server_manager() -> None:
             managers = codex_app_server_managers()
             cleanup_epoch = CODEX_APP_SERVER_MANAGER_EPOCH
             CODEX_APP_SERVER_MANAGER = None
-            CODEX_CUSTOM_APP_SERVER_MANAGERS.clear()
             CODEX_RETIRED_APP_SERVER_MANAGERS.clear()
             CODEX_SESSION_APP_SERVER_MANAGERS.clear()
             CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH = cleanup_epoch
@@ -47849,14 +47695,10 @@ def record_runtime_success(backend: str) -> None:
 
 async def ensure_runtime_available(backend: str, *, session: dict[str, Any] | None = None) -> dict[str, Any]:
     if backend not in VALID_BACKENDS:
-        raise HTTPException(410, "This provider was removed. Its saved chat history remains readable.")
+        raise HTTPException(410, REMOVED_PROVIDER_MESSAGE)
+    if session is not None and (retired := retired_session_runtime_message(session)):
+        raise HTTPException(410, retired)
     diagnostic = await asyncio.to_thread(runtime_diagnostic, backend)
-    if (session or {}).get("provider_connection") == "custom":
-        selected = PROVIDER_CONNECTION_STORE.for_session(session)
-        provider_connections.require_model(selected)
-        if backend not in {BACKEND_CLAUDE} or diagnostic.get("installed") is not True:
-            raise HTTPException(503, "Install this provider's native CLI to use its custom API.")
-        diagnostic = {**diagnostic, "status": "ready", "authenticated": True}
     if (
         backend == BACKEND_CLAUDE
         and diagnostic.get("installed") is True
@@ -47865,12 +47707,6 @@ async def ensure_runtime_available(backend: str, *, session: dict[str, Any] | No
         # An unknown or previously rejected login must not prevent the native
         # runtime from renewing it, or noticing an external login on retry.
         return diagnostic
-    if backend == BACKEND_CODEX and codex_provider.session_choice((session or {}).get("codex_provider")) == "custom":
-        CODEX_PROVIDER_STORE.for_session(session)
-        if CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC and diagnostic.get("installed") is True:
-            return {**diagnostic, "status": "ready", "authenticated": True,
-                "message": "The custom Codex endpoint and provider key are configured."}
-        raise HTTPException(503, "The custom endpoint requires an installed native Codex app-server runtime.")
     if diagnostic.get("status") == "ready":
         if diagnostic.get("status") == "ready" and diagnostic.get(
             "_executable"
@@ -48490,17 +48326,10 @@ def discover_runtime_backend_catalog(backend: str, *, force_runtime_probe: bool 
         catalog = parse_claude_help_catalog()
     elif backend == BACKEND_CODEX:
         catalog = discover_codex_catalog()
-        catalog["custom_provider"] = CODEX_PROVIDER_STORE.catalog(
-            available=CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC
-            and diagnostic.get("installed") is True,
-        )
     else:
         raise HTTPException(400, "Unsupported provider runtime.")
     catalog["diagnostic"] = public_runtime_diagnostic(diagnostic)
     catalog["available"] = ready
-    catalog["native_credentials_present"] = provider_connections.native_credentials_present(backend, diagnostic)
-    if backend in {BACKEND_CLAUDE}:
-        catalog["custom_provider"] = PROVIDER_CONNECTION_STORE.catalog(backend, installed=diagnostic.get("installed") is True)
     return catalog
 
 
@@ -48539,20 +48368,10 @@ def codex_thread_instruction_hash(session_id: str, sess: dict[str, Any]) -> str:
         f"hyadex-policy-v{CODEX_THREAD_POLICY_VERSION}\0"
         f"{codex_thread_instructions(session_id, sess)}"
     )
-    if sess.get("codex_provider") == "custom":
-        payload += "\0custom-model-capabilities-v1"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def codex_runtime_settings(sess: dict[str, Any]) -> tuple[str, str, str]:
-    selected = CODEX_PROVIDER_STORE.for_session(sess)
-    CODEX_PROVIDER_STORE.require_thread(session_codex_thread_id(sess), selected)
-    if selected:
-        model = selected.get("model")
-        if not model:
-            raise HTTPException(409, "Choose a model for this custom endpoint in the chat settings.")
-        catalog = CODEX_PROVIDER_STORE.cached_catalog(selected)
-        return model, codex_provider.runtime_effort(selected, catalog, sess.get("effort")), ""
     configured_model, configured_effort, configured_service_tier = codex_user_config_defaults()
     model = codex_available_model(str(sess.get("model") or configured_model or CODEX_DEFAULT_MODEL).strip())
     effort = clamp_codex_runtime_effort(
@@ -48572,7 +48391,7 @@ async def migrate_retired_codex_selection(
     No native transcript edits, forks, auth changes, or retries. Native
     compaction/recovery remains Codex-owned and can still fail independently.
     """
-    if sess.get("backend") != BACKEND_CODEX or sess.get("codex_provider") == "custom":
+    if sess.get("backend") != BACKEND_CODEX:
         return sess
     configured_model, _effort, _tier = codex_user_config_defaults()
     previous = str(previous_model or sess.get("model") or configured_model or CODEX_DEFAULT_MODEL).strip()
@@ -48698,9 +48517,6 @@ def codex_thread_params(
         params["developerInstructions"] = developer_instructions
     if model:
         params["model"] = model
-    selected = CODEX_PROVIDER_STORE.for_session(sess)
-    if selected:
-        params["modelProvider"] = codex_provider.PROVIDER_ID
     if service_tier:
         params["serviceTier"] = codex_app_server_service_tier(service_tier)
     # Honor explicit per-thread settings for start, resume and fork without
@@ -48715,12 +48531,6 @@ def codex_thread_params(
     # context.  The static endpoint learns the exact live run only from
     # Codex-owned turn metadata supplied below at turn/start.
     flat_config = params.setdefault("config", {})
-    if selected:
-        # Custom endpoints must not inherit reasoning-summary parameters from
-        # the normal account. Effort is replaced explicitly on every turn.
-        flat_config["model_reasoning_summary"] = codex_provider.runtime_summary(
-            selected, CODEX_PROVIDER_STORE.cached_catalog(selected))
-        flat_config["model_catalog_json"] = str(CODEX_PROVIDER_STORE.root / "native-models.json")
     reserved_prefix = f"mcp_servers.{CODEX_PROVIDER_MCP_NAME}"
     for key in tuple(flat_config):
         if key == reserved_prefix or key.startswith(reserved_prefix + "."):
@@ -49122,7 +48932,6 @@ async def ensure_codex_app_server_thread(
                     "serviceName": "Hyadex",
                 }
             )
-            await asyncio.to_thread(CODEX_PROVIDER_STORE.record_thread, provider_id, CODEX_PROVIDER_STORE.for_session(sess))
             await pin_codex_app_server_thread(provider_id, manager)
             pinned = True
         elif already_loaded and policy_changed:
@@ -49382,12 +49191,6 @@ def build_claude_cmd(
         cmd.extend(["--settings", json.dumps({"env": {
             "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": str(subagent_limit),
         }}, separators=(",", ":"))])
-    if sess.get("provider_connection") == "custom":
-        _, settings_path = PROVIDER_CONNECTION_STORE.claude_overrides(sess)
-        if "--settings" in cmd:
-            index = cmd.index("--settings")
-            del cmd[index:index + 2]
-        cmd.extend(["--settings", settings_path])
     if no_session_persistence and not provider_id:
         cmd.append("--no-session-persistence")
     if provider_id:
@@ -49443,7 +49246,6 @@ def claude_sdk_configuration_key(
         "allowed_tools": [CLAUDE_PROVIDER_MCP_TOOL_NAME],
         "thinking": {"type": "adaptive", "display": "summarized"},
         "hyadex_provider_tool": 1,
-        "provider_connection_revision": sess.get("provider_connection_revision"),
     }
     subagent_limit = sess.get("subagent_limit")
     if type(subagent_limit) is int and subagent_limit > 0:
@@ -49492,10 +49294,6 @@ def build_claude_sdk_options(
             {"env": subagent_env}, separators=(",", ":"),
         )
     cli_path = claude_sdk_cli_path(env)
-    if sess.get("provider_connection") == "custom":
-        custom_env, custom_settings = PROVIDER_CONNECTION_STORE.claude_overrides(sess)
-        env.update(custom_env)
-        subagent_settings["settings"] = custom_settings
     system_prompt = session_system_prompt(session_id, sess, manifest_path)
     provider_id = resolve_claude_resume_provider(sess, cwd)[0]
     if sess.get("fork_resume_session_at") and not (provider_id and sess.get("fork_from")):
@@ -49633,7 +49431,7 @@ def build_claude_sdk_options(
         stderr=lambda line: logger.warning(
             "Claude SDK stderr session=%s: %s",
             session_id,
-            compact_memory_text(PROVIDER_CONNECTION_STORE.redact(sess, line), 2_000),
+            compact_memory_text(line, 2_000),
         ),
     )
     def bind_provider_tool_owner(ownership_token: str, run_id: str) -> None:
@@ -50527,8 +50325,6 @@ async def fork_codex_thread(
     *,
     last_turn_id: str | None = None,
 ) -> str:
-    selected_provider = CODEX_PROVIDER_STORE.for_session(sess)
-    CODEX_PROVIDER_STORE.require_thread(source_thread_id, selected_provider)
     cwd = existing_cwd(str(sess.get("cwd") or DEFAULT_CWD))
     manager = await codex_app_server_manager(sess)
     bound_fork_ids: set[str] = set()
@@ -50536,7 +50332,6 @@ async def fork_codex_thread(
     async def journal_created_fork(thread_id: str) -> bool:
         # Persist the provider generation before publishing orphan recovery.
         # Joining this task on cancellation preserves both pieces together.
-        await asyncio.to_thread(CODEX_PROVIDER_STORE.record_thread, thread_id, selected_provider)
         bound_fork_ids.add(thread_id)
         return await persist_abandoned_fork_provider_thread(thread_id)
 
@@ -52131,7 +51926,7 @@ async def run_claude_print(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
-            env={**agent_runner_env(session_id, runtime_env), **PROVIDER_CONNECTION_STORE.claude_overrides(sess)[0]} if sess.get("provider_connection") == "custom" else agent_runner_env(session_id, runtime_env),
+            env=agent_runner_env(session_id, runtime_env),
             limit=PROCESS_STREAM_LIMIT,
             start_new_session=True,
         )
@@ -55584,12 +55379,6 @@ async def run_codex_app_server(
     provider_command: ProviderCommandRecord | None = None,
     provider_runtime_env: dict[str, str] | None = None,
 ) -> None:
-    selected_provider = CODEX_PROVIDER_STORE.for_session(sess)
-    if selected_provider:
-        # Freeze before the first await; Save may replace the current pointer
-        # while this turn is preparing its workspace or starting its client.
-        sess = {**sess, "codex_provider_revision": selected_provider["credential_id"],
-            "codex_provider_binding": codex_provider.binding(selected_provider)}
     runtime_env = validate_provider_runtime_env(provider_runtime_env)
     if standalone_provider_context:
         sess = standalone_provider_session(sess)
@@ -57547,10 +57336,6 @@ async def run_codex_app_server(
                     overrides["model"] = model
                 if effort:
                     overrides["effort"] = effort
-                if selected_provider:
-                    overrides.update(codex_provider.turn_overrides(model, effort,
-                        summary=codex_provider.runtime_summary(selected_provider,
-                            CODEX_PROVIDER_STORE.cached_catalog(selected_provider))))
                 if service_tier:
                     overrides["serviceTier"] = codex_app_server_service_tier(service_tier)
 
@@ -58013,7 +57798,6 @@ async def run_codex_app_server(
         can_fallback = (
             allow_exec_fallback
             and not codex_native_archive_rejection(exc, str(session_provider_id(sess) or ""))
-            and codex_provider.session_choice(sess.get("codex_provider")) == "default"
             and provider_command is None
             and not stop_requested
             and (
@@ -58065,10 +57849,6 @@ async def run_codex_app_server(
         stopped = stop_requested
         terminal_status = "interrupted" if stopped else "failed"
         if not stopped:
-            if selected_provider:
-                failure_kind = codex_provider.classify_failure(terminal_error)
-                if failure_kind != "failed":
-                    terminal_error = codex_provider.test_result(failure_kind)["message"]
             await append_event(session_id, "error", {
                 "run_id": current_run_id,
                 "backend": BACKEND_CODEX,
@@ -58265,19 +58045,9 @@ async def run_codex_app_server(
         terminal_error = None
     if compaction_failed and terminal_error:
         terminal_error = codex_compaction_error_message(model, terminal_error)
-    if selected_provider and not produced_activity and not stopped and (
-        first_activity_stalled or terminal_status == "completed"
-    ):
-        terminal_status = "failed"
-        terminal_error = (
-            "The custom model did not return a usable Codex response. Check this "
-            "model's basic compatibility in Custom endpoint settings. Its gateway "
-            "must support Responses streaming and native tool calls."
-        )
     recover_resume = (
         not delivery_unknown
         and not compaction_failed
-        and not (selected_provider and (first_activity_stalled or not produced_activity))
         and not goal_steer_recovery_fenced
         and not child_continuation_attempts
         and goal_continuation_result is None
@@ -58344,12 +58114,7 @@ async def run_codex_app_server(
     try:
         if terminal_status == "failed":
             terminal_error = terminal_error or "Codex app-server turn failed."
-            if selected_provider and not compaction_failed:
-                failure_kind = codex_provider.classify_failure(terminal_error)
-                if failure_kind != "failed":
-                    terminal_error = codex_provider.test_result(failure_kind)["message"]
-            if (codex_provider.session_choice(sess.get("codex_provider")) == "default"
-                    and getattr(manager, "_hyadex_login_superseded", False) is not True):
+            if getattr(manager, "_hyadex_login_superseded", False) is not True:
                 record_runtime_failure(BACKEND_CODEX, terminal_error)
             if not error_emitted:
                 await append_event(session_id, "error", {
@@ -58359,8 +58124,7 @@ async def run_codex_app_server(
                     "transport": CODEX_TRANSPORT_APP_SERVER,
                     **current_metadata(),
                 })
-        elif (not stopped and codex_provider.session_choice(sess.get("codex_provider")) == "default"
-                and getattr(manager, "_hyadex_login_superseded", False) is not True):
+        elif not stopped and getattr(manager, "_hyadex_login_superseded", False) is not True:
             record_runtime_success(BACKEND_CODEX)
 
         await flush_pending_unknown(
@@ -58631,8 +58395,8 @@ async def _start_turn_locked(
     sess = STORE.sessions.get(session_id)
     if not sess:
         raise HTTPException(status_code=404, detail="session not found")
-    if str(sess.get("backend") or DEFAULT_BACKEND).lower() not in VALID_BACKENDS:
-        raise HTTPException(410, "This provider was removed. Its saved chat history remains readable.")
+    if retired := retired_session_runtime_message(sess):
+        raise HTTPException(410, retired)
     if sess.get("archived"):
         raise HTTPException(status_code=409, detail="archived chats cannot start turns")
     if req.purpose == "chat_mailbox_wake" or mailbox_wake_claim is not None:
@@ -62125,11 +61889,6 @@ def privileged_native_json_transport(
 async def require_agent_token(request: Request, call_next):
     codex_goals_admin_route = request.url.path in {
         "/api/admin/codex/goals", "/api/admin/codex/subagents",
-        "/api/admin/codex/auth", "/api/admin/codex/auth/api-key",
-        "/api/admin/codex/auth/reload",
-        "/api/admin/codex/provider", "/api/admin/codex/provider/test",
-        "/api/admin/codex/provider/models",
-        "/api/admin/provider-connections/claude", "/api/admin/provider-connections/claude/check",
     }
     codex_provider_mcp_route = (
         request.url.path == CODEX_PROVIDER_MCP_PATH
@@ -62232,38 +61991,7 @@ async def require_agent_token(request: Request, call_next):
             )
         if not request_exact_native_token_header_authorized(request):
             return JSONResponse({"detail": "unauthorized"}, status_code=401)
-        if request.url.path in {"/api/admin/codex/auth/api-key", "/api/admin/codex/auth/reload"} and request.method.upper() == "POST":
-            declared_size, transport_error = privileged_native_json_transport(
-                request, max_body_bytes=codex_auth.MAX_BODY_BYTES,
-                label="Codex authentication", require_content_length=True,
-            )
-            if transport_error is not None:
-                status_code, detail = transport_error
-                return JSONResponse({"detail": detail}, status_code=status_code)
-            body_error = await prebuffer_bounded_request_body(
-                request, max_body_bytes=codex_auth.MAX_BODY_BYTES,
-                declared_size=declared_size,
-            )
-            if body_error is not None:
-                status_code, detail = body_error
-                return JSONResponse({"detail": detail}, status_code=status_code)
-        elif (request.url.path in {"/api/admin/codex/provider", "/api/admin/codex/provider/test", "/api/admin/codex/provider/models"}
-              and request.method.upper() in {"PUT", "POST"}) or (request.url.path.startswith("/api/admin/provider-connections/")
-              and request.method.upper() in {"PUT", "POST", "DELETE"}):
-            declared_size, transport_error = privileged_native_json_transport(
-                request, max_body_bytes=codex_provider.MAX_BODY_BYTES,
-                label="Provider endpoint", require_content_length=True,
-            )
-            if transport_error is not None:
-                status_code, detail = transport_error
-                return JSONResponse({"detail": detail}, status_code=status_code)
-            body_error = await prebuffer_bounded_request_body(
-                request, max_body_bytes=codex_provider.MAX_BODY_BYTES, declared_size=declared_size,
-            )
-            if body_error is not None:
-                status_code, detail = body_error
-                return JSONResponse({"detail": detail}, status_code=status_code)
-        elif codex_goals_admin_route and request.method.upper() == "PUT":
+        if codex_goals_admin_route and request.method.upper() == "PUT":
             declared_size, transport_error = privileged_native_json_transport(
                 request,
                 max_body_bytes=CODEX_GOALS_ADMIN_MAX_BODY_BYTES,
@@ -62724,9 +62452,6 @@ async def health() -> dict[str, Any]:
             "subagent_limit_v1": {"version": 1, "backends": ["codex", "claude"]},
             "provider_usage": {"available": bool(AGENT_TOKEN), "version": 1, "backends": ["codex", "claude"]},
             "side_questions": side_questions.capability(),
-            "codex_auth_v1": codex_auth.capability(available=bool(AGENT_TOKEN) and CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC),
-            "codex_provider_v1": {"available": bool(AGENT_TOKEN) and CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC, "wire_api": "responses", "per_chat": True, "per_chat_models": True, "model_discovery": True, "model_compatibility": True},
-            "provider_connections_v1": {"available": bool(AGENT_TOKEN), "per_chat": True, "backends": [BACKEND_CLAUDE]},
             "websocket_auth_v1": {
                 "available": True,
                 "required": False,
@@ -63013,13 +62738,6 @@ async def put_codex_subagents_admin(req: CodexSubagentsAdminRequest) -> dict[str
         except OSError as exc:
             raise HTTPException(status_code=503, detail="Codex settings could not be saved") from exc
         return codex_subagents_admin_status()
-
-
-def queued_turn_backend(session_id: str, item: dict[str, Any]) -> str:
-    session = STORE.sessions.get(session_id) or {}
-    return str(
-        item.get("backend") or session.get("backend") or DEFAULT_BACKEND
-    ).strip().lower()
 
 
 def codex_subagent_has_live_owner(
@@ -63646,57 +63364,6 @@ async def active_provider_background_work_labels_async() -> list[str]:
     return provider_background_work_labels_from_snapshot(snapshot)
 
 
-async def reserve_codex_goals_reconfiguration() -> None:
-    """Close Codex admission and reject a setting change if work exists."""
-
-    global CODEX_GOALS_RECONFIGURING
-    async with ACTIVE_LOCK:
-        lifecycle_blocker = server_lifecycle_admission_blocker()
-        if lifecycle_blocker:
-            raise HTTPException(status_code=503, detail=lifecycle_blocker)
-        if CODEX_GOALS_RECONFIGURING:
-            raise HTTPException(
-                status_code=409,
-                detail="Codex goals configuration is already changing",
-            )
-        CODEX_GOALS_RECONFIGURING = True
-        active_labels = active_codex_work_labels()
-    try:
-        async with QUEUE_LOCK:
-            queued_labels = [
-                f"queued Codex turn {item.get('queued_id') or 'unknown'} in {session_id}"
-                for session_id, queue in QUEUED_TURNS.items()
-                for item in queue
-                if queued_turn_backend(session_id, item) == BACKEND_CODEX
-            ]
-            for session_id, item in RUN_NOW_TURNS.items():
-                if queued_turn_backend(session_id, item) == BACKEND_CODEX:
-                    queued_labels.append(f"queued Codex Force Send in {session_id}")
-        blockers = [*active_labels, *queued_labels]
-        if blockers:
-            preview = ", ".join(blockers[:3])
-            remainder = len(blockers) - min(3, len(blockers))
-            if remainder:
-                preview += f", and {remainder} more"
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Codex goals cannot be reconfigured while Codex work is "
-                    f"active or queued: {preview}"
-                ),
-            )
-    except BaseException:
-        async with ACTIVE_LOCK:
-            CODEX_GOALS_RECONFIGURING = False
-        raise
-
-
-async def release_codex_goals_reconfiguration() -> None:
-    global CODEX_GOALS_RECONFIGURING
-    async with ACTIVE_LOCK:
-        CODEX_GOALS_RECONFIGURING = False
-
-
 async def pause_idle_codex_goals_before_disable() -> dict[str, int]:
     paused = 0
     fenced = 0
@@ -63780,160 +63447,6 @@ def require_native_admin_control(request: Request) -> None:
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
-@asynccontextmanager
-async def codex_auth_operation(*, mutate: bool, existing_only: bool = False):
-    """Fence native authentication changes with the existing Codex admission barrier."""
-    if not mutate:
-        await refresh_codex_app_server_login(source="account_status")
-    async with CODEX_AUTH_LOCK:
-        reserved = False
-        try:
-            if mutate:
-                try:
-                    await reserve_codex_goals_reconfiguration()
-                except HTTPException as exc:
-                    if exc.status_code == 409:
-                        raise HTTPException(409, codex_auth.BUSY_MESSAGE) from None
-                    raise
-                reserved = True
-                # Native goals may run between server-owned turns. Side chats
-                # own separate native processes using the same native login.
-                if any(
-                    str(session.get("backend") or DEFAULT_BACKEND).lower() == BACKEND_CODEX
-                    and isinstance(session.get("codex_goal"), dict)
-                    and session["codex_goal"].get("status") == "active"
-                    for session in STORE.sessions.values()
-                ) or any(
-                    str((STORE.sessions.get(session_id) or {}).get("backend") or DEFAULT_BACKEND).lower() == BACKEND_CODEX
-                    for session_id in SIDE_QUESTIONS.active_session_ids()
-                ):
-                    raise HTTPException(409, codex_auth.BUSY_MESSAGE)
-            manager = CODEX_APP_SERVER_MANAGER if existing_only else await codex_app_server_manager()
-            if mutate and any(
-                not turn._completed
-                for active_manager in codex_app_server_managers()
-                for turn in active_manager.client._turns_by_thread.values()
-            ):
-                raise HTTPException(409, codex_auth.BUSY_MESSAGE)
-            yield manager
-        finally:
-            if reserved:
-                await release_codex_goals_reconfiguration()
-
-
-async def reload_codex_login() -> bool:
-    logger.info("Codex login reload requested source=manual_login_reload")
-    if not await refresh_codex_app_server_login(request_handoff=True, source="manual_login_reload"):
-        logger.info("Codex login reload deferred source=manual_login_reload reason=unavailable_or_busy")
-        raise HTTPException(409, "Codex sign-in cannot be reloaded now. Its credential store is unsupported or maintenance is active.")
-    return any(getattr(manager, "_hyadex_login_superseded", False) is True
-               for manager in codex_app_server_managers())
-
-
-router.include_router(codex_auth.create_router(
-    authorize=require_native_admin_control,
-    operation=codex_auth_operation,
-    available=lambda: CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC,
-    reload_login=reload_codex_login,
-))
-
-
-CODEX_PROVIDER_SETTINGS_LOCK = asyncio.Lock()
-
-
-async def probe_codex_provider(selected: dict):
-    return await codex_provider.test_connection(selected, executable=CODEX_BIN, environment=runner_env())
-
-
-async def mutate_codex_provider(selected: dict | None):
-    """Change future chats' settings without disturbing live provider clients."""
-    async with CODEX_PROVIDER_SETTINGS_LOCK:
-        task = asyncio.create_task(replace_codex_provider_settings(selected))
-        try:
-            await asyncio.shield(task)
-        except BaseException:
-            # Finish the owned pointer write even if the caller disconnects.
-            with suppress(BaseException):
-                await join_task_despite_caller_cancellation(task)
-            raise
-
-
-async def replace_codex_provider_settings(selected: dict | None):
-    # Legacy chats did not carry a credential revision. Pin them before the
-    # pointer changes so an edit/reset cannot reroute an existing conversation.
-    async with STORE._lock:
-        previous = CODEX_PROVIDER_STORE.registration()
-        changed = False
-        if previous:
-            await asyncio.to_thread(CODEX_PROVIDER_STORE.retain_current)
-            for session in STORE.sessions.values():
-                if session.get("codex_provider") != "custom" or session.get("codex_provider_revision"):
-                    continue
-                if session.get("codex_provider_binding") not in (None, codex_provider.binding(previous), codex_provider.legacy_binding(previous)):
-                    continue
-                session["codex_provider_revision"] = previous["credential_id"]
-                session["codex_provider_binding"] = codex_provider.binding(previous)
-                thread_id = session_codex_thread_id(session)
-                if thread_id:
-                    await asyncio.to_thread(CODEX_PROVIDER_STORE.record_thread, thread_id, previous)
-                changed = True
-            if changed:
-                await STORE.save(durable=True)
-        if selected is None:
-            await asyncio.to_thread(CODEX_PROVIDER_STORE.reset)
-        else:
-            await asyncio.to_thread(CODEX_PROVIDER_STORE.save, selected)
-
-
-async def custom_codex_discovery_native_models() -> dict:
-    path = await codex_provider.prepare_native_catalog(
-        CODEX_BIN, codex_app_server_env(), CODEX_PROVIDER_STORE.root / "discovery-native-models.json",
-    )
-    return await asyncio.to_thread(lambda: json.loads(Path(path).read_text(encoding="utf-8")))
-
-
-async def set_codex_default_model(model: str | None, expected_revision):
-    async with CODEX_PROVIDER_SETTINGS_LOCK:
-        selected = await asyncio.to_thread(CODEX_PROVIDER_STORE.selection, include_key=True, include_revision=True)
-        if not selected or selected.get("credential_id") != expected_revision:
-            raise HTTPException(409, "Endpoint settings changed. Refresh and try again.")
-        status = await asyncio.to_thread(CODEX_PROVIDER_STORE.status)
-        if status.get("connection_verified") is not True:
-            raise HTTPException(409, "Check this API connection first.")
-        replacement = {"base_url": selected["base_url"], "api_key": selected["api_key"],
-                       "model": model, "connection_verified": True}
-        task = asyncio.create_task(replace_codex_provider_settings(replacement))
-        try:
-            await asyncio.shield(task)
-        except BaseException:
-            with suppress(BaseException): await join_task_despite_caller_cancellation(task)
-            raise
-        current = await asyncio.to_thread(CODEX_PROVIDER_STORE.status)
-        return {"backend": "codex", "revision": current["credential_id"], "default_model": current["model"]}
-
-
-router.include_router(provider_connections.create_router(
-    authorize=require_native_admin_control, store=PROVIDER_CONNECTION_STORE,
-    codex_store=CODEX_PROVIDER_STORE, codex_set_model=set_codex_default_model,
-    session_lookup=lambda session_id: STORE.sessions.get(session_id),
-    account=lambda backend: provider_connections.native_account_metadata(
-        backend, env=runner_env(),
-    ),
-))
-
-
-router.include_router(codex_provider.create_router(
-    authorize=require_native_admin_control,
-    store=CODEX_PROVIDER_STORE,
-    mutate=mutate_codex_provider,
-    probe=probe_codex_provider,
-    available=lambda: CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC,
-    session_lookup=lambda session_id: STORE.sessions.get(session_id),
-    native_models=custom_codex_discovery_native_models,
-    check_credentials=provider_connections.probe_credentials,
-))
-
-
 def native_session_available(session_id: str) -> bool:
     if not isinstance(session_id, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id) is None:
         return False
@@ -63967,9 +63480,7 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
     parent_id = provider_id(session)
     if not parent_id:
         raise side_questions.SideQuestionError(409, "The native conversation has not started yet")
-    custom_codex = backend == BACKEND_CODEX and codex_provider.session_choice(session.get("codex_provider")) == "custom"
-    provider_revision = CODEX_PROVIDER_STORE.for_session(session)["credential_id"] if custom_codex else None
-    binding = {"backend": backend, "parent_id": parent_id, "provider_revision": provider_revision}
+    binding = {"backend": backend, "parent_id": parent_id}
     if persisted_state is not None and any(persisted_state.get(key) != value for key, value in binding.items()):
         raise side_questions.SideQuestionError(410, "The main provider conversation changed; clear Side chat")
     if durable and persist_state is not None and persisted_state is None:
@@ -63988,11 +63499,6 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
             current = STORE.sessions[session_id]
             if str(current.get("backend") or DEFAULT_BACKEND).lower() != backend or provider_id(current) != parent_id:
                 raise side_questions.SideQuestionError(410, "The main provider conversation changed; clear Side chat")
-            if backend == BACKEND_CODEX:
-                selected = CODEX_PROVIDER_STORE.for_session(current)
-                if (selected or {}).get("credential_id") != provider_revision:
-                    raise side_questions.SideQuestionError(410, "This chat's Codex endpoint changed; clear Side chat")
-                CODEX_PROVIDER_STORE.require_thread(parent_id, selected)
             return current
 
         async def ask(self, question, *, history):
@@ -64065,13 +63571,6 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
                             side_session_id=session_id, side_owner_is_current=is_current,
                             side_approval_policy=approval_policy)
 
-                    provider_selection = CODEX_PROVIDER_STORE.for_session(current, include_key=True)
-                    if provider_selection:
-                        provider_selection["effort"] = codex_provider.runtime_effort(
-                            provider_selection, CODEX_PROVIDER_STORE.cached_catalog(provider_selection), current.get("effort"),
-                        )
-                        provider_selection["reasoning_summary"] = codex_provider.runtime_summary(
-                            provider_selection, CODEX_PROVIDER_STORE.cached_catalog(provider_selection))
                     async def save_codex_state(value):
                         if persist_state is not None:
                             await persist_state({**binding, "codex": value})
@@ -64080,7 +63579,7 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
                         cwd=cwd, fork_overrides=fork_overrides, turn_overrides=turn_overrides,
                         server_request_handler=side_server_request,
                         env=side_questions.isolated_environment(runner_env()),
-                        provider_selection=provider_selection, durable=durable,
+                        durable=durable,
                         resume_state=(persisted_state or {}).get("codex"), persist_state=save_codex_state)
                 result = {"answer": await self.codex.ask(question),
                           "context_note": "Native Codex context from when Side chat started, including tool results. Clear Side chat to use the latest main context."}
@@ -64946,7 +64445,7 @@ async def runtime_catalog(refresh: bool = False) -> dict[str, Any]:
 @router.get("/api/runtime/usage")
 async def runtime_provider_usage(
     request: Request, backend: str, session_id: str | None = None,
-    codex_provider: str | None = None, refresh: bool = False,
+    refresh: bool = False,
 ) -> JSONResponse:
     require_native_admin_control(request)
     session = STORE.sessions.get(session_id) if session_id else None
@@ -64957,10 +64456,7 @@ async def runtime_provider_usage(
     elif session is not None and str(session.get("backend") or DEFAULT_BACKEND).lower() != backend:
         result = provider_usage.unavailable(backend, "selection_changed")
     elif backend == BACKEND_CODEX:
-        selected_provider = str((session or {}).get("codex_provider") or codex_provider or "default")
-        if selected_provider == "custom":
-            result = provider_usage.unavailable(backend, "custom_endpoint", account_kind="custom")
-        elif CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC:
+        if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC:
             result = provider_usage.unavailable(backend, "unsupported_transport")
         else:
             try:
@@ -64968,8 +64464,6 @@ async def runtime_provider_usage(
                 result = await PROVIDER_USAGE.read_codex(manager, refresh=refresh)
             except Exception:
                 result = provider_usage.unavailable(backend, "temporarily_unavailable")
-    elif session is not None and session.get("provider_connection") == "custom":
-        result = provider_usage.unavailable(backend, "custom_endpoint", account_kind="custom")
     else:
         result = await read_claude_account_usage(refresh=refresh)
         if result.get("status") != "available":
@@ -65246,7 +64740,7 @@ async def ensure_backend_update_allowed(
     yet, while still allowing idempotent saves from older clients.
     """
 
-    if ("backend" not in patch or patch.get("backend") is None) and "codex_provider" not in patch:
+    if "backend" not in patch or patch.get("backend") is None:
         return
     current_backend = str(
         current.get("backend") or DEFAULT_BACKEND
@@ -65254,8 +64748,7 @@ async def ensure_backend_update_allowed(
     requested_backend = str(
         patch.get("backend") or current_backend
     ).strip().lower()
-    provider_changed = "codex_provider" in patch and codex_provider.session_choice(patch.get("codex_provider")) != codex_provider.session_choice(current.get("codex_provider"))
-    if requested_backend == current_backend and not provider_changed:
+    if requested_backend == current_backend:
         return
 
     async with ACTIVE_LOCK:
@@ -66445,7 +65938,7 @@ def empty_chat_revision(session: dict[str, Any]) -> str:
     revision = {key: session.get(key) for key in (
         "created_at", "updated_at", "title", "folder", "cwd", "backend",
         "model", "effort", "system_prompt", "_title_source",
-        "codex_provider", "provider_connection", "parent_id",
+        "parent_id",
         "codex_goal", "claude_goal",
     )}
     revision["latest_event_seq"] = int(session.get("latest_event_seq") or 0)
@@ -67068,8 +66561,8 @@ def claude_completed_fork_boundary(
 
 @router.post("/api/sessions/{session_id}/fork")
 async def fork_session(session_id: str, req: ForkSessionRequest) -> dict[str, Any]:
-    if str((STORE.sessions.get(session_id) or {}).get("backend") or DEFAULT_BACKEND).lower() not in VALID_BACKENDS:
-        raise HTTPException(410, "This provider was removed. Its saved chat history remains readable.")
+    if retired := retired_session_runtime_message(STORE.sessions.get(session_id) or {}):
+        raise HTTPException(410, retired)
     cleanup_state: dict[str, str | None] = {}
     async with session_lifecycle_lock(session_id):
         try:
@@ -67123,16 +66616,6 @@ async def _fork_session_locked(
     parent_codex_thread_id = parent.get("codex_thread_id") or (
         parent.get("session_id") if parent_backend == BACKEND_CODEX else None
     )
-    if parent_backend == BACKEND_CODEX:
-        # Endpoint rejection must not become a memory fork that sends the
-        # original conversation to a different host after settings change.
-        selected_provider = CODEX_PROVIDER_STORE.for_session(parent)
-        if selected_provider:
-            parent["codex_provider_revision"] = selected_provider["credential_id"]
-            parent["codex_provider_binding"] = codex_provider.binding(selected_provider)
-        CODEX_PROVIDER_STORE.require_thread(
-            parent_codex_thread_id, selected_provider,
-        )
     parent_claude_session_id = (
         validated_claude_fork_provider_id(parent, session_id, fork_cwd)
         if parent_backend == BACKEND_CLAUDE and not empty_snapshot
@@ -67221,8 +66704,6 @@ async def _fork_session_locked(
             folder=parent.get("folder"),
             cwd=parent.get("cwd"),
             backend=parent_backend,
-            codex_provider=codex_provider.session_choice(parent.get("codex_provider")),
-            provider_connection=parent.get("provider_connection") or "default",
             model=parent.get("model"),
             effort=parent.get("effort"),
             subagent_limit=parent.get("subagent_limit"),

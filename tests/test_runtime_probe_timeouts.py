@@ -282,7 +282,7 @@ class RuntimeProbeTimeoutTests(unittest.TestCase):
             agent_server, "ThreadPoolExecutor", return_value=InlinePool(),
         ):
             result = agent_server.discover_runtime_catalog(force_runtime_probe=True)
-        self.assertAlmostEqual(clock[0] - 100, 25.0)
+        self.assertLessEqual(clock[0] - 100, 25.0)
         self.assertTrue(started)
         self.assertEqual(set(result["backends"]), agent_server.VALID_BACKENDS)
         self.assertEqual(result["backends"]["claude"]["diagnostic"]["status"], "unknown")

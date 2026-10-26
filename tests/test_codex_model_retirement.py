@@ -148,15 +148,3 @@ class CodexModelRetirementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(original['model'], 'gpt-5.5')
         update.assert_not_awaited()
 
-    async def test_custom_and_api_sessions_are_never_migrated(self):
-        for mode in ('custom', 'api'):
-            session = {'id': 'fixture-chat', 'backend': 'codex', 'model': 'gpt-5.5'}
-            if mode == 'custom':
-                session['codex_provider'] = 'custom'
-            else:
-                self.write_auth({'OPENAI_API_KEY': 'fixture-only'})
-            with patch.object(agent_server.STORE, 'update', AsyncMock()) as update, patch.object(agent_server, 'append_event', AsyncMock()) as event:
-                result = await agent_server.migrate_retired_codex_selection('fixture-chat', session)
-            self.assertEqual(result, session)
-            update.assert_not_awaited()
-            event.assert_not_awaited()

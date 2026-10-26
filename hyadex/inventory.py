@@ -26,8 +26,6 @@ FILES = (
     'claude_background_reconciliation.py',
     'hyadex/providers/codex.py',
     'codex_auth.py',
-    'codex_provider.py',
-    'provider_connections.py',
     'side_questions.py',
     'hyadex/__init__.py',
     'hyadex/app.py',

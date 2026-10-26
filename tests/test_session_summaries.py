@@ -37,7 +37,6 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertIsNone(full["emergency_alert"])
         self.assertEqual(full["unacknowledged_emergency_count"], 0)
         self.assertNotIn("provider_connection", summary)
-        self.assertEqual(full["provider_connection"], "default")
         self.assertNotIn("history_maintenance", summary)
         self.assertEqual(full["history_maintenance"], {"status": None, "reason": None, "retry_at": None})
 
@@ -49,10 +48,6 @@ class SessionSummaryTests(unittest.TestCase):
             self.assertEqual(public_session(session, summary=True)["history_maintenance"], state)
             state.update(status="idle", reason=None, retry_at=None)
             self.assertEqual(public_session(session, summary=True)["history_maintenance"], state)
-
-    def test_explicit_native_connection_survives_summary_as_a_cache_tombstone(self):
-        summary = public_session({"id": "changed-chat", "backend": "cursor", "provider_connection": "default"}, summary=True)
-        self.assertEqual(summary["provider_connection"], "default")
 
     def test_notification_fields_are_sparse_but_read_clears_are_explicit(self):
         self.assertNotIn("unread_notification_level", public_session({"id": "ordinary-chat"}, summary=True))
