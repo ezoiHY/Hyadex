@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 import httpx
 
-from codex_app_server import CodexAppServerClient
+from hyadex.providers.codex import CodexAppServerClient
 from codex_side_question import isolated_config
 from side_questions import isolated_environment, run_isolated_command
 

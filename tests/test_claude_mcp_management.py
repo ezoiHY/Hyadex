@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 import agent_server
-from claude_sdk_client import ClaudeSDKControlTimeout
+from hyadex.providers.claude import ClaudeSDKControlTimeout
 
 
 RAW_MCP_STATUS = {

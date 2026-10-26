@@ -6,7 +6,7 @@ import tempfile
 from unittest.mock import AsyncMock, patch
 
 import agent_server as server
-from codex_app_server import CodexAppServerClient, CodexAppServerRequestError
+from hyadex.providers.codex import CodexAppServerClient, CodexAppServerRequestError
 
 
 class NativeArchive(unittest.IsolatedAsyncioTestCase):

@@ -15,6 +15,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
+from hyadex.providers.runtime import validate_provider_runtime_env
 from unittest.mock import AsyncMock, Mock, patch
 
 import hyadex_chats as cli
@@ -195,7 +196,7 @@ class AsyncRouteRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "CROSS_CHAT_CAPABILITIES": {"isolated": self.capability},
             "PROVIDER_JOBS_ACCESS_MODE_SET": {"blocked", "full", "read_only"},
             "provider_helper_server_origin": lambda: "http://127.0.0.1:1234",
-            "validate_provider_runtime_env": lambda value: dict(value),
+            "validate_provider_runtime_env": validate_provider_runtime_env,
             "ProviderToolError": RuntimeError,
         })
 

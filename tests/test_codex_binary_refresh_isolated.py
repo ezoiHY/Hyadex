@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock
 import weakref
 
 from fastapi import HTTPException
-from codex_app_server import CodexAppServerClient, CodexAppServerRequestError
+from hyadex.providers.codex import CodexAppServerClient, CodexAppServerRequestError
 import codex_provider
 import codex_auth
 

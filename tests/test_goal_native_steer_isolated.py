@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 
-from codex_app_server import CodexAppServerError, CodexAppServerProtocolError, CodexAppServerRequestError
+from hyadex.providers.codex import CodexAppServerError, CodexAppServerProtocolError, CodexAppServerRequestError
 from tests.test_goal_followup_admission_isolated import AdmissionHTTPException, saved_route_snapshots
 
 

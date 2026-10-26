@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 import codex_auth
 import side_questions
-from codex_app_server import CodexAppServerClient, CodexAppServerRequestError, CodexAppServerTimeout
+from hyadex.providers.codex import CodexAppServerClient, CodexAppServerRequestError, CodexAppServerTimeout
 from tests import test_codex_subagents_admin_isolated as admin_fixture
 from tests.test_codex_app_server import FakeProcessFactory, NO_RESPONSE, wait_until
 

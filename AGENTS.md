@@ -7,7 +7,7 @@
 - Verify provider parity separately against the corresponding native runtime
   and client. Do not infer Claude parity from Codex tests, treat headings as
   proof of complete content, or claim parity from visibility changes alone.
-- Keep new subsystems in their own modules (as `group_chat.py` does) and wire
+- Keep new subsystems in their own modules (as `hyadex/groups.py` does) and wire
   them into `agent_server.py` through a small adapter. Do not grow the
   monolith when a module can own the logic.
 - Run tests with a temporary `HOME` and state. Exercise changes against a real

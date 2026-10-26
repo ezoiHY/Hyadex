@@ -14,6 +14,7 @@ import httpx
 from pydantic import ValidationError
 
 import agent_server
+from hyadex.providers import runtime as provider_runtime
 import hyadex_chats
 import hyadex_emergency
 import hyadex_jobs
@@ -410,7 +411,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_provider_generated_context_and_tool_inputs_are_bounded(self):
         exact_user_text = "User-authored text must remain byte-for-byte exact."
-        payload = agent_server.ProviderTurnPayload(
+        payload = provider_runtime.ProviderTurnPayload(
             exact_user_text,
             "runtime",
             {},
@@ -420,9 +421,9 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             len(agent_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM),
             agent_server.MAX_PROVIDER_STATIC_INSTRUCTIONS_CHARS,
         )
-        with self.assertRaises(agent_server.ProviderRuntimeContextError):
-            agent_server.validate_provider_runtime_context(
-                "\U0001f4e6" * (agent_server.MAX_PROVIDER_RUNTIME_CONTEXT_BYTES // 4 + 1)
+        with self.assertRaises(provider_runtime.ProviderRuntimeContextError):
+            provider_runtime.validate_provider_runtime_context(
+                "\U0001f4e6" * (provider_runtime.MAX_PROVIDER_RUNTIME_CONTEXT_BYTES // 4 + 1)
             )
         with self.assertRaises(agent_server.ProviderToolError):
             agent_server.validate_provider_tool_input({
@@ -453,8 +454,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                         "arguments": ["send", "--route", "route"],
                         "stdin": malformed,
                     })
-        with self.assertRaises(agent_server.ProviderRuntimeContextError):
-            agent_server.validate_provider_runtime_context("\ud800")
+        with self.assertRaises(provider_runtime.ProviderRuntimeContextError):
+            provider_runtime.validate_provider_runtime_context("\ud800")
 
     async def test_provider_tool_rejects_huge_target_index_as_safe_error(self):
         with self.assertRaises(agent_server.ProviderToolError):

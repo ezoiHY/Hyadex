@@ -12,6 +12,9 @@ route collection, authorization middleware and lifespan to the application facto
 | `hyadex/store/transcripts.py` | Bounded JSONL parsing | Caller-owned binary streams |
 | `hyadex/jobs/schedules.py` | Interval, cron, RRULE and timezone calculations | Calendar libraries; no runtime state |
 | `hyadex/jobs/context.py` | Chat/standalone provider context policy | Explicit default backend and allowed backends |
+| `hyadex/providers/runtime.py` | Exact user input, bounded runtime control data and environment scrubbing | No runtime state |
+| `hyadex/providers/claude.py` | Claude SDK actor ownership and lifecycle | Native SDK factory and callbacks; lazy model-catalog/side-question adapters |
+| `hyadex/providers/codex.py` | Multiplexed Codex app-server JSON-RPC transport | Process factory and explicit callbacks |
 | `hyadex/groups.py` | Group models, timeline, dispatch, recovery | `GroupRuntime` supplied by the application |
 | `hyadex/autopilot.py` | Planning, approval, verification, review, worktree checkpoints | Group engine |
 | `hyadex/routes/groups.py` | Group HTTP and WebSocket endpoints | Group engine and explicit WebSocket callbacks |
@@ -24,8 +27,8 @@ The domain modules do not import HTTP routers. Each router factory receives its
 engine, so isolated tests can exercise the public endpoints without compiling
 fragments of the server source.
 
-Root-level `group_chat.py`, `autopilot.py`, `chat_mailbox.py` and
-`transcript_reader.py` are removed. All callers use the
+Root-level `group_chat.py`, `autopilot.py`, `chat_mailbox.py`,
+`transcript_reader.py`, `claude_sdk_client.py` and `codex_app_server.py` are removed. All callers use the
 package paths; there are no duplicate implementations or compatibility wrappers.
 The installer, deployment inventory and release manifest enumerate every nested
 Python file explicitly and preserve its relative path.

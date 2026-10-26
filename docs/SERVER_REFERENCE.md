@@ -1438,7 +1438,7 @@ FIFO order.
 Before publishing:
 
 ```bash
-python3 -m py_compile agent_server.py hyadex_jobs.py hyadex_chats.py hyadex_emergency.py hyadex_notify.py hyadex_publish.py provider_commands.py claude_sdk_client.py codex_app_server.py cursor_agent_client.py update_runner.py
+python3 -m py_compile agent_server.py hyadex_jobs.py hyadex_chats.py hyadex_emergency.py hyadex_notify.py hyadex_publish.py provider_commands.py hyadex/providers/claude.py hyadex/providers/codex.py hyadex/providers/runtime.py cursor_agent_client.py update_runner.py
 rg -n 'private-host|/home/<name>|/Users/<name>|token-value' .
 ```
 

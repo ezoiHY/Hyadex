@@ -5,6 +5,7 @@ import tempfile
 import json
 from types import SimpleNamespace
 import unittest
+from hyadex.providers.runtime import validate_provider_runtime_env
 from unittest.mock import AsyncMock, Mock, patch
 
 from gemini_acp_client import GeminiProtocolError
@@ -46,7 +47,7 @@ class Runner(unittest.IsolatedAsyncioTestCase):
                 DELETING_SESSIONS=set(), STOPPED_RUNS=set(), DEFAULT_CWD=directory,
                 CROSS_CHAT_CAPABILITY_LOCK=asyncio.Lock(), CROSS_CHAT_CAPABILITIES={}, ACTIVE_LOCK=asyncio.Lock(),
                 PROVIDER_CONNECTION_STORE=SimpleNamespace(for_session=lambda sess: ({**connection, "model": sess.get("model") or connection.get("model")} if connection else None), root=Path(directory)),
-                validate_provider_runtime_env=lambda _: {}, opencode_helper_output_redactor=lambda *_: lambda x: x,
+                validate_provider_runtime_env=validate_provider_runtime_env, opencode_helper_output_redactor=lambda *_: lambda x: x,
                 runner_env=lambda: {"HOME": directory}, run_event_metadata=lambda _: {},
                 turn_slot_is_owned=AsyncMock(return_value=True),
                 append_event=AsyncMock(), clear_reasoning_summary_stream=AsyncMock(),

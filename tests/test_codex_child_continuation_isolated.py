@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 
-from codex_app_server import CodexAppServerClient, CodexAppServerTurn, CodexAppServerTimeout
+from hyadex.providers.codex import CodexAppServerClient, CodexAppServerTurn, CodexAppServerTimeout
 from tests import test_goal_followup_lifecycle_isolated as ordinary_fixture
 
 NAMES = {"codex_collaboration_states", "codex_collaboration_thread_ids",
@@ -89,7 +89,7 @@ class CodexChildContinuationTests(unittest.IsolatedAsyncioTestCase):
             "chat", "operation", "Inspect this with a subagent", self.session,
             self.root / "manifest.json", allow_exec_fallback=False,
             diff_baseline={"head": "synthetic"},
-            provider_runtime_env={"HYADEX_PROVIDER_RUN_ID": "operation"},
+            provider_runtime_env={"HYADEX_PROVIDER_AUTHORITY_FILE": str(self.root / "synthetic-authority")},
         ))
         self.tasks.append(runner)
         await self.wait(lambda: (self.ns["ACTIVE"].get("chat") or {}).get("provider_turn_ready"))

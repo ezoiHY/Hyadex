@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from codex_app_server import (
+from hyadex.providers.codex import (
     CodexAppServerClient,
     CodexAppServerDisconnected,
     CodexAppServerManager,
@@ -2449,7 +2449,7 @@ class CodexAppServerClientTests(unittest.IsolatedAsyncioTestCase):
             recorded_timeouts.append(timeout)
             return await real_wait_for(awaitable, timeout=timeout)
 
-        with patch("codex_app_server.asyncio.wait_for", recording_wait_for):
+        with patch("hyadex.providers.codex.asyncio.wait_for", recording_wait_for):
             with self.assertRaises(CodexAppServerTimeout):
                 await client.request("test/no-response", {}, timeout=0.1)
 
@@ -2778,7 +2778,7 @@ class CodexAppServerClientTests(unittest.IsolatedAsyncioTestCase):
             if requested_signal == 0:
                 raise ProcessLookupError
 
-        with patch("codex_app_server.os.killpg", side_effect=kill_group), \
+        with patch("hyadex.providers.codex.os.killpg", side_effect=kill_group), \
              patch.object(process, "terminate") as terminate:
             await client.close()
 
@@ -2810,7 +2810,7 @@ class CodexAppServerClientTests(unittest.IsolatedAsyncioTestCase):
             elif requested_signal == 0 and not group_alive:
                 raise ProcessLookupError
 
-        with patch("codex_app_server.os.killpg", side_effect=kill_group), \
+        with patch("hyadex.providers.codex.os.killpg", side_effect=kill_group), \
              patch.object(process, "terminate") as terminate:
             await client.close()
 

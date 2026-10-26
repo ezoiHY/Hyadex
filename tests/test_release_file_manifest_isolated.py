@@ -16,6 +16,9 @@ EXECUTION_MODULES = {
     "execution_manage.py", "execution_ownership.py", "execution_service.py", "execution_transport.py",
 }
 NEW_MODULES = {
+    "hyadex/providers/claude.py", "hyadex/providers/codex.py",
+    "hyadex/providers/__init__.py",
+    "hyadex/providers/runtime.py",
     "hyadex/jobs/__init__.py",
     "hyadex/jobs/schedules.py",
     "hyadex/jobs/context.py",

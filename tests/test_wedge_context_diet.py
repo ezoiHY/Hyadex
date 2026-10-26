@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import agent_server
+from hyadex.providers import runtime as provider_runtime
 
 AUTHORITY_PATH = Path(
     "/Users/example/.hyadex/cross_chat_authority/"
@@ -163,7 +164,7 @@ class CompactProviderAuthorityBlockTests(unittest.TestCase):
 
         self.assertIn("$HYADEX_PUBLISH_CLI", verbose)
         self.assertIn("Jobs (full access)", verbose)
-        payload = agent_server.ProviderTurnPayload(
+        payload = provider_runtime.ProviderTurnPayload(
             "Exact user text.",
             "",
             {"HYADEX_PROVIDER_AUTHORITY_ACTIONS": "publish,jobs"},

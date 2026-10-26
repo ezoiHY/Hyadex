@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 import agent_server
-from claude_sdk_client import ClaudeSDKQueryError, ClaudeSDKUnavailable
+from hyadex.providers.claude import ClaudeSDKQueryError, ClaudeSDKUnavailable
 
 
 class FakeClaudeRun:

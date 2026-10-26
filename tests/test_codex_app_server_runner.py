@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 import agent_server
-from codex_app_server import (
+from hyadex.providers.codex import (
     CodexAppServerDisconnected,
     CodexAppServerRequestError,
     CodexAppServerTimeout,

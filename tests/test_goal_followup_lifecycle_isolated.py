@@ -12,10 +12,11 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+from hyadex.providers.runtime import validate_provider_runtime_env
 from unittest.mock import AsyncMock, Mock
 
 import codex_provider
-from codex_app_server import CodexAppServerDisconnected
+from hyadex.providers.codex import CodexAppServerDisconnected
 from tests.test_goal_followup_admission_isolated import AdmissionHTTPException, saved_route_snapshots
 from tests import test_goal_native_steer_isolated as native_goal_fixture
 
@@ -153,7 +154,7 @@ class GoalFollowupLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "CROSS_CHAT_CAPABILITIES": {"operation": self.authority},
             "RUN_METADATA": {"operation": {"synthetic_authority": "original"}},
             "RUN_NOW_TURNS": {}, "STEERING_SESSIONS": set(), "STEERING_WAIT_TASKS": {},
-            "validate_provider_runtime_env": lambda value: dict(value or {}),
+            "validate_provider_runtime_env": validate_provider_runtime_env,
             "existing_cwd": lambda value: value, "session_provider_id": lambda value: value.get("codex_thread_id"),
             "codex_runtime_settings": lambda value: (None, None, None),
             "now_iso": lambda: "2026-09-13T10:00:00Z",
@@ -216,7 +217,7 @@ class GoalFollowupLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "chat", "operation", "Original goal request", self.session,
             self.root / "manifest.json", allow_exec_fallback=False,
             diff_baseline={"head": "synthetic"},
-            provider_runtime_env={"HYADEX_PROVIDER_RUN_ID": "operation"} if runtime_authority else None,
+            provider_runtime_env={"HYADEX_PROVIDER_AUTHORITY_FILE": str(self.root / "synthetic-authority")} if runtime_authority else None,
             provider_command=provider_command,
         ))
         self.tasks.append(runner)

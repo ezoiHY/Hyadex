@@ -3,6 +3,37 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Native provider package and shared runtime contract
+
+- Moved the Claude SDK actor client and Codex app-server transport unchanged
+  into `hyadex/providers/claude.py` and `codex.py`. Removed their old root files
+  and updated static/inline imports, mock targets and all runtime inventories.
+- Extracted exact-user-text validation, bounded control context, per-turn
+  environment validation and secret scrubbing into `hyadex/providers/runtime.py`.
+  Legacy secret names remain scrubbed. No provider protocol or control-data
+  semantics changed. Claude's internal logger is now `hyadex.providers.claude`.
+- Four test fixtures now use the production validator instead of extracted or
+  pass-through replacements. Invalid synthetic environment keys were corrected
+  in those fixtures and their consumers. The fast suite includes both native
+  client contract suites and the standalone runtime contract.
+
+**Validation.** 234 focused cases and 257 fast-package cases pass. The full
+isolated suite ran 5,334 cases (62 skipped), with the same nine inherited
+failures and no new failures or errors. Follow-up validator/consumer tests pass.
+All 374 Python sources compile; dependency-lock, shell and manifest checks
+pass. The two moved native client files match their previous bytes, and the
+extracted runtime definitions match their previous ASTs. Independent Claude
+static review found no blocker; package dependency and compile documentation
+were corrected.
+
+A real isolated server passed native Claude/Codex file editing and handoff,
+contextual follow-up, parallel replies, Stop, queued messages, group-job
+execution and 47 ordered WebSocket events. Real provider-tool mail passed send,
+exact-key duplicate receipt, idle read/reply, busy unread cancellation and
+server restart persistence. Desktop/mobile clients were not exercised.
+**Availability:** source only. Remaining provider orchestration still belongs
+to the legacy runtime; this does not claim a completed unified provider API.
+
 ## 2026-10-26 — Abort verification during process startup
 
 A later fast-package run exposed an existing Autopilot race: Abort could retire

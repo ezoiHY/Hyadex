@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 
-from claude_sdk_client import ClaudeSDKSupervisorClosed
+from hyadex.providers.claude import ClaudeSDKSupervisorClosed
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")

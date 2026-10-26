@@ -17,7 +17,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from claude_goals import ClaudeGoalProjection
-from claude_sdk_client import ClaudeSDKSupervisorError
+from hyadex.providers.claude import ClaudeSDKSupervisorError
 
 
 def load_routes(add_cleanup):

@@ -63,6 +63,18 @@ from urllib.parse import quote, unquote, urlparse
 
 from fastapi import APIRouter, BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from hyadex.app import ApplicationBindings, create_app
+from hyadex.providers.runtime import (
+    MAX_PROVIDER_RUNTIME_CONTEXT_BYTES,
+    MAX_PROVIDER_RUNTIME_ENV_VARS,
+    PROVIDER_SECRET_ENV_NAMES,
+    ProviderRuntimeContextError,
+    ProviderTurnPayload,
+    assert_provider_user_message_unchanged,
+    is_provider_runtime_env_name,
+    scrub_provider_runtime_environment,
+    validate_provider_runtime_context,
+    validate_provider_runtime_env,
+)
 from hyadex.jobs.schedules import (
     VALID_JOB_SCHEDULE_KINDS,
     job_schedule_kind,
@@ -95,7 +107,7 @@ import local_session_ownership
 import cursor_history
 import provider_usage
 
-from codex_app_server import (
+from hyadex.providers.codex import (
     CodexAppServerDisconnected,
     CodexAppServerError,
     CodexAppServerManager,
@@ -105,7 +117,7 @@ from codex_app_server import (
     CodexAppServerTimeout,
     decline_server_request,
 )
-from claude_sdk_client import (
+from hyadex.providers.claude import (
     CLAUDE_NON_DURABLE_SCHEDULER_TOOLS,
     CLAUDE_PROVIDER_MCP_SERVER_NAME,
     CLAUDE_PROVIDER_MCP_TOOL_NAME,
@@ -995,7 +1007,7 @@ CLAUDE_SDK_IDLE_WARN_SECONDS = max(
 )
 # A Codex app-server notification can be silently dropped if it arrives for a
 # subscription that already closed (see _route_notification in
-# codex_app_server.py) - the turn then waits forever with zero visible
+# hyadex/providers/codex.py) - the turn then waits forever with zero visible
 # activity, but IDLE_WARN/IDLE_KILL_SECONDS above are sized for legitimate
 # gaps *between* activity on an already-productive turn, not "nothing has
 # happened since the turn started." This bounds only that first-activity
@@ -1457,58 +1469,6 @@ def configure_atomic_workspace_rename() -> tuple[Any | None, int]:
 
 WORKSPACE_ATOMIC_RENAME, WORKSPACE_ATOMIC_RENAME_FLAG = configure_atomic_workspace_rename()
 WORKSPACE_MUTATIONS_AVAILABLE = WORKSPACE_SECURE_OPEN_AVAILABLE and WORKSPACE_ATOMIC_RENAME is not None
-PROVIDER_SECRET_ENV_NAMES = (
-    "HYADEX_AGENT_TOKEN",
-    "ZENITHDOCK_AGENT_TOKEN",
-    "ZENITHBOT_AGENT_TOKEN",
-    "HYADEX_PUBLISH_TOKEN",
-    "HYADEX_PROVIDER_AUTHORITY_FILE",
-)
-PROVIDER_RUNTIME_ENV_EXACT_NAMES = frozenset({
-    "HYADEX_CHAT_ID",
-    "HYADEX_PROVIDER_AUTHORITY_FILE",
-    "HYADEX_PROVIDER_AUTHORITY_ACTIONS",
-    "HYADEX_PROVIDER_JOBS_ACCESS",
-    "HYADEX_PROVIDER_SERVER_ORIGIN",
-    "HYADEX_PROVIDER_FINAL_RESULT_HANDOFF",
-    "HYADEX_PROVIDER_TEAM_MAIL_PREBOUND",
-    "HYADEX_CROSS_CHAT_HANDLE_COUNT",
-    "HYADEX_CROSS_CHAT_MODE",
-    "HYADEX_CROSS_CHAT_RESPONSE_EXCHANGE_ID",
-    "HYADEX_CROSS_CHAT_RESPONSE_INBOUND_LEG_ID",
-    "HYADEX_CROSS_CHAT_RESPONSE_FOLLOWUP",
-    "HYADEX_CROSS_CHAT_RESPONSE_ROUTE_ID",
-    "HYADEX_CROSS_CHAT_RESPONSE_MODE",
-})
-PROVIDER_RUNTIME_ENV_PREFIXES = (
-    "HYADEX_CROSS_CHAT_HANDLE_",
-)
-
-
-def is_provider_runtime_env_name(name: Any) -> bool:
-    clean = str(name or "")
-    return clean in PROVIDER_RUNTIME_ENV_EXACT_NAMES or any(
-        clean.startswith(prefix) for prefix in PROVIDER_RUNTIME_ENV_PREFIXES
-    )
-
-
-def scrub_provider_runtime_environment(
-    environment: dict[str, str],
-    *,
-    shadow: bool = False,
-) -> None:
-    """Remove or explicitly shadow every run-scoped provider variable."""
-
-    names = {
-        name
-        for name in environment
-        if name in PROVIDER_SECRET_ENV_NAMES or is_provider_runtime_env_name(name)
-    }
-    for name in names:
-        if shadow:
-            environment[name] = ""
-        else:
-            environment.pop(name, None)
 AGENT_TOKEN = env_setting(
     "HYADEX_AGENT_TOKEN",
     "",
@@ -1827,129 +1787,6 @@ You are operating through Hyadex, backed by HyadexServer.
 
 if len(CURSOR_PROMPT_PRELUDE) > MAX_PROVIDER_STATIC_INSTRUCTIONS_CHARS:
     raise RuntimeError("Hyadex static Cursor instructions exceed their safe limit")
-
-MAX_PROVIDER_RUNTIME_CONTEXT_CHARS = 32 * 1024
-MAX_PROVIDER_RUNTIME_CONTEXT_BYTES = 32 * 1024
-MAX_PROVIDER_RUNTIME_ENV_VARS = 64
-MAX_PROVIDER_RUNTIME_ENV_KEY_CHARS = 128
-MAX_PROVIDER_RUNTIME_ENV_VALUE_CHARS = 4096
-MAX_PROVIDER_RUNTIME_ENV_BYTES = 32 * 1024
-
-
-class ProviderRuntimeContextError(RuntimeError):
-    """Generated per-turn control context is unsafe to deliver."""
-
-
-def validate_provider_runtime_context(value: Any) -> str:
-    """Return bounded runtime control text without ever truncating grants."""
-
-    if not isinstance(value, str):
-        raise ProviderRuntimeContextError(
-            "Hyadex provider runtime context must be text"
-        )
-    context = value
-    try:
-        context_bytes = len(context.encode("utf-8"))
-    except UnicodeEncodeError as exc:
-        raise ProviderRuntimeContextError(
-            "Hyadex provider runtime context is not valid UTF-8"
-        ) from exc
-    if (
-        len(context) > MAX_PROVIDER_RUNTIME_CONTEXT_CHARS
-        or context_bytes > MAX_PROVIDER_RUNTIME_CONTEXT_BYTES
-    ):
-        raise ProviderRuntimeContextError(
-            "Hyadex provider runtime context exceeds the safe per-turn limit"
-        )
-    return context
-
-
-def validate_provider_runtime_env(value: Any) -> dict[str, str]:
-    """Return one bounded, allow-listed per-turn environment projection."""
-
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise ProviderRuntimeContextError(
-            "Hyadex provider runtime environment must be an object"
-        )
-    if len(value) > MAX_PROVIDER_RUNTIME_ENV_VARS:
-        raise ProviderRuntimeContextError(
-            "Hyadex provider runtime environment has too many variables"
-        )
-    clean: dict[str, str] = {}
-    total_bytes = 0
-    for raw_name, raw_value in value.items():
-        name = str(raw_name or "")
-        if (
-            not name
-            or len(name) > MAX_PROVIDER_RUNTIME_ENV_KEY_CHARS
-            or re.fullmatch(r"[A-Z][A-Z0-9_]*", name) is None
-            or not is_provider_runtime_env_name(name)
-        ):
-            raise ProviderRuntimeContextError(
-                "Hyadex provider runtime environment has an invalid variable"
-            )
-        if not isinstance(raw_value, str) or "\x00" in raw_value:
-            raise ProviderRuntimeContextError(
-                "Hyadex provider runtime environment has an invalid value"
-            )
-        if len(raw_value) > MAX_PROVIDER_RUNTIME_ENV_VALUE_CHARS:
-            raise ProviderRuntimeContextError(
-                "Hyadex provider runtime environment value exceeds its safe limit"
-            )
-        try:
-            total_bytes += len(name.encode("utf-8")) + len(
-                raw_value.encode("utf-8")
-            )
-        except UnicodeEncodeError as exc:
-            raise ProviderRuntimeContextError(
-                "Hyadex provider runtime environment is not valid UTF-8"
-            ) from exc
-        if total_bytes > MAX_PROVIDER_RUNTIME_ENV_BYTES:
-            raise ProviderRuntimeContextError(
-                "Hyadex provider runtime environment exceeds its safe limit"
-            )
-        clean[name] = raw_value
-    return clean
-
-
-def assert_provider_user_message_unchanged(
-    actual: str,
-    original: str,
-) -> None:
-    """Fail closed if runtime assembly mutated provider-visible user text."""
-
-    if actual != original:
-        raise ProviderRuntimeContextError(
-            "Hyadex runtime context mutated the provider user message"
-        )
-
-
-@dataclass(frozen=True)
-class ProviderTurnPayload:
-    """Keep provider user input and non-user runtime control structurally split."""
-
-    user_prompt: str
-    runtime_context: str
-    runtime_env: dict[str, str]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.user_prompt, str):
-            raise ProviderRuntimeContextError(
-                "Hyadex provider user message must be text"
-            )
-        object.__setattr__(
-            self,
-            "runtime_context",
-            validate_provider_runtime_context(self.runtime_context),
-        )
-        object.__setattr__(
-            self,
-            "runtime_env",
-            validate_provider_runtime_env(self.runtime_env),
-        )
-
 
 HYADEX_CONTEXT_END_MARKER = "[End Hyadex context]"
 
@@ -75166,7 +75003,7 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
         async def ask(self, question, *, history):
             current = self.current()
             if backend == BACKEND_CLAUDE:
-                from claude_sdk_client import (ClaudeSDKGenerationChanged, ClaudeSDKConfigurationConflict,
+                from hyadex.providers.claude import (ClaudeSDKGenerationChanged, ClaudeSDKConfigurationConflict,
                     ClaudeSDKRunActive, ClaudeSDKSupervisorError)
                 try:
                     cwd = existing_cwd(str(current.get("cwd") or DEFAULT_CWD))

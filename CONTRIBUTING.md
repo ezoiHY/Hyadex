@@ -27,8 +27,9 @@ For a quick check of the extracted packages, run:
 ```
 
 This runner creates a temporary home and rejects imports of `agent_server`.
-It covers calendar and job policy, group/Autopilot engines and routes, the app
-factory, transcript parsing and runtime inventories. It does not replace the
+It covers calendar and job policy, native provider-client contracts, runtime
+input validation, group/Autopilot engines and routes, the app factory, transcript
+parsing and runtime inventories. It does not replace the
 full integration/provider/installer suite above; `--list` shows its exact scope.
 
 Several modules read the home directory when `agent_server` is imported, so

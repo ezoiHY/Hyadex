@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import tempfile
 
-from codex_app_server import CodexAppServerClient, CodexAppServerError, decline_server_request
+from hyadex.providers.codex import CodexAppServerClient, CodexAppServerError, decline_server_request
 from side_questions import (
     MAX_OUTPUT_BYTES, SideQuestionError, isolated_environment, run_isolated_command,
 )
@@ -56,7 +56,7 @@ def isolated_config() -> dict:
 
 def side_chat_config(parent_config: dict | None = None) -> dict:
     """Keep native tools, without inheriting a main run's helper transport."""
-    from claude_sdk_client import CLAUDE_PROVIDER_MCP_SERVER_NAME
+    from hyadex.providers.claude import CLAUDE_PROVIDER_MCP_SERVER_NAME
 
     config = deepcopy(parent_config or {})
     name = CLAUDE_PROVIDER_MCP_SERVER_NAME

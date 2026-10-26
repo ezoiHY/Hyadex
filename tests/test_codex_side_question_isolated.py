@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import codex_side_question as adapter
 import codex_provider
-from claude_sdk_client import CLAUDE_PROVIDER_MCP_SERVER_NAME
+from hyadex.providers.claude import CLAUDE_PROVIDER_MCP_SERVER_NAME
 from side_questions import SideQuestionError
 
 
@@ -230,7 +230,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("environments", self.client.start_turn.await_args.kwargs["overrides"])
 
     async def test_side_chat_uses_normal_codex_transport_deadlines(self):
-        from codex_app_server import CodexAppServerClient
+        from hyadex.providers.codex import CodexAppServerClient
 
         await self.answer()
         # Instantiate the shared transport from the actual adapter arguments;

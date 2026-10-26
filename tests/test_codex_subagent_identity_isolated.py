@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 import weakref
 from unittest.mock import AsyncMock, Mock
-from codex_app_server import CodexAppServerClient
+from hyadex.providers.codex import CodexAppServerClient
 
 
 FUNCTIONS = {

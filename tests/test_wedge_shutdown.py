@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import agent_server
-from codex_app_server import CodexAppServerClient
+from hyadex.providers.codex import CodexAppServerClient
 from tests.test_codex_app_server import FakeProcessFactory
 from tests.test_server_restart_endpoints import (
     SERVER_INSTANCE_ID,

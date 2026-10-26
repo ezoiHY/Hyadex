@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 import codex_auth
 import codex_provider as provider
-from codex_app_server import CodexAppServerClient, CodexAppServerRequestError, CodexAppServerProtocolError
+from hyadex.providers.codex import CodexAppServerClient, CodexAppServerRequestError, CodexAppServerProtocolError
 from tests.test_codex_app_server import FakeProcessFactory, NO_RESPONSE
 from tests import test_codex_auth_isolated as auth_fixture
 from tests.test_codex_auth_isolated import NATIVE

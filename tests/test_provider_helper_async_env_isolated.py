@@ -14,19 +14,16 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 import hyadex_chats
+from hyadex.providers import runtime as provider_runtime
 
 
 TREE = ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text())
 ROUTE = "route_" + "a" * 32
 FUNCTIONS = {
-    "execute_provider_tool", "agent_runner_env", "is_provider_runtime_env_name",
-    "scrub_provider_runtime_environment", "validate_provider_runtime_env",
+    "execute_provider_tool", "agent_runner_env",
     "resolve_provider_tool_arguments", "provider_tool_argument_value",
 }
 CONSTANTS = {
-    "PROVIDER_SECRET_ENV_NAMES", "PROVIDER_RUNTIME_ENV_EXACT_NAMES", "PROVIDER_RUNTIME_ENV_PREFIXES",
-    "MAX_PROVIDER_RUNTIME_ENV_VARS", "MAX_PROVIDER_RUNTIME_ENV_KEY_CHARS",
-    "MAX_PROVIDER_RUNTIME_ENV_VALUE_CHARS", "MAX_PROVIDER_RUNTIME_ENV_BYTES",
     "PROVIDER_TOOL_MAX_OUTPUT_BYTES", "PROVIDER_TOOL_TIMEOUT_SECONDS", "PROVIDER_CROSS_CHAT_ROUTE_ID_RE",
 }
 
@@ -41,7 +38,9 @@ class ProviderHelperAsyncEnvTests(unittest.IsolatedAsyncioTestCase):
                 nodes.append(node)
         self.namespace = {
             "Any": Any, "Path": Path, "sys": sys, "re": re, "json": json,
-            "ProviderToolError": RuntimeError, "ProviderRuntimeContextError": ValueError,
+            "ProviderToolError": RuntimeError,
+            "validate_provider_runtime_env": provider_runtime.validate_provider_runtime_env,
+            "scrub_provider_runtime_environment": provider_runtime.scrub_provider_runtime_environment,
             "SERVER_ROOT": Path("/qa/source"),
             "validate_provider_tool_input": lambda value: (value["helper"], value["arguments"], value.get("stdin", "")),
             "redact_provider_tool_output": lambda value, _path: value,

@@ -16,6 +16,9 @@ import tempfile
 MODULES = (
     "tests.test_job_occurrences",
     "tests.test_job_policy",
+    "tests.test_provider_runtime",
+    "tests.test_claude_sdk_client",
+    "tests.test_codex_app_server",
     "tests.test_group_chat",
     "tests.test_autopilot",
     "tests.test_application_factory",

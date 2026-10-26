@@ -19,6 +19,7 @@ from hyadex import groups, autopilot
 from hyadex.app import ApplicationBindings, create_app
 from hyadex.store import cross_chat, mailbox, transcripts
 from hyadex.jobs import schedules, context
+from hyadex.providers import claude, codex, runtime
 from hyadex.routes.groups import create_group_router
 from hyadex.routes.autopilot import create_autopilot_router
 assert 'agent_server' not in sys.modules
