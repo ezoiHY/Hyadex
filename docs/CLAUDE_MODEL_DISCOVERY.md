@@ -76,9 +76,8 @@ CLI help plus the static fallback. Metadata failure does not mark login broken.
   models coexist with current choices, disabled/omitted candidates stay absent,
   API results are passed through native enforcement, explicit picker settings
   survive, and optional expansion failure retains the original native list.
-- Distribution manifests include the module in npm and legacy release archives,
-  installers, direct deploy and staged import checks. Actual offline npm/legacy
-  archive tests verify its bytes, not only manifest membership.
+- The source inventory includes the module, so source installation and
+  release-archive checks verify it is present.
 - Local native probes on Claude Code 2.1.281 returned Opus 5.5 (1M), Fable 5.1
   (1M), Sonnet 5 and Haiku 4.5, plus older Opus 5/4.8/4.7/4.6/4.5, Fable 5 and
   Sonnet 4.6/4.5. `settings.json` and saved model choices were unchanged. No

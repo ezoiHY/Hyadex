@@ -10,6 +10,7 @@ separately confirms its exact path at an interactive terminal.
 from __future__ import annotations
 
 import argparse
+import ctypes
 from contextlib import ExitStack, contextmanager
 import fcntl
 import hashlib
@@ -21,14 +22,88 @@ import shutil
 import stat
 import sys
 import uuid
+from typing import Any
 
 import execution_install as files
 from execution_manage import InstallationLock, NativeServices, WorkerControl
-from update_handoff import _installed_layout, _no_activation
-from execution_preparation import _binding, _check_binding
+
 
 
 INTENT_NAME = ".execution-uninstall.json"
+
+
+def _no_activation(root: Path) -> None:
+    files.refuse_retired_activation(root)
+    path = root / files.TRANSACTION_NAME
+    if path.exists() or path.is_symlink():
+        raise RuntimeError("activation already owns execution recovery")
+
+
+def _volume_uuid(path: Path, identity: os.stat_result) -> str:
+    """Read Darwin's persistent volume UUID from the exact inspected inode."""
+    class Attributes(ctypes.Structure):
+        _fields_ = [
+            ("count", ctypes.c_uint16), ("reserved", ctypes.c_uint16),
+            ("common", ctypes.c_uint32), ("volume", ctypes.c_uint32),
+            ("directory", ctypes.c_uint32), ("file", ctypes.c_uint32),
+            ("fork", ctypes.c_uint32),
+        ]
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (identity.st_dev, identity.st_ino):
+            raise RuntimeError("uninstall volume anchor changed")
+        library = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        function = library.fgetattrlist
+        function.argtypes = [
+            ctypes.c_int, ctypes.POINTER(Attributes), ctypes.c_void_p,
+            ctypes.c_size_t, ctypes.c_ulong,
+        ]
+        function.restype = ctypes.c_int
+        # ATTR_BIT_MAP_COUNT, ATTR_VOL_INFO | ATTR_VOL_UUID, from sys/attr.h.
+        attributes = Attributes(5, 0, 0, 0x80040000, 0, 0, 0)
+        result = ctypes.create_string_buffer(20)
+        if function(descriptor, ctypes.byref(attributes), result, 20, 0) != 0:
+            raise OSError(ctypes.get_errno(), "cannot read uninstall volume UUID")
+        if int.from_bytes(result.raw[:4], sys.byteorder) != 20:
+            raise RuntimeError("uninstall volume UUID response is invalid")
+        identifier = uuid.UUID(bytes=result.raw[4:20])
+        if identifier.int == 0:
+            raise RuntimeError("uninstall filesystem has no persistent volume UUID")
+        linked = path.lstat()
+        if (linked.st_dev, linked.st_ino) != (opened.st_dev, opened.st_ino):
+            raise RuntimeError("uninstall volume anchor changed")
+        return str(identifier)
+    finally:
+        os.close(descriptor)
+
+
+def _binding(path: Path) -> dict:
+    info = path.lstat()
+    mode = stat.S_IMODE(info.st_mode)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+            or mode & 0o022 or mode & 0o500 != 0o500):
+        raise PermissionError("uninstall directory is not safely owned")
+    return {"device": info.st_dev, "inode": info.st_ino,
+            "volume_uuid": _volume_uuid(path, info) if sys.platform == "darwin" else None}
+
+
+def _check_binding(path: Path, saved: Any) -> None:
+    if (not isinstance(saved, dict) or set(saved) != {"device", "inode", "volume_uuid"}
+            or any(type(saved[key]) is not int or saved[key] < 1 for key in ("device", "inode"))):
+        raise ValueError("invalid uninstall directory identity")
+    current = _binding(path)
+    if current["inode"] != saved["inode"]:
+        raise RuntimeError("uninstall directory identity changed")
+    if sys.platform == "darwin":
+        # st_dev changes across reboot/remount; the UUID and inode must not.
+        if not saved["volume_uuid"] or saved["volume_uuid"] != current["volume_uuid"]:
+            raise RuntimeError("uninstall filesystem identity changed")
+    elif saved["volume_uuid"] is not None or saved["device"] != current["device"]:
+        raise RuntimeError("uninstall filesystem identity changed")
 
 
 def _read_intent(root: Path, layout: files.ExecutionLayout) -> dict | None:
@@ -63,7 +138,7 @@ def _read_intent(root: Path, layout: files.ExecutionLayout) -> dict | None:
 def pending_uninstall_operation(root: Path, runtime_root: Path) -> str:
     """Startup-only reader: hold this exact retained worker without mutations."""
     _no_activation(root)
-    layout = _installed_layout(root)
+    layout = files.installed_layout(root)
     value = _read_intent(root, layout)
     if value is None or files._path(runtime_root) != layout.worker_release:
         raise RuntimeError("worker is not retained by the pending uninstall")
@@ -197,9 +272,7 @@ def uninstall(root: Path, *, config_root: Path, state_root: Path, home: Path,
     root, config_root, state_root, home = map(files._path, (root, config_root, state_root, home))
     with InstallationLock(root), ExitStack() as leases:
         _no_activation(root)
-        from execution_recovery import require_retired_owners
-        require_retired_owners(root)
-        layout = _installed_layout(root)
+        layout = files.installed_layout(root)
         if (layout.config_root, layout.state_root, layout.home) != (config_root, state_root, home):
             raise RuntimeError("uninstall roots do not match the installed execution layout")
         native = services or NativeServices(layout)
@@ -380,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # Validate provenance before prompting or executing native operations.
         _no_activation(arguments.root)
-        _installed_layout(files._path(arguments.root))
+        files.installed_layout(files._path(arguments.root))
         if arguments.purge_state:
             if not sys.stdin.isatty():
                 raise RuntimeError("Refusing to purge state without an interactive terminal; --yes never bypasses the state guard")

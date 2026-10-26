@@ -4,12 +4,11 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { parsePair, selectAddresses, connectionLink, pair, showSetupQr } = require('./pair.cjs')
-const { parse } = require('./cli.cjs')
 
-test('pair defaults, alias, network selection and rejected ambiguous arguments', () => {
-  assert.equal(parse(['pair']).name, 'default')
-  assert.equal(parse(['qrcode', 'work']).name, 'work')
-  assert.equal(parse(['pair', 'work', '--network', 'lan']).network, 'lan')
+test('pair defaults, network selection and rejected ambiguous arguments', () => {
+  assert.equal(parsePair([]).name, 'default')
+  assert.equal(parsePair(['work']).name, 'work')
+  assert.equal(parsePair(['work', '--network', 'lan']).network, 'lan')
   for (const args of [['../bad'], ['--network', 'public'], ['work', 'other'], ['--output'],
     ['--link', '--link'], ['--link', '--output', 'file.png']]) assert.throws(() => parsePair(args))
   const choices = { local: ['http://127.0.0.1:7851'], lan: ['http://192.168.1.10:7851'], tailscale: 'http://100.64.0.10:7851' }

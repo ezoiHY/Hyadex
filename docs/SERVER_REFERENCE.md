@@ -408,12 +408,9 @@ named services append `.NAME` to each label. On Linux, named units are
 `hyadex-server-NAME.service` and `hyadex-server-NAME-gateway.service`. Native
 stdout/stderr logs live under the selected state directory in `execution/logs/`.
 
-The source CLI also provides `hyadex logs [NAME]` (`default` when omitted),
-with `--lines N` and `--follow`. It selects the installed service layout,
-including both gateway and worker logs for default and named installations. This
-command is not in the published 1.0.10 / 1.0.11-beta.1 packages yet; use the
-platform commands above until a CLI release includes it. See
-[the log command guide](../npm/hyadex/README.md#read-service-logs).
+From a source checkout, `./instances.sh logs [NAME]` (`default` when omitted)
+accepts `--lines N` and `--follow`. It selects the installed service layout,
+including both gateway and worker logs for default and named installations.
 
 ### Retired in-app updates
 
@@ -468,25 +465,13 @@ The direct `deploy.sh` helper has been removed. Check out the desired source on
 the target machine and use its local installer with the selected instance stopped.
 Changing this checkout does not publish or deploy anything automatically.
 
-## Systemd Template
+## Linux services
 
-New installations do not need to copy the template because `install.sh`
-creates and manages `hyadex-server.service` automatically. The template is
-provided for inspection and custom deployments.
-
-Manual install flow:
+`install.sh` writes and manages the worker and gateway user units itself; there
+is no separate unit template. Check them with:
 
 ```bash
-mkdir -p ~/.config/systemd/user
-cp systemd/hyadex-server.service.example ~/.config/systemd/user/hyadex-server.service
-systemctl --user daemon-reload
-systemctl --user enable --now hyadex-server.service
-```
-
-Then check it:
-
-```bash
-systemctl --user status hyadex-server.service --no-pager -l
+systemctl --user status hyadex-server.service hyadex-server-gateway.service --no-pager -l
 curl -H 'Authorization: Bearer replace-with-a-long-random-token' \
   http://127.0.0.1:7870/api/health
 ```
@@ -1333,7 +1318,7 @@ FIFO order.
 Before publishing:
 
 ```bash
-python3 -m py_compile agent_server.py hyadex_jobs.py hyadex_chats.py hyadex_emergency.py hyadex_notify.py hyadex_publish.py provider_commands.py hyadex/providers/claude.py hyadex/providers/codex.py hyadex/providers/runtime.py update_runner.py
+python3 -m py_compile agent_server.py hyadex_jobs.py hyadex_chats.py hyadex_emergency.py hyadex_notify.py hyadex_publish.py provider_commands.py hyadex/providers/claude.py hyadex/providers/codex.py hyadex/providers/runtime.py
 rg -n 'private-host|/home/<name>|/Users/<name>|token-value' .
 ```
 

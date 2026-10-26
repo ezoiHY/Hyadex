@@ -73,6 +73,19 @@ def _owned_directory(path: Path, *, private: bool = False) -> None:
         raise PermissionError(f"execution directory permissions are unsafe: {path}")
 
 
+# The retired in-app updater journaled activations and their recovery jobs
+# here. Hyadex no longer recovers them; refuse to act over leftover evidence.
+RETIRED_ACTIVATION_NAMES = (".activation-transaction", ".activation-recovery")
+
+
+def refuse_retired_activation(root: Path) -> None:
+    for name in RETIRED_ACTIVATION_NAMES:
+        path = root / name
+        if path.exists() or path.is_symlink():
+            raise RuntimeError(f"a retired in-app update left {path}; finish or remove it with the "
+                               "release that created it before changing this installation")
+
+
 def _ensure_directory(path: Path, *, private: bool = False) -> None:
     _path(path)
     if not path.exists():
@@ -720,16 +733,8 @@ def retained_releases(root: Path) -> list[str]:
     """Return all releases the active layout or an unfinished journal can need."""
     root = _path(root)
     _owned_directory(root)
+    refuse_retired_activation(root)
     retained: set[str] = set()
-    outer = root / ".activation-transaction"
-    if outer.exists() or outer.is_symlink():
-        from activation_transaction import execution_context
-        pending = execution_context(root)
-        if pending is not None:
-            for release in (pending["candidate_release"], pending["old_release"],
-                            pending["execution"]["old_worker_release"]):
-                if release:
-                    retained.update((release["source"], release["target"]))
     try:
         data, _mode = _read_file(root / LAYOUT_NAME, private=True)
     except FileNotFoundError:
@@ -756,19 +761,14 @@ def pending_worker_operation(root: Path, runtime_root: Path) -> str | None:
     """Bind startup admission to either worker generation until finalization."""
     root, runtime_root = _path(root), _path(runtime_root)
     _owned_directory(root)
+    refuse_retired_activation(root)
     journal = root / TRANSACTION_NAME
-    outer = root / ".activation-transaction"
     uninstall = root / ".execution-uninstall.json"
     if uninstall.exists() or uninstall.is_symlink():
-        if outer.exists() or outer.is_symlink() or journal.exists() or journal.is_symlink():
+        if journal.exists() or journal.is_symlink():
             raise RuntimeError("activation and uninstall both claim execution ownership")
         from execution_uninstall import pending_uninstall_operation
         return pending_uninstall_operation(root, runtime_root)
-    if outer.exists() or outer.is_symlink():
-        if journal.exists() or journal.is_symlink():
-            raise RuntimeError("two activation journals claim execution ownership")
-        from activation_transaction import pending_execution_worker_operation
-        return pending_execution_worker_operation(root, runtime_root)
     if not journal.exists() and not journal.is_symlink():
         return None
     value, layout = _load(root)

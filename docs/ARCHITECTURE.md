@@ -76,8 +76,8 @@ lifecycle guard and owner authentication; they do not depend on sharing.
 In-app update orchestration, update routes and update health advertisements are
 removed. Runtime admission now names the surviving worker-maintenance and
 restart fences directly. `hyadex/store/files.py` owns the same fsynced atomic JSON
-primitive used by ordinary state writers; importing the server no longer imports
-`update_runner`. The retained legacy recovery tools also use that primitive while their
-remaining uninstall/old-transaction dependencies are removed. Saved update evidence is not opened or
-resumed. The narrow legacy job-park migration restores exact unchanged due
+primitive used by ordinary state writers. The updater, activation transaction and
+their recovery jobs are deleted; installation, startup and uninstall refuse to act
+while a journal they left (`.activation-transaction`, `.activation-recovery`) is
+present. Saved update evidence is not opened or resumed. The narrow legacy job-park migration restores exact unchanged due
 occurrences and discards obsolete park ownership without overwriting edits.

@@ -314,10 +314,12 @@ class SplitUninstallTests(unittest.TestCase):
         self.assertEqual((intent.read_bytes(), intent.stat()), before)
         with self.assertRaisesRegex(RuntimeError, "not retained"):
             files.pending_worker_operation(self.root, self.support.new)
-        for name in (".execution-transaction", ".activation-transaction"):
+        for name, message in ((".execution-transaction", "both claim"),
+                              (".activation-transaction", "retired in-app update"),
+                              (".activation-recovery", "retired in-app update")):
             marker = self.root / name
             marker.symlink_to(self.root / "missing")
-            with self.assertRaisesRegex(RuntimeError, "both claim"):
+            with self.assertRaisesRegex(RuntimeError, message):
                 files.pending_worker_operation(self.root, self.layout.worker_release)
             marker.unlink()
         intent.chmod(0o644)

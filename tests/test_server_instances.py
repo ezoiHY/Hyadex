@@ -18,7 +18,6 @@ import unittest
 from unittest.mock import patch
 
 import server_instances as instances
-import update_runner
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -930,18 +929,6 @@ class InstanceTests(unittest.TestCase):
 
     def test_specific_bind_only_advertises_that_ip(self):
         self.assertEqual(instances.candidate_addresses("192.0.2.1", 7900), ["http://192.0.2.1:7900"])
-
-    def test_update_rejects_old_default_only_release(self):
-        release = self.home / "release"
-        release.mkdir()
-        (release / "install.sh").write_text("#!/bin/sh\n")
-        with patch.dict(os.environ, {"HYADEX_SERVER_INSTANCE": "work"}):
-            with self.assertRaisesRegex(RuntimeError, "does not support named instances"):
-                update_runner.instance_installer_arguments(release)
-            with self.assertRaisesRegex(RuntimeError, "does not support named instances"):
-                update_runner.instance_installer_arguments(ROOT)
-        with patch.dict(os.environ, {"HYADEX_SERVER_INSTANCE": "default"}):
-            self.assertEqual(update_runner.instance_installer_arguments(release), [])
 
     def snapshot(self, instance):
         return {str(path.relative_to(self.home)): path.read_bytes() for root in (instance.runtime, instance.config, instance.state) if root.exists() for path in root.rglob("*") if path.is_file()}

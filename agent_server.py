@@ -65424,19 +65424,9 @@ async def lifespan(app: FastAPI):
     global SERVER_SHUTTING_DOWN, QUEUE_RECOVERY_TASK, EXECUTION_MAINTENANCE
     install_root = os.environ.get("HYADEX_SERVER_INSTALL_DIR")
     if EXECUTION_MAINTENANCE is None and install_root:
-        # A legacy unit may restart after current switched but before the
-        # installer replaces that unit. It must not admit work in this window.
-        root = Path(install_root).expanduser().resolve()
-        journal = root / ".activation-transaction"
-        if journal.exists() or journal.is_symlink():
-            from activation_transaction import pending_execution_worker_operation
-            operation = pending_execution_worker_operation(root, SERVER_ROOT.resolve())
-            if operation is not None:
-                from execution_maintenance import ExecutionMaintenance
-                EXECUTION_MAINTENANCE = ExecutionMaintenance(
-                    STATE_DIR / "admin" / "execution-maintenance.json", SERVER_INSTANCE_ID,
-                )
-                EXECUTION_MAINTENANCE.hold_for_startup(operation)
+        # Never admit work over a journal the retired in-app updater left.
+        from execution_install import refuse_retired_activation
+        refuse_retired_activation(Path(install_root).expanduser().resolve())
     global SERVER_STATE_PROCESS_LOCK
     if SERVER_STATE_PROCESS_LOCK is None:
         SERVER_STATE_PROCESS_LOCK = server_instances.acquire_state_lock(STATE_DIR)

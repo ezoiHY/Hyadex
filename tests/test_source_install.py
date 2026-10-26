@@ -43,6 +43,22 @@ class SourceInstallTests(unittest.TestCase):
         self.assertEqual(f.layout.current.resolve(), f.old)
         self.assertEqual(files.installed_layout(f.root), f.layout)
 
+    def test_retired_update_journals_block_startup_and_release_retention(self):
+        f = self.fixture
+        f.migrate()
+        for name in files.RETIRED_ACTIVATION_NAMES:
+            with self.subTest(name=name):
+                marker = f.root / name
+                marker.mkdir()
+                try:
+                    with self.assertRaisesRegex(RuntimeError, "retired in-app update"):
+                        files.pending_worker_operation(f.root, f.old)
+                    with self.assertRaisesRegex(RuntimeError, "retired in-app update"):
+                        files.retained_releases(f.root)
+                    self.assertTrue(marker.is_dir())
+                finally:
+                    marker.rmdir()
+
     def test_interrupted_new_install_config_restores_absence_and_retains_candidate(self):
         f = self.fixture
         files.stage(f.layout, scope='install', prior_services=f.absent)

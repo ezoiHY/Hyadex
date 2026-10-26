@@ -128,7 +128,6 @@ def main() -> int:
         (package_root / "hyadex_emergency.py").chmod(0o755)
         (package_root / "hyadex_notify.py").chmod(0o755)
         (package_root / "hyadex_publish.py").chmod(0o755)
-        (package_root / "update_runner.py").chmod(0o755)
         with tarfile.open(archive_path, "w:gz", format=tarfile.PAX_FORMAT) as archive:
             archive.add(package_root, arcname=package_root.name)
 

@@ -28,11 +28,6 @@ class HyadexDefaultsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(agent_server.enabled_backends(), {"claude", "codex"})
 
 
-    def test_release_channel_points_at_hyadex(self) -> None:
-        import update_runner
-
-        self.assertEqual(update_runner.RELEASE_REPOSITORY, "ezoiHY/Hyadex")
-
 
 class GroupWiringTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:

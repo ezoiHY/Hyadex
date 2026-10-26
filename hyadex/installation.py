@@ -297,8 +297,7 @@ def install(args: argparse.Namespace, *, source: Path = ROOT) -> None:
         files._ensure_directory(directory)
     with InstallationLock(root), ExitStack() as stack:
         refuse_legacy_operation(root)
-        from execution_recovery import require_retired_owners
-        require_retired_owners(root)
+        files.refuse_retired_activation(root)
         if read_environment(config / 'env') != previous_environment:
             raise RuntimeError("configuration changed during preflight; retry without overwriting it")
         if args.fresh_install_only:

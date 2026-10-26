@@ -16,7 +16,7 @@ Further package splitting and deletion are deferred. The source version remains
 | Authentication | Header or WebSocket-subprotocol credentials; no query-string tokens, no permissive browser CORS |
 
 Team Hub, Team Network/secure-peer networking, Gemini/OpenCode/Cursor execution,
-browser sharing and in-app updates are removed. Existing stored history and
+browser sharing, in-app updates and npm packages are removed. Existing stored history and
 retired-feature evidence are preserved. Retired-provider chats keep their
 identity; they cannot silently run with a different provider, and their jobs
 remain paused.
@@ -62,16 +62,16 @@ Keep native Claude/Codex login profiles available to their processes.
 
 Do not remove pending installation journals to bypass recovery. Use the recorded
 source recovery path or the previous retained installer, as described in the
-server reference. Remaining legacy update/packaging modules are retained because
-installation/uninstall recovery still depends on parts of them; they do not
-restore the removed in-app update API.
+server reference. The legacy update, activation and npm packaging modules are
+deleted; journals they left on old installations block installation, startup
+and uninstall instead of being recovered.
 
 ## Deferred work
 
 - Further runtime/store/route separation, provider-interface consolidation and
   explicit application-state ownership.
 - Typed settings, lighter health diagnostics and remaining AST fixture migration.
-- Final legacy update/package dependency removal and obsolete alias cleanup.
+- Obsolete alias cleanup.
 - The six known test failures and Linux/client acceptance.
 
 These are follow-up items, not changes included in this checkpoint. Availability

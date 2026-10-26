@@ -3,6 +3,24 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Retired updater, activation and npm code removed
+
+- Deleted the in-app updater and everything only it used: the signed-release
+  runner and its public key, update preparation, handoff and recovery, the
+  activation transaction and its durable recovery jobs, and the legacy runner.
+  These modules were no longer reachable from the server or the installer.
+- Installation, worker startup and uninstall now refuse to proceed while a
+  journal from the retired updater (`.activation-transaction`,
+  `.activation-recovery`) is present, instead of trying to recover it. Fresh
+  Hyadex installations never create these.
+- Removed the npm packages (`@hyadex/server`, the `hyadex` CLI) and their
+  packaging scripts; installation is from source only. Service logs are read
+  with `./instances.sh logs [NAME]`. The phone-pairing QR helper moved to
+  `tools/pairing/` and is no longer installed with the server.
+- Removed the single-service systemd template; `install.sh` writes the worker
+  and gateway units itself.
+- No API, stored-state or chat behaviour changed.
+
 ## 2026-10-26 — Usage, context and native permissions in the Mac app
 
 - Server: `GET /api/runtime/usage?backend=claude` now answers from Claude
