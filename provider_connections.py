@@ -28,7 +28,7 @@ MAX_BODY_BYTES = 16 * 1024
 # Reasoning can consume output tokens before the short visible check answer.
 # Keep this explicit probe bounded and single-shot, including for such models.
 MODEL_CHECK_MAX_OUTPUT_TOKENS = 256
-PROTOCOLS = {"claude": {"anthropic"}, "cursor": {"cursor"}}
+PROTOCOLS = {"claude": {"anthropic"}}
 RESULTS = {"verified", "authentication_failed", "rate_limited", "unsupported", "connection_failed", "invalid_response", "model_required", "cli_update_required"}
 
 
@@ -48,10 +48,6 @@ def selection(backend: str, value: object) -> dict:
     backend_name(backend)
     if not isinstance(value, dict) or set(value) != {"base_url", "api_key", "model", "protocol", "auth_header", "expected_revision"}:
         raise HTTPException(400, "Provide an endpoint, key, model, protocol and revision.")
-    if backend == "cursor":
-        from cursor_api_key import ENDPOINT
-        if value["base_url"] != ENDPOINT or value["protocol"] != "cursor" or value["auth_header"] != "bearer":
-            raise HTTPException(400, "Cursor API keys use Cursor's official service only.")
     if not isinstance(value["protocol"], str) or not isinstance(value["auth_header"], str) or value["protocol"] not in PROTOCOLS[backend] or value["auth_header"] not in {"bearer", "x-api-key"}:
         raise HTTPException(400, "Unsupported API protocol or authentication header.")
     if value["protocol"] != "anthropic" and value["auth_header"] != "bearer":
@@ -59,8 +55,6 @@ def selection(backend: str, value: object) -> dict:
     selected = validate_selection({"base_url": value["base_url"], "api_key": value["api_key"],
                                    "model": None if value["model"] == "" else value["model"]})
     selected.setdefault("model", None)
-    if backend == "cursor" and selected["model"] is None:
-        selected["model"] = "auto"
     if selected["base_url"].lower().endswith("/messages"):
         raise HTTPException(400, "Enter the base URL, without an API operation suffix.")
     return {**selected, "protocol": value["protocol"], "auth_header": value["auth_header"],
@@ -220,13 +214,11 @@ class ConnectionStore:
                 cached = self.catalog_cache.get(cache_key)
                 if cached and time.monotonic() - cached[0] < 300:
                     models = cached[1]
-                elif session is None and backend != "cursor":  # Cursor discovery uses an async CLI probe.
+                elif session is None:
                     models = discover_models(value)
                     self.catalog_cache[cache_key] = (time.monotonic(), models)
                     if len(self.catalog_cache) > 32:
                         self.catalog_cache.pop(next(iter(self.catalog_cache)))
-                if backend == "cursor" and not models:
-                    models = [{"value": "auto", "label": "Auto"}]
                 if model and not any(item["value"] == model for item in models):
                     models = [{"value": model, "label": model}, *models]
             return {"configured": configured, "available": configured and installed,
@@ -267,12 +259,6 @@ class ConnectionStore:
                 with os.fdopen(fd, "w") as stream:
                     stream.write(content)
         return env, str(path)
-
-    def cursor_overrides(self, session: dict) -> dict:
-        if session.get("backend") != "cursor" or session.get("provider_connection") != "custom":
-            return {}
-        from cursor_api_key import overrides
-        return overrides(self.for_session(session)["api_key"])
 
 
     def redact(self, session: dict, value):
@@ -427,12 +413,12 @@ async def probe(selected: dict) -> str:
         return "invalid_response"
 
 
-def native_account_metadata(backend: str, *, env=None, cursor_executable=None, command=None) -> dict:
+def native_account_metadata(backend: str, *, env=None) -> dict:
     """Allowlisted account display fields only; never log in or renew credentials.
 
     Claude's profile is cached metadata, not proof of current authentication.
     """
-    if backend not in {"claude", "cursor"}:
+    if backend != "claude":
         raise HTTPException(400, "Unsupported CLI account.")
     env = os.environ if env is None else env
     result = {"backend": backend, "email": None, "plan_type": None, "source": "unavailable"}
@@ -474,27 +460,11 @@ def native_account_metadata(backend: str, *, env=None, cursor_executable=None, c
             result["plan_type"] = clean(oauth.get("subscriptionType"))
         if result["email"] or result["plan_type"]:
             result["source"] = "local_profile"
-    elif backend == "cursor" and cursor_executable and command and not env.get("CURSOR_API_KEY"):
-        from cursor_agent_client import parse_cursor_auth_status, parse_cursor_account_tier
-        try:
-            status = command([cursor_executable, "status"])
-            if status.returncode != 0:
-                return result
-            parsed = parse_cursor_auth_status(status.stdout + "\n" + status.stderr, executable_name=Path(cursor_executable).name)
-            if parsed.get("state") != "ready":
-                return result
-            result["email"] = clean(parsed.get("email"), email=True)
-            result["source"] = "cli"
-            about = command([cursor_executable, "about"])
-            if about.returncode == 0:
-                result["plan_type"] = clean(parse_cursor_account_tier(about.stdout + "\n" + about.stderr))
-        except (OSError, subprocess.SubprocessError):
-            pass
     return result
 
 
 def create_router(*, authorize, store: ConnectionStore, check=probe, account=native_account_metadata,
-                  codex_store=None, codex_set_model=None, session_lookup=None, cursor_catalog=None) -> APIRouter:
+                  codex_store=None, codex_set_model=None, session_lookup=None) -> APIRouter:
     router = APIRouter()
     locks = {name: asyncio.Lock() for name in PROTOCOLS}
 
@@ -524,7 +494,7 @@ def create_router(*, authorize, store: ConnectionStore, check=probe, account=nat
         return JSONResponse(value, headers={"Cache-Control": "no-store"})
 
     async def model_selection(backend, session_id=None):
-        if backend not in {"codex", "claude", "cursor"}:
+        if backend not in {"codex", "claude"}:
             raise HTTPException(400, "Unsupported custom endpoint.")
         session = session_lookup(session_id) if session_id and session_lookup else None
         if session_id and (not session or session.get("backend") != backend):
@@ -542,11 +512,7 @@ def create_router(*, authorize, store: ConnectionStore, check=probe, account=nat
     async def models(backend: str, request: Request, session_id: str | None = None):
         authorize(request)
         selected = await model_selection(backend, session_id)
-        if backend == "cursor":
-            if cursor_catalog is None: raise HTTPException(501, "Cursor API keys are unavailable.")
-            result = await cursor_catalog(selected)
-        else:
-            result = await asyncio.to_thread(endpoint_model_catalog, selected, protocol=selected.get("protocol", "responses"))
+        result = await asyncio.to_thread(endpoint_model_catalog, selected, protocol=selected.get("protocol", "responses"))
         # Fence a settings read that raced replacement/forget. Session bindings
         # deliberately remain usable independently of the current settings.
         if not session_id:
@@ -597,7 +563,7 @@ def create_router(*, authorize, store: ConnectionStore, check=probe, account=nat
     @router.get("/api/admin/provider-accounts/{backend}")
     async def native_account(backend: str, request: Request):
         authorize(request)
-        if backend not in {"claude", "cursor"}:
+        if backend != "claude":
             raise HTTPException(400, "Unsupported CLI account.")
         return reply(await asyncio.to_thread(account, backend))
 
@@ -631,21 +597,14 @@ def create_router(*, authorize, store: ConnectionStore, check=probe, account=nat
             if selected is None:
                 raise HTTPException(409, "Save an endpoint before checking it.")
             try:
-                if backend == "cursor":
-                    if cursor_catalog is None: raise HTTPException(501, "Cursor API keys are unavailable.")
-                    discovered = await cursor_catalog(selected)
-                    result = "cli_update_required" if discovered.get("cli_update_required") else "verified" if discovered["discovery_status"] == "ready" and discovered["models"] else "connection_failed"
-                else:
-                    result = await check(selected)
+                result = await check(selected)
                 # Public catalogs cannot authenticate a key. Keep a private,
                 # explicitly unverified setup so the client can list models
                 # before choosing one for a subsequent explicit check.
-                pending_model = result == "model_required" and not selected.get("model") and backend != "cursor"
+                pending_model = result == "model_required" and not selected.get("model")
                 if request.method == "PUT" and result != "verified" and not pending_model:
                     return reply({"ok": False, "status": result})
                 configuration = await asyncio.to_thread(store.write, backend, expected, selected, result)
-                if backend == "cursor" and result == "verified":
-                    store.catalog_cache[(backend, configuration["revision"])] = (time.monotonic(), discovered["models"])
                 return reply({"ok": result == "verified", "status": result, "configuration": configuration})
             finally:
                 selected.clear()

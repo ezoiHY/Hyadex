@@ -147,14 +147,14 @@ class RuntimeProbeTimeoutTests(unittest.TestCase):
         with patch.object(agent_server, "probe_runtime") as probe, patch.object(
             agent_server, "runtime_executable",
         ) as resolve:
-            result = agent_server.runtime_diagnostic("cursor", force=True)
+            result = agent_server.runtime_diagnostic("claude", force=True)
         probe.assert_not_called()
         resolve.assert_not_called()
         self.assertEqual(result["status"], "unknown")
         self.assertIsNone(result["installed"])
         self.assertIsNone(result["authenticated"])
         self.assertIn("deadline", result["message"])
-        self.assertNotIn("cursor", agent_server.RUNTIME_DIAGNOSTICS)
+        self.assertNotIn("claude", agent_server.RUNTIME_DIAGNOSTICS)
 
     def test_completed_signed_out_result_is_not_discarded_at_budget_boundary(self):
         clock = [100.0]
@@ -176,13 +176,6 @@ class RuntimeProbeTimeoutTests(unittest.TestCase):
         self.assertEqual(result["status"], "unauthenticated")
         self.assertEqual(agent_server.RUNTIME_DIAGNOSTICS["claude"]["status"], "unauthenticated")
 
-    def test_cursor_catalog_resolution_budget_expiry_returns_safe_auto_fallback(self):
-        with patch.object(agent_server, "resolve_cursor_executable", side_effect=agent_server.RuntimeCatalogBudgetExpired), patch.object(
-            agent_server, "run_catalog_command",
-        ) as run:
-            result = agent_server.discover_cursor_catalog()
-        run.assert_not_called()
-        self.assertEqual(result["models"], [{"value": "auto", "label": "Auto"}])
 
     def test_budget_exhaustion_is_not_a_normal_auth_timeout(self):
         clock = [100.0]
@@ -323,7 +316,7 @@ class RuntimeProbeTimeoutTests(unittest.TestCase):
         static = {"models": [], "efforts": []}
 
         def diagnostic(backend, *, force):
-            if backend == "cursor":
+            if backend == "claude":
                 slow_started.set()
                 self.assertTrue(models_finished.wait(timeout=5))
                 return {"backend": backend, "status": "error"}

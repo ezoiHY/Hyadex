@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
-import os
 import sqlite3
 import tempfile
 import threading
@@ -214,151 +212,6 @@ class LegacyCodexPreviewTests(unittest.TestCase):
                 self.assertEqual(self.preview(self.event(text)), text[:160])
 
 
-class CursorNativeMetadata(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.config = self.root / "config"
-        self.cwd = str(self.root / "project")
-        bucket = hashlib.md5(self.cwd.encode(), usedforsecurity=False).hexdigest()
-        self.database = self.config / "chats" / bucket / "native-chat" / "store.db"
-        self.enterContext(patch.dict(os.environ, {"CURSOR_CONFIG_DIR": str(self.config)}))
-        self.sess = {"backend": "cursor", "session_id": "native-chat", "cwd": self.cwd}
-
-    def write_metadata(self, metadata=None, *, raw=None):
-        if metadata is None:
-            metadata = {"agentId": "native-chat", "name": "Native Cursor title", "latestRootBlobId": "ab" * 32}
-        self.database.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.database)
-        try:
-            connection.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
-            connection.execute("INSERT OR REPLACE INTO meta VALUES ('0', ?)",
-                               (raw if raw is not None else json.dumps(metadata).encode().hex(),))
-            connection.commit()
-        finally:
-            connection.close()
-
-    def read(self, **changes):
-        return server.read_native_session_title({**self.sess, **changes})
-
-    def test_exact_name_without_reading_conversation_blobs_or_writing(self):
-        self.write_metadata({"agentId": "native-chat", "name": "  修复\n Cursor\x00\u202e  "})
-        before = self.database.read_bytes()
-        # The fixture deliberately has no blobs table: naming never needs it.
-        self.assertEqual(self.read(), "修复 Cursor")
-        self.assertEqual(self.database.read_bytes(), before)
-
-    def test_missing_store_and_directory_are_not_created(self):
-        self.assertIsNone(self.read())
-        self.assertFalse(self.config.exists())
-
-    def test_wrong_workspace_and_other_session_never_supply_name(self):
-        self.write_metadata()
-        for changes in ({"cwd": str(self.root / "other")}, {"cwd": None}, {"cwd": "relative"},
-                        {"session_id": "neighbor"}, {"session_id": "../../escape"}):
-            with self.subTest(changes=changes):
-                self.assertIsNone(self.read(**changes))
-
-    def test_identity_child_and_unknown_title_shapes_fail_closed(self):
-        for metadata in (
-            {"agentId": "other", "name": "Foreign"},
-            {"name": "No identity"},
-            {"agentId": "native-chat", "name": "Child", "subagentInfo": {}},
-            {"agentId": "native-chat", "name": {"bad": "shape"}},
-            {"agentId": "native-chat", "name": "New Agent"},
-            {"agentId": "native-chat", "name": "x" * 4097},
-            [],
-        ):
-            with self.subTest(metadata=str(metadata)[:80]):
-                self.write_metadata(metadata)
-                self.assertIsNone(self.read())
-
-    def test_malformed_oversized_and_non_text_values_fail_closed(self):
-        nested = ("[" * 2000 + "0" + "]" * 2000).encode().hex()
-        for raw in ("not hex", "ff", "7b", "00" * 20000, b"abcd", "7b7d", nested):
-            with self.subTest(raw=str(raw)[:20]):
-                self.write_metadata(raw=raw)
-                self.assertIsNone(self.read())
-
-    def test_busy_store_keeps_fallback(self):
-        self.write_metadata()
-        connection = sqlite3.connect(self.database)
-        try:
-            connection.execute("BEGIN EXCLUSIVE")
-            self.assertIsNone(self.read())
-        finally:
-            connection.rollback()
-            connection.close()
-
-    def test_missing_schema_or_corrupt_db_keeps_fallback(self):
-        self.database.parent.mkdir(parents=True)
-        for data in (b"", b"not a sqlite database"):
-            self.database.write_bytes(data)
-            self.assertIsNone(self.read())
-            self.assertEqual(self.database.read_bytes(), data)
-
-    def test_wal_metadata_is_visible_without_a_checkpoint(self):
-        self.write_metadata()
-        connection = sqlite3.connect(self.database)
-        try:
-            connection.execute("PRAGMA journal_mode=WAL")
-            connection.execute("PRAGMA wal_autocheckpoint=0")
-            connection.execute("UPDATE meta SET value=? WHERE key='0'", (
-                json.dumps({"agentId": "native-chat", "name": "Newest WAL name"}).encode().hex(),
-            ))
-            connection.commit()
-            before = self.database.read_bytes()
-            wal = self.database.with_name("store.db-wal")
-            before_wal = wal.read_bytes()
-            self.assertEqual(self.read(), "Newest WAL name")
-            self.assertEqual(self.database.read_bytes(), before)
-            self.assertEqual(wal.read_bytes(), before_wal)
-        finally:
-            connection.close()
-
-    def test_database_open_is_read_only(self):
-        self.write_metadata()
-        connect = sqlite3.connect
-        with patch.object(server.sqlite3, "connect", wraps=connect) as spy:
-            self.assertEqual(self.read(), "Native Cursor title")
-        self.assertEqual(spy.call_args.args[0], self.database.resolve().as_uri() + "?mode=ro")
-        self.assertTrue(spy.call_args.kwargs["uri"])
-
-    def test_linked_database_or_workspace_is_not_followed(self):
-        self.write_metadata()
-        actual = self.database.with_name("actual.db")
-        self.database.rename(actual)
-        self.database.symlink_to(actual)
-        self.assertIsNone(self.read())
-        self.database.unlink()
-        actual.rename(self.database)
-        directory = self.database.parent
-        moved = directory.with_name("moved")
-        directory.rename(moved)
-        directory.symlink_to(moved, target_is_directory=True)
-        self.assertIsNone(self.read())
-
-    def test_cursor_config_root_precedence_matches_cli(self):
-        self.write_metadata()
-        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.root / "different"), "CURSOR_DATA_DIR": str(self.root / "not-chats")}):
-            self.assertEqual(self.read(), "Native Cursor title")
-
-        xdg_config = self.root / "xdg" / "cursor"
-        xdg_config.parent.mkdir()
-        self.config.rename(xdg_config)
-        with patch.dict(os.environ, {"CURSOR_CONFIG_DIR": "", "XDG_CONFIG_HOME": str(xdg_config.parent)}):
-            self.assertEqual(self.read(), "Native Cursor title")
-        default_config = self.root / ".cursor"
-        xdg_config.rename(default_config)
-        with patch.dict(os.environ, {"CURSOR_CONFIG_DIR": "", "XDG_CONFIG_HOME": ""}), patch.object(Path, "home", return_value=self.root):
-            self.assertEqual(self.read(), "Native Cursor title")
-
-    def test_relative_config_is_resolved_from_provider_working_directory(self):
-        self.write_metadata()
-        Path(self.cwd).mkdir()
-        with patch.dict(os.environ, {"CURSOR_CONFIG_DIR": "../config"}):
-            self.assertEqual(self.read(), "Native Cursor title")
 
 
 class ResumeTitleCreation(unittest.IsolatedAsyncioTestCase):
@@ -374,13 +227,13 @@ class ResumeTitleCreation(unittest.IsolatedAsyncioTestCase):
         self.reader = self.enterContext(patch.object(server, "read_native_session_title", return_value="Existing native title"))
         self.generator = self.enterContext(patch.object(server.title_generation, "generate_title", new_callable=AsyncMock))
 
-    async def create(self, backend="cursor", **kwargs):
+    async def create(self, backend="claude", **kwargs):
         return await self.store.create(server.CreateSessionRequest(
             backend=backend, provider_session_id="native-chat", cwd="/work", **kwargs,
         ))
 
     async def test_all_providers_use_native_title_before_returning_resume_response(self):
-        for backend in ("claude", "codex", "cursor"):
+        for backend in ("claude", "codex"):
             for title in (None, "New chat", f"Resumed {backend.title()} native-c"):
                 with self.subTest(backend=backend, title=title):
                     created = await self.create(backend, title=title)
@@ -391,7 +244,7 @@ class ResumeTitleCreation(unittest.IsolatedAsyncioTestCase):
         self.generator.assert_not_awaited()
 
     async def test_explicit_name_always_wins(self):
-        for title in ("My manual name", "Resumed Cursor other-id", "Resumed chat"):
+        for title in ("My manual name", "Resumed Claude other-id", "Resumed chat"):
             created = await self.create(title=title)
             self.assertEqual(created["title"], title)
             self.assertEqual(created["_title_source"], "manual")
@@ -402,18 +255,18 @@ class ResumeTitleCreation(unittest.IsolatedAsyncioTestCase):
             self.reader.return_value = None
             self.reader.side_effect = error
             created = await self.create()
-            self.assertEqual(created["title"], "Resumed Cursor native-c")
+            self.assertEqual(created["title"], "Resumed Claude native-c")
             self.assertEqual(created["_title_source"], "placeholder")
 
     async def test_new_chats_forks_and_staged_imports_do_not_probe_metadata(self):
-        await self.store.create(server.CreateSessionRequest(backend="cursor"))
+        await self.store.create(server.CreateSessionRequest(backend="claude"))
         for flags in ({"parent_id": "parent"}, {"initializing_fork": True}, {"initializing_import": True}):
-            await self.store.create(server.CreateSessionRequest(backend="cursor", provider_session_id="native-chat"), **flags)
+            await self.store.create(server.CreateSessionRequest(backend="claude", provider_session_id="native-chat"), **flags)
         self.reader.assert_not_called()
 
     async def test_placeholder_wording_is_manual_when_user_renames_existing_chat(self):
         created = await self.create()
-        await self.store.update(created["id"], {"title": "Resumed Cursor native-c"})
+        await self.store.update(created["id"], {"title": "Resumed Claude native-c"})
         self.assertEqual(created["_title_source"], "manual")
         self.reader.reset_mock()
         await server.refresh_native_session_title(created["id"])
@@ -422,8 +275,8 @@ class ResumeTitleCreation(unittest.IsolatedAsyncioTestCase):
     async def test_resume_endpoint_returns_native_title_without_import_or_model_call(self):
         with patch.object(server, "import_session_history", new_callable=AsyncMock) as history:
             response = await server.create_session(server.CreateSessionRequest(
-                backend="cursor", provider_session_id="native-chat", cwd="/work",
-                title="Resumed Cursor native-c", import_history=False,
+                backend="claude", provider_session_id="native-chat", cwd="/work",
+                title="Resumed Claude native-c", import_history=False,
             ))
             self.assertEqual(response["session"]["title"], "Existing native title")
             history.assert_not_awaited()
@@ -440,20 +293,8 @@ class ResumeTitleCreation(unittest.IsolatedAsyncioTestCase):
                 stream.write(json.dumps({"type": "ai-title", "sessionId": "native-chat", "aiTitle": "Claude title"}) + "\n")
             index = root / "session_index.jsonl"
             index.write_text(json.dumps({"id": "native-chat", "thread_name": "Codex title"}) + "\n")
-            bucket = hashlib.md5(b"/work", usedforsecurity=False).hexdigest()
-            database = root / "cursor" / "chats" / bucket / "native-chat" / "store.db"
-            database.parent.mkdir(parents=True)
-            connection = sqlite3.connect(database)
-            connection.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
-            connection.execute("INSERT INTO meta VALUES ('0', ?)", (
-                json.dumps({"agentId": "native-chat", "name": "Cursor title"}).encode().hex(),
-            ))
-            connection.commit()
-            connection.close()
-            with patch.object(server, "CLAUDE_PROJECTS_ROOT", projects), patch.object(server, "CODEX_SESSION_INDEX_PATH", index), patch.dict(
-                os.environ, {"CURSOR_CONFIG_DIR": str(root / "cursor")},
-            ):
-                for backend in ("claude", "codex", "cursor"):
+            with patch.object(server, "CLAUDE_PROJECTS_ROOT", projects), patch.object(server, "CODEX_SESSION_INDEX_PATH", index):
+                for backend in ("claude", "codex"):
                     created = await self.create(backend, title=f"Resumed {backend.title()} native-c")
                     self.assertEqual(created["title"], f"{backend.title()} title")
         self.generator.assert_not_awaited()
@@ -463,7 +304,7 @@ class ResumeTitleCreation(unittest.IsolatedAsyncioTestCase):
         self.reader.side_effect = lambda _session: release.wait(3) and "Too late"
         try:
             created = await asyncio.wait_for(self.create(), timeout=2)
-            self.assertEqual(created["title"], "Resumed Cursor native-c")
+            self.assertEqual(created["title"], "Resumed Claude native-c")
         finally:
             release.set()
         self.assertEqual(created["_title_source"], "placeholder")

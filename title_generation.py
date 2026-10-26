@@ -2,16 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
-import os
 from pathlib import Path
-import re
-import shlex
-import stat
-import sys
 import tempfile
-import time
 import unicodedata
 
 
@@ -34,8 +27,6 @@ INSTRUCTIONS = (
 
 class TitleGenerationError(Exception):
     """Keep errors content-free: prompts, credentials and output are private."""
-
-
 
 
 def title_prompt(user_text: str, reply: str) -> str:
@@ -166,176 +157,8 @@ async def generate_codex_title(prompt: str, *, executable: str, model: str | Non
                 await _close(client)
 
 
-def _cursor_auth_file(home: Path, env: dict) -> Path:
-    if sys.platform == 'darwin':
-        return home / '.cursor' / 'auth.json'
-    if os.name == 'nt':
-        return Path(env.get('APPDATA') or home / 'AppData' / 'Roaming') / 'Cursor' / 'auth.json'
-    return Path(env.get('XDG_CONFIG_HOME') or home / '.config') / 'cursor' / 'auth.json'
-
-
-def cursor_credentials_snapshot(credentials: dict) -> dict:
-    # The CLI requires an access+refresh pair even when no refresh is needed.
-    # Only use a login with ample validity left. Never run optional generation
-    # to repair/refresh an expired main login or create a new login.
-    if not isinstance(credentials, dict):
-        raise TitleGenerationError('Invalid Cursor credentials')
-    if isinstance(credentials.get('apiKey'), str) and credentials['apiKey']:
-        return {'apiKey': credentials['apiKey']}
-    access, refresh = credentials.get('accessToken'), credentials.get('refreshToken')
-    try:
-        encoded = access.split('.')[1]
-        claims = json.loads(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
-        expiry = claims['exp']
-        if not isinstance(expiry, (int, float)) or expiry <= time.time() + TIMEOUT_SECONDS + 60:
-            raise ValueError('expired')
-        if not isinstance(refresh, str) or not refresh:
-            raise ValueError('missing refresh credential')
-    except (AttributeError, IndexError, KeyError, ValueError, TypeError):
-        raise TitleGenerationError('Cursor needs a fresh login before optional naming') from None
-    return {'accessToken': access, 'refreshToken': refresh}
-
-
-def _private_json(path: Path) -> dict:
-    """Bounded, owner-only, no symlink following for selected native settings."""
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
-    with os.fdopen(descriptor, 'rb') as source:
-        info = os.fstat(source.fileno())
-        if (not stat.S_ISREG(info.st_mode) or info.st_size > 65536
-                or (hasattr(os, 'getuid') and info.st_uid != os.getuid())):
-            raise TitleGenerationError('Unsafe Cursor settings')
-        data = source.read(65537)
-    if len(data) > 65536:
-        raise TitleGenerationError('Excessive Cursor settings')
-    result = json.loads(data)
-    if not isinstance(result, dict):
-        raise TitleGenerationError('Invalid Cursor settings')
-    return result
-
-
-def cursor_default_model(env: dict) -> str | None:
-    """Only the selected model ID is inherited, never permissions or hooks."""
-    config = Path(env.get('CURSOR_CONFIG_DIR') or Path(env.get('HOME') or Path.home()) / '.cursor')
-    try:
-        value = _private_json(config / 'cli-config.json')
-    except FileNotFoundError:
-        return None
-    for key in ('selectedModel', 'model'):
-        selection = value.get(key)
-        model = selection.get('modelId') if isinstance(selection, dict) else None
-        if isinstance(model, str) and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}', model):
-            return model
-    return None
-
-
-def cursor_profile(root: Path, original_env: dict) -> tuple[Path, dict]:
-    """Disposable HOME/config/data. Copy only file auth, never settings/hooks/MCP."""
-    home = root / 'home'
-    workspace = root / 'workspace'
-    workspace.mkdir()
-    config = home / '.cursor'
-    config.mkdir(parents=True)
-    # Enterprise hooks are policy, not ours to bypass. Do not run optional
-    # generation if machine-managed hooks could execute outside isolation.
-    managed = (Path('/Library/Application Support/Cursor/hooks.json') if sys.platform == 'darwin'
-               else Path('/etc/cursor/hooks.json'))
-    if managed.exists():
-        raise TitleGenerationError('Managed Cursor hooks require explicit compatibility')
-    allowed = {'PATH', 'SystemRoot', 'WINDIR', 'LANG', 'LC_ALL', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
-               'NODE_EXTRA_CA_CERTS', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
-               'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'CURSOR_API_KEY', 'CURSOR_API_ENDPOINT'}
-    env = {k: v for k, v in original_env.items() if k in allowed}
-    if original_env.get('AGENT_CLI_CREDENTIAL_STORE') == 'memory' and env.get('CURSOR_API_KEY'):
-        from cursor_api_key import overrides
-        env.update(overrides(env['CURSOR_API_KEY']))
-    env.update(HOME=str(home), USERPROFILE=str(home), CURSOR_CONFIG_DIR=str(config),
-               CURSOR_DATA_DIR=str(root / 'data'), XDG_CONFIG_HOME=str(home / '.config'),
-               XDG_DATA_HOME=str(root / 'data'), XDG_CACHE_HOME=str(root / 'cache'),
-               TMPDIR=str(root), TMP=str(root), TEMP=str(root),
-               NODE_COMPILE_CACHE=str(root / 'cache'), NO_OPEN_BROWSER='1')
-    auth = _cursor_auth_file(Path(original_env.get('HOME') or Path.home()), original_env)
-    if not env.get('CURSOR_API_KEY') and auth.exists():
-        destination = _cursor_auth_file(home, env)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        credentials = _private_json(auth)
-        credentials = cursor_credentials_snapshot(credentials)
-        destination.write_text(json.dumps(credentials))
-        destination.chmod(0o600)
-        env['AGENT_CLI_CREDENTIAL_STORE'] = 'file'
-    deny = ['Shell(*)', 'Read(**)', 'Read(/**)', 'Write(**)', 'Write(/**)', 'WebFetch(*)', 'Mcp(*:*)']
-    (config / 'cli-config.json').write_text(json.dumps({
-        'version': 1, 'editor': {'vimMode': False}, 'permissions': {'allow': [], 'deny': deny},
-        'notifications': False, 'hints': False,
-    }))
-    (config / 'mcp.json').write_text('{"mcpServers":{}}')
-    block = 'import sys; print(\'{"permission":"deny","agent_message":"Tools are disabled for title generation."}\'); sys.exit(2)'
-    hook = {'command': shlex.join([sys.executable, '-c', block]), 'timeout': 2, 'failClosed': True}
-    hooks = {'version': 1, 'hooks': {name: [hook] for name in (
-        'preToolUse', 'beforeShellExecution', 'beforeReadFile', 'beforeMCPExecution', 'subagentStart')}}
-    (config / 'hooks.json').write_text(json.dumps(hooks))
-    project = workspace / '.cursor'
-    project.mkdir()
-    (project / 'hooks.json').write_text(json.dumps(hooks))
-    (workspace / '.cursorignore').write_text('*\n')
-    return workspace, env
-
-
-async def cursor_keychain_snapshot(env: dict, isolated: dict, workspace: Path) -> None:
-    if sys.platform != 'darwin' or isolated.get('CURSOR_API_KEY') or isolated.get('AGENT_CLI_CREDENTIAL_STORE') == 'file':
-        return
-    # Cursor's macOS CLI stores these exact credentials under cursor-user.
-    # Read the exact login pair; never enumerate keychain
-    # entries, print secrets, refresh the account, or modify its saved login.
-    access = await run_isolated_command(
-        ['/usr/bin/security', 'find-generic-password', '-a', 'cursor-user', '-s', 'cursor-access-token', '-w'],
-        prompt='', cwd=str(workspace), env={**isolated, 'HOME': env.get('HOME', str(Path.home()))}, timeout=5,
-    )
-    if not access.strip() or len(access) > 32768:
-        raise TitleGenerationError('Cursor login unavailable for isolated titles')
-    refresh = await run_isolated_command(
-        ['/usr/bin/security', 'find-generic-password', '-a', 'cursor-user', '-s', 'cursor-refresh-token', '-w'],
-        prompt='', cwd=str(workspace), env={**isolated, 'HOME': env.get('HOME', str(Path.home()))}, timeout=5,
-    )
-    credentials = cursor_credentials_snapshot({'accessToken': access.strip(), 'refreshToken': refresh.strip()})
-    destination = Path(isolated['HOME']) / '.cursor' / 'auth.json'
-    destination.write_text(json.dumps(credentials))
-    destination.chmod(0o600)
-    isolated['AGENT_CLI_CREDENTIAL_STORE'] = 'file'
-
-
-async def generate_cursor_title(prompt: str, *, executable: str, model: str | None, env: dict) -> str | None:
-    model = model or ('auto' if env.get('AGENT_CLI_CREDENTIAL_STORE') == 'memory' else cursor_default_model(env))
-    with tempfile.TemporaryDirectory(prefix='hyadex-title-cursor-') as directory:
-        workspace, isolated = cursor_profile(Path(directory), env)
-        await cursor_keychain_snapshot(env, isolated, workspace)
-        version = await run_isolated_command([executable, '--version'], prompt='', cwd=str(workspace),
-                                             env=isolated, timeout=10)
-        match = re.match(r'^(\d{4})\.(\d{2})\.(\d{2})-', version.strip())
-        if not match or tuple(map(int, match.groups())) < (2026, 9, 18):
-            raise TitleGenerationError('Cursor fail-closed tool hooks require a newer CLI')
-        command = [executable, '--print', '--mode', 'ask', '--trust', '--output-format', 'stream-json']
-        if model:
-            command += ['--model', model]
-        output = await run_isolated_command(command, prompt=prompt, cwd=str(workspace),
-                                            env=isolated, timeout=TIMEOUT_SECONDS)
-        result = None
-        for line in output.splitlines():
-            event = json.loads(line)
-            if not isinstance(event, dict):
-                raise TitleGenerationError('Invalid Cursor title protocol')
-            if event.get('type') == 'tool_call':
-                raise TitleGenerationError('Tool attempt in Cursor title request')
-            if event.get('type') == 'result':
-                if event.get('is_error') or event.get('subtype') != 'success':
-                    raise TitleGenerationError('Cursor title request failed')
-                result = event.get('result')
-        return clean_title(result)
-
-
-
-
 async def generate_title(backend: str, user_text: str, reply: str, **options) -> str | None:
-    generator = {'codex': generate_codex_title, 'cursor': generate_cursor_title}.get(backend)
+    generator = {'codex': generate_codex_title}.get(backend)
     if generator is None:
         return None
     return await asyncio.wait_for(generator(title_prompt(user_text, reply), **options), TIMEOUT_SECONDS)

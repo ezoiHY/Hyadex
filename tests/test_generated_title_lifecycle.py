@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import agent_server as server
 
-REAL_GENERATE_TITLE = server.title_generation.generate_title
 REAL_AUTONOMOUS_ADMISSION = server.managed_server_update_scheduled_job_blocker
 
 
@@ -21,7 +20,7 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.store = server.SessionStore()
         self.store.save = AsyncMock()
         self.sess = {
-            'id': 'title-chat', 'backend': 'cursor', 'session_id': 'native-parent',
+            'id': 'title-chat', 'backend': 'codex', 'session_id': 'native-parent',
             'title': 'Write a song', '_title_source': 'prompt',
             '_title_auto_value': 'Write a song', '_title_seed': 'Write a song about cats',
             'cwd': '/tmp', 'folder': 'General', 'model': 'selected-model',
@@ -41,7 +40,6 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.dict(os.environ, {'HYADEX_AUTO_TITLES': '1'}))
         self.enterContext(patch.object(server.title_generation, 'generate_title', self.generator))
         self.enterContext(patch.object(server, 'runner_env', return_value={'PATH': '/synthetic'}))
-        self.enterContext(patch.object(server, 'resolve_cursor_executable', return_value='cursor'))
         self.admission = self.enterContext(patch.object(
             server, 'managed_server_update_scheduled_job_blocker', return_value=None))
         self.runtime_settings = self.enterContext(patch.object(
@@ -68,8 +66,8 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.sess['session_id'], 'native-parent')
         self.assertTrue(self.sess['_title_generation_attempted'])
         self.assertNotIn('_title_seed', self.sess)
-        self.generator.assert_awaited_once_with('cursor', 'Write a song about cats', 'A playful song',
-            executable='cursor', model='selected-model', env={'PATH': '/synthetic'})
+        self.generator.assert_awaited_once_with('codex', 'Write a song about cats', 'A playful song',
+            executable=server.CODEX_BIN, model='selected-model', env={'PATH': '/synthetic'}, provider_selection=None)
         self.append.assert_not_awaited()
         self.schedule()
         self.assertFalse(self.tasks)
@@ -178,7 +176,7 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_late_result_cannot_overwrite_manual_name_provider_or_model(self):
         for fields in (
-            {'_title_source': 'manual'}, {'session_id': 'replacement'}, {'backend': 'codex'},
+            {'_title_source': 'manual'}, {'session_id': 'replacement'}, {'backend': 'claude'},
             {'model': 'different'}, {'codex_provider_revision': 'replacement'},
             {'auto_title_enabled': False}, {'archived': True},
         ):
@@ -209,7 +207,7 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.sess['title'], 'My own title')
 
     async def test_unchanged_turn_settings_preserve_pending_title(self):
-        for backend in ('codex', 'cursor'):
+        for backend in ('codex',):
             for model in (None, 'selected-model'):
                 with self.subTest(backend=backend, model=model):
                     await server.close_generated_session_titles()
@@ -270,13 +268,13 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.sess.update(original)
 
     async def test_reselected_custom_connection_cancels_only_if_credentials_change(self):
-        self.sess.update(provider_connection='custom', provider_connection_revision='original')
+        self.sess.update(codex_provider='custom', codex_provider_revision='original',
+            codex_provider_binding=server.codex_provider.binding({'base_url': 'https://fixture.invalid'}))
         connections = SimpleNamespace(
-            bind=Mock(return_value={'credential_id': 'original', 'model': 'selected-model'}),
-            cursor_overrides=Mock(return_value={}),
+            for_session=Mock(return_value={'credential_id': 'original', 'model': 'selected-model', 'base_url': 'https://fixture.invalid'}),
+            cached_catalog=Mock(return_value={}), require_thread=Mock(),
         )
-        self.enterContext(patch.object(server, 'PROVIDER_CONNECTION_STORE', connections))
-        self.enterContext(patch.object(server.cursor_api_key, 'require_isolation', new_callable=AsyncMock))
+        self.enterContext(patch.object(server, 'CODEX_PROVIDER_STORE', connections))
         started = asyncio.Event()
         async def pending(*args, **kwargs):
             started.set()
@@ -285,11 +283,11 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.schedule()
         await asyncio.wait_for(started.wait(), 1)
         task = self.tasks['title-chat']
-        await self.store.update('title-chat', {'provider_connection': 'custom'})
+        await self.store.update('title-chat', {'codex_provider': 'custom'})
         await asyncio.sleep(0)
         self.assertFalse(task.done())
-        connections.bind.return_value = {'credential_id': 'replacement', 'model': 'selected-model'}
-        await self.store.update('title-chat', {'provider_connection': 'custom'})
+        connections.for_session.return_value = {'credential_id': 'replacement', 'model': 'selected-model', 'base_url': 'https://fixture.invalid'}
+        await self.store.update('title-chat', {'codex_provider': 'custom'})
         await asyncio.gather(task, return_exceptions=True)
         self.assertTrue(task.cancelled())
         self.assertEqual(self.sess['title'], 'Write a song')
@@ -364,11 +362,14 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.tasks)
 
     def real_title_process(self):
-        """Exercise the actual adapter/process owner with no provider or account."""
+        """Exercise the real bounded process owner through a synthetic title task.
+
+        Codex protocol isolation is covered by the separate adapter tests.
+        """
         temporary = tempfile.TemporaryDirectory(prefix='title-lifecycle-process-')
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
-        executable = root / 'synthetic-cursor'
+        executable = root / 'synthetic-title'
         executable.write_text(f'''#!{sys.executable}
 import json, os, pathlib, signal, subprocess, sys, time
 if '--version' in sys.argv:
@@ -385,11 +386,14 @@ child.wait()
 print(json.dumps({{'type': 'result', 'subtype': 'success', 'result': 'Song About Two Cats'}}), flush=True)
 ''')
         executable.chmod(0o700)
-        self.enterContext(patch.object(server.title_generation, 'generate_title', REAL_GENERATE_TITLE))
-        self.enterContext(patch.object(server, 'resolve_cursor_executable', return_value=str(executable)))
-        self.enterContext(patch.object(server, 'runner_env', return_value={
-            'HOME': str(root / 'unused-home'), 'CURSOR_API_KEY': 'synthetic-not-a-credential',
-        }))
+        async def synthetic_title(*_args, **_options):
+            with tempfile.TemporaryDirectory(prefix='title-process-home-') as directory:
+                result = await server.title_generation.run_isolated_command(
+                    [str(executable)], prompt='', cwd=directory,
+                    env={'HOME': directory}, timeout=30,
+                )
+                return json.loads(result)['result']
+        self.enterContext(patch.object(server.title_generation, 'generate_title', synthetic_title))
         return root
 
     async def await_process(self, root):

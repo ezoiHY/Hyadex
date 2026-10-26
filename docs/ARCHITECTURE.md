@@ -54,10 +54,11 @@ applications. Do not move the monolith behind a wildcard import or duplicate
 its mutable globals. Preserve durable queue admission/recovery, event sequence
 allocation, WebSocket catch-up and provider-native session continuity throughout.
 
-Gemini and OpenCode execution, API binding, skills and runtime routes are
+Cursor, Gemini and OpenCode execution, API binding, skills and runtime routes are
 removed. Existing registry rows and timeline files retain their backend and
 provider identity. Turn/fork admission rejects those rows before selecting a
 replacement runtime. Native-private-field redaction and local ownership labels
 still recognize persisted retired-provider records. Retired jobs stay paused
-across restarts. Cursor remains an optional legacy integration pending its
-own removal round.
+across restarts. Only Claude and Codex are admitted, even when an old environment
+configuration names a retired runtime. Pagination and transcript byte cursors
+are shared storage concepts and remain unchanged.

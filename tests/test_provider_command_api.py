@@ -14,7 +14,7 @@ from provider_commands import ProviderCommandRecord, codex_provider_command_inve
 class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
 
 
-    async def test_cursor_snapshot_is_explicitly_unsupported_and_session_scoped(self) -> None:
+    async def test_retired_provider_snapshot_is_unsupported_and_session_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             sessions = {
                 "cursor-chat": {

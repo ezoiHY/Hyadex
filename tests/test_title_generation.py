@@ -47,107 +47,11 @@ class FormattingTests(unittest.TestCase):
         self.assertFalse(titles.supports_codex_titles(data))
         self.assertFalse(titles.supports_codex_titles({}))
 
-    def test_cursor_auth_does_not_refresh_expired_tokens(self):
-        def credentials(expiry):
-            body = base64.urlsafe_b64encode(json.dumps({'exp': expiry}).encode()).decode().rstrip('=')
-            return {'accessToken': 'header.' + body + '.signature', 'refreshToken': 'synthetic-refresh'}
-        fresh = credentials(time.time() + 3600)
-        self.assertEqual(titles.cursor_credentials_snapshot(fresh), fresh)
-        for bad in (None, [], {}, credentials(time.time()), {'accessToken': 'opaque', 'refreshToken': 'test'}):
-            with self.assertRaises(titles.TitleGenerationError):
-                titles.cursor_credentials_snapshot(bad)
-
-    def test_cursor_inherits_only_model_identity(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'cli-config.json'
-            path.write_text(json.dumps({'selectedModel': {'modelId': 'selected-native-model'},
-                'model': {'modelId': 'old-model'}, 'permissions': {'allow': ['Shell(*)']}}))
-            self.assertEqual(titles.cursor_default_model({'CURSOR_CONFIG_DIR': directory}), 'selected-native-model')
-
-    def test_native_settings_symlink_is_not_followed(self):
-        with tempfile.TemporaryDirectory() as directory:
-            target = Path(directory) / 'real.json'
-            target.write_text('{}')
-            link = Path(directory) / 'link.json'
-            link.symlink_to(target)
-            with self.assertRaises(OSError):
-                titles._private_json(link)
-
-    def test_cursor_profile_no_authority_or_inherited_settings(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            original = root / 'original'
-            original.mkdir()
-            (original / '.cursor').mkdir()
-            (original / '.cursor' / 'hooks.json').write_text('dangerous original hooks')
-            (original / '.cursor' / 'mcp.json').write_text('original integrations')
-            target = root / 'isolated'
-            target.mkdir()
-            cwd, env = titles.cursor_profile(target, {
-                'HOME': str(original), 'PATH': '/bin', 'HYADEX_TOKEN': 'secret',
-                'OPENAI_API_KEY': 'unrelated-secret', 'CURSOR_API_KEY': 'cursor-key',
-                'NODE_OPTIONS': '--require unsafe.js', 'CURSOR_CONFIG_DIR': '/unsafe',
-            })
-            self.assertEqual(cwd, target / 'workspace')
-            self.assertEqual(env['HOME'], str(target / 'home'))
-            for key in ('HYADEX_TOKEN', 'OPENAI_API_KEY', 'NODE_OPTIONS'):
-                self.assertNotIn(key, env)
-            self.assertEqual(env['CURSOR_API_KEY'], 'cursor-key')
-            config = Path(env['CURSOR_CONFIG_DIR'])
-            self.assertEqual(json.loads((config / 'mcp.json').read_text()), {'mcpServers': {}})
-            hooks = json.loads((config / 'hooks.json').read_text())['hooks']
-            self.assertTrue(hooks['preToolUse'][0]['failClosed'])
-            self.assertIn('sys.exit(2)', hooks['preToolUse'][0]['command'])
-            permissions = json.loads((config / 'cli-config.json').read_text())['permissions']
-            self.assertEqual(permissions['allow'], [])
-            for token in ('Read(/**)', 'Write(/**)', 'Shell(*)', 'Mcp(*:*)', 'WebFetch(*)'):
-                self.assertIn(token, permissions['deny'])
-            self.assertEqual((original / '.cursor' / 'hooks.json').read_text(), 'dangerous original hooks')
 
 
-class CursorAdapterTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
-        self.env = {'HOME': '/nonexistent-title-test-home', 'CURSOR_API_KEY': 'synthetic-key'}
-        self.calls = []
-        self.output = json.dumps({'type': 'result', 'subtype': 'success', 'result': 'Song for the cats'})
 
-        async def run(command, **kwargs):
-            self.calls.append((command, kwargs))
-            return '2026.09.18-tested' if '--version' in command else self.output
 
-        self.enterContext(patch.object(titles, 'run_isolated_command', side_effect=run))
 
-    async def generate(self):
-        return await titles.generate_cursor_title('synthetic prompt', executable='cursor', model='chosen-model', env=self.env)
-
-    async def test_separate_request_no_resume_or_escalation_and_cleans_profile(self):
-        self.assertEqual(await self.generate(), 'Song for the cats')
-        argv, options = self.calls[-1]
-        self.assertEqual(argv, ['cursor', '--print', '--mode', 'ask', '--trust', '--output-format', 'stream-json', '--model', 'chosen-model'])
-        self.assertEqual(options['prompt'], 'synthetic prompt')
-        self.assertFalse(Path(options['cwd']).exists())
-        self.assertFalse(Path(options['env']['HOME']).exists())
-
-    async def test_any_tool_attempt_is_rejected_even_with_success_result(self):
-        self.output = json.dumps({'type': 'tool_call', 'tool': 'read'}) + '\n' + self.output
-        with self.assertRaises(titles.TitleGenerationError):
-            await self.generate()
-        self.assertFalse(Path(self.calls[-1][1]['env']['HOME']).exists())
-
-    async def test_no_known_isolation_version_no_model_request(self):
-        with patch.object(titles, 'run_isolated_command', new_callable=AsyncMock, return_value='2025.10.01-old') as run:
-            with self.assertRaises(titles.TitleGenerationError):
-                await self.generate()
-        self.assertEqual(run.await_count, 1)
-
-    async def test_cancel_cleans_temporary_auth(self):
-        async def cancelled(command, **options):
-            self.calls.append((command, options))
-            raise asyncio.CancelledError
-        with patch.object(titles, 'run_isolated_command', side_effect=cancelled):
-            with self.assertRaises(asyncio.CancelledError):
-                await self.generate()
-        self.assertFalse(Path(self.calls[-1][1]['env']['HOME']).exists())
 
 
 class CodexAdapterTests(unittest.IsolatedAsyncioTestCase):

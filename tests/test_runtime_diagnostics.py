@@ -132,270 +132,14 @@ class RuntimeDiagnosticTests(unittest.TestCase):
         self.assertEqual(diagnostic["status"], "unauthenticated")
         self.assertIn("codex login", diagnostic["action"])
 
-    def test_cursor_prefers_first_compatible_candidate_not_first_installed(self) -> None:
-        compatible_help = """
--p, --print --output-format stream-json --resume --model --trust --force
---mode plan --list-models
-"""
 
-        def which(candidate: str, **_kwargs: object) -> str | None:
-            return {
-                "cursor-agent": "/legacy/cursor-agent",
-                "agent": "/current/agent",
-            }.get(candidate)
 
-        def command(args: list[str]) -> subprocess.CompletedProcess[str]:
-            if args == ["/legacy/cursor-agent", "--help"]:
-                return completed(args, stdout="-p --output-format")
-            if args == ["/current/agent", "--help"]:
-                return completed(args, stdout=compatible_help)
-            if args == ["/current/agent", "about"]:
-                return completed(args, stdout="About Cursor CLI\n")
-            if args == ["/current/agent", "--version"]:
-                return completed(args, stdout="2026.08.11-e8db854\n")
-            if args == ["/current/agent", "status"]:
-                return completed(args, stdout="Logged in as user@example.com\n")
-            raise AssertionError(args)
 
-        with patch.object(agent_server.shutil, "which", side_effect=which), patch.object(
-            agent_server, "runtime_command", side_effect=command
-        ):
-            diagnostic = agent_server.probe_runtime(agent_server.BACKEND_CURSOR)
 
-        self.assertEqual(diagnostic["status"], "ready")
-        self.assertEqual(diagnostic["_executable"], "/current/agent")
 
-    def test_cursor_nonzero_status_cannot_false_report_authenticated(self) -> None:
-        secret = "private-account@example.com"
-        compatible_help = (
-            "-p --print --output-format stream-json --resume --model --trust "
-            "--force --mode plan --list-models"
-        )
-        responses = [
-            completed(["/bin/agent", "--help"], stdout=compatible_help),
-            completed(["/bin/agent", "about"], stdout="About Cursor CLI\n"),
-            completed(["/bin/agent", "--version"], stdout="2026.08\n"),
-            completed(
-                ["/bin/agent", "status"],
-                returncode=2,
-                stderr=f"authenticated cache for {secret} could not be read",
-            ),
-        ]
-        with patch.object(agent_server.shutil, "which", return_value="/bin/agent"), patch.object(
-            agent_server, "runtime_command", side_effect=responses
-        ):
-            diagnostic = agent_server.probe_runtime(agent_server.BACKEND_CURSOR)
 
-        self.assertEqual(diagnostic["status"], "error")
-        self.assertIsNone(diagnostic["authenticated"])
-        self.assertNotIn(secret, json.dumps(diagnostic))
-        self.assertIn("output was omitted", diagnostic["message"])
 
-    def test_cursor_agent_name_collision_is_rejected_by_identity_probe(self) -> None:
-        compatible_help = (
-            "-p --print --output-format stream-json --resume --model --trust "
-            "--force --mode plan --list-models"
-        )
-        with patch.object(
-            agent_server,
-            "cursor_executable_candidates",
-            return_value=("agent",),
-        ), patch.object(
-            agent_server.shutil,
-            "which",
-            return_value="/bin/agent",
-        ), patch.object(
-            agent_server,
-            "runtime_command",
-            side_effect=[
-                completed(["/bin/agent", "--help"], stdout=compatible_help),
-                completed(["/bin/agent", "about"], stdout="About Grok CLI\n"),
-            ],
-        ):
-            compatible, installed, missing, error = (
-                agent_server.cursor_executable_resolution()
-            )
-        self.assertIsNone(compatible)
-        self.assertEqual(installed, str(Path("/bin/agent").resolve()))
-        self.assertEqual(missing, ())
-        self.assertEqual(error, "identity probe did not identify Cursor CLI")
-        self.assertNotIn("Grok", error)
 
-    def test_cursor_resolution_pins_realpath_before_compatibility_probe(self) -> None:
-        compatible_help = (
-            "-p --print --output-format stream-json --resume --model --trust "
-            "--force --mode plan --list-models"
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            first = root / "agent-v1"
-            second = root / "agent-v2"
-            first.write_text("v1")
-            second.write_text("v2")
-            resolved_first = str(first.resolve())
-            alias = root / "agent"
-            alias.symlink_to(first)
-
-            def command(args: list[str]) -> subprocess.CompletedProcess[str]:
-                self.assertEqual(args[0], resolved_first)
-                if args[1] == "--help":
-                    alias.unlink()
-                    alias.symlink_to(second)
-                    return completed(args, stdout=compatible_help)
-                return completed(args, stdout="About Cursor CLI\n")
-
-            with patch.object(
-                agent_server,
-                "cursor_executable_candidates",
-                return_value=("agent",),
-            ), patch.object(
-                agent_server.shutil,
-                "which",
-                return_value=str(alias),
-            ), patch.object(
-                agent_server,
-                "runtime_command",
-                side_effect=command,
-            ):
-                compatible, _installed, _missing, _error = (
-                    agent_server.cursor_executable_resolution()
-                )
-        self.assertEqual(compatible, resolved_first)
-
-    def test_cursor_auth_parser_uses_combined_stdout_and_stderr(self) -> None:
-        compatible_help = (
-            "-p --print --output-format stream-json --resume --model --trust "
-            "--force --mode plan --list-models"
-        )
-        responses = [
-            completed(["/bin/agent", "--help"], stdout=compatible_help),
-            completed(["/bin/agent", "about"], stdout="About Cursor CLI\n"),
-            completed(["/bin/agent", "--version"], stdout="2026.08\n"),
-            completed(["/bin/agent", "status"], stdout="Cursor status\n", stderr="Authenticated: false\n"),
-        ]
-        with patch.object(agent_server.shutil, "which", return_value="/bin/agent"), patch.object(
-            agent_server, "runtime_command", side_effect=responses
-        ):
-            diagnostic = agent_server.probe_runtime(agent_server.BACKEND_CURSOR)
-        self.assertEqual(diagnostic["status"], "unauthenticated")
-
-    def test_cursor_api_key_readiness_does_not_use_stored_login_status(self) -> None:
-        with patch.object(
-            agent_server,
-            "cursor_executable_resolution",
-            return_value=("/bin/agent", "/bin/agent", (), None),
-        ), patch.object(
-            agent_server,
-            "runner_env",
-            return_value={"CURSOR_API_KEY": "configured-secret"},
-        ), patch.object(
-            agent_server,
-            "runtime_command",
-            side_effect=[
-                completed(
-                    ["/bin/agent", "--version"],
-                    stdout="2026.08.25-3e8eec8\n",
-                ),
-                completed(
-                    ["/bin/agent", "--list-models"],
-                    stdout="Auto\n",
-                ),
-            ],
-        ) as command:
-            diagnostic = agent_server.probe_runtime(
-                agent_server.BACKEND_CURSOR
-            )
-
-        self.assertEqual(command.call_count, 2)
-        command.assert_any_call(["/bin/agent", "--version"])
-        command.assert_any_call(["/bin/agent", "--list-models"])
-        self.assertEqual(diagnostic["status"], "ready")
-        self.assertTrue(diagnostic["available"])
-        self.assertTrue(diagnostic["authenticated"])
-
-    def test_cursor_auth_confirmation_ignores_project_owned_401_text(self) -> None:
-        with patch.object(
-            agent_server,
-            "runner_env",
-            return_value={},
-        ), patch.object(
-            agent_server,
-            "runtime_command",
-            return_value=completed(
-                ["/bin/agent", "status"],
-                stdout="Project command failed: 401 Unauthorized\n",
-            ),
-        ):
-            confirmed = agent_server.cursor_auth_failure_confirmed(
-                "/bin/agent"
-            )
-
-        self.assertFalse(confirmed)
-
-    def test_cursor_api_key_failure_is_ambiguous_not_confirmed_auth(self) -> None:
-        with patch.object(
-            agent_server,
-            "runner_env",
-            return_value={"CURSOR_API_KEY": "configured-secret"},
-        ), patch.object(
-            agent_server,
-            "runtime_command",
-            return_value=completed(
-                ["/bin/agent", "--list-models"],
-                returncode=1,
-                stderr="Invalid API key",
-            ),
-        ) as command:
-            confirmed = agent_server.cursor_auth_failure_confirmed(
-                "/bin/agent"
-            )
-
-        self.assertFalse(confirmed)
-        command.assert_called_once_with(["/bin/agent", "--list-models"])
-
-    def test_force_refresh_cannot_restore_ready_for_unchanged_bad_api_key(
-        self,
-    ) -> None:
-        agent_server.store_runtime_diagnostic(
-            agent_server.runtime_diagnostic_payload(
-                agent_server.BACKEND_CURSOR,
-                "unauthenticated",
-                installed=True,
-                authenticated=False,
-                executable="/bin/agent",
-            )
-        )
-        with patch.object(
-            agent_server,
-            "cursor_executable_resolution",
-            return_value=("/bin/agent", "/bin/agent", (), None),
-        ), patch.object(
-            agent_server,
-            "runner_env",
-            return_value={"CURSOR_API_KEY": "unchanged-bad-secret"},
-        ), patch.object(
-            agent_server,
-            "runtime_command",
-            side_effect=[
-                completed(
-                    ["/bin/agent", "--version"],
-                    stdout="2026.08.25-3e8eec8\n",
-                ),
-                completed(
-                    ["/bin/agent", "--list-models"],
-                    returncode=1,
-                    stderr="Invalid API key",
-                ),
-            ],
-        ):
-            diagnostic = agent_server.runtime_diagnostic(
-                agent_server.BACKEND_CURSOR,
-                force=True,
-            )
-
-        self.assertEqual(diagnostic["status"], "error")
-        self.assertFalse(diagnostic["available"])
-        self.assertIsNone(diagnostic["authenticated"])
 
     def test_stale_probe_cannot_overwrite_newer_runtime_failure(self) -> None:
         probe_started = threading.Event()
@@ -406,7 +150,7 @@ class RuntimeDiagnosticTests(unittest.TestCase):
             probe_started.set()
             self.assertTrue(release_probe.wait(timeout=5))
             return agent_server.runtime_diagnostic_payload(
-                agent_server.BACKEND_CURSOR,
+                "codex",
                 "ready",
                 installed=True,
                 authenticated=True,
@@ -415,7 +159,7 @@ class RuntimeDiagnosticTests(unittest.TestCase):
 
         def refresh() -> None:
             result["diagnostic"] = agent_server.runtime_diagnostic(
-                agent_server.BACKEND_CURSOR,
+                "codex",
                 force=True,
             )
 
@@ -424,8 +168,8 @@ class RuntimeDiagnosticTests(unittest.TestCase):
             thread.start()
             self.assertTrue(probe_started.wait(timeout=5))
             agent_server.record_runtime_failure(
-                agent_server.BACKEND_CURSOR,
-                "Cursor authentication failed.",
+                "codex",
+                "Codex authentication failed.",
                 executable="/bin/agent",
                 auth_failure=True,
             )
@@ -435,84 +179,15 @@ class RuntimeDiagnosticTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(result["diagnostic"]["status"], "unauthenticated")
         self.assertEqual(
-            agent_server.RUNTIME_DIAGNOSTICS[agent_server.BACKEND_CURSOR][
+            agent_server.RUNTIME_DIAGNOSTICS["codex"][
                 "status"
             ],
             "unauthenticated",
         )
 
-    def test_missing_cursor_action_does_not_require_server_restart(self) -> None:
-        action = agent_server.runtime_action(
-            agent_server.BACKEND_CURSOR,
-            "missing",
-            executable="cursor-agent",
-        )
-        self.assertIn("cursor.com/install", action)
-        self.assertIn("Recheck CLIs", action)
-        self.assertNotIn("restart", action.lower())
 
-    def test_cursor_unauthenticated_action_includes_api_key_option(self) -> None:
-        action = agent_server.runtime_action(
-            agent_server.BACKEND_CURSOR,
-            "unauthenticated",
-            executable="cursor-agent",
-        )
-        self.assertIn("`cursor-agent login`", action)
-        self.assertIn("`CURSOR_API_KEY`", action)
-        self.assertIn("Recheck CLIs", action)
 
-    def test_cursor_public_diagnostic_does_not_leak_absolute_executable(self) -> None:
-        diagnostic = agent_server.runtime_diagnostic_payload(
-            agent_server.BACKEND_CURSOR,
-            "error",
-            installed=True,
-            authenticated=None,
-            executable="/private/server/bin/agent",
-        )
-        public = agent_server.public_runtime_diagnostic(diagnostic)
-        self.assertNotIn("_executable", public)
-        self.assertNotIn("/private/server/bin", json.dumps(public))
-        self.assertIn("`agent --version`", public["action"])
 
-    def test_incompatible_cursor_runtime_skips_model_catalog_subprocesses(self) -> None:
-        diagnostic = agent_server.runtime_diagnostic_payload(
-            agent_server.BACKEND_CURSOR,
-            "error",
-            installed=True,
-            authenticated=None,
-        )
-        diagnostics = {
-            agent_server.BACKEND_CLAUDE: agent_server.runtime_diagnostic_payload(
-                agent_server.BACKEND_CLAUDE, "missing", installed=False,
-                authenticated=False,
-            ),
-            agent_server.BACKEND_CODEX: agent_server.runtime_diagnostic_payload(
-                agent_server.BACKEND_CODEX, "missing", installed=False,
-                authenticated=False,
-            ),
-            agent_server.BACKEND_CURSOR: diagnostic,
-        }
-        static = {
-            "models": [], "efforts": [], "default_model": None,
-            "default_effort": None,
-        }
-        with patch.object(
-            agent_server, "runtime_diagnostic", side_effect=lambda backend, **_kwargs: diagnostics.get(
-                backend, {"backend": backend, "status": "unknown"},
-            )
-        ), patch.object(
-            agent_server, "parse_claude_help_catalog", return_value=dict(static)
-        ), patch.object(
-            agent_server, "discover_codex_catalog", return_value=dict(static)
-        ), patch.object(agent_server, "discover_cursor_catalog") as cursor_catalog:
-            catalog = agent_server.discover_runtime_catalog()
-
-        cursor_catalog.assert_not_called()
-        self.assertFalse(catalog["backends"]["cursor"]["available"])
-        self.assertEqual(
-            catalog["backends"]["cursor"]["permission_modes"],
-            ["default", "full_access", "plan"],
-        )
 
     def test_codex_model_effort_validation_accepts_supported_ultra(self) -> None:
         self.assertEqual(
@@ -1086,67 +761,8 @@ class RuntimeDiagnosticTests(unittest.TestCase):
         with patch.object(agent_server.subprocess, "run", return_value=completed([], stdout="2.1.207 (Claude Code)\n")):
             self.assertTrue(agent_server.claude_supports_effort("ultracode"))
 
-    def test_cursor_catalog_locks_named_models_on_free_plan(self) -> None:
-        list_models_output = (
-            "Available models\n\n"
-            "auto - Auto (default)\n"
-            "gpt-5.2 - GPT-5.2\n"
-        )
-        about_output = (
-            "About Cursor CLI\n\n"
-            "CLI Version         2026.08.11-e8db854\n"
-            "Subscription Tier   Free\n"
-            "User Email          user@example.com\n"
-        )
-        with patch.object(
-            agent_server, "run_catalog_command", side_effect=[list_models_output, about_output]
-        ):
-            catalog = agent_server.discover_cursor_catalog(
-                executable="/fake/agent"
-            )
 
-        by_value = {option["value"]: option for option in catalog["models"]}
-        self.assertNotIn("locked", by_value["auto"])
-        self.assertTrue(by_value["gpt-5.2"]["locked"])
-        self.assertIn("free plan", by_value["gpt-5.2"]["locked_reason"])
-        # The synthetic "Server default" entry mirrors "auto" (the default),
-        # so it must stay selectable too - only named models lock.
-        self.assertNotIn("locked", by_value[""])
 
-    def test_cursor_catalog_does_not_lock_models_on_paid_plan(self) -> None:
-        list_models_output = (
-            "Available models\n\n"
-            "auto - Auto (default)\n"
-            "gpt-5.2 - GPT-5.2\n"
-        )
-        about_output = (
-            "About Cursor CLI\n\n"
-            "Subscription Tier   Pro\n"
-            "User Email          user@example.com\n"
-        )
-        with patch.object(
-            agent_server, "run_catalog_command", side_effect=[list_models_output, about_output]
-        ):
-            catalog = agent_server.discover_cursor_catalog(
-                executable="/fake/agent"
-            )
-
-        for option in catalog["models"]:
-            self.assertNotIn("locked", option)
-
-    def test_cursor_catalog_does_not_assume_unknown_tier_is_free(self) -> None:
-        list_models_output = "Available models\n\nauto - Auto (default)\ngpt-5.2 - GPT-5.2\n"
-        with patch.object(
-            agent_server,
-            "run_catalog_command",
-            side_effect=[list_models_output, RuntimeError("agent about exited 1")],
-        ):
-            catalog = agent_server.discover_cursor_catalog(
-                executable="/fake/agent"
-            )
-
-        by_value = {option["value"]: option for option in catalog["models"]}
-        self.assertNotIn("locked", by_value["gpt-5.2"])
 
 
 class RuntimePreflightTests(unittest.IsolatedAsyncioTestCase):
@@ -1164,133 +780,11 @@ class RuntimePreflightTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.detail["code"], "runtime_unavailable")
         self.assertEqual(raised.exception.detail["backend"], "codex")
 
-    async def test_cursor_ready_cache_backfills_one_compatible_executable(self) -> None:
-        diagnostic = agent_server.runtime_diagnostic_payload(
-            agent_server.BACKEND_CURSOR,
-            "ready",
-            installed=True,
-            authenticated=True,
-            version="2026.08.11-e8db854",
-        )
-        with patch.object(
-            agent_server,
-            "runtime_diagnostic",
-            return_value=diagnostic,
-        ), patch.object(
-            agent_server,
-            "resolve_cursor_executable",
-            return_value="/compatible/agent",
-        ) as resolve, patch.object(
-            agent_server,
-            "store_runtime_diagnostic",
-        ) as store:
-            result = await agent_server.ensure_runtime_available(
-                agent_server.BACKEND_CURSOR
-            )
 
-        resolve.assert_called_once_with()
-        store.assert_called_once()
-        self.assertEqual(result["_executable"], "/compatible/agent")
 
-    async def test_cursor_ready_cache_reuses_fenced_executable(self) -> None:
-        diagnostic = agent_server.runtime_diagnostic_payload(
-            agent_server.BACKEND_CURSOR,
-            "ready",
-            installed=True,
-            authenticated=True,
-            version="2026.08.11-e8db854",
-            executable="/already-probed/agent",
-        )
-        with patch.object(
-            agent_server,
-            "runtime_diagnostic",
-            return_value=diagnostic,
-        ), patch.object(
-            agent_server,
-            "resolve_cursor_executable",
-        ) as resolve:
-            result = await agent_server.ensure_runtime_available(
-                agent_server.BACKEND_CURSOR
-            )
-
-        resolve.assert_not_called()
-        self.assertEqual(result["_executable"], "/already-probed/agent")
-
-    async def test_cursor_ready_cache_without_compatible_binary_fails_closed(
-        self,
-    ) -> None:
-        cached = agent_server.runtime_diagnostic_payload(
-            agent_server.BACKEND_CURSOR,
-            "ready",
-            installed=True,
-            authenticated=True,
-            version="stale",
-        )
-        refreshed = agent_server.runtime_diagnostic_payload(
-            agent_server.BACKEND_CURSOR,
-            "error",
-            installed=True,
-            authenticated=None,
-            version="legacy",
-        )
-        with patch.object(
-            agent_server,
-            "runtime_diagnostic",
-            side_effect=[cached, refreshed],
-        ), patch.object(
-            agent_server,
-            "resolve_cursor_executable",
-            return_value=None,
-        ):
-            with self.assertRaises(HTTPException) as raised:
-                await agent_server.ensure_runtime_available(
-                    agent_server.BACKEND_CURSOR
-                )
-
-        self.assertEqual(raised.exception.status_code, 503)
-        self.assertEqual(raised.exception.detail["backend"], "cursor")
 
 
 class SessionRuntimeValidationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_load_normalizes_legacy_cursor_mode_and_rejects_bad_resume_id(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            sessions_file = Path(temporary) / "sessions.json"
-            sessions_file.write_text(json.dumps({
-                "cursor-chat": {
-                    "id": "cursor-chat",
-                    "backend": agent_server.BACKEND_CURSOR,
-                    "session_id": "invalid cursor id with spaces",
-                    "cursor_session_id": "invalid cursor id with spaces",
-                    "cursor_permission_mode": "auto_review",
-                    "cursor_instruction_hash": "legacy-hash",
-                    "cursor_instruction_version": "legacy-version",
-                }
-            }))
-            store = agent_server.SessionStore()
-            save = AsyncMock()
-            with patch.object(
-                agent_server,
-                "SESSIONS_FILE",
-                sessions_file,
-            ), patch.object(
-                agent_server,
-                "ensure_dirs",
-            ), patch.object(
-                store,
-                "save",
-                save,
-            ):
-                await store.load()
-
-        session = store.sessions["cursor-chat"]
-        self.assertEqual(session["cursor_permission_mode"], "default")
-        self.assertIsNone(session["session_id"])
-        self.assertIsNone(session["cursor_session_id"])
-        self.assertNotIn("cursor_instruction_hash", session)
-        self.assertNotIn("cursor_instruction_version", session)
-        save.assert_awaited()
 
     async def test_update_rejects_incompatible_effort_without_mutating_session(self) -> None:
         store = agent_server.SessionStore()

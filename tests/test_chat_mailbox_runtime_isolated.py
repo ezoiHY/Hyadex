@@ -167,9 +167,9 @@ class ChatMailboxRuntimeTests(unittest.IsolatedAsyncioTestCase):
                       and node.args[0].value == "admit_wake"]
         launches = [node for node in ast.walk(start) if isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Name)
-                    and node.func.id in {"run_codex", "run_claude", "run_cursor"}]
+                    and node.func.id in {"run_codex", "run_claude"}]
         self.assertEqual(len(admissions), 1)
-        self.assertEqual({node.func.id for node in launches}, {"run_codex", "run_claude", "run_cursor"})
+        self.assertEqual({node.func.id for node in launches}, {"run_codex", "run_claude"})
         self.assertTrue(all(admissions[0].lineno < node.lineno for node in launches))
 
     def test_mailbox_wake_authority_snapshot_uses_read_eligible_pairs(self):

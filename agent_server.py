@@ -101,10 +101,8 @@ import workspace_git
 import codex_auth
 import codex_provider
 import provider_connections
-import cursor_api_key
 import server_instances
 import local_session_ownership
-import cursor_history
 import provider_usage
 
 from hyadex.providers.codex import (
@@ -202,8 +200,7 @@ logger = logging.getLogger("hyadex-server")
 
 BACKEND_CLAUDE = "claude"
 BACKEND_CODEX = "codex"
-BACKEND_CURSOR = "cursor"
-VALID_BACKENDS = {BACKEND_CLAUDE, BACKEND_CODEX, BACKEND_CURSOR}
+VALID_BACKENDS = {BACKEND_CLAUDE, BACKEND_CODEX}
 CODEX_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 CODEX_EFFORT_ALIASES = {
     "extra high": "xhigh",
@@ -447,14 +444,7 @@ CODEX_SESSION_INDEX_PATH = (
 )
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
-# Cursor has shipped both ``cursor-agent`` (the documented executable) and
-# ``agent`` (newer preview builds). An explicit override is authoritative;
-# otherwise runtime discovery tries the documented name first and the preview
-# alias second. ``CURSOR_BIN`` remains mutable for focused runner tests.
-CURSOR_BIN_OVERRIDE = os.environ.get("CURSOR_BIN", "").strip()
-CURSOR_BIN = CURSOR_BIN_OVERRIDE or "cursor-agent"
-CURSOR_EXECUTABLE_CANDIDATES = ("cursor-agent", "agent")
-CURSOR_PROCESS_GUARD = Path(__file__).with_name("cursor_process_guard.py")
+
 CODEX_DEFAULT_MODEL = hyadex_setting("CODEX_MODEL", "gpt-5.5").strip() or "gpt-5.5"
 _configured_codex_effort = hyadex_setting("CODEX_EFFORT", "xhigh").strip().lower() or "xhigh"
 CODEX_DEFAULT_EFFORT = CODEX_EFFORT_ALIASES.get(_configured_codex_effort, _configured_codex_effort)
@@ -467,8 +457,8 @@ DEFAULT_BACKEND = hyadex_setting("BACKEND", BACKEND_CLAUDE).lower()
 def enabled_backends() -> set[str]:
     """Backends new chats may use. Existing chats on other backends still load.
 
-    Hyadex v1 supports Claude Code and Codex; HYADEX_ENABLED_BACKENDS can opt in
-    to the inherited experimental backends (comma-separated).
+    HYADEX_ENABLED_BACKENDS can restrict the supported Claude/Codex backends
+    with a comma-separated list; retired runtime names never enable execution.
     """
     configured = os.environ.get("HYADEX_ENABLED_BACKENDS", "")
     names = {item.strip().lower() for item in configured.split(",") if item.strip()}
@@ -749,8 +739,6 @@ CLAUDE_PERMISSION_MODE_OPTIONS = (
 )
 CLAUDE_PERMISSION_MODES = set(CLAUDE_PERMISSION_MODE_OPTIONS)
 CLAUDE_DEFAULT_PERMISSION_MODE = "default"
-CURSOR_PERMISSION_MODES = ("default", "full_access", "plan")
-CURSOR_DEFAULT_PERMISSION_MODE = "default"
 PROVIDER_JOBS_ACCESS_MODES = ("full", "read_only", "blocked")
 PROVIDER_JOBS_ACCESS_MODE_SET = set(PROVIDER_JOBS_ACCESS_MODES)
 PROVIDER_JOBS_ACCESS_DEFAULT = "full"
@@ -997,75 +985,6 @@ CLAUDE_SDK_IDLE_WARN_SECONDS = max(
 # of hanging with no error for up to IDLE_KILL_SECONDS.
 CODEX_APP_SERVER_FIRST_ACTIVITY_TIMEOUT_SECONDS = int(
     hyadex_setting("CODEX_APP_SERVER_FIRST_ACTIVITY_TIMEOUT_SECONDS", "180")
-)
-CURSOR_STARTUP_TIMEOUT_SECONDS = max(
-    5.0,
-    float(hyadex_setting("CURSOR_STARTUP_TIMEOUT_SECONDS", "120")),
-)
-CURSOR_TURN_TIMEOUT_SECONDS = max(
-    CURSOR_STARTUP_TIMEOUT_SECONDS,
-    float(
-        hyadex_setting(
-            "CURSOR_TURN_TIMEOUT_SECONDS",
-            str(IDLE_KILL_SECONDS),
-        )
-    ),
-)
-CURSOR_IDLE_TIMEOUT_SECONDS = max(
-    30.0,
-    float(hyadex_setting("CURSOR_IDLE_TIMEOUT_SECONDS", "900")),
-)
-CURSOR_IDLE_WARN_SECONDS = min(300.0, CURSOR_IDLE_TIMEOUT_SECONDS / 2)
-CURSOR_POST_TERMINAL_EXIT_SECONDS = max(
-    0.1,
-    float(hyadex_setting("CURSOR_POST_TERMINAL_EXIT_SECONDS", "30")),
-)
-CURSOR_GUARD_TEARDOWN_GRACE_SECONDS = max(
-    1.0,
-    float(
-        hyadex_setting(
-            "CURSOR_GUARD_TEARDOWN_GRACE_SECONDS",
-            "1.5",
-        )
-    ),
-)
-CURSOR_STDERR_TAIL_BYTES = max(
-    4_096,
-    int(hyadex_setting("CURSOR_STDERR_TAIL_BYTES", str(64 * 1024))),
-)
-CURSOR_STDERR_DRAIN_TIMEOUT_SECONDS = max(
-    0.1,
-    float(hyadex_setting("CURSOR_STDERR_DRAIN_TIMEOUT_SECONDS", "2")),
-)
-CURSOR_TEXT_EVENT_MAX_CHARS = max(
-    12_000,
-    int(hyadex_setting("CURSOR_TEXT_EVENT_MAX_CHARS", str(128 * 1024))),
-)
-CURSOR_ACCUMULATED_TEXT_MAX_CHARS = max(
-    CURSOR_TEXT_EVENT_MAX_CHARS,
-    int(
-        hyadex_setting(
-            "CURSOR_ACCUMULATED_TEXT_MAX_CHARS",
-            str(256 * 1024),
-        )
-    ),
-)
-CURSOR_MAX_TOOL_CALLS = max(
-    32,
-    int(hyadex_setting("CURSOR_MAX_TOOL_CALLS", "4096")),
-)
-CURSOR_MAX_STREAM_EVENTS = max(
-    100,
-    int(hyadex_setting("CURSOR_MAX_STREAM_EVENTS", "20000")),
-)
-CURSOR_MAX_STREAM_BYTES = max(
-    16 * 1024 * 1024,
-    int(
-        hyadex_setting(
-            "CURSOR_MAX_STREAM_BYTES",
-            str(32 * 1024 * 1024),
-        )
-    ),
 )
 STOP_GRACE_SECONDS = float(hyadex_setting("STOP_GRACE_SECONDS", "2.0"))
 PROCESS_STREAM_LIMIT = int(hyadex_setting("PROCESS_STREAM_LIMIT", str(16 * 1024 * 1024)))
@@ -1631,14 +1550,6 @@ SYSTEM_PROMPT = CLAUDE_PROMPT_PRELUDE
 # v8: static provider-authority usage and cross-chat delivery provenance moved
 # from every per-turn prompt into these thread instructions (context diet).
 CODEX_THREAD_POLICY_VERSION = "11"
-CURSOR_PROMPT_POLICY_VERSION = "6"
-# Native permissions remain in force; the private run profile adds only MCP.
-CURSOR_FILE_DELIVERY_ADDENDUM = """\
-Delivering files in this Cursor session:
-- Use the internal provider tool with helper=publish; it needs no Shell permission. An explicit denial still applies. A rejected tool call means the file remains undelivered.
-- On older runtimes without the internal tool, the authorized file-writing fallback needs no shell: write `{{"files":["/absolute/path.ext"]}}` to `{manifest_path}` and say only "submitted for attachment". Do not use this fallback to bypass an explicit denial.
-- This covers everything produced for the user, including generated images: write the image to a real file first, then list that absolute path in the manifest.
-"""
 CLAUDE_SDK_CONFIGURATION_VERSION = 10
 CODEX_PROMPT_PRELUDE = """\
 You are operating through Hyadex, backed by HyadexServer.
@@ -1659,27 +1570,6 @@ You are operating through Hyadex, backed by HyadexServer.
 - Preserve user work; avoid destructive actions without authorization; continue until complete or blocked.
 """ + PROVIDER_THREAD_INSTRUCTION_ADDENDUM
 
-# Cursor carries stable instructions in its native user-role envelope. Helper
-# runs use the native CLI with a private, run-bound MCP plugin.
-CURSOR_PROMPT_PRELUDE = """\
-You are operating through Hyadex, backed by HyadexServer.
-- Keep the final answer concise; the UI renders tool calls, command output, reasoning, and artifacts separately.
-- Render inline math as `$...$` and display math as `$$...$$`.
-- Continue through ordinary inspection errors when a safe retry or narrow fix is available.
-- Never detach required work with `nohup`, `disown`, `setsid`, or shell `&`. Keep work needed for the current reply in foreground. Async completion that must wake chat requires a provider-tracked Agent/workflow; an explicitly requested durable service must use an observable service manager.
-- This is Hyadex, not Slack; create files locally and never call Slack file helpers.
-- Publish user-facing files only through the run-bound Hyadex provider tool. Say “attached” only after a successful JSON receipt. Older-server fallback: write `{{"files":["/absolute/path.ext"]}}` to `{manifest_path}` and say only “submitted for attachment.” Use absolute paths and playable `.mp4`/`.mov` videos.
-- Never rely on provider-local timers, loops, or detached processes to wake this Hyadex chat or deliver a later reply. Manage durable scheduled jobs only when explicitly asked and only through the Jobs helper in the run-bound provider tool.
-- Use the Chats helper through the run-bound provider tool for cross-chat messages.
-- The persistent terminal is tmux session `{terminal_session}`; inspect it read-only unless the user explicitly asks you to operate it.
-- Check installed skills and project playbooks before claiming a specialized environment or remote path is unavailable.
-- If an incidental cleanup or optional clause makes a compound command fail, immediately retry the still-safe requested operation without that clause.
-- Keep the main chat focused; delegate bounded noisy exploration and return summaries instead of dumping large logs or tool output into the thread.
-- Preserve user work; avoid destructive actions without authorization; continue until complete or blocked.
-""" + PROVIDER_THREAD_INSTRUCTION_ADDENDUM
-
-if len(CURSOR_PROMPT_PRELUDE) > MAX_PROVIDER_STATIC_INSTRUCTIONS_CHARS:
-    raise RuntimeError("Hyadex static Cursor instructions exceed their safe limit")
 
 HYADEX_CONTEXT_END_MARKER = "[End Hyadex context]"
 
@@ -5517,8 +5407,6 @@ class CreateSessionRequest(BaseModel):
     codex_approvals_reviewer: Literal["user", "auto_review", "guardian_subagent"] | None = None
     provider_jobs_access: Literal["full", "read_only", "blocked"] | None = None
     import_history: bool | None = None
-    cursor_session_id: str | None = None
-    cursor_permission_mode: Literal["default", "full_access", "plan"] | None = None
 
 
 MAX_BULK_IMPORT_ITEMS = 25
@@ -5530,7 +5418,7 @@ PROVIDER_SESSION_IDENTIFIER_RE = re.compile(
 
 class BulkImportSessionItem(BaseModel):
     provider_session_id: str = Field(min_length=1, max_length=256)
-    backend: Literal["claude", "codex", "cursor"]
+    backend: Literal["claude", "codex"]
     cwd: str | None = Field(default=None, max_length=MAX_WORKSPACE_PATH_CHARS)
     title: str | None = Field(default=None, max_length=MAX_LOCAL_SESSION_LABEL_CHARS)
     provider_connection: Literal["custom"] | None = None
@@ -5583,7 +5471,6 @@ class UpdateSessionRequest(BaseModel):
     codex_permission_profile: str | None = Field(default=None, max_length=240)
     codex_approvals_reviewer: Literal["user", "auto_review", "guardian_subagent"] | None = None
     provider_jobs_access: Literal["full", "read_only", "blocked"] | None = None
-    cursor_permission_mode: Literal["default", "full_access", "plan"] | None = None
 
 
 SESSION_LIFECYCLE_UPDATE_FIELDS = frozenset({
@@ -5600,7 +5487,6 @@ SESSION_LIFECYCLE_UPDATE_FIELDS = frozenset({
     "codex_permission_profile",
     "codex_approvals_reviewer",
     "provider_jobs_access",
-    "cursor_permission_mode",
     "archived",
 })
 
@@ -6331,7 +6217,7 @@ def preview_session_runtime_update(
 
     current_connection = sess.get("provider_connection") or "default"
     connection = (patch.get("provider_connection") or "default") if "provider_connection" in patch else "default" if backend_changed else current_connection
-    if connection not in {"default", "custom"} or connection == "custom" and prospective_backend not in {BACKEND_CLAUDE, BACKEND_CURSOR}:
+    if connection not in {"default", "custom"} or connection == "custom" and prospective_backend not in {BACKEND_CLAUDE}:
         raise HTTPException(400, "This backend does not support that API connection.")
     connection_changed = current_connection != connection
     if connection_changed and session_backend_locked(sess):
@@ -6395,7 +6281,6 @@ def preview_session_runtime_update(
         provider_id_field = {
             BACKEND_CLAUDE: "claude_session_id",
             BACKEND_CODEX: "codex_thread_id",
-            BACKEND_CURSOR: "cursor_session_id",
         }[prospective_backend]
         preview["session_id"] = sess.get(provider_id_field)
     return preview
@@ -6451,20 +6336,6 @@ def active_claude_permission_mode(
     # build. New turns always carry the captured field below.
     return effective_claude_permission_mode(
         STORE.sessions.get(session_id) or {}
-    )
-
-
-def effective_cursor_permission_mode(sess: dict[str, Any]) -> str:
-    """Return one canonical headless Cursor permission mode."""
-
-    value = str(
-        sess.get("cursor_permission_mode")
-        or CURSOR_DEFAULT_PERMISSION_MODE
-    ).strip()
-    return (
-        value
-        if value in CURSOR_PERMISSION_MODES
-        else CURSOR_DEFAULT_PERMISSION_MODE
     )
 
 
@@ -8916,43 +8787,6 @@ class SessionStore:
             if sess.get("claude_permission_mode") != claude_permission_mode:
                 sess["claude_permission_mode"] = claude_permission_mode
                 runtime_changed = True
-            cursor_permission_mode = effective_cursor_permission_mode(sess)
-            if sess.get("cursor_permission_mode") != cursor_permission_mode:
-                sess["cursor_permission_mode"] = cursor_permission_mode
-                runtime_changed = True
-            if backend == BACKEND_CURSOR:
-                stored_cursor_id = (
-                    sess.get("cursor_session_id")
-                    or sess.get("session_id")
-                )
-                if stored_cursor_id:
-                    clean_cursor_id = provider_session_identifier(
-                        stored_cursor_id
-                    )
-                    if clean_cursor_id:
-                        if sess.get("cursor_session_id") != clean_cursor_id:
-                            sess["cursor_session_id"] = clean_cursor_id
-                            runtime_changed = True
-                        if sess.get("session_id") != clean_cursor_id:
-                            sess["session_id"] = clean_cursor_id
-                            runtime_changed = True
-                    else:
-                        # Never feed an unbounded/corrupt legacy value to
-                        # Cursor's --resume argv. Retain local history but
-                        # force a fresh provider session and policy injection.
-                        if sess.get("cursor_session_id") is not None:
-                            sess["cursor_session_id"] = None
-                            runtime_changed = True
-                        if sess.get("session_id") is not None:
-                            sess["session_id"] = None
-                            runtime_changed = True
-                        for key in (
-                            "cursor_instruction_hash",
-                            "cursor_instruction_version",
-                        ):
-                            if key in sess:
-                                sess.pop(key, None)
-                                runtime_changed = True
             provider_jobs_access = effective_provider_jobs_access(sess)
             if sess.get("provider_jobs_access") != provider_jobs_access:
                 sess["provider_jobs_access"] = provider_jobs_access
@@ -9272,7 +9106,7 @@ class SessionStore:
             runtime_source.update({name: parent.get(name) for name in ("provider_connection", "provider_connection_revision")})
         if (req.provider_connection == "custom" and not initializing_fork
                 and any((req.provider_session_id, req.session_id,
-                         req.claude_session_id, req.cursor_session_id))):
+                         req.claude_session_id))):
             raise HTTPException(409, "Import native conversations with their native login. Create a new chat for a custom API.")
         runtime = preview_session_runtime_update(runtime_source, {
             "codex_provider": req.codex_provider, "provider_connection": req.provider_connection, "model": req.model, "effort": req.effort,
@@ -9282,21 +9116,9 @@ class SessionStore:
         provider_id = req.provider_session_id or req.session_id
         claude_session_id = req.claude_session_id or (provider_id if backend == BACKEND_CLAUDE else None)
         codex_thread_id = req.codex_thread_id or (provider_id if backend == BACKEND_CODEX else None)
-        cursor_session_id = req.cursor_session_id or (provider_id if backend == BACKEND_CURSOR else None)
-        if cursor_session_id:
-            cursor_session_id = str(cursor_session_id).strip()
-            if not PROVIDER_SESSION_IDENTIFIER_RE.fullmatch(cursor_session_id):
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "cursor_session_id must be a bounded local provider "
-                        "identifier"
-                    ),
-                )
         active_provider_id = (
             claude_session_id if backend == BACKEND_CLAUDE
-            else codex_thread_id if backend == BACKEND_CODEX
-            else cursor_session_id
+            else codex_thread_id
         )
         # A Claude chat can park an inactive Codex identity for later backend
         # switching, so validate every supplied Codex thread, not only the
@@ -9361,15 +9183,11 @@ class SessionStore:
             "session_id": active_provider_id,
             "claude_session_id": claude_session_id,
             "codex_thread_id": codex_thread_id,
-            "cursor_session_id": cursor_session_id,
             # Backend identity becomes immutable at turn admission, before
             # the provider necessarily returns its native session ID.
             "backend_locked": bool(active_provider_id),
             "claude_permission_mode": (
                 req.claude_permission_mode or CLAUDE_DEFAULT_PERMISSION_MODE
-            ),
-            "cursor_permission_mode": (
-                req.cursor_permission_mode or CURSOR_DEFAULT_PERMISSION_MODE
             ),
             "codex_approval_policy": (
                 req.codex_approval_policy or CODEX_DEFAULT_APPROVAL_POLICY
@@ -9509,8 +9327,6 @@ class SessionStore:
                     def provider_id_field(name: str) -> str:
                         if name == BACKEND_CLAUDE:
                             return "claude_session_id"
-                        if name == BACKEND_CURSOR:
-                            return "cursor_session_id"
                         return "codex_thread_id"
                     if sess.get("session_id"):
                         sess[provider_id_field(old)] = sess["session_id"]
@@ -9567,12 +9383,7 @@ class SessionStore:
                     PROVIDER_JOBS_ACCESS_DEFAULT,
                     PROVIDER_JOBS_ACCESS_MODE_SET,
                 ),
-                (
-                    "cursor_permission_mode",
-                    CURSOR_DEFAULT_PERMISSION_MODE,
-                    set(CURSOR_PERMISSION_MODES),
-                ),
-                ):
+            ):
                 if key not in patch:
                     continue
                 value = str(patch[key] or default).strip()
@@ -9995,7 +9806,6 @@ class SessionStore:
         *,
         cwd: str | None = None,
         codex_instruction_hash: str | None = None,
-        cursor_instruction_hash: str | None = None,
         defer_runtime_broadcast: bool = False,
     ) -> dict[str, Any] | None:
         if backend == BACKEND_CODEX:
@@ -10024,19 +9834,6 @@ class SessionStore:
                 if backend == BACKEND_CLAUDE
                 else ""
             )
-            previous_cursor_session_id = (
-                str(
-                    sess.get("cursor_session_id")
-                    or (
-                        sess.get("session_id")
-                        if sess.get("backend") == BACKEND_CURSOR
-                        else ""
-                    )
-                    or ""
-                )
-                if backend == BACKEND_CURSOR
-                else ""
-            )
             sess["session_id"] = provider_id
             sess["backend"] = sess.get("backend") or backend
             sess["backend_locked"] = True
@@ -10044,19 +9841,11 @@ class SessionStore:
                 sess["claude_session_id"] = provider_id
             elif backend == BACKEND_CODEX:
                 sess["codex_thread_id"] = provider_id
-            elif backend == BACKEND_CURSOR:
-                sess["cursor_session_id"] = provider_id
-                if previous_cursor_session_id != provider_id:
-                    sess.pop("cursor_instruction_hash", None)
-                    sess.pop("cursor_instruction_version", None)
             if backend == BACKEND_CLAUDE and cwd:
                 sess["claude_session_cwd"] = cwd
             if backend == BACKEND_CODEX and codex_instruction_hash is not None:
                 sess["codex_instruction_hash"] = codex_instruction_hash
                 sess["codex_instruction_version"] = CODEX_THREAD_POLICY_VERSION
-            if backend == BACKEND_CURSOR and cursor_instruction_hash is not None:
-                sess["cursor_instruction_hash"] = cursor_instruction_hash
-                sess["cursor_instruction_version"] = CURSOR_PROMPT_POLICY_VERSION
             if backend == BACKEND_CODEX and previous_codex_thread_id != provider_id:
                 for key in (
                     "codex_token_usage",
@@ -16491,7 +16280,6 @@ def provider_tool_active_matches(
     provider_thread_id: str = "",
     provider_turn_id: str = "",
     claude_owner_token: str = "",
-    cursor_owner_token: str = "",
 ) -> tuple[bool, asyncio.Event | None]:
     """Check the no-await portion of the exact live provider ownership fence."""
 
@@ -16501,7 +16289,6 @@ def provider_tool_active_matches(
     expected_transport = (
         CODEX_TRANSPORT_APP_SERVER
         if backend == BACKEND_CODEX
-        else "exec" if backend == BACKEND_CURSOR
         else CLAUDE_TRANSPORT_AGENT_SDK
     )
     matches = bool(
@@ -16525,16 +16312,6 @@ def provider_tool_active_matches(
             and str(active.get("provider_thread_id") or "") == provider_thread_id
             and str(active.get("provider_turn_id") or "") == provider_turn_id
             and active.get("provider_turn_ready") is True
-        )
-    elif backend == BACKEND_CURSOR:
-        proc = active.get("proc")
-        matches = bool(
-            matches and cursor_owner_token
-            # The exec transport requires the exact process owner.
-            and hmac.compare_digest(str(active.get(f"{backend}_mcp_owner_token") or ""), cursor_owner_token)
-            and proc is not None and proc.returncode is None
-            and active.get("provider_turn_ready") is True
-            and isinstance(ready, asyncio.Event) and ready.is_set()
         )
     else:
         matches = bool(
@@ -16560,7 +16337,6 @@ async def provider_tool_capability_snapshot(
     provider_thread_id: str = "",
     provider_turn_id: str = "",
     claude_owner_token: str = "",
-    cursor_owner_token: str = "",
 ) -> tuple[Path, dict[str, str]]:
     """Resolve exactly one capability between two exact ACTIVE checks."""
 
@@ -16572,7 +16348,6 @@ async def provider_tool_capability_snapshot(
             provider_thread_id=provider_thread_id,
             provider_turn_id=provider_turn_id,
             claude_owner_token=claude_owner_token,
-            cursor_owner_token=cursor_owner_token,
         )
     if not matches and ready is not None and not ready.is_set():
         try:
@@ -16598,7 +16373,7 @@ async def provider_tool_capability_snapshot(
                      and codex_native_mailbox_owner_matches(session_id, run_id, provider_thread_id, provider_turn_id))
         ):
             raise ProviderToolError("provider tool turn is stale")
-    elif backend != BACKEND_CURSOR:
+    else:
         raise ProviderToolError("provider tool backend is unsupported")
 
     async with ACTIVE_LOCK:
@@ -16609,7 +16384,6 @@ async def provider_tool_capability_snapshot(
             provider_thread_id=provider_thread_id,
             provider_turn_id=provider_turn_id,
             claude_owner_token=claude_owner_token,
-            cursor_owner_token=cursor_owner_token,
         )
     if not matches:
         raise ProviderToolError("provider tool run is no longer active")
@@ -16641,7 +16415,6 @@ async def provider_tool_capability_snapshot(
             provider_thread_id=provider_thread_id,
             provider_turn_id=provider_turn_id,
             claude_owner_token=claude_owner_token,
-            cursor_owner_token=cursor_owner_token,
         )
     if not matches:
         raise ProviderToolError("provider tool run ended during authorization")
@@ -16779,7 +16552,6 @@ async def execute_provider_tool(
     provider_thread_id: str = "",
     provider_turn_id: str = "",
     claude_owner_token: str = "",
-    cursor_owner_token: str = "",
 ) -> tuple[str, bool]:
     """Run one allow-listed helper subprocess with server-owned authority."""
 
@@ -16791,7 +16563,6 @@ async def execute_provider_tool(
         provider_thread_id=provider_thread_id,
         provider_turn_id=provider_turn_id,
         claude_owner_token=claude_owner_token,
-        cursor_owner_token=cursor_owner_token,
     )
     resolved = resolve_provider_tool_arguments(helper, arguments, runtime_env)
     scripts = {
@@ -16906,7 +16677,6 @@ async def execute_provider_tool_once(
     provider_thread_id: str = "",
     provider_turn_id: str = "",
     claude_owner_token: str = "",
-    cursor_owner_token: str = "",
 ) -> tuple[str, bool]:
     """Single-flight/replay one provider call; live Chats waits never cache."""
 
@@ -16922,7 +16692,6 @@ async def execute_provider_tool_once(
         provider_thread_id=provider_thread_id,
         provider_turn_id=provider_turn_id,
         claude_owner_token=claude_owner_token,
-        cursor_owner_token=cursor_owner_token,
     )
     key = (session_id, run_id, str(replay_key))
     input_digest = hashlib.sha256(
@@ -16966,7 +16735,6 @@ async def execute_provider_tool_once(
             provider_thread_id=provider_thread_id,
             provider_turn_id=provider_turn_id,
             claude_owner_token=claude_owner_token,
-            cursor_owner_token=cursor_owner_token,
         )
         return result
     try:
@@ -16978,7 +16746,6 @@ async def execute_provider_tool_once(
             provider_thread_id=provider_thread_id,
             provider_turn_id=provider_turn_id,
             claude_owner_token=claude_owner_token,
-            cursor_owner_token=cursor_owner_token,
         )
         if not future.done():
             future.set_result(result)
@@ -24863,23 +24630,10 @@ def active_process_snapshot(session_id: str, active: dict[str, Any]) -> dict[str
 
     ordered = ordered_process_tree(pid, selected, rows_by_pid)
     processes: list[dict[str, Any]] = []
-    backend = str(active.get("backend") or "").strip().lower()
-    public_argv = [str(value) for value in (active.get("argv") or [])]
     for row in ordered:
         row_pid = int(row["pid"])
         cwd = proc_cwd(row_pid)
         public_row = dict(row)
-        if backend == BACKEND_CURSOR:
-            # Cursor print mode receives the full policy/authority/user prompt
-            # in argv. Never reflect ps(1)'s raw command line through the
-            # authenticated diagnostics endpoint. Descendant argv is redacted
-            # too because shells may repeat parent arguments in wrappers.
-            public_row["args"] = (
-                shlex.join(public_argv)
-                if row_pid == pid and public_argv
-                else str(row.get("command") or "cursor-child")
-            )
-            public_row["args_redacted"] = True
         hints = unique_log_hints(
             fd_log_hints(row_pid)
             + command_log_hints(str(public_row.get("args") or ""), cwd)
@@ -24973,20 +24727,12 @@ def write_bounded_jsonl(path: Path, record: dict[str, Any], max_bytes: int) -> N
 async def host_health_record() -> dict[str, Any]:
     active_runs = await active_run_summaries()
     active_pgids = {int(run["pgid"]) for run in active_runs if run.get("pgid") is not None}
-    active_backends_by_pgid = {
-        int(run["pgid"]): str(run.get("backend") or "").strip().lower()
-        for run in active_runs
-        if run.get("pgid") is not None
-    }
     top_rows = await asyncio.to_thread(top_process_rows, 20)
     top_processes = []
     for row in top_rows:
         clean = trim_process_args(row)
         row_pgid = int(clean.get("pgid") or -1)
         clean["tracked_by_hyadex"] = row_pgid in active_pgids
-        if active_backends_by_pgid.get(row_pgid) == BACKEND_CURSOR:
-            clean["args"] = str(clean.get("command") or "cursor")
-            clean["args_redacted"] = True
         top_processes.append(clean)
     return {
         "ts": now_iso(),
@@ -25025,77 +24771,6 @@ async def append_active_stdout(session_id: str, text: str) -> None:
         tail.append(line)
         active["stdout_total_lines"] = int(active.get("stdout_total_lines") or 0) + 1
         active["stdout_updated_at"] = now_iso()
-
-
-def cursor_stream_event_diagnostic(raw_line: str) -> dict[str, Any]:
-    """Return schema metadata without persisting Cursor event contents."""
-
-    encoded = raw_line.encode("utf-8", "replace")
-    diagnostic: dict[str, Any] = {
-        "redacted": True,
-        "byte_length": len(encoded),
-    }
-    try:
-        payload = json.loads(raw_line)
-    except (TypeError, ValueError):
-        diagnostic["json_type"] = "invalid"
-        return diagnostic
-    diagnostic["json_type"] = type(payload).__name__
-    if isinstance(payload, dict):
-        # Keys and type/subtype values are provider-controlled and may carry
-        # prompt material while still looking identifier-safe. Counts retain
-        # enough schema-drift context without creating another reflection
-        # channel.
-        diagnostic["object_key_count"] = len(payload)
-        diagnostic["has_type_field"] = "type" in payload
-        diagnostic["has_subtype_field"] = "subtype" in payload
-    return diagnostic
-
-
-def cursor_stderr_diagnostic(stderr_bytes: bytes) -> str:
-    """Describe Cursor stderr without reflecting prompt-bearing contents."""
-
-    if not stderr_bytes:
-        return "Cursor emitted no stderr output."
-    return (
-        "Cursor stderr was omitted from diagnostics because it may quote "
-        f"the composed prompt ({len(stderr_bytes)} bytes)."
-    )
-
-
-def cursor_logical_failure_message(result_text: str) -> str:
-    """Classify actionable Cursor failures without reflecting provider text."""
-
-    lower = str(result_text or "").lower()
-    if "named model" in lower or "free plans can only use auto" in lower:
-        return "The selected Cursor model is unavailable for this account. Choose Auto or an available plan model."
-    if any(marker in lower for marker in ("rate limit", "quota", "usage limit")):
-        return "Cursor reported a provider usage or rate limit. Check the Cursor account, then retry."
-    return "Cursor reported a logical provider error."
-
-
-def cursor_live_event_summary(event: dict[str, Any]) -> str:
-    """Project a Cursor stream event without exposing any event text."""
-
-    kind = str(event.get("kind") or "event")
-    if kind == "session_started":
-        return "[Cursor session initialized]"
-    if kind == "assistant_text":
-        return f"[Cursor assistant output: {len(str(event.get('text') or ''))} chars]"
-    if kind == "reasoning_delta":
-        return f"[Cursor reasoning update: {len(str(event.get('text') or ''))} chars]"
-    if kind in {
-        "tool_started",
-        "tool_finished",
-        "tool_rejected",
-        "tool_status",
-        "tool_confirmation_required",
-    }:
-        tool = str(event.get("tool") or "tool")[:80]
-        return f"[Cursor {kind.replace('_', ' ')}: {tool}]"
-    if kind == "turn_finished":
-        return "[Cursor terminal result received]"
-    return f"[Cursor {kind.replace('_', ' ')}]"
 
 
 def tail_text_file(path: str, lines: int = 200, max_bytes: int = 512 * 1024) -> dict[str, Any]:
@@ -33358,22 +33033,6 @@ def cross_chat_supported_target_backends() -> list[str]:
         and claude_sdk_dependency_available()
     ):
         supported.append(BACKEND_CLAUDE)
-    # Native login and an explicitly verified API connection are independent.
-    # Only cached diagnostics/private metadata are read here; health must not
-    # launch CLIs or authenticate remotely. Each target's actual turn admission
-    # still checks its own binding, CLI compatibility and selected login mode.
-    for backend in (BACKEND_CURSOR,):
-        with RUNTIME_DIAGNOSTICS_LOCK:
-            diagnostic = dict(RUNTIME_DIAGNOSTICS.get(backend) or {})
-        ready = diagnostic.get("status") == "ready"
-        if not ready and diagnostic.get("installed") is True:
-            try:
-                connection = PROVIDER_CONNECTION_STORE.public(backend)
-                ready = connection.get("configured") is True and connection.get("last_result") == "verified"
-            except HTTPException:
-                pass
-        if ready:
-            supported.append(backend)
     return supported
 
 
@@ -33396,12 +33055,10 @@ def cross_chat_handoffs_capability() -> dict[str, Any]:
     else:
         message = (
             "Cross-chat handoffs require native Codex app-server, Claude "
-            "Agent SDK, or a ready Cursor CLI target "
-            "transport."
+            "Agent SDK transport."
         )
         action = (
-            "Enable Codex app-server, install and enable Claude Agent SDK, "
-            "or install and authenticate a compatible Cursor CLI."
+            "Enable Codex app-server or install and enable Claude Agent SDK."
         )
     return {
         "available": available,
@@ -33522,8 +33179,7 @@ def cross_chat_handoffs_capability() -> dict[str, Any]:
         "required_target_transports": {
             BACKEND_CODEX: CODEX_TRANSPORT_APP_SERVER,
             BACKEND_CLAUDE: CLAUDE_TRANSPORT_AGENT_SDK,
-            BACKEND_CURSOR: "headless-stream-json",
-        },
+            },
     }
 
 
@@ -33543,19 +33199,6 @@ def cross_chat_delivery_client_capabilities(target: dict[str, Any]) -> list[str]
                 detail="target Claude chat must use Agent SDK transport for cross-chat delivery",
             )
         return [CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY]
-    if backend == BACKEND_CURSOR:
-        if not cross_chat_target_backend_supported(backend):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "target Cursor chat requires a compatible authenticated "
-                    "headless Cursor CLI for cross-chat delivery"
-                ),
-            )
-        # Cursor's print-mode runner has no renderer-owned interactive bridge.
-        # An empty immutable client-capability set selects that exact headless
-        # path; request/reply final answers are relayed by the server ledger.
-        return []
     raise HTTPException(
         status_code=409,
         detail=f"target backend {backend!r} does not support cross-chat delivery",
@@ -33565,8 +33208,7 @@ def cross_chat_delivery_client_capabilities(target: dict[str, Any]) -> list[str]
 CROSS_CHAT_DELIVERY_CAPABILITIES_BY_BACKEND: dict[str, frozenset[str]] = {
     BACKEND_CODEX: frozenset({CODEX_INTERACTIVE_CLIENT_CAPABILITY}),
     BACKEND_CLAUDE: frozenset({CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY}),
-    BACKEND_CURSOR: frozenset(),
-}
+    }
 
 
 def cross_chat_delivery_runtime_matches_target(
@@ -41934,11 +41576,9 @@ def session_provider_id(sess: dict[str, Any]) -> str | None:
         return sess.get("claude_session_id") or sess.get("session_id")
     if backend == BACKEND_CODEX:
         return sess.get("codex_thread_id") or sess.get("session_id")
-    if backend == BACKEND_CURSOR:
-        return sess.get("cursor_session_id") or sess.get("session_id")
     # Identity-only tombstones keep old saved records attributable; they never
     # resolve a runtime or permit execution of a retired provider.
-    if backend in {"opencode", "gemini"}:
+    if backend in {"opencode", "gemini", "cursor"}:
         return sess.get(f"{backend}_session_id") or sess.get("session_id")
     return sess.get("session_id")
 
@@ -42007,58 +41647,6 @@ def claude_transcript_title(path: Path, provider_id: str) -> str | None:
     return custom_title or ai_title
 
 
-def cursor_native_session_title(provider_id: str, cwd: Any) -> str | None:
-    """Read only Cursor CLI's small metadata row, not its conversation blobs.
-
-    Verified against CLI 2026.09.18: config/chats/md5(absolute cwd)/id/store.db,
-    meta['0'] contains hex-encoded UTF-8 JSON with agentId and name. This is an
-    optional private-format adapter: identity/schema/path drift keeps fallback.
-    No recursive scanning, CLI invocation, deserialization of executable data,
-    database migration, or conversation-blob decryption is needed. No metadata
-    other than the sanitized name leaves this function.
-    """
-    provider_id = provider_session_identifier(provider_id)
-    cwd = normalized_local_session_cwd(cwd)
-    if not provider_id or not cwd:
-        return None
-    config = os.environ.get("CURSOR_CONFIG_DIR", "").strip()
-    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
-    config_root = Path(config) if config else Path(xdg) / "cursor" if xdg else Path.home() / ".cursor"
-    if not config_root.is_absolute():
-        config_root = Path(cwd) / config_root
-    bucket = hashlib.md5(cwd.encode("utf-8"), usedforsecurity=False).hexdigest()
-    root = config_root / "chats"
-    workspace = root / bucket
-    directory = workspace / provider_id
-    database = directory / "store.db"
-    try:
-        if any(path.is_symlink() for path in (root, workspace, directory, database)):
-            return None
-        if not database.is_file():
-            return None
-        connection = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.05)
-        try:
-            connection.execute("PRAGMA query_only = ON")
-            connection.execute("PRAGMA trusted_schema = OFF")
-            connection.set_progress_handler(lambda: 1, 10000)
-            row = connection.execute(
-                "SELECT substr(value, 1, 32769) FROM meta "
-                "WHERE key = '0' AND typeof(value) = 'text'",
-            ).fetchone()
-        finally:
-            connection.close()
-        if not row or len(row[0]) > 32768:
-            return None
-        metadata = json.loads(bytes.fromhex(row[0]))
-        if not isinstance(metadata, dict) or metadata.get("agentId") != provider_id:
-            return None
-        if metadata.get("subagentInfo") is not None:
-            return None
-        return cursor_history.native_title(metadata.get("name"))
-    except (OSError, ValueError, RecursionError, sqlite3.Error):
-        return None
-
-
 def read_native_session_title(sess: dict[str, Any]) -> str | None:
     """Read existing native metadata only; never launch a CLI or model request.
 
@@ -42077,8 +41665,6 @@ def read_native_session_title(sess: dict[str, Any]) -> str | None:
         return claude_transcript_title(candidates[0], provider_id)
     if backend == BACKEND_CODEX:
         return native_session_title(codex_session_index_thread_names().get(provider_id))
-    if backend == BACKEND_CURSOR:
-        return cursor_native_session_title(provider_id, sess.get("cwd"))
     return None
 
 
@@ -42141,7 +41727,7 @@ def generated_title_eligible(sess: dict[str, Any], *, allow_attempted: bool = Fa
     return bool(
         os.environ.get("HYADEX_AUTO_TITLES", "1").strip().lower() not in {"0", "false", "off"}
         and not SERVER_SHUTTING_DOWN
-        and sess.get("backend") in {BACKEND_CODEX, BACKEND_CURSOR}
+        and sess.get("backend") in {BACKEND_CODEX}
         and sess.get("auto_title_enabled", True) is not False
         and not sess.get("archived") and not sess.get("parent_id") and not sess.get("fork_from")
         and sess.get("id") not in DELETING_SESSIONS
@@ -42190,17 +41776,9 @@ async def generate_session_title(session_id: str, snapshot: dict, reply: str) ->
         if SERVER_SHUTTING_DOWN or managed_server_update_scheduled_job_blocker():
             return
         options = {"model": snapshot.get("model"), "env": runner_env()}
-        if snapshot["backend"] == BACKEND_CODEX:
-            options["model"] = codex_runtime_settings(snapshot)[0]
-            options["executable"] = CODEX_BIN
-            options["provider_selection"] = CODEX_PROVIDER_STORE.for_session(snapshot, include_key=True)
-        else:
-            options["executable"] = resolve_cursor_executable()
-            if not options["executable"]:
-                return
-            if snapshot.get("provider_connection") == "custom":
-                await cursor_api_key.require_isolation(options["executable"], options["env"])
-                options["env"].update(PROVIDER_CONNECTION_STORE.cursor_overrides(snapshot))
+        options["model"] = codex_runtime_settings(snapshot)[0]
+        options["executable"] = CODEX_BIN
+        options["provider_selection"] = CODEX_PROVIDER_STORE.for_session(snapshot, include_key=True)
         result = await title_generation.generate_title(
             snapshot["backend"], snapshot["_title_seed"], reply, **options,
         )
@@ -42476,149 +42054,9 @@ def local_codex_session_candidates(known_provider_ids: set[str]) -> list[dict[st
     return candidates
 
 
-CURSOR_IMPORT_TOOL_BINDING_RE = re.compile(
-    r"\n\n\[Hyadex tool binding\]\n"
-    r"For this turn only, use MCP server `(?P<server>plugin-hyadex-[0-9a-f]{24}-native)`, tool `run` "
-    r"\(Cursor tool `(?P=server)-run`\) for Hyadex helpers\. "
-    r"This supersedes older helper commands and earlier tool bindings\. "
-    r"No shell fallback, credential lookup, or full-access permission is needed\. "
-    r"Only this top-level agent may call it\.\n\[End Hyadex tool binding\]\Z"
-)
-
-
-def cursor_import_user_preview(text: str) -> str:
-    """Unwrap a recognized server launch envelope for a display label only.
-
-    Do not use a generic bracket-removal regex. A standalone current-prompt
-    marker needs a validated generated authority/tool-binding suffix. Preserve
-    incomplete envelopes, ordinary quotations and markers inside the real prompt.
-    This does not rewrite provider transcripts or persisted/imported history.
-    """
-    original = text
-    normalized = text.strip()
-    candidate = strip_all_legacy_hyadex_provider_authority_suffixes(
-        normalized, allow_portable_authority_root=True,
-    )
-    generated = candidate != normalized
-    binding = CURSOR_IMPORT_TOOL_BINDING_RE.search(candidate)
-    if binding is not None:
-        candidate = candidate[:binding.start()]
-        generated = True
-    header = (
-        "[Hyadex provider instructions]\n"
-        "You are operating through Hyadex, backed by HyadexServer.\n"
-    )
-    footer = "\n[End Hyadex provider instructions]\n\n"
-    if candidate.startswith(header):
-        boundary = candidate.find(footer, len(header), 64 * 1024)
-        if boundary < 0:
-            return original
-        policy = candidate[len(header):boundary]
-        if "- Keep the final answer concise;" not in policy:
-            return original
-        candidate = candidate[boundary + len(footer):]
-        generated = True
-    if not generated:
-        return original
-    memory = re.match(r"\[Fork memory context; chars=(\d{1,8})\]\n", candidate)
-    if memory is not None:
-        memory_end = memory.end() + int(memory.group(1))
-        memory_footer = "\n[End Fork memory context]\n\n"
-        if not candidate.startswith(memory_footer, memory_end):
-            return original
-        candidate = candidate[memory_end + len(memory_footer):]
-    marker = "[Current user prompt]\n"
-    if candidate == marker.rstrip():
-        return ""
-    if candidate.startswith(marker):
-        return candidate[len(marker):]
-    return original
-
-
-def cursor_history_event_item(event: dict[str, Any], *, for_preview: bool = False) -> dict[str, Any] | None:
-    """Project only Cursor CLI's public text export, never internal blobs/tools."""
-    role = event.get("role")
-    if role not in {"user", "assistant"}:
-        return None
-    message = event.get("message")
-    content = message.get("content") if isinstance(message, dict) else None
-    if not isinstance(content, list):
-        return None
-    parts = []
-    for block in content:
-        if not isinstance(block, dict) or block.get("type") != "text" or not isinstance(block.get("text"), str):
-            continue
-        text = block["text"]
-        if role == "user":
-            # Cursor's native export wraps human prompts. Raw user-role tool
-            # results, image reinjections and system context are not user turns.
-            match = re.fullmatch(
-                r"(?:<timestamp>[^<>\r\n]{1,128}</timestamp>\s*)?<user_query>(.*)</user_query>\s*",
-                text, flags=re.DOTALL,
-            )
-            if match is None:
-                continue
-            text = cursor_import_user_preview(match[1]) if for_preview else match[1]
-            text = strip_hyadex_generated_user_text(text, provider_history=True)
-        parts.append(text)
-    return normalized_history_item(role, "\n".join(parts), allow_user_boilerplate=True)
-
-
-def cursor_initial_history(provider_id: str, cwd: str, limit: int | None = None) -> tuple[Path | None, list[dict[str, Any]]]:
-    session = cursor_history.find_session(provider_id, cwd)
-    if session is None:
-        return None, []
-    snapshot, _continued = provider_history_source_snapshot(session.transcript, None)
-    items: deque[dict[str, Any]] = deque(maxlen=normalized_history_import_limit(limit))
-    for event in bounded_jsonl_events_range(
-        session.transcript, 0, snapshot["source_offset"], expected_stat=snapshot["expected_stat"],
-    ):
-        item = cursor_history_event_item(event)
-        if item is not None:
-            # The export has no immutable message IDs. Identical consecutive
-            # public messages can be legitimate; never deduplicate by text here.
-            items.append(item)
-    return session.transcript, list(items)
-
-
-def local_cursor_session_candidates(known_provider_ids: set[str]) -> list[dict[str, Any]]:
-    candidates: dict[str, dict[str, Any]] = {}
-    ambiguous: set[str] = set()
-    for session in cursor_history.local_sessions():
-        provider_id = session.provider_id
-        if provider_id in known_provider_ids or provider_id in ambiguous:
-            continue
-        title = cursor_history.native_title(session.title)
-        preview = None
-        try:
-            for index, event in enumerate(bounded_jsonl_events(session.transcript)):
-                if index >= 200:
-                    break
-                item = cursor_history_event_item(event, for_preview=True)
-                if item is not None and item["kind"] == "user":
-                    preview = " ".join(item["text"].split())[:160]
-                    break
-        except (OSError, ValueError, RecursionError):
-            continue
-        label = local_session_label(title or preview, f"Cursor chat {provider_id[:8]}")
-        # Do not choose arbitrarily if a copied ID exists in multiple workspaces.
-        if provider_id in candidates:
-            candidates.pop(provider_id)
-            ambiguous.add(provider_id)
-            continue
-        candidates[provider_id] = {
-            "provider_session_id": provider_id, "backend": BACKEND_CURSOR,
-            "label": label,
-            "updated_at": iso_from_timestamp(session.updated_at), "cwd": session.cwd,
-        }
-    return list(candidates.values())
-
-
 def local_session_candidates(
     limit: int,
     known_provider_keys: set[tuple[str, str]] | None = None,
-    *,
-    include_cursor: bool = False,
 ) -> list[dict[str, Any]]:
     """Enumerate sessions not already used by this or another local instance."""
 
@@ -42643,10 +42081,6 @@ def local_session_candidates(
         *local_claude_session_candidates(claude_known),
         *local_codex_session_candidates(codex_known),
     ]
-    if include_cursor:
-        candidates.extend(local_cursor_session_candidates({
-            provider_id for backend, provider_id in known_provider_keys if backend == BACKEND_CURSOR
-        }))
     candidates.sort(key=lambda c: c["updated_at"], reverse=True)
     return candidates[:max(1, min(limit, MAX_LOCAL_SESSION_LIST_ITEMS))]
 
@@ -42692,10 +42126,7 @@ def standalone_provider_session(sess: dict[str, Any]) -> dict[str, Any]:
     isolated["session_id"] = None
     isolated["claude_session_id"] = None
     isolated["codex_thread_id"] = None
-    isolated["cursor_session_id"] = None
     isolated["backend_locked"] = False
-    isolated.pop("cursor_instruction_hash", None)
-    isolated.pop("cursor_instruction_version", None)
     isolated["fork_from"] = None
     isolated.pop("fork_resume_session_at", None)
     isolated["memory_seed"] = None
@@ -44648,22 +44079,6 @@ async def import_session_history(sess: dict[str, Any], *, force: bool = False, l
         raise HTTPException(410, "This provider was removed. Its saved chat history remains readable.")
     if not provider_id:
         return {"imported": 0, "source_path": None, "message": "No provider session ID set."}
-    if backend == BACKEND_CURSOR:
-        # Initial public-text snapshot only. The private native store, not these
-        # display messages, supplies resume context. Cursor exports are rewritable
-        # and lack stable event IDs; do not enable automatic history reconciliation
-        # or force replay through the append-only Claude/Codex cursor machinery.
-        if await asyncio.to_thread(lambda: any(
-            event.get("type") == "history_imported" for event in iter_session_events(session_id)
-        )):
-            return {"imported": 0, "source_path": None, "message": "Cursor initial history already imported."}
-        try:
-            source, items = await asyncio.to_thread(cursor_initial_history, provider_id, str(sess.get("cwd") or ""), limit)
-        except (OSError, ValueError, RecursionError):
-            return {"imported": 0, "source_path": None, "message": "Cursor local history is unavailable; native resume is unchanged."}
-        if source is None or not items:
-            return {"imported": 0, "source_path": None, "message": "No readable Cursor CLI history was found for this ID and workspace."}
-        return await append_imported_history(sess, source, items)
     if not force and any(event.get("type") == "history_imported" for event in read_events(session_id, limit=10000)):
         return {"imported": 0, "source_path": None, "message": "History already imported."}
 
@@ -45730,8 +45145,7 @@ def public_session(sess: dict[str, Any], *, summary: bool = False) -> dict[str, 
     detail_fields = () if summary else (
         "auto_title_enabled",
         "system_prompt", "session_id", "claude_session_id", "codex_thread_id",
-        "cursor_session_id",
-        "claude_permission_mode", "cursor_permission_mode",
+        "claude_permission_mode",
         "codex_approval_policy", "codex_sandbox_mode",
         "codex_permission_profile", "codex_approvals_reviewer",
         "provider_jobs_access",
@@ -52276,141 +51690,16 @@ def claude_supports_no_session_persistence() -> bool:
     return supported
 
 
-CURSOR_REQUIRED_CLI_FLAGS = (
-    "--print/-p",
-    "--output-format",
-    "--resume",
-    "--model",
-    "--trust",
-    "--force",
-    "--mode",
-    "--list-models",
-    "stream-json",
-    "plan",
-)
-
-
-def cursor_executable_candidates() -> tuple[str, ...]:
-    """Return the configured Cursor executable ceiling in preference order."""
-
-    configured = str(CURSOR_BIN or "").strip()
-    if CURSOR_BIN_OVERRIDE or configured not in CURSOR_EXECUTABLE_CANDIDATES:
-        return (configured,) if configured else ()
-    return tuple(dict.fromkeys((configured, *CURSOR_EXECUTABLE_CANDIDATES)))
-
-
-def cursor_cli_compatibility(executable: str) -> tuple[bool, tuple[str, ...], str]:
-    """Require the exact headless contract used by the Cursor runner.
-
-    Old ``cursor-agent`` builds and newer ``agent`` previews have shipped
-    materially different flag sets.  Advertising a partly compatible binary
-    would make permission labels or resumed turns lie, so compatibility is
-    all-or-nothing and read-only.
-    """
-
-    try:
-        result = runtime_command([executable, "--help"])
-    except (OSError, subprocess.SubprocessError) as exc:
-        return False, CURSOR_REQUIRED_CLI_FLAGS, concise_error_message(exc)
-    output = f"{result.stdout}\n{result.stderr}"
-    lower_output = output.lower()
-    has_print = "--print" in output or re.search(
-        r"(?:^|[\s,])-p(?:[\s,]|$)", output, re.MULTILINE
-    ) is not None
-    missing = tuple(
-        requirement
-        for requirement in CURSOR_REQUIRED_CLI_FLAGS
-        if (
-            requirement == "--print/-p" and not has_print
-        ) or (
-            requirement != "--print/-p"
-            and requirement.lower() not in lower_output
-        )
-    )
-    if result.returncode != 0:
-        return (
-            False,
-            missing or CURSOR_REQUIRED_CLI_FLAGS,
-            "Cursor CLI compatibility probe failed",
-        )
-    if missing:
-        return False, missing, "required headless flags are unavailable"
-    try:
-        identity_result = runtime_command([executable, "about"])
-    except (OSError, subprocess.SubprocessError):
-        return False, (), "Cursor identity probe could not run"
-    identity_output = f"{identity_result.stdout}\n{identity_result.stderr}"
-    if (
-        identity_result.returncode != 0
-        or "about cursor cli" not in identity_output.lower()
-    ):
-        return False, (), "identity probe did not identify Cursor CLI"
-    return True, (), ""
-
-
-def cursor_executable_resolution(
-) -> tuple[str | None, str | None, tuple[str, ...], str]:
-    """Probe candidates once and return compatible + diagnostic details."""
-
-    path = runner_env().get("PATH")
-    first_installed: str | None = None
-    first_missing: tuple[str, ...] = ()
-    first_error = ""
-    for candidate in cursor_executable_candidates():
-        resolved = shutil.which(candidate, path=path)
-        if not resolved:
-            continue
-        try:
-            # Pin the probed version target. Cursor's launcher symlink can be
-            # retargeted by auto-update between admission and process spawn;
-            # executing the resolved target preserves the compatibility fence.
-            resolved = str(Path(resolved).resolve())
-        except OSError:
-            continue
-        compatible, missing, error = cursor_cli_compatibility(resolved)
-        if compatible:
-            return resolved, first_installed or resolved, (), ""
-        if first_installed is None:
-            first_installed = resolved
-            first_missing = missing
-            first_error = error
-        if CURSOR_BIN_OVERRIDE:
-            break
-    return None, first_installed, first_missing, first_error
-
-
-def resolve_cursor_executable(*, require_compatible: bool = True) -> str | None:
-    """Resolve one Cursor executable without mutating user state.
-
-    Candidate order is deterministic (configured override, then
-    ``cursor-agent``, then ``agent``), but an installed legacy binary may not
-    shadow a later compatible candidate. The diagnostic path can request the
-    first merely-installed candidate so it can explain incompatibility;
-    catalogs and turns always require the exact compatible contract.
-    """
-
-    compatible, installed, _missing, _error = cursor_executable_resolution()
-    return compatible if require_compatible else (compatible or installed)
-
-
 def runtime_executable(backend: str) -> str:
     if backend == BACKEND_CLAUDE:
         return CLAUDE_BIN
-    if backend == BACKEND_CURSOR:
-        return (
-            resolve_cursor_executable()
-            or resolve_cursor_executable(require_compatible=False)
-            or CURSOR_BIN
-        )
-    return CODEX_BIN
+    if backend == BACKEND_CODEX:
+        return CODEX_BIN
+    raise HTTPException(410, "This provider runtime has been removed or is unsupported.")
 
 
 def runtime_display_name(backend: str) -> str:
-    if backend == BACKEND_CLAUDE:
-        return "Claude Code"
-    if backend == BACKEND_CURSOR:
-        return "Cursor"
-    return "Codex"
+    return {BACKEND_CLAUDE: "Claude Code", BACKEND_CODEX: "Codex"}.get(backend, backend)
 
 
 def runtime_action(
@@ -52422,30 +51711,14 @@ def runtime_action(
     if status in {"ready", "unknown"}:
         return None
     executable = executable or runtime_executable(backend)
-    public_executable = (
-        Path(executable).name
-        if backend == BACKEND_CURSOR
-        else executable
-    )
+    public_executable = executable
     if status == "missing":
-        if backend == BACKEND_CURSOR:
-            return (
-                "Install the Cursor CLI from cursor.com/install for the server "
-                "user, make `cursor-agent` or `agent` available on PATH, then "
-                "click Recheck CLIs."
-            )
         return f"Install {runtime_display_name(backend)} for the server user, make `{public_executable}` available on PATH, then restart the agent server."
     if status == "unauthenticated":
         if backend == BACKEND_CLAUDE:
             return (
                 "Run `claude auth login` as the server user, then retry your "
                 "message. Claude checks sign-in during the actual request."
-            )
-        elif backend == BACKEND_CURSOR:
-            return (
-                f"Run `{public_executable} login` as the server user, or "
-                "configure `CURSOR_API_KEY` for the agent server, then click "
-                "Recheck CLIs."
             )
         else:
             command = "codex login"
@@ -52455,15 +51728,6 @@ def runtime_action(
             return (
                 f"Run `{public_executable} --version` as the server user to "
                 "check the Claude installation, then retry your message."
-            )
-        elif backend == BACKEND_CURSOR:
-            return (
-                f"Run `{public_executable} --version`, "
-                f"`{public_executable} status`, and "
-                f"`{public_executable} --list-models` as the server user. "
-                "Check server network access and credentials, update the CLI "
-                "if its required headless features are missing, then click "
-                "Recheck CLIs."
             )
         else:
             command = "codex login status"
@@ -52570,112 +51834,16 @@ def auth_failure_text(value: str) -> bool:
     ))
 
 
-def cursor_api_key_configured() -> bool:
-    """Return whether the Cursor subprocess environment contains an API key."""
-
-    return bool(str(runner_env().get("CURSOR_API_KEY") or "").strip())
-
-
-def cursor_auth_probe_state(
-    executable: str,
-) -> Literal["ready", "unauthenticated", "error"]:
-    """Return Cursor authentication state from provider-owned output.
-
-    Turn output and stderr can contain user/project text, so they are only a
-    trigger for this check and can never classify authentication on their own.
-    Cursor's ``status`` command does not account for ``CURSOR_API_KEY``;
-    API-key setups therefore use ``--list-models`` as the independent probe.
-    A successful model listing proves readiness, while any failure remains an
-    ordinary runtime error: Cursor can report network failures using auth-like
-    wording, so text alone is not strong enough to declare an API key invalid.
-    """
-
-    api_key_configured = cursor_api_key_configured()
-    command = (
-        [executable, "--list-models"]
-        if api_key_configured
-        else [executable, "status"]
-    )
-    try:
-        result = runtime_command(command)
-    except (OSError, subprocess.SubprocessError):
-        return "error"
-    combined = f"{result.stdout}\n{result.stderr}"
-    if api_key_configured:
-        return "ready" if result.returncode == 0 else "error"
-
-    if result.returncode != 0:
-        return "error"
-
-    from cursor_agent_client import parse_cursor_auth_status
-
-    parsed = parse_cursor_auth_status(
-        combined,
-        executable_name=Path(executable).name,
-    )
-    state = str(parsed.get("state") or "error")
-    if state in {"ready", "unauthenticated"}:
-        return state
-    return "error"
-
-
-def cursor_auth_failure_confirmed(executable: str) -> bool:
-    """Return true only for an unambiguous stored-login authentication failure."""
-
-    return cursor_auth_probe_state(executable) == "unauthenticated"
-
-
 def probe_runtime(backend: str) -> dict[str, Any]:
-    if backend == BACKEND_CURSOR:
-        (
-            resolved,
-            installed_cursor,
-            missing_flags,
-            compatibility_error,
-        ) = cursor_executable_resolution()
-        if resolved is None and installed_cursor is not None:
-            version: str | None = None
-            try:
-                version_result = runtime_command(
-                    [installed_cursor, "--version"]
-                )
-                version = safe_runtime_version(
-                    version_result.stdout or version_result.stderr
-                )
-            except (OSError, subprocess.SubprocessError):
-                pass
-            missing = ", ".join(missing_flags)
-            message = (
-                f"Cursor CLI {version or '(unknown version)'} is installed "
-                "but is incompatible with this HyadexServer Cursor backend."
-            )
-            if missing:
-                message += f" Missing required flags: {missing}."
-            if (
-                compatibility_error
-                and compatibility_error
-                != "required headless flags are unavailable"
-            ):
-                message += f" Probe error: {compatibility_error}."
-            return runtime_diagnostic_payload(
-                backend,
-                "error",
-                installed=True,
-                authenticated=None,
-                version=version,
-                message=message,
-                executable=installed_cursor,
-            )
-    else:
-        configured = runtime_executable(backend)
-        resolved = shutil.which(configured, path=runner_env().get("PATH"))
+    configured = runtime_executable(backend)
+    resolved = shutil.which(configured, path=runner_env().get("PATH"))
     if not resolved:
         return runtime_diagnostic_payload(
             backend,
             "missing",
             installed=False,
             authenticated=False,
-            executable=(CURSOR_BIN if backend == BACKEND_CURSOR else None),
+            executable=None,
         )
 
     try:
@@ -52687,7 +51855,7 @@ def probe_runtime(backend: str) -> dict[str, Any]:
             "error",
             installed=True,
             authenticated=None,
-            executable=(resolved if backend == BACKEND_CURSOR else None),
+            executable=None,
         )
     version = safe_runtime_version(version_result.stdout or version_result.stderr)
     if version_result.returncode != 0:
@@ -52697,31 +51865,9 @@ def probe_runtime(backend: str) -> dict[str, Any]:
             installed=True,
             authenticated=None,
             version=version,
-            executable=(resolved if backend == BACKEND_CURSOR else None),
+            executable=None,
         )
 
-    if backend == BACKEND_CURSOR:
-        auth_state = cursor_auth_probe_state(resolved)
-        return runtime_diagnostic_payload(
-            backend,
-            auth_state,
-            installed=True,
-            authenticated=(
-                True
-                if auth_state == "ready"
-                else False
-                if auth_state == "unauthenticated"
-                else None
-            ),
-            version=version,
-            message=(
-                f"{Path(resolved).name} authentication check failed; its "
-                "output was omitted because it may contain account details."
-                if auth_state == "error"
-                else None
-            ),
-            executable=resolved,
-        )
 
     if backend == BACKEND_CLAUDE:
         # Even `auth status` can start OAuth renewal during CLI initialization
@@ -52764,7 +51910,7 @@ def probe_runtime(backend: str) -> dict[str, Any]:
             installed=True,
             authenticated=None,
             version=version,
-            executable=(resolved if backend == BACKEND_CURSOR else None),
+            executable=None,
         )
 
     combined = f"{auth_result.stdout}\n{auth_result.stderr}"
@@ -52915,11 +52061,7 @@ def record_runtime_failure(
             installed=True,
             authenticated=False,
             version=previous.get("version"),
-            executable=(
-                str(executable or previous.get("_executable") or "") or None
-                if backend == BACKEND_CURSOR
-                else None
-            ),
+            executable=None,
         )
     elif runtime_error:
         current = runtime_diagnostic_payload(
@@ -52928,11 +52070,7 @@ def record_runtime_failure(
             installed=True,
             authenticated=None,
             version=previous.get("version"),
-            executable=(
-                str(executable or previous.get("_executable") or "") or None
-                if backend == BACKEND_CURSOR
-                else None
-            ),
+            executable=None,
         )
     elif spawn_failure and (
         isinstance(error, FileNotFoundError)
@@ -52959,11 +52097,7 @@ def record_runtime_success(backend: str) -> None:
         authenticated=True,
         message=("The last Claude request authenticated successfully." if backend == BACKEND_CLAUDE else None),
         version=previous.get("version"),
-        executable=(
-            str(previous.get("_executable") or "") or None
-            if backend == BACKEND_CURSOR
-            else None
-        ),
+        executable=None,
     )
     if backend == BACKEND_CODEX and previous.get("_codex_auth_mode"):
         # A successful turn does not establish which login kind was used.
@@ -52981,11 +52115,8 @@ async def ensure_runtime_available(backend: str, *, session: dict[str, Any] | No
     diagnostic = await asyncio.to_thread(runtime_diagnostic, backend)
     if (session or {}).get("provider_connection") == "custom":
         selected = PROVIDER_CONNECTION_STORE.for_session(session)
-        if backend != BACKEND_CURSOR:
-            provider_connections.require_model(selected)
-        else:
-            await cursor_api_key.require_isolation(await asyncio.to_thread(resolve_cursor_executable), runner_env())
-        if backend not in {BACKEND_CLAUDE, BACKEND_CURSOR} or diagnostic.get("installed") is not True:
+        provider_connections.require_model(selected)
+        if backend not in {BACKEND_CLAUDE} or diagnostic.get("installed") is not True:
             raise HTTPException(503, "Install this provider's native CLI to use its custom API.")
         diagnostic = {**diagnostic, "status": "ready", "authenticated": True}
     if (
@@ -53003,32 +52134,11 @@ async def ensure_runtime_available(backend: str, *, session: dict[str, Any] | No
                 "message": "The custom Codex endpoint and provider key are configured."}
         raise HTTPException(503, "The custom endpoint requires an installed native Codex app-server runtime.")
     if diagnostic.get("status") == "ready":
-        if backend == BACKEND_CURSOR and not diagnostic.get("_executable"):
-            # Carry one compatibility-probed absolute path from admission to
-            # spawn. A stale ready cache must never make run_cursor perform a
-            # second, potentially different PATH selection.
-            resolver = (
-                resolve_cursor_executable
-            )
-            resolved = await asyncio.to_thread(resolver)
-            if resolved:
-                diagnostic = {**diagnostic, "_executable": resolved}
-                store_runtime_diagnostic(
-                    diagnostic,
-                    preserve_last_error=True,
-                )
-            else:
-                diagnostic = await asyncio.to_thread(
-                    runtime_diagnostic,
-                    backend,
-                    force=True,
-                )
         if diagnostic.get("status") == "ready" and diagnostic.get(
             "_executable"
         ):
             return diagnostic
-        if backend != BACKEND_CURSOR:
-            return diagnostic
+        return diagnostic
     raise HTTPException(status_code=503, detail={
         "code": "runtime_unavailable",
         "backend": backend,
@@ -53600,88 +52710,6 @@ def parse_claude_help_catalog() -> dict[str, Any]:
     }
 
 
-def discover_cursor_catalog(*, executable: str | None = None) -> dict[str, Any]:
-    """Discover per-account Cursor models from the compatible executable.
-
-    Free-plan Cursor accounts still list every model name here, but reject
-    any of them except "auto" at turn-launch time with "ActionRequiredError:
-    Named models unavailable Free plans can only use Auto" (confirmed live).
-    That's an account-tier restriction enforced by Cursor's own API. Rather
-    than let a free-plan turn hit that error, every non-"auto" model is
-    marked `locked` (with a human-readable `locked_reason`) via `agent
-    about`'s Subscription Tier - the client disables locked options instead
-    of letting them fail at send time. Unknown/future tier names are not
-    assumed free because Cursor has added paid tiers over time.
-
-    Parsing is delegated to cursor_agent_client, which is unit-tested against
-    real captured output from more than one CLI version/account tier (the
-    default-marker format itself changed between captures: "(current,
-    default)" vs plain "(default)").
-    """
-    from cursor_agent_client import (
-        cursor_account_is_free_tier,
-        parse_cursor_account_tier,
-        parse_cursor_models_list,
-    )
-
-    model_source = f"{Path(executable or CURSOR_BIN).name} --list-models"
-    try:
-        executable = executable or resolve_cursor_executable()
-        if executable is None:
-            raise RuntimeError("no compatible Cursor executable is available")
-        model_source = f"{Path(executable).name} --list-models"
-        output = run_catalog_command([executable, "--list-models"])
-        parsed = parse_cursor_models_list(output)
-    except Exception as exc:
-        logger.warning(
-            "cursor model discovery failed error_type=%s",
-            type(exc).__name__,
-        )
-        parsed = []
-        model_source = f"{model_source} failed"
-
-    is_free_tier = False
-    try:
-        if executable and not runtime_catalog_budget_expired():
-            about_output = run_catalog_command([executable, "about"])
-            is_free_tier = cursor_account_is_free_tier(parse_cursor_account_tier(about_output))
-    except Exception as exc:
-        logger.warning(
-            "cursor account tier detection failed error_type=%s",
-            type(exc).__name__,
-        )
-
-    if not parsed:
-        # Never regress below the one value already confirmed to work.
-        return {
-            "models": [runtime_option("auto", "Auto")],
-            "efforts": [],
-            "model_source": model_source if "failed" in model_source else f"{model_source} empty",
-            "effort_source": "none",
-            "default_model": "auto",
-            "default_effort": None,
-        }
-    default_entry = next((model for model in parsed if model.get("is_default")), parsed[0])
-    locked_reason = "Requires a paid Cursor plan - this account is on the free plan, which can only use Auto"
-    model_options = [
-        runtime_option(
-            model["id"],
-            model["label"],
-            **({"locked": True, "locked_reason": locked_reason}
-               if is_free_tier and not model.get("is_router") else {}),
-        )
-        for model in parsed
-    ]
-    return {
-        "models": unique_runtime_options(model_options, default_entry["label"]),
-        "efforts": [],
-        "model_source": model_source,
-        "effort_source": "none",
-        "default_model": str(default_entry.get("id") or "auto"),
-        "default_effort": None,
-    }
-
-
 def discover_runtime_catalog(*, force_runtime_probe: bool = False) -> dict[str, Any]:
     deadline = time.monotonic() + RUNTIME_CATALOG_BUDGET_SECONDS
     existing_deadline = RUNTIME_CATALOG_DEADLINE.get()
@@ -53715,7 +52743,6 @@ def discover_runtime_catalog_within_budget(*, force_runtime_probe: bool = False)
 def discover_runtime_backend_catalog(backend: str, *, force_runtime_probe: bool = False) -> dict[str, Any]:
     diagnostic = runtime_diagnostic(backend, force=force_runtime_probe)
     ready = diagnostic.get("status") == "ready"
-    executable = str(diagnostic.get("_executable") or "") or None
     if backend == BACKEND_CLAUDE:
         catalog = parse_claude_help_catalog()
     elif backend == BACKEND_CODEX:
@@ -53724,25 +52751,12 @@ def discover_runtime_backend_catalog(backend: str, *, force_runtime_probe: bool 
             available=CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC
             and diagnostic.get("installed") is True,
         )
-    elif backend == BACKEND_CURSOR:
-        catalog = discover_cursor_catalog(executable=executable) if ready and not runtime_catalog_budget_expired() else {
-            "models": [runtime_option("auto", "Auto")],
-            "efforts": [],
-            "model_source": "Runtime refresh deadline" if ready else "Cursor runtime unavailable",
-            "effort_source": "none",
-            "default_model": "auto",
-            "default_effort": None,
-        }
-        catalog.update({
-            "permission_modes": list(CURSOR_PERMISSION_MODES),
-            "default_permission_mode": CURSOR_DEFAULT_PERMISSION_MODE,
-        })
     else:
         raise HTTPException(400, "Unsupported provider runtime.")
     catalog["diagnostic"] = public_runtime_diagnostic(diagnostic)
     catalog["available"] = ready
     catalog["native_credentials_present"] = provider_connections.native_credentials_present(backend, diagnostic)
-    if backend in {BACKEND_CLAUDE, BACKEND_CURSOR}:
+    if backend in {BACKEND_CLAUDE}:
         catalog["custom_provider"] = PROVIDER_CONNECTION_STORE.catalog(backend, installed=diagnostic.get("installed") is True)
     return catalog
 
@@ -54943,13 +53957,6 @@ async def discover_session_provider_commands(
         selector_secret=PROVIDER_COMMAND_EMPTY_FALLBACK_SECRET,
         binding_context=session_id,
     )
-    if backend == BACKEND_CURSOR:
-        support = provider_command_support(
-            False,
-            "unsupported",
-            "Cursor does not currently expose local commands to Hyadex.",
-        )
-        return provider_command_snapshot(fallback_empty, support), fallback_empty
     if backend == BACKEND_CODEX:
         if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC:
             support = provider_command_support(
@@ -55204,10 +54211,6 @@ def redacted_provider_argv(cmd: list[str], backend: str) -> list[str]:
         ]
         if redacted:
             redacted[-1] = "<prompt>"
-        return redacted
-    if backend == BACKEND_CURSOR:
-        # Cursor receives its composed prompt over stdin. Its argv therefore
-        # contains only executable/runtime flags and is safe to project.
         return redacted
     return redacted
 
@@ -57267,7 +56270,6 @@ async def persist_run_provider_session(
     *,
     cwd: str | None = None,
     codex_instruction_hash: str | None = None,
-    cursor_instruction_hash: str | None = None,
     standalone_provider_context: bool = False,
     emit_event: bool = True,
 ) -> bool:
@@ -57310,8 +56312,6 @@ async def persist_run_provider_session(
             save_kwargs["cwd"] = cwd
         if codex_instruction_hash is not None:
             save_kwargs["codex_instruction_hash"] = codex_instruction_hash
-        if cursor_instruction_hash is not None:
-            save_kwargs["cursor_instruction_hash"] = cursor_instruction_hash
         usage_signal = await STORE.save_provider_session(
             session_id,
             provider_id,
@@ -60687,1145 +59687,6 @@ async def run_codex_exec(
         "exit_code": proc.returncode,
         "result_text": clean_assistant_text("\n\n".join(text_parts).strip()),
         "stopped": stopped,
-        **run_event_metadata(run_id),
-    }
-    finalize_task = asyncio.create_task(finalize_owned_turn_finished(
-        session_id,
-        run_id,
-        stopped=stopped,
-        payload=terminal_payload,
-    ))
-    try:
-        await asyncio.shield(finalize_task)
-    except asyncio.CancelledError:
-        await join_task_despite_caller_cancellation(finalize_task)
-        raise
-
-
-def cursor_provider_instructions(
-    session_id: str,
-    sess: dict[str, Any],
-    manifest_path: Path,
-) -> str:
-    """Return stable Hyadex policy for a Cursor provider thread."""
-
-    from cursor_provider_mcp import MCP_NAME
-    return "\n\n".join(
-        value
-        for value in (
-            CURSOR_PROMPT_PRELUDE.replace(CLAUDE_PROVIDER_MCP_TOOL_NAME, f"run on MCP server {MCP_NAME}").format(
-                manifest_path=str(manifest_path),
-                terminal_session=terminal_session_name(session_id),
-                chat_id=session_id,
-            ).rstrip(),
-            CURSOR_FILE_DELIVERY_ADDENDUM.format(
-                manifest_path=str(manifest_path),
-            ).rstrip(),
-            session_prompt_addendum(sess).strip(),
-        )
-        if value
-    )
-
-
-def cursor_instruction_hash(
-    session_id: str,
-    sess: dict[str, Any],
-    manifest_path: Path,
-) -> str:
-    payload = (
-        f"hyadex-cursor-policy-v{CURSOR_PROMPT_POLICY_VERSION}\0"
-        f"{cursor_provider_instructions(session_id, sess, manifest_path)}"
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def build_cursor_provider_prompt(
-    session_id: str,
-    sess: dict[str, Any],
-    prompt: str,
-    manifest_path: Path,
-) -> tuple[str, str, bool, bool]:
-    """Compose one Cursor prompt without replaying stable policy on resume.
-
-    Cursor print mode currently exposes no separate system/developer channel,
-    so this is a same-role instruction envelope rather than a security
-    boundary. Sensitive helper operations remain constrained by the
-    per-turn authority file and server-side ACLs.
-    """
-
-    provider_id = str(session_provider_id(sess) or "").strip()
-    instruction_hash = cursor_instruction_hash(
-        session_id,
-        sess,
-        manifest_path,
-    )
-    inject_instructions = (
-        not provider_id
-        or str(sess.get("cursor_instruction_hash") or "") != instruction_hash
-        or str(sess.get("cursor_instruction_version") or "")
-        != CURSOR_PROMPT_POLICY_VERSION
-    )
-    memory_seed = str(sess.get("memory_seed") or "").strip()
-    inject_memory = bool(
-        memory_seed
-        and (not sess.get("memory_seed_used") or not provider_id)
-    )
-    sections: list[str] = []
-    if inject_instructions:
-        sections.append(
-            "[Hyadex provider instructions]\n"
-            f"{cursor_provider_instructions(session_id, sess, manifest_path)}\n"
-            "[End Hyadex provider instructions]"
-        )
-    if inject_memory:
-        sections.append(
-            "[Fork memory context; "
-            f"chars={len(memory_seed)}]\n{memory_seed}\n"
-            "[End Fork memory context]"
-        )
-    sections.append(f"[Current user prompt]\n{prompt}")
-    return "\n\n".join(sections), instruction_hash, inject_instructions, inject_memory
-
-
-async def drain_bounded_process_stream(
-    stream: asyncio.StreamReader | None,
-    *,
-    limit_bytes: int,
-) -> bytes:
-    """Drain a pipe concurrently while retaining only its bounded tail."""
-
-    if stream is None:
-        return b""
-    tail = bytearray()
-    while True:
-        chunk = await stream.read(64 * 1024)
-        if not chunk:
-            break
-        if len(chunk) >= limit_bytes:
-            tail[:] = chunk[-limit_bytes:]
-            continue
-        tail.extend(chunk)
-        overflow = len(tail) - limit_bytes
-        if overflow > 0:
-            del tail[:overflow]
-    return bytes(tail)
-
-
-async def finish_bounded_process_stream(
-    task: asyncio.Task[bytes],
-    *,
-    timeout: float = CURSOR_STDERR_DRAIN_TIMEOUT_SECONDS,
-) -> bytes:
-    """Finish one pipe drain without letting teardown hang indefinitely."""
-
-    try:
-        return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-    except asyncio.TimeoutError:
-        task.cancel()
-        with suppress(BaseException):
-            await task
-        return b""
-    except asyncio.CancelledError:
-        task.cancel()
-        with suppress(BaseException):
-            await task
-        raise
-
-
-async def write_cursor_process_stdin(
-    proc: asyncio.subprocess.Process,
-    prompt: str,
-) -> None:
-    """Write one composed Cursor prompt without exposing it in process argv."""
-
-    writer = proc.stdin
-    if writer is None:
-        raise RuntimeError("Cursor stdin pipe is unavailable")
-    try:
-        writer.write(prompt.encode("utf-8"))
-        await asyncio.wait_for(
-            writer.drain(),
-            timeout=CURSOR_STARTUP_TIMEOUT_SECONDS,
-        )
-    except (BrokenPipeError, ConnectionResetError) as exc:
-        raise RuntimeError("Cursor closed stdin before accepting the prompt") from exc
-    finally:
-        writer.close()
-        with suppress(
-            asyncio.TimeoutError,
-            BrokenPipeError,
-            ConnectionResetError,
-            OSError,
-        ):
-            await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
-
-
-async def close_cursor_process_stdin(
-    proc: asyncio.subprocess.Process,
-) -> None:
-    """Close Cursor's prompt channel without delivering any user work."""
-
-    writer = proc.stdin
-    if writer is None:
-        return
-    writer.close()
-    with suppress(
-        asyncio.TimeoutError,
-        BrokenPipeError,
-        ConnectionResetError,
-        OSError,
-    ):
-        await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
-
-
-async def run_cursor(
-    session_id: str,
-    run_id: str,
-    prompt: str,
-    sess: dict[str, Any],
-    manifest_path: Path,
-    *,
-    standalone_provider_context: bool = False,
-) -> None:
-    from cursor_provider_mcp import CursorToolBroker, CursorRuntimeProfile
-
-    async with CROSS_CHAT_CAPABILITY_LOCK:
-        has_authority = any(
-            c.get("source_session_id") == session_id
-            and c.get("source_run_id") == run_id
-            for c in CROSS_CHAT_CAPABILITIES.values()
-        )
-    # A run without helper grants keeps the existing native print transport.
-    # An admitted helper run must never silently fall back to Shell or force.
-    if not has_authority:
-        return await run_cursor_process(session_id, run_id, prompt, sess, manifest_path,
-                                        standalone_provider_context=standalone_provider_context)
-    owner = secrets.token_urlsafe(48)
-
-    async def execute(value: Any, key: str) -> tuple[str, bool]:
-        try:
-            return await execute_provider_tool_once(
-                session_id, run_id, value, replay_key="cursor:" + key,
-                backend=BACKEND_CURSOR, cursor_owner_token=owner,
-            )
-        except ProviderToolError as exc:
-            return str(exc), True
-
-    broker = CursorToolBroker(codex_provider_mcp_tool_definition(), execute)
-    profile = CursorRuntimeProfile(agent_runner_env(session_id), existing_cwd(str(sess.get("cwd") or DEFAULT_CWD)))
-    try:
-        tool_env = await broker.start()
-        profile.env.update(tool_env)
-        prepare = asyncio.create_task(asyncio.to_thread(profile.prepare))
-        try:
-            profile_env, flags = await asyncio.shield(prepare)
-        except asyncio.CancelledError:
-            await join_task_despite_caller_cancellation(prepare)
-            raise
-        selected = {**sess, "_cursor_mcp_owner_token": owner,
-                    "_cursor_tool_env": {**tool_env, **profile_env}, "_cursor_tool_flags": flags}
-        await run_cursor_process(session_id, run_id, prompt, selected, manifest_path,
-                                 standalone_provider_context=standalone_provider_context)
-    finally:
-        await broker.close()
-        profile.close()
-
-
-async def run_cursor_process(
-    session_id: str,
-    run_id: str,
-    prompt: str,
-    sess: dict[str, Any],
-    manifest_path: Path,
-    *,
-    standalone_provider_context: bool = False,
-) -> None:
-    """Run one bounded, resumable Cursor CLI turn in a fresh subprocess."""
-    from cursor_agent_client import (
-        CursorEventParseError,
-        build_cursor_cmd,
-        cursor_approval_request_text,
-        normalize_cursor_stream_event,
-    )
-
-    if standalone_provider_context:
-        sess = standalone_provider_session(sess)
-    requested_cwd = str(sess.get("cwd") or DEFAULT_CWD)
-    cwd = existing_cwd(requested_cwd)
-    diff_baseline = await capture_git_baseline(session_id, run_id, cwd)
-    if str(Path(requested_cwd).expanduser()) != cwd:
-        await append_event(session_id, "cwd_fallback", {"run_id": run_id, "requested_cwd": requested_cwd, "cwd": cwd})
-
-    cursor_bin = str(sess.get("_cursor_executable") or "").strip()
-    if not cursor_bin:
-        cursor_bin = await asyncio.to_thread(resolve_cursor_executable) or ""
-    if not cursor_bin:
-        error = RuntimeError(
-            "no compatible cursor-agent or agent executable is available"
-        )
-        released = await release_turn_slot(
-            session_id,
-            expected_run_id=run_id,
-        )
-        try:
-            if released:
-                record_runtime_failure(BACKEND_CURSOR, error, spawn_failure=True)
-                await append_event(session_id, "error", {
-                    "run_id": run_id,
-                    "backend": BACKEND_CURSOR,
-                    "message": str(error),
-                    **run_event_metadata(run_id),
-                })
-                await append_turn_finished_event(session_id, {
-                    "run_id": run_id,
-                    "backend": BACKEND_CURSOR,
-                    "exit_code": None,
-                    "result_text": "",
-                    "is_error": True,
-                    **run_event_metadata(run_id),
-                })
-        finally:
-            RUN_METADATA.pop(run_id, None)
-            STOPPED_RUNS.discard(run_id)
-            if released:
-                schedule_next_queued_turn(session_id)
-        return
-    provider_prompt, instruction_hash, _instructions_injected, memory_injected = (
-        build_cursor_provider_prompt(
-            session_id,
-            sess,
-            prompt,
-            manifest_path,
-        )
-    )
-    runner_sess = dict(sess)
-    runner_sess["cursor_permission_mode"] = effective_cursor_permission_mode(
-        sess
-    )
-    cmd = build_cursor_cmd(
-        runner_sess,
-        cursor_bin=cursor_bin,
-    )
-    mcp_owner = str(sess.get("_cursor_mcp_owner_token") or "")
-    cmd.extend(sess.get("_cursor_tool_flags") or [])
-    public_cmd = redacted_provider_argv(cmd, BACKEND_CURSOR)
-    await append_event(session_id, "process_started", {"run_id": run_id, "backend": BACKEND_CURSOR, "argv": public_cmd, "cwd": cwd})
-    env = agent_runner_env(session_id)
-    env.update(sess.get("_cursor_tool_env") or {})
-    # Last overlay: a saved key cannot inherit an auth-token override, write
-    # the shared CLI credential store, or be redirected by project direnv.
-    env.update(PROVIDER_CONNECTION_STORE.cursor_overrides(sess))
-    cursor_dir = os.path.dirname(os.path.abspath(cursor_bin))
-    if cursor_dir and cursor_dir not in env.get("PATH", "").split(os.pathsep):
-        env["PATH"] = cursor_dir + os.pathsep + env.get("PATH", "")
-    guard_cmd = [
-        sys.executable,
-        str(CURSOR_PROCESS_GUARD),
-        "--parent-pid",
-        str(os.getpid()),
-        "--",
-        *cmd,
-    ]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *guard_cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-            env=env,
-            limit=PROCESS_STREAM_LIMIT,
-            start_new_session=True,
-        )
-    except Exception as e:
-        released = await release_turn_slot(
-            session_id,
-            expected_run_id=run_id,
-        )
-        try:
-            if released:
-                record_runtime_failure(BACKEND_CURSOR, e, spawn_failure=True)
-                await append_event(session_id, "error", {"run_id": run_id, "backend": BACKEND_CURSOR, "message": f"failed to start Cursor: {e}", **run_event_metadata(run_id)})
-                await append_turn_finished_event(session_id, {
-                    "run_id": run_id,
-                    "backend": BACKEND_CURSOR,
-                    "exit_code": None,
-                    "result_text": "",
-                    "is_error": True,
-                    **run_event_metadata(run_id),
-                })
-        finally:
-            RUN_METADATA.pop(run_id, None)
-            STOPPED_RUNS.discard(run_id)
-            if released:
-                schedule_next_queued_turn(session_id)
-        return
-
-    stderr_task = asyncio.create_task(
-        drain_bounded_process_stream(
-            proc.stderr,
-            limit_bytes=CURSOR_STDERR_TAIL_BYTES,
-        )
-    )
-    pgid = process_group_for_pid(proc.pid)
-    try:
-        bound, stop_requested = await bind_active_turn(
-            session_id,
-            run_id,
-            {
-                "proc": proc,
-                "run_id": run_id,
-                "backend": BACKEND_CURSOR,
-                "transport": "exec",
-                "cursor_mcp_owner_token": mcp_owner,
-                "provider_tools_ready": asyncio.Event(),
-                "pid": proc.pid,
-                "pgid": pgid,
-                "cwd": cwd,
-                "argv": public_cmd,
-                "started_at": time.time(),
-                "started_at_iso": now_iso(),
-                "provider_turn_ready": False,
-                "stdout_tail": deque(maxlen=LIVE_STDOUT_MAX_LINES),
-                "stdout_total_lines": 0,
-                "stdout_updated_at": None,
-            },
-        )
-    except BaseException:
-        # Binding is the ownership boundary. A cancelled or stale startup must
-        # never receive the prompt, and its guard must not survive the runner.
-        with suppress(BaseException):
-            await close_cursor_process_stdin(proc)
-        with suppress(BaseException):
-            await terminate_process_tree(
-                proc,
-                grace=CURSOR_GUARD_TEARDOWN_GRACE_SECONDS,
-            )
-        with suppress(BaseException):
-            await finish_bounded_process_stream(stderr_task)
-        raise
-    if not bound:
-        await close_cursor_process_stdin(proc)
-        await terminate_process_tree(
-            proc,
-            grace=CURSOR_GUARD_TEARDOWN_GRACE_SECONDS,
-        )
-        with suppress(BaseException):
-            await finish_bounded_process_stream(stderr_task)
-        return
-
-    stdin_task: asyncio.Task[None] | None = None
-    text_parts: list[str] = []
-    accumulated_text_chars = 0
-    stream_event_count = 0
-    stream_bytes = 0
-    provider_id: str | None = sess.get("cursor_session_id")
-    started_monotonic = time.monotonic()
-    last_event_monotonic = started_monotonic
-    deadline_clock_checked_monotonic = started_monotonic
-    deadline_clock_was_paused = False
-    provider_started = False
-    terminal_event_seen = False
-    terminal_exit_forced = False
-    stream_error: str | None = None
-    timeout_error: str | None = None
-    turn_is_error = False
-    result_text = ""
-    cursor_usage: dict[str, int] = {}
-    tool_calls: dict[str, dict[str, Any]] = {}
-    started_tool_ids: set[str] = set()
-    finished_tool_ids: set[str] = set()
-    changed_paths: set[str] = set()
-    seen_artifacts: set[str] = set()
-    stderr_bytes = b""
-    # Cursor streams reasoning as many token-sized `thinking` deltas, while
-    # Codex publishes exactly one reasoning_summary per reasoning item and
-    # the client renders one event as one block. Emitting every delta turned
-    # a single thought into a burst of answer-looking blocks that the
-    # timeline then reconciled away. Buffer deltas and publish one event per
-    # completed thought instead.
-    reasoning_buffer: list[str] = []
-    reasoning_buffer_chars = 0
-    idle_warning_emitted = False
-    manifest_watch_task = asyncio.create_task(watch_manifest_artifacts(session_id, run_id, manifest_path, seen_artifacts))
-
-    async def flush_cursor_reasoning() -> None:
-        nonlocal reasoning_buffer, reasoning_buffer_chars
-        if not reasoning_buffer:
-            return
-        text = compact_memory_text(
-            "".join(reasoning_buffer).strip(),
-            CODEX_APP_SERVER_TOOL_OUTPUT_MAX_CHARS,
-        )
-        reasoning_buffer = []
-        reasoning_buffer_chars = 0
-        if text:
-            await append_event(session_id, "reasoning_summary", {
-                "run_id": run_id,
-                "text": text,
-                "phase": "commentary",
-            })
-
-    async def emit_provider_session(new_provider_id: str) -> None:
-        nonlocal provider_id, provider_started
-        if not new_provider_id:
-            return
-        if provider_started and provider_id == new_provider_id:
-            return
-        provider_id = new_provider_id
-        provider_started = True
-
-    try:
-        if stop_requested:
-            await close_cursor_process_stdin(proc)
-            await terminate_process_tree(proc)
-        else:
-            stdin_task = asyncio.create_task(
-                write_cursor_process_stdin(proc, provider_prompt)
-            )
-            try:
-                await stdin_task
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                stream_error = concise_error_message(exc)
-                await terminate_process_tree(proc)
-        while stream_error is None:
-            now_monotonic = time.monotonic()
-            if deadline_clock_was_paused:
-                started_monotonic += max(
-                    0.0,
-                    now_monotonic - deadline_clock_checked_monotonic,
-                )
-            pending_live_wait = provider_run_owns_pending_cross_chat_live_wait(
-                session_id,
-                run_id,
-            )
-            deadline_clock_checked_monotonic = now_monotonic
-            deadline_clock_was_paused = pending_live_wait
-            if pending_live_wait:
-                last_event_monotonic = now_monotonic
-                idle_warning_emitted = False
-            elapsed = now_monotonic - started_monotonic
-            if (
-                not pending_live_wait
-                and not provider_started
-                and elapsed >= CURSOR_STARTUP_TIMEOUT_SECONDS
-            ):
-                timeout_error = (
-                    "Cursor did not initialize within "
-                    f"{CURSOR_STARTUP_TIMEOUT_SECONDS:g} seconds."
-                )
-                await terminate_process_tree(proc)
-                break
-            if (
-                not pending_live_wait
-                and elapsed >= CURSOR_TURN_TIMEOUT_SECONDS
-            ):
-                timeout_error = (
-                    "Cursor exceeded the absolute turn timeout of "
-                    f"{CURSOR_TURN_TIMEOUT_SECONDS:g} seconds."
-                )
-                await terminate_process_tree(proc)
-                break
-            startup_remaining = (
-                CURSOR_STARTUP_TIMEOUT_SECONDS - elapsed
-                if not provider_started and not pending_live_wait
-                else CURSOR_TURN_TIMEOUT_SECONDS
-            )
-            turn_remaining = (
-                CURSOR_TURN_TIMEOUT_SECONDS
-                if pending_live_wait
-                else CURSOR_TURN_TIMEOUT_SECONDS - elapsed
-            )
-            idle_elapsed = now_monotonic - last_event_monotonic
-            idle_deadline = (
-                CURSOR_IDLE_TIMEOUT_SECONDS
-                if idle_warning_emitted
-                else CURSOR_IDLE_WARN_SECONDS
-            )
-            idle_remaining = max(0.01, idle_deadline - idle_elapsed)
-            wait_seconds = max(
-                0.01,
-                min(
-                    5.0,
-                    startup_remaining,
-                    turn_remaining,
-                    idle_remaining,
-                ),
-            )
-            try:
-                raw = await asyncio.wait_for(
-                    proc.stdout.readline(),  # type: ignore[union-attr]
-                    timeout=wait_seconds,
-                )
-            except asyncio.TimeoutError:
-                now_monotonic = time.monotonic()
-                if deadline_clock_was_paused:
-                    started_monotonic += max(
-                        0.0,
-                        now_monotonic - deadline_clock_checked_monotonic,
-                    )
-                pending_live_wait = (
-                    provider_run_owns_pending_cross_chat_live_wait(
-                        session_id,
-                        run_id,
-                    )
-                )
-                deadline_clock_checked_monotonic = now_monotonic
-                deadline_clock_was_paused = pending_live_wait
-                if pending_live_wait:
-                    last_event_monotonic = now_monotonic
-                    idle_warning_emitted = False
-                    continue
-                elapsed = now_monotonic - started_monotonic
-                idle = now_monotonic - last_event_monotonic
-                if (
-                    not provider_started
-                    and elapsed >= CURSOR_STARTUP_TIMEOUT_SECONDS
-                ):
-                    timeout_error = (
-                        "Cursor did not initialize within "
-                        f"{CURSOR_STARTUP_TIMEOUT_SECONDS:g} seconds."
-                    )
-                    await terminate_process_tree(proc)
-                    break
-                if elapsed >= CURSOR_TURN_TIMEOUT_SECONDS:
-                    timeout_error = (
-                        "Cursor exceeded the absolute turn timeout of "
-                        f"{CURSOR_TURN_TIMEOUT_SECONDS:g} seconds."
-                    )
-                    await terminate_process_tree(proc)
-                    break
-                if idle >= CURSOR_IDLE_WARN_SECONDS and not idle_warning_emitted:
-                    await append_event(session_id, "idle_warning", {"run_id": run_id, "idle_seconds": int(idle)})
-                    idle_warning_emitted = True
-                if idle >= CURSOR_IDLE_TIMEOUT_SECONDS:
-                    timeout_error = (
-                        "Cursor produced no output for "
-                        f"{CURSOR_IDLE_TIMEOUT_SECONDS:g} seconds."
-                    )
-                    await terminate_process_tree(proc)
-                    break
-                continue
-            if not raw:
-                break
-            stream_event_count += 1
-            stream_bytes += len(raw)
-            if (
-                stream_event_count > CURSOR_MAX_STREAM_EVENTS
-                or stream_bytes > CURSOR_MAX_STREAM_BYTES
-            ):
-                stream_error = (
-                    "Cursor exceeded the bounded per-turn stream ceiling "
-                    f"({CURSOR_MAX_STREAM_EVENTS} events / "
-                    f"{CURSOR_MAX_STREAM_BYTES} bytes)."
-                )
-                await terminate_process_tree(proc)
-                break
-            last_event_monotonic = time.monotonic()
-            idle_warning_emitted = False
-            decoded = raw.decode("utf-8", "replace").rstrip("\r\n")
-            line = decoded.strip()
-            if not line.startswith("{"):
-                if cursor_approval_request_text(line):
-                    stream_error = (
-                        "Cursor requested interactive approval, which is not "
-                        "supported by the headless backend."
-                    )
-                    await terminate_process_tree(proc)
-                    break
-                continue
-            try:
-                normalized = normalize_cursor_stream_event(line)
-            except CursorEventParseError as exc:
-                await append_event(session_id, "raw_event", {
-                    "run_id": run_id,
-                    "backend": BACKEND_CURSOR,
-                    "diagnostic": cursor_stream_event_diagnostic(line),
-                })
-                logger.warning("unrecognized Cursor stream-json event session=%s run=%s error=%s", session_id, run_id, exc)
-                stream_error = (
-                    "Cursor requested interactive approval, which is not "
-                    "supported by the headless backend."
-                    if cursor_approval_request_text(line)
-                    else (
-                        "Cursor emitted an unsupported stream-json event; "
-                        "update HyadexServer or use a compatible Cursor CLI. "
-                        f"({exc})"
-                    )
-                )
-                await terminate_process_tree(proc)
-                break
-            if normalized is None:
-                continue
-            await append_active_stdout(
-                session_id,
-                cursor_live_event_summary(normalized),
-            )
-            kind = normalized["kind"]
-            event_provider_id = str(
-                normalized.get("session_id") or ""
-            ).strip()
-            if (
-                provider_started
-                and event_provider_id != provider_id
-            ):
-                stream_error = (
-                    "Cursor changed session_id within one provider turn."
-                )
-                await terminate_process_tree(proc)
-                break
-            if kind == "session_started":
-                if provider_id and event_provider_id != provider_id:
-                    stream_error = (
-                        "Cursor resume initialized a different session_id "
-                        "than the admitted provider session."
-                    )
-                    await terminate_process_tree(proc)
-                    break
-                await emit_provider_session(event_provider_id)
-                await mark_provider_turn_ready(session_id, run_id, provider_id)
-                async with ACTIVE_LOCK:
-                    owned = ACTIVE.get(session_id) or {}
-                    if owned.get("run_id") == run_id and mcp_owner:
-                        owned["provider_tools_ready"].set()
-            elif not provider_started:
-                stream_error = (
-                    "Cursor emitted provider activity before session "
-                    "initialization."
-                )
-                await terminate_process_tree(proc)
-                break
-            elif kind == "assistant_text":
-                # Publish the thought that led here before the answer itself,
-                # so the timeline keeps provider order even when Cursor never
-                # sends the matching `thinking/completed`.
-                await flush_cursor_reasoning()
-                text = compact_memory_text(
-                    clean_assistant_text(str(normalized.get("text") or "")),
-                    CURSOR_TEXT_EVENT_MAX_CHARS,
-                )
-                if text:
-                    remaining_text_chars = max(
-                        0,
-                        CURSOR_ACCUMULATED_TEXT_MAX_CHARS
-                        - accumulated_text_chars,
-                    )
-                    retained_text = text[:remaining_text_chars]
-                    if retained_text:
-                        text_parts.append(retained_text)
-                        accumulated_text_chars += len(retained_text)
-                    await append_event(session_id, "assistant_text", {"run_id": run_id, "text": text, **run_event_metadata(run_id)})
-            elif kind == "reasoning_delta":
-                delta = str(normalized.get("text") or "")
-                if delta and reasoning_buffer_chars < CODEX_APP_SERVER_TOOL_OUTPUT_MAX_CHARS:
-                    reasoning_buffer.append(delta)
-                    reasoning_buffer_chars += len(delta)
-            elif kind == "reasoning_completed":
-                await flush_cursor_reasoning()
-            elif kind == "tool_started":
-                await flush_cursor_reasoning()
-                call_id = str(normalized["call_id"])
-                if (
-                    call_id not in started_tool_ids
-                    and len(started_tool_ids) >= CURSOR_MAX_TOOL_CALLS
-                ):
-                    stream_error = (
-                        "Cursor exceeded the bounded per-turn tool-call "
-                        f"ceiling ({CURSOR_MAX_TOOL_CALLS})."
-                    )
-                    await terminate_process_tree(proc)
-                    break
-                bounded_args = bounded_codex_interaction_value(
-                    normalized.get("args") or {},
-                    remaining=CODEX_APP_SERVER_TOOL_OUTPUT_MAX_CHARS,
-                )
-                tool = {
-                    "id": call_id,
-                    "name": str(normalized.get("tool") or "Tool")[:240],
-                    "input": (
-                        bounded_args
-                        if isinstance(bounded_args, dict)
-                        else {"value": bounded_args}
-                    ),
-                }
-                tool_calls[call_id] = tool
-                changed_paths.update(tool_changed_paths(tool))
-                if call_id not in started_tool_ids:
-                    started_tool_ids.add(call_id)
-                    await append_event(session_id, "tool_started", {"run_id": run_id, "tool": tool})
-            elif kind in (
-                "tool_finished",
-                "tool_rejected",
-                "tool_status",
-                "tool_confirmation_required",
-            ):
-                call_id = str(normalized["call_id"])
-                if (
-                    call_id
-                    and call_id not in finished_tool_ids
-                    and len(finished_tool_ids) >= CURSOR_MAX_TOOL_CALLS
-                ):
-                    stream_error = (
-                        "Cursor exceeded the bounded per-turn completed "
-                        f"tool-call ceiling ({CURSOR_MAX_TOOL_CALLS})."
-                    )
-                    await terminate_process_tree(proc)
-                    break
-                if call_id and call_id not in finished_tool_ids:
-                    finished_tool_ids.add(call_id)
-                    tool = tool_calls.get(call_id)
-                    if tool is None:
-                        bounded_args = bounded_codex_interaction_value(
-                            normalized.get("args") or {},
-                            remaining=CODEX_APP_SERVER_TOOL_OUTPUT_MAX_CHARS,
-                        )
-                        tool = {
-                            "id": call_id,
-                            "name": str(
-                                normalized.get("tool") or "Tool"
-                            )[:240],
-                            "input": (
-                                bounded_args
-                                if isinstance(bounded_args, dict)
-                                else {"value": bounded_args}
-                            ),
-                        }
-                        changed_paths.update(tool_changed_paths(tool))
-                    if kind in {
-                        "tool_rejected",
-                        "tool_confirmation_required",
-                    }:
-                        output: Any = bounded_codex_output_text(
-                            normalized.get("reason")
-                            or normalized.get("message")
-                            or "Rejected by permission policy."
-                        )
-                        exit_code = 1
-                    elif kind == "tool_status":
-                        output = bounded_codex_output_text(
-                            normalized.get("message")
-                            or "Cursor reported an intermediate tool status."
-                        )
-                        exit_code = None
-                    else:
-                        output = bounded_codex_output_text(
-                            normalized.get("result")
-                        )
-                        normalized_exit = normalized.get("exit_code")
-                        exit_code = (
-                            normalized_exit
-                            if isinstance(normalized_exit, int)
-                            and not isinstance(normalized_exit, bool)
-                            else None
-                        )
-                    await append_event(session_id, "tool_finished", {
-                        "run_id": run_id,
-                        "tool_id": call_id,
-                        "tool": tool,
-                        "output": output,
-                        "exit_code": exit_code,
-                    })
-                    tool_calls.pop(call_id, None)
-                    if kind == "tool_confirmation_required":
-                        stream_error = (
-                            "Cursor requested confirmation for a tool action, "
-                            "which is not supported by the headless backend."
-                        )
-                        await terminate_process_tree(proc)
-                        break
-            elif kind == "turn_finished":
-                terminal_event_seen = True
-                turn_is_error = bool(normalized.get("is_error"))
-                normalized_usage = normalized.get("usage")
-                cursor_usage = (
-                    dict(normalized_usage)
-                    if isinstance(normalized_usage, dict)
-                    else {}
-                )
-                result_text = compact_memory_text(
-                    str(normalized.get("result_text") or ""),
-                    CURSOR_TEXT_EVENT_MAX_CHARS,
-                )
-                try:
-                    await asyncio.wait_for(
-                        proc.wait(),
-                        timeout=CURSOR_POST_TERMINAL_EXIT_SECONDS,
-                    )
-                except asyncio.TimeoutError:
-                    terminal_exit_forced = True
-                    await terminate_process_tree(
-                        proc,
-                        grace=CURSOR_GUARD_TEARDOWN_GRACE_SECONDS,
-                    )
-                break
-    except Exception as e:
-        stream_error = (
-            f"{type(e).__name__} while processing the Cursor stream"
-        )
-        logger.error(
-            "Cursor run failed session=%s run=%s error_type=%s",
-            session_id,
-            run_id,
-            type(e).__name__,
-        )
-    finally:
-        # A turn can end (completed, stopped, or failed) while a thought is
-        # still buffered; publish it rather than dropping it.
-        with suppress(Exception):
-            await flush_cursor_reasoning()
-        manifest_watch_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await manifest_watch_task
-        await terminate_process_tree(
-            proc,
-            grace=CURSOR_GUARD_TEARDOWN_GRACE_SECONDS,
-        )
-        await clear_active_process(session_id, expected_run_id=run_id)
-        try:
-            stderr_bytes = await finish_bounded_process_stream(stderr_task)
-        except asyncio.CancelledError:
-            stderr_task.cancel()
-            with suppress(BaseException):
-                await stderr_task
-            raise
-        except Exception as exc:
-            logger.warning(
-                "Cursor stderr drain failed session=%s run=%s error=%s",
-                session_id,
-                run_id,
-                concise_error_message(exc),
-            )
-
-    stderr_diagnostic = cursor_stderr_diagnostic(stderr_bytes)
-    stopped = run_id in STOPPED_RUNS
-    outstanding_tools = list(tool_calls.items())
-    if outstanding_tools:
-        unfinished_reason = (
-            "Cursor tool stopped before completion."
-            if stopped
-            else "Cursor tool did not emit a completion event."
-        )
-        for call_id, tool in outstanding_tools:
-            await append_event(session_id, "tool_finished", {
-                "run_id": run_id,
-                "tool_id": call_id,
-                "tool": tool,
-                "output": unfinished_reason,
-                "exit_code": 1,
-            })
-            tool_calls.pop(call_id, None)
-    protocol_error: str | None = None
-    if not stopped and not timeout_error and not stream_error and not turn_is_error:
-        if terminal_exit_forced:
-            protocol_error = (
-                "Cursor emitted a terminal result but did not exit cleanly; "
-                "its resumable state may not have finished persisting."
-            )
-        elif outstanding_tools:
-            protocol_error = (
-                "Cursor completed with unfinished tool calls."
-            )
-        elif proc.returncode in (0, None) and not terminal_event_seen:
-            protocol_error = (
-                "Cursor exited successfully without a terminal result event."
-            )
-        elif proc.returncode in (0, None) and not provider_started:
-            protocol_error = (
-                "Cursor completed without initializing a resumable session."
-            )
-
-    stderr_text = stderr_bytes.decode("utf-8", "replace")
-    cursor_auth_signal = bool(
-        not stopped
-        and (
-            turn_is_error
-            or proc.returncode not in (0, None)
-        )
-        and (
-            (turn_is_error and auth_failure_text(result_text))
-            or auth_failure_text(stderr_text)
-        )
-    )
-    cursor_auth_state = (
-        await asyncio.to_thread(cursor_auth_probe_state, cursor_bin)
-        if cursor_auth_signal and sess.get("provider_connection") != "custom"
-        else None
-    )
-    cursor_auth_failed = cursor_auth_state == "unauthenticated"
-    cursor_auth_validation_error = cursor_auth_state == "error"
-    cursor_auth_failure_message = (
-        "Cursor authentication failed. Sign in as the server user or configure "
-        "CURSOR_API_KEY, then click Recheck CLIs."
-    )
-    cursor_auth_validation_message = (
-        "Cursor could not validate the failed provider request. Check the "
-        "server network and Cursor credentials, then click Recheck CLIs."
-    )
-    logical_failure_message = (
-        cursor_logical_failure_message(result_text)
-        if turn_is_error
-        else None
-    )
-    cursor_failure_message = (
-        cursor_auth_failure_message
-        if cursor_auth_failed
-        else cursor_auth_validation_message
-        if cursor_auth_validation_error
-        else logical_failure_message
-    )
-
-    if timeout_error and not stopped:
-        await append_event(session_id, "error", {
-            "run_id": run_id,
-            "backend": BACKEND_CURSOR,
-            "message": timeout_error,
-            "exit_code": proc.returncode,
-            **run_event_metadata(run_id),
-        })
-    elif stream_error and not stopped:
-        await append_event(session_id, "error", {"run_id": run_id, "message": f"Cursor stream failed: {stream_error}", **run_event_metadata(run_id)})
-    elif protocol_error and not stopped:
-        await append_event(session_id, "error", {
-            "run_id": run_id,
-            "backend": BACKEND_CURSOR,
-            "message": protocol_error,
-            "exit_code": proc.returncode,
-            **run_event_metadata(run_id),
-        })
-    elif turn_is_error and not stopped:
-        await append_event(session_id, "error", {
-            "run_id": run_id,
-            "message": cursor_failure_message,
-            "exit_code": proc.returncode,
-            **run_event_metadata(run_id),
-        })
-    elif (
-        not stopped
-        and proc.returncode not in (0, None)
-        and not terminal_exit_forced
-    ):
-        await append_event(session_id, "error", {
-            "run_id": run_id,
-            "message": (
-                cursor_auth_failure_message
-                if cursor_auth_failed
-                else cursor_auth_validation_message
-                if cursor_auth_validation_error
-                else f"Cursor exited {proc.returncode}. {stderr_diagnostic}"
-            ),
-            "exit_code": proc.returncode,
-            **run_event_metadata(run_id),
-        })
-
-    runtime_failure_reason = (
-        (
-            cursor_auth_failure_message
-            if cursor_auth_failed
-            else cursor_auth_validation_message
-            if cursor_auth_validation_error
-            else None
-        )
-        or timeout_error
-        or stream_error
-        or protocol_error
-        or (logical_failure_message if turn_is_error else None)
-        or (
-            f"Cursor exited {proc.returncode}. {stderr_diagnostic}"
-            if proc.returncode not in (0, None)
-            else None
-        )
-    )
-    if not stopped and sess.get("provider_connection") != "custom" and (
-        timeout_error
-        or stream_error
-        or protocol_error
-        or turn_is_error
-        or (
-            proc.returncode not in (0, None)
-            and not terminal_exit_forced
-        )
-    ):
-        record_runtime_failure(
-            BACKEND_CURSOR,
-            runtime_failure_reason
-            or "The latest Cursor run failed.",
-            executable=cursor_bin,
-            auth_failure=cursor_auth_failed,
-            runtime_error=cursor_auth_validation_error,
-        )
-    elif not stopped and sess.get("provider_connection") != "custom":
-        record_runtime_success(BACKEND_CURSOR)
-
-    successful_terminal = bool(
-        not stopped
-        and not timeout_error
-        and not stream_error
-        and not protocol_error
-        and not turn_is_error
-        and proc.returncode == 0
-        and not terminal_exit_forced
-        and terminal_event_seen
-        and provider_started
-    )
-    if provider_id and successful_terminal:
-        persisted = await persist_run_provider_session(
-            session_id,
-            run_id,
-            BACKEND_CURSOR,
-            provider_id,
-            cursor_instruction_hash=instruction_hash,
-            standalone_provider_context=standalone_provider_context,
-            emit_event=True,
-        )
-        if persisted and memory_injected:
-            async with STORE._lock:
-                current = STORE.sessions.get(session_id)
-                if (
-                    current is not None
-                    and str(session_provider_id(current) or "") == provider_id
-                ):
-                    current["memory_seed_used"] = True
-                    current["updated_at"] = now_iso()
-                    await STORE.save()
-            await append_event(session_id, "history_imported", {
-                "run_id": run_id,
-                "backend": BACKEND_CURSOR,
-                "message": (
-                    "Applied bounded fork memory to this successful Cursor "
-                    "turn."
-                ),
-            })
-    await collect_manifest(session_id, run_id, manifest_path, seen_artifacts=seen_artifacts, final=True)
-    await collect_recent_leftover_manifests(session_id, run_id, manifest_path, seen_artifacts=seen_artifacts)
-    await publish_turn_code_diff(session_id, run_id, BACKEND_CURSOR, cwd, diff_baseline, changed_paths)
-
-    terminal_payload = {
-        "run_id": run_id,
-        "backend": BACKEND_CURSOR,
-        "exit_code": 0 if successful_terminal else proc.returncode,
-        "result_text": (
-            clean_assistant_text(
-                result_text or "\n\n".join(text_parts).strip()
-            )[:CURSOR_ACCUMULATED_TEXT_MAX_CHARS].rstrip()
-            if successful_terminal
-            else ""
-        ),
-        "stopped": stopped,
-        "is_error": bool(not successful_terminal and not stopped),
-        **({
-            "input_tokens": cursor_usage.get("input_tokens"),
-            "cached_input_tokens": cursor_usage.get("cache_read_tokens"),
-            "cache_write_input_tokens": cursor_usage.get("cache_write_tokens"),
-            "output_tokens": cursor_usage.get("output_tokens"),
-            "total_tokens": (
-                cursor_usage.get("input_tokens", 0)
-                + cursor_usage.get("cache_read_tokens", 0)
-                + cursor_usage.get("cache_write_tokens", 0)
-                + cursor_usage.get("output_tokens", 0)
-            ),
-        } if cursor_usage else {}),
         **run_event_metadata(run_id),
     }
     finalize_task = asyncio.create_task(finalize_owned_turn_finished(
@@ -65563,14 +63424,6 @@ async def _start_turn_locked(
             )
         if provider_context_mode == "chat":
             sess = await STORE.mark_backend_started(session_id, str(backend))
-        if backend == BACKEND_CURSOR:
-            # Keep the exact compatibility-probed executable pinned through
-            # admission; mark_backend_started returns a fresh durable snapshot.
-            sess = dict(sess)
-            executable_key = (
-                "_cursor_executable"
-            )
-            sess[executable_key] = runtime_status.get("_executable")
 
         if grant_bearing_admission:
             route_grant_mutation = (
@@ -65780,12 +63633,6 @@ async def _start_turn_locked(
             ),
         )
         provider_authority_context = ""
-        if turn_obligation_ids and backend == BACKEND_CURSOR:
-            provider_authority_context += (
-                "\n\n[Hyadex final-result handoff]\n"
-                "Your successful non-empty final answer will be delivered once to the explicitly referenced chat. "
-                "Do not send it manually.\n[End Hyadex final-result handoff]\n"
-            )
         provider_runtime_env = await provider_authority_runtime_env(
             run_id,
             authority_path,
@@ -65810,11 +63657,6 @@ async def _start_turn_locked(
             prompt,
         )
         provider_prompt = provider_turn_payload.user_prompt
-        if backend == BACKEND_CURSOR:
-            # These print-mode CLIs have no separate system/application-context
-            # channel. Preserve its existing self-contained prompt until that
-            # provider exposes an out-of-band per-turn instruction surface.
-            provider_prompt += provider_turn_payload.runtime_context
 
         if req.skill_selection is not None:
             # Close the gap between the early queue/admission check and the
@@ -66093,19 +63935,6 @@ async def _start_turn_locked(
                 interactive_app_server=interactive_app_server,
                 provider_command=resolved_provider_command,
                 provider_runtime_env=provider_turn_payload.runtime_env,
-                **(
-                    {"standalone_provider_context": True}
-                    if provider_context_mode == "standalone"
-                    else {}
-                ),
-            )
-        elif backend == BACKEND_CURSOR:
-            task = run_cursor(
-                session_id,
-                run_id,
-                provider_prompt,
-                dict(sess),
-                manifest_path,
                 **(
                     {"standalone_provider_context": True}
                     if provider_context_mode == "standalone"
@@ -70569,7 +68398,7 @@ async def health() -> dict[str, Any]:
             "side_questions": side_questions.capability(),
             "codex_auth_v1": codex_auth.capability(available=bool(AGENT_TOKEN) and CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC),
             "codex_provider_v1": {"available": bool(AGENT_TOKEN) and CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC, "wire_api": "responses", "per_chat": True, "per_chat_models": True, "model_discovery": True, "model_compatibility": True},
-            "provider_connections_v1": {"available": bool(AGENT_TOKEN), "per_chat": True, "backends": [BACKEND_CLAUDE, BACKEND_CURSOR]},
+            "provider_connections_v1": {"available": bool(AGENT_TOKEN), "per_chat": True, "backends": [BACKEND_CLAUDE]},
             "websocket_auth_v1": {
                 "available": True,
                 "required": False,
@@ -70591,14 +68420,6 @@ async def health() -> dict[str, Any]:
                 "version": 1,
                 "max_batch_items": MAX_BULK_IMPORT_ITEMS,
                 "max_list_items": MAX_LOCAL_SESSION_LIST_ITEMS,
-            },
-            "local_session_import_cursor_v1": {
-                "available": True,
-                "required": False,
-                "message": "Cursor CLI discovery and native resume with an initial public-text history snapshot are available; request include_cursor=true.",
-                "action": None,
-                "version": 1,
-                "history_mode": "initial_text_snapshot",
             },
             "session_fork_completed_prefix_v1": {
                 "available": True,
@@ -70653,30 +68474,6 @@ async def health() -> dict[str, Any]:
                 ),
                 "max_client_frame_bytes": PORT_TUNNEL_MAX_CLIENT_FRAME_BYTES,
                 **port_tunnel_status,
-            },
-            "cursor_backend": {
-                # ``available`` advertises the server contract. Runtime
-                # readiness is reported independently by
-                # /api/runtime/catalog backends.cursor.available so clients
-                # can distinguish an old server from a missing/old CLI.
-                "available": True,
-                "required": False,
-                "version": 2,
-                "message": (
-                    "Cursor is supported when a compatible authenticated "
-                    "cursor-agent or agent executable is available."
-                ),
-                "action": None,
-                "permission_modes": list(CURSOR_PERMISSION_MODES),
-                "default_permission_mode": CURSOR_DEFAULT_PERMISSION_MODE,
-                "permission_semantics": {
-                    "default": "cursor_configured_permissions_without_force",
-                    "full_access": "force_allow_except_explicit_cursor_denies",
-                    "plan": "plan_only",
-                },
-                "supports_standalone_context": True,
-                "instruction_channel": "prompt_envelope",
-                "trusted_system_instruction_channel": False,
             },
             "server_restart": server_restart_capability(
                 restart_blocker_snapshot
@@ -71882,13 +69679,10 @@ async def set_codex_default_model(model: str | None, expected_revision):
 
 router.include_router(provider_connections.create_router(
     authorize=require_native_admin_control, store=PROVIDER_CONNECTION_STORE,
-    cursor_catalog=lambda selected: cursor_api_key.catalog(selected, executable=resolve_cursor_executable(), env=runner_env()),
     codex_store=CODEX_PROVIDER_STORE, codex_set_model=set_codex_default_model,
     session_lookup=lambda session_id: STORE.sessions.get(session_id),
     account=lambda backend: provider_connections.native_account_metadata(
         backend, env=runner_env(),
-        cursor_executable=shutil.which(CURSOR_BIN, path=runner_env().get("PATH")) if backend == BACKEND_CURSOR else None,
-        command=lambda cmd: runtime_command(cmd, timeout_seconds=4),
     ),
 ))
 
@@ -72546,16 +70340,6 @@ async def interactive_chat_native_snapshot(session_id: str) -> dict[str, Any]:
     codex_available = backend == BACKEND_CODEX and CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC
     claude_available = backend == BACKEND_CLAUDE and CLAUDE_TRANSPORT != CLAUDE_TRANSPORT_PRINT
     runtime_available = True
-    if backend == BACKEND_CURSOR:
-        # Contract support is independent of CLI readiness. Read only the
-        # cached readiness bit; never expose raw diagnostics or probe on a
-        # guest refresh. Actual turn admission still rechecks the runtime.
-        with RUNTIME_DIAGNOSTICS_LOCK:
-            diagnostic = RUNTIME_DIAGNOSTICS.get(BACKEND_CURSOR) or {}
-            runtime_available = (
-                diagnostic.get("status") == "ready"
-                and diagnostic.get("available") is True
-            )
     status = {"type": "active" if active else "idle", "activeFlags": []}
     codex_runtime = {
         "available": codex_available, "transport": CODEX_TRANSPORT,
@@ -72601,11 +70385,6 @@ async def interactive_chat_native_snapshot(session_id: str) -> dict[str, Any]:
             "codex_controls": {"available": codex_available},
             "claude_controls": {"available": claude_available,
                                 "interactive_client_capability": CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY},
-            "cursor_backend": {
-                "available": True, "required": False, "version": 2,
-                "permission_modes": list(CURSOR_PERMISSION_MODES),
-                "default_permission_mode": CURSOR_DEFAULT_PERMISSION_MODE,
-            },
             "provider_jobs_access_control_v1": {
                 "available": bool(AGENT_TOKEN), "version": 1,
                 "modes": list(PROVIDER_JOBS_ACCESS_MODES),
@@ -75077,7 +72856,6 @@ async def create_session_with_history(req: CreateSessionRequest) -> dict[str, An
 @router.get("/api/local-sessions")
 async def get_local_sessions(
     limit: int = Query(default=200, ge=1, le=MAX_LOCAL_SESSION_LIST_ITEMS),
-    include_cursor: bool = False,
 ) -> dict[str, Any]:
     """List main conversations unused by any installed same-user local instance."""
 
@@ -75087,8 +72865,7 @@ async def get_local_sessions(
             for session in STORE.sessions.values()
             for key in local_session_ownership.provider_session_keys(session, DEFAULT_BACKEND)
         }
-    options = {"include_cursor": True} if include_cursor else {}
-    sessions = await asyncio.to_thread(local_session_candidates, limit, known_provider_keys, **options)
+    sessions = await asyncio.to_thread(local_session_candidates, limit, known_provider_keys)
     return {"sessions": sessions}
 
 
@@ -75160,7 +72937,6 @@ async def bulk_import_sessions_guarded(
             local_session_candidates,
             MAX_LOCAL_SESSION_LIST_ITEMS,
             set(),
-            **({"include_cursor": True} if any(item.backend == BACKEND_CURSOR for item in req.items) else {}),
         )
         candidate_by_key = {
             (str(candidate["backend"]), str(candidate["provider_session_id"])): candidate
@@ -75214,29 +72990,24 @@ async def bulk_import_sessions_guarded(
 
             staged_session: dict[str, Any] | None = None
             try:
-                if item.backend == BACKEND_CURSOR:
-                    source_path, history_items = await asyncio.to_thread(
-                        cursor_initial_history, item.provider_session_id, candidate_cwd or "",
-                    )
-                else:
-                    source_path, history_items = await asyncio.to_thread(
-                        provider_history,
-                        {
-                            "backend": item.backend,
-                            "session_id": item.provider_session_id,
-                            "claude_session_id": (
-                                item.provider_session_id
-                                if item.backend == BACKEND_CLAUDE
-                                else None
-                            ),
-                            "codex_thread_id": (
-                                item.provider_session_id
-                                if item.backend == BACKEND_CODEX
-                                else None
-                            ),
-                        },
-                        None,
-                    )
+                source_path, history_items = await asyncio.to_thread(
+                    provider_history,
+                    {
+                        "backend": item.backend,
+                        "session_id": item.provider_session_id,
+                        "claude_session_id": (
+                            item.provider_session_id
+                            if item.backend == BACKEND_CLAUDE
+                            else None
+                        ),
+                        "codex_thread_id": (
+                            item.provider_session_id
+                            if item.backend == BACKEND_CODEX
+                            else None
+                        ),
+                    },
+                    None,
+                )
                 if source_path is None:
                     results.append(bulk_import_result(
                         item,
@@ -79367,7 +77138,6 @@ async def _fork_session_locked(
             subagent_limit=parent.get("subagent_limit"),
             system_prompt=parent.get("system_prompt"),
             claude_permission_mode=effective_claude_permission_mode(parent),
-            cursor_permission_mode=effective_cursor_permission_mode(parent),
             codex_approval_policy=parent.get("codex_approval_policy"),
             codex_sandbox_mode=parent.get("codex_sandbox_mode"),
             codex_permission_profile=parent.get("codex_permission_profile"),
@@ -79487,23 +77257,6 @@ async def _fork_session_locked(
         async with STORE._lock:
             STORE.sessions[child["id"]] = child
             await STORE.save()
-    elif parent_backend == BACKEND_CURSOR:
-        cursor_fork_reason = (
-            "Cursor does not expose an HyadexServer-owned native fork; "
-            "using bounded conversation memory"
-        )
-        child["memory_seed"] = await asyncio.to_thread(
-            build_fork_memory,
-            parent,
-            session_id,
-            reason=cursor_fork_reason,
-        )
-        child["memory_seed_used"] = False
-        child["memory_forked"] = True
-        child["memory_fork_reason"] = cursor_fork_reason
-        async with STORE._lock:
-            STORE.sessions[child["id"]] = child
-            await STORE.save()
     if parent_claude_session_id:
         child["fork_from"] = parent_claude_session_id
         if claude_cutoff:
@@ -79546,7 +77299,7 @@ async def _fork_session_locked(
             },
         )
     else:
-        # Claude, Cursor, and any future backend still need one current event so
+        # Claude and any future backend still need one current event so
         # copied source timestamps do not become the child's latest activity.
         await append_event(
             child["id"],
@@ -79556,12 +77309,6 @@ async def _fork_session_locked(
                 "message": (
                     "Forked "
                     f"{copied} conversation events from the parent chat. "
-                    + (
-                        "The first Cursor turn will seed a fresh provider "
-                        "session with bounded conversation memory."
-                        if parent_backend == BACKEND_CURSOR
-                        else ""
-                    )
                 ).strip(),
                 "copied_events": copied,
                 "history_copy_error": history_copy_error,
@@ -82533,7 +80280,7 @@ async def stop_turn(
             if pending:
                 if (
                     hard_terminalize_on_timeout
-                    and str(session.get("backend") or "") in {BACKEND_CODEX, BACKEND_CLAUDE, BACKEND_CURSOR}
+                    and str(session.get("backend") or "") in {BACKEND_CODEX, BACKEND_CLAUDE}
                 ):
                     backend = str(session.get("backend") or "")
                     run_id = str(current_turn.get("run_id") or "") or None

@@ -38,8 +38,8 @@ class CodexProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
             "asyncio": asyncio, "HTTPException": HTTPException, "codex_provider": codex_provider,
             "provider_connections": SimpleNamespace(native_credentials_present=lambda *args: False),
             "PROVIDER_CONNECTION_STORE": SimpleNamespace(catalog=lambda *args, **kwargs: {}),
-            "BACKEND_CODEX": "codex", "BACKEND_CLAUDE": "claude", "BACKEND_CURSOR": "cursor",
-            "VALID_BACKENDS": {"claude", "codex", "cursor"},
+            "BACKEND_CODEX": "codex", "BACKEND_CLAUDE": "claude",
+            "VALID_BACKENDS": {"claude", "codex"},
             "ThreadPoolExecutor": ThreadPoolExecutor, "copy_context": copy_context,
             "RUNTIME_CATALOG_DEADLINE": ContextVar("test_catalog_deadline", default=None),
             "RUNTIME_CATALOG_BUDGET_SECONDS": 25.0,
@@ -50,8 +50,7 @@ class CodexProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
             "runtime_command": self.command, "logger": Mock(),
             "runtime_diagnostic": Mock(return_value={"status": "unauthenticated", "installed": True}),
             "public_runtime_diagnostic": lambda value: value,
-            "runtime_option": lambda value, label: {"value": value, "label": label},
-            "CURSOR_PERMISSION_MODES": [], "CURSOR_DEFAULT_PERMISSION_MODE": "default"}
+            "runtime_option": lambda value, label: {"value": value, "label": label}}
         exec(CODE, self.ns)
 
     def test_normal_codex_uses_its_login_despite_saved_or_broken_optional_provider(self):
@@ -91,15 +90,15 @@ class CodexProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
             self.ns.update(PROVIDER_CONNECTION_STORE=store, CODEX_PROVIDER_STORE=codex,
                            provider_connections=provider_connections)
             self.ns["runtime_diagnostic"].return_value = {"status": "ready", "installed": True}
-            for backend in ("claude", "cursor", "codex"):
+            for backend in ("claude", "codex"):
                 session = {"backend": backend, "model": "fixture/model"}
                 if backend == "codex":
                     codex.save({"base_url": "https://synthetic.invalid/v1", "api_key": "synthetic", "model": "fixture/model"})
                     session.update(codex_provider="custom", codex_provider_revision=codex.revision())
                     codex.reset()
                 else:
-                    value = {"base_url": "https://api2.cursor.sh" if backend == "cursor" else "https://synthetic.invalid/v1",
-                             "protocol": "cursor" if backend == "cursor" else "anthropic", "auth_header": "bearer",
+                    value = {"base_url": "https://synthetic.invalid/v1",
+                             "protocol": "anthropic", "auth_header": "bearer",
                              "api_key": "synthetic", "model": "fixture/model", "expected_revision": 0}
                     store.write(backend, 0, value, "verified")
                     session["provider_connection"] = "custom"

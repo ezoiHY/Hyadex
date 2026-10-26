@@ -91,7 +91,7 @@ and personal machine paths outside tracked source.
 
 ### Retired providers
 
-Gemini and OpenCode no longer appear in the runtime catalog and cannot be
+Cursor, Gemini and OpenCode no longer appear in the runtime catalog and cannot be
 re-enabled with `HYADEX_ENABLED_BACKENDS`. Their saved chat history remains
 readable and can be renamed, pinned, moved or archived. New turns, runtime
 changes, forks and native imports reject the removed backend. Existing jobs
@@ -733,9 +733,6 @@ claude --version
 command -v codex
 codex --version
 
-# Cursor backend
-command -v cursor-agent || command -v agent
-cursor-agent --version || agent --version
 ```
 
 Run these as the same Unix user that owns the systemd service. If the CLI works
@@ -787,9 +784,6 @@ environment. Its behavior during token renewal and process termination has not
 been validated by the passive-readiness tests. Do not treat a successful model
 list as authentication evidence or this change as a guarantee against all
 native login failures.
-
-Cursor capability contract v2 advertises the hardened process guard, bounded
-idle warning/timeout lifecycle, and explicit permission-mode semantics.
 
 A new prompt performs installation preflight before reserving real agent work. If
 the selected CLI is unavailable, the endpoint returns a structured
@@ -1395,8 +1389,8 @@ Authenticated clients can call
 `GET /api/sessions/{session_id}/provider-commands?refresh=false` to retrieve a
 bounded, sanitized inventory for that chat's backend and working directory.
 Codex returns native skills from app-server `skills/list`; Claude returns the
-commands reported by the Claude Agent SDK. Cursor currently reports explicit
-unsupported metadata and an empty inventory.
+commands reported by the Claude Agent SDK. Retired providers report unsupported
+metadata and an empty inventory.
 
 Clients select an entry by sending only its opaque `id` and inventory
 `revision` in the optional turn field `skill_selection`. They never receive or
@@ -1421,7 +1415,7 @@ FIFO order.
 Before publishing:
 
 ```bash
-python3 -m py_compile agent_server.py hyadex_jobs.py hyadex_chats.py hyadex_emergency.py hyadex_notify.py hyadex_publish.py provider_commands.py hyadex/providers/claude.py hyadex/providers/codex.py hyadex/providers/runtime.py cursor_agent_client.py update_runner.py
+python3 -m py_compile agent_server.py hyadex_jobs.py hyadex_chats.py hyadex_emergency.py hyadex_notify.py hyadex_publish.py provider_commands.py hyadex/providers/claude.py hyadex/providers/codex.py hyadex/providers/runtime.py update_runner.py
 rg -n 'private-host|/home/<name>|/Users/<name>|token-value' .
 ```
 

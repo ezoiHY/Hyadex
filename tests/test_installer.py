@@ -124,8 +124,7 @@ class InstallerContractTests(unittest.TestCase):
         self.assert_smoke_check_imports(
             INSTALLER.read_text(),
             {"codex_auth", "codex_provider", "side_questions", "codex_side_question",
-             "claude_side_question", "cursor_agent_client", "cursor_provider_mcp",
-             "cursor_process_guard"},
+             "claude_side_question"},
         )
         self.assertIn('version("claude-agent-sdk")', INSTALLER.read_text())
         self.assertIn(
@@ -747,8 +746,6 @@ exit 0
         self.assertIn('"$SCRIPT_DIR/provider_usage.py"', source)
         self.assertIn('"$SCRIPT_DIR/hyadex/providers/claude.py"', source)
         self.assertIn('"$SCRIPT_DIR/hyadex/providers/codex.py"', source)
-        self.assertIn('"$SCRIPT_DIR/cursor_agent_client.py"', source)
-        self.assertIn('"$SCRIPT_DIR/cursor_provider_mcp.py"', source)
         self.assert_smoke_check_imports(
             source, {"claude_agent_sdk", "croniter", "cryptography", "dateutil", "tzdata"},
         )
@@ -759,14 +756,12 @@ exit 0
         self.assertIn("python-dateutil>=2.9,<3", source)
         self.assertIn("'$REMOTE_SERVER_DIR/hyadex/providers/claude.py'", source)
         self.assertIn("'$REMOTE_SERVER_DIR/hyadex/providers/codex.py'", source)
-        self.assertIn("'$REMOTE_SERVER_DIR/cursor_agent_client.py'", source)
         self.assertIn("'$REMOTE_SERVER_DIR/provider_commands.py'", source)
         self.assertIn("'$REMOTE_SERVER_DIR/provider_usage.py'", source)
         self.assert_smoke_check_imports(
             source,
             {"codex_auth", "codex_provider", "side_questions", "codex_side_question",
              "claude_side_question", "claude_agent_sdk",
-             "cursor_agent_client", "cursor_process_guard",
              "provider_commands"},
         )
         self.assertNotIn("EXPECTED_CLIENT_BINDING", source)

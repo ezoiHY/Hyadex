@@ -54,7 +54,7 @@ class DigestQueuePersistenceTests(unittest.TestCase):
         source = {
             "id": "cursor-source",
             "title": "Cursor source",
-            "backend": agent_server.BACKEND_CURSOR,
+            "backend": "cursor",
             "cwd": "/tmp/cursor",
             "session_id": "cursor-provider-1",
             "cursor_session_id": "cursor-provider-1",
@@ -186,7 +186,7 @@ class DigestSummarizerBackendTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(agent_server.HTTPException) as raised:
                 await agent_server.build_handoff_digest(
                     "source",
-                    summarizer_backend=agent_server.BACKEND_CURSOR,
+                    summarizer_backend="cursor",
                 )
 
         self.assertEqual(raised.exception.status_code, 400)
@@ -725,7 +725,7 @@ class DigestDeliveryTests(unittest.IsolatedAsyncioTestCase):
         event = {
             "type": "turn_finished",
             "run_id": "cursor-source-run",
-            "backend": agent_server.BACKEND_CURSOR,
+            "backend": "cursor",
             "purpose": "handoff_digest",
             "digest_job_id": "digest-1",
             "source_session_id": "source-1",

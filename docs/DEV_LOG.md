@@ -3,6 +3,43 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Retire Cursor and admit only Claude/Codex
+
+- Removed Cursor execution, process guard, MCP bridge, CLI probes, API-key
+  configuration, optional title generation and local native-history discovery.
+  Runtime inventories now contain only the Claude and Codex integrations.
+- Removed Cursor health capabilities and the local-discovery opt-in parameter.
+  Bulk-import requests containing a Cursor item fail validation; old optional
+  Cursor-specific request fields follow the existing unknown-field policy and
+  are ignored. No old field or environment setting can enable Cursor execution.
+- Stored chats retain their backend, native identity, title and event bytes.
+  Metadata edits remain available; execution, import and fork return 410.
+  Saved jobs and retired backend overrides remain durably paused. Native
+  configuration, credentials and transcripts are retained as user data.
+- Internal executable discovery now rejects retired/unknown providers before
+  resolving a CLI instead of falling through to Codex. Its regression failed
+  before the guard and passes after it. Generic pagination, transcript byte
+  cursors and same-server mailbox behavior remain intact.
+- Claude static review identified stale installer expectations and a title
+  process fixture. Expectations were corrected; the process fixture now tests
+  the shared bounded process owner and still verifies update/restart deferral,
+  shutdown and descendant cleanup. Separate tests cover the Codex protocol.
+
+**Validation.** The final isolated full suite ran 4,826 cases (13 skipped), with
+only the eight inherited failures and no new failures or errors. All 257 fast
+package cases and 257 post-review focused cases pass; the earlier broader
+focused run passed 634 cases. All 328 Python files compile; dependency-lock,
+shell, manifest and diff checks pass. Native runners, event delivery, group
+recovery and shared history-cursor functions retain their previous ASTs.
+
+Real isolated HTTP acceptance passed old native/custom history reads, metadata
+edits, native/custom import guards, retired execution and fork rejection,
+durable job pause and two starts with unchanged event bytes and native files.
+Real Claude/Codex acceptance passed file editing and receipt, handoff,
+contextual follow-up, parallel replies, Stop, queue continuation, group-job
+execution and 47 ordered WebSocket events. Desktop/mobile clients and a live
+Cursor runtime were not exercised. **Availability:** source only.
+
 ## 2026-10-26 — Retire the OpenCode runtime
 
 - Removed OpenCode execution, stream translation, CLI probing, native title

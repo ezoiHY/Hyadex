@@ -108,7 +108,6 @@ class ExecutionStartupProcessTests(unittest.IsolatedAsyncioTestCase):
             "CLAUDE_PROJECTS_ROOT": str(self.base / "claude-history"),
             "CODEX_BIN": str(self.base / "no-codex"),
             "CLAUDE_BIN": str(self.base / "no-claude"),
-            "CURSOR_BIN": str(self.base / "no-cursor"),
             "TMPDIR": str(self.base / "tmp"),
             "PYTHONDONTWRITEBYTECODE": "1",
         })

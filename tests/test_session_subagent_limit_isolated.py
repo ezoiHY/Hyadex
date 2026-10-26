@@ -109,7 +109,7 @@ class SessionSubagentLimitTests(unittest.IsolatedAsyncioTestCase):
             self.ns["CODEX_TRANSPORT"] = "exec"
             with self.assertRaises(HTTPException) as caught:
                 await self.create(backend=backend, subagent_limit=3)
-            self.assertEqual(caught.exception.status_code, 409)
+            self.assertEqual(caught.exception.status_code, 400 if backend == "cursor" else 409)
 
     async def test_busy_save_does_not_wait_for_lifecycle_or_touch_native_provider(self):
         session = await self.create(subagent_limit=3)

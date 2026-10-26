@@ -2,8 +2,7 @@
 
 An endpoint is the base URL of an API service. You do not need to host one:
 an API vendor or company gateway can provide the URL, API key and model ID.
-An API subscription/credit balance is separate from a ChatGPT, Claude or
-Cursor consumer subscription. Never paste a real key into chat or a screenshot.
+An API subscription/credit balance is separate from a ChatGPT or Claude consumer subscription. Never paste a real key into chat or a screenshot.
 
 ## Start without an existing endpoint
 
@@ -17,7 +16,6 @@ trust; it and its upstream provider receive the requests you submit.
 | --- | --- | --- |
 | Codex | `https://openrouter.ai/api/v1` | Responses; OpenRouter API key |
 | Claude Code | `https://openrouter.ai/api` | Anthropic Messages; Bearer; OpenRouter API key |
-| Cursor | Not a generic OpenRouter endpoint | Native Cursor login / Cursor-issued CLI key |
 
 Claude Code custom APIs can be selected **per chat**. Select the
 intended server, open **Settings → My Agents → Configure API**, enter the
@@ -33,13 +31,12 @@ A green API check means the last explicit credential check passed; it does
 not certify every model or tool. Merely saving a legacy configuration cannot
 turn it green. The native account card is independent of custom API billing.
 
-Three collapsed provider rows show a check when either login method is detected
+The provider rows show a check when either login method is detected
 or connected. Expand to distinguish native credentials from a checked API.
 Only unsigned native providers show a short CLI sign-in command and a Read more
 link. Run the command as the
 user owning the selected server: [Codex](https://developers.openai.com/codex/auth),
-[Claude Code](https://code.claude.com/docs/en/authentication),
-or [Cursor](https://cursor.com/docs/cli/reference/authentication). They do not start a local login
+and [Claude Code](https://code.claude.com/docs/en/authentication). They do not start a local login
 on a potentially unrelated client machine or claim login succeeded. Claude
 continues to verify authentication on actual sends, not a background recheck.
 
@@ -93,8 +90,7 @@ Each provider uses matching **CLI Login** and **Custom API** cards. Account
 details belong only to CLI Login, never to an independent API key. Codex reports
 email and plan through its account API. Claude can expose saved profile email
 and subscription metadata, labeled as cached; this does not run auth-status,
-renew credentials or assert freshness. Cursor reports email from `status` and
-plan from `about` when available. Missing fields stay absent. Optional account reads occur
+renew credentials or assert freshness. Missing fields stay absent. Optional account reads occur
 on expanding a connected CLI card, use native-only administration and are fenced
 to the selected server. Failure to read details does not invalidate the login.
 
@@ -139,7 +135,6 @@ global logout action, so other server instances and terminal logins are untouche
 Saving a default retains the previous credential-check timestamp and creates a
 new settings revision. Existing chats retain their original credentials/model;
 refreshing their catalog uses their own saved binding, not the new global key.
-Cursor does not expose this generic custom-endpoint flow.
 
 The native-only `/api/admin/provider-models/{codex|claude}` route supports
 GET for inventory (optional `session_id`) and PUT with only `model` and
@@ -153,7 +148,7 @@ Private historical credential records remain for in-flight redaction and history
 identity, but durable revocation prevents using them for new requests, including
 after restart. Legacy empty settings from an earlier Forget are also revoked.
 
-Claude/Cursor bindings are private immutable snapshots, retained across
+Claude bindings are private immutable snapshots, retained across
 profile replacement but revoked by removal. Endpoint changes require a new chat after the
 first turn. Forks inherit the original binding. Importing a native conversation
 directly into a custom API is rejected. Claude uses chat-local process env and a
@@ -168,16 +163,6 @@ skipped. It is not LAN discovery and does not install or restart servers.
 Native credential presence is not a promise that a token remains valid; actual
 sends still determine authentication. Claude discovery never runs auth-status
 or renews credentials. Custom API keys are always entered explicitly.
-
-Cursor CLI's `--endpoint` configures a Cursor service API, not an arbitrary
-OpenAI-compatible model endpoint. Its API key is issued by Cursor. Cursor
-desktop BYOK is a separate feature; this does not certify CLI BYOK. The Cursor
-card explains the limitation and links to native authentication instructions.
-On CLI 2026.09.26, a disposable loopback probe of `--endpoint` requested
-`POST /auth/exchange_user_api_key`, not a model completion route. The bundled
-hidden `--base-url`/`--authless` options require a separate `agent-cli-local`
-entry point; the installed official CLI rejects that mode. They are not a
-supported generic-URL contract for this integration.
 
 ## Storage and boundary
 
@@ -204,10 +189,9 @@ supported generic-URL contract for this integration.
 References: [OpenRouter Codex](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli),
 [OpenRouter key status](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key),
 [OpenRouter Claude Code](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration),
-[Claude gateways](https://code.claude.com/docs/en/llm-gateway-connect),
-[Cursor CLI authentication](https://cursor.com/docs/cli/reference/authentication).
+[Claude gateways](https://code.claude.com/docs/en/llm-gateway-connect).
 
-Gemini and OpenCode execution and endpoint management were removed. Their
+Cursor, Gemini and OpenCode execution and endpoint management were removed. Their
 existing private connection/profile files are retained as user configuration; this code cleanup
 does not erase credentials or native history. They are no longer read to launch
 turns or generate titles.

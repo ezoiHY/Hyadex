@@ -185,7 +185,7 @@ def workspace_changes(before: dict[str, list[Any]] | None, after: dict[str, list
 # Request models
 # ---------------------------------------------------------------------------
 
-BackendName = Literal["claude", "codex", "cursor"]
+BackendName = Literal["claude", "codex"]
 
 
 class ParticipantSpec(BaseModel):
@@ -637,7 +637,7 @@ class GroupEngine:
         while handle in taken:
             handle = f"{base}{counter}"[:24]
             counter += 1
-        default_labels = {"claude": "Claude Code", "codex": "Codex", "cursor": "Cursor"}
+        default_labels = {"claude": "Claude Code", "codex": "Codex"}
         return {
             "handle": handle,
             "label": spec.label or default_labels.get(spec.backend, spec.backend),

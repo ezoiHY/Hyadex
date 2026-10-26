@@ -5,7 +5,7 @@ is not enough: verify the server contract and the behavior exposed by that
 provider's native runtime/client. This is a review template, not a support claim.
 
 Current package ownership is documented in [architecture](ARCHITECTURE.md).
-Gemini integration was removed; historical validation records are not a current
+Cursor, Gemini and OpenCode integrations were removed; historical validation records are not a current
 support claim.
 
 Record: **provider · transport · CLI/SDK versions · model/endpoint · server commit
@@ -96,7 +96,7 @@ Describe differences and extra provider usage for server-provided equivalents.
   history import, later native-history reconciliation and fork. Resume working
   does not prove the other four work. Distinguish CLI, IDE and cloud histories;
   never assume they share a format. Apply this checklist to Claude, Codex,
-  Cursor and each future adapter, including explicitly unsupported items.
+  each future adapter, including explicitly unsupported items.
 - [ ] Keep the original provider ID and exact workspace when resuming; test a
   contextual follow-up against the same native conversation. A missing workspace
   or unreadable store must not silently create a fresh thread or replay history
@@ -196,7 +196,6 @@ Run this minimum smoke flow with disposable chats/workspaces:
 ## Repository starting points
 
 - [Native-parity rules](../AGENTS.md); [runtime diagnostics tests](../tests/test_runtime_diagnostics.py).
-- [Cursor CLI import contract](CURSOR_LOCAL_IMPORT.md); [Cursor import tests](../tests/test_cursor_local_import.py), [cross-instance import tests](../tests/test_cross_instance_import.py).
 - [Titles](NATIVE_SESSION_TITLES.md); [title lifecycle tests](../tests/test_generated_title_lifecycle.py).
 - [Chat authorization](ASYNC_CHAT_ROUTES.md), [mailbox](CHAT_MAILBOX.md); [authority tests](../tests/test_provider_authority_lifecycle.py).
 - [Reasoning tests](../tests/test_reasoning_stream_isolated.py), [WebSocket catch-up tests](../tests/test_event_websocket_catchup.py), [history reconciliation tests](../tests/test_provider_history_sync.py).

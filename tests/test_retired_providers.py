@@ -176,6 +176,14 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
             server.BulkImportSessionItem(backend=self.backend, provider_session_id="old-native-id")
         self.assertNotIn(self.backend, provider_connections.PROTOCOLS)
 
+    def test_direct_retired_runtime_probe_cannot_select_a_replacement_executable(self):
+        with patch.object(server.shutil, "which", side_effect=AssertionError("Must not resolve a replacement runtime")):
+            for backend in (self.backend, "unknown-runtime"):
+                with self.subTest(backend=backend):
+                    with self.assertRaises(HTTPException) as raised:
+                        server.probe_runtime(backend)
+                    self.assertEqual(raised.exception.status_code, 410)
+
     async def test_direct_runtime_admission_fails_before_any_probe(self):
         with patch.object(server, "runtime_diagnostic", new=Mock()) as probe:
             with self.assertRaises(HTTPException) as raised:
@@ -185,10 +193,10 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_identity_cannot_be_imported_into_a_custom_connection(self):
         before = set(self.store.sessions)
-        with patch.dict(os.environ, {"HYADEX_ENABLED_BACKENDS": "claude,codex,cursor"}), patch.object(
+        with patch.dict(os.environ, {"HYADEX_ENABLED_BACKENDS": "claude,codex"}), patch.object(
             server.PROVIDER_CONNECTION_STORE, "bind", side_effect=AssertionError("Must reject before endpoint binding"),
         ):
-            for backend in ("claude", "cursor"):
+            for backend in ("claude",):
                 for field in ("provider_session_id", "session_id", backend + "_session_id"):
                     with self.subTest(backend=backend, field=field):
                         response = await self.client.post("/api/sessions", json={
@@ -201,3 +209,7 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
 
 class RetiredOpenCodeTests(RetiredProviderTests):
     backend = "opencode"
+
+
+class RetiredCursorTests(RetiredProviderTests):
+    backend = "cursor"

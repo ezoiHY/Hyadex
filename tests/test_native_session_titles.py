@@ -72,7 +72,7 @@ class NativeTitleReaders(unittest.TestCase):
 
 
 
-    def test_cursor_missing_metadata_keeps_fallback(self):
+    def test_retired_provider_has_no_native_title_reader(self):
         with patch.dict(os.environ, {"CURSOR_CONFIG_DIR": str(self.root / "missing")}):
             self.assertIsNone(server.read_native_session_title(session("cursor")))
 

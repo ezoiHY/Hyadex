@@ -1,7 +1,7 @@
 # Automatic session titles
 
 Unnamed new chats immediately show their first prompt line. Existing native
-provider titles are adopted when available. If a Cursor or Codex chat still has no
+provider titles are adopted when available. If a Codex chat still has no
 native title after a successful ordinary user turn, HyadexServer makes one
 independent background request for a short summarized title.
 
@@ -17,7 +17,7 @@ explicitly named imports, forks, and child agents are not retroactively renamed.
   from another session or a sidechain is never used as the parent title.
 - Codex import candidates prefer a valid `session_index.jsonl` `thread_name`;
   missing, malformed, oversized, or placeholder names use the first user message.
-- Preview labels for Claude, Codex and Cursor do not repeat the project name;
+- Preview labels for Claude and Codex do not repeat the project name;
   workspace information stays in `cwd`. If no title or user text is readable,
   use a provider/short-ID label. Listing never generates a new title with a model.
   Preview-only follow-up: 201 focused tests passed, including first-message
@@ -25,11 +25,10 @@ explicitly named imports, forks, and child agents are not retroactively renamed.
   sessions with identical previews. The updated test server's authenticated list
   was checked against native titles and first messages after restart.
 - Legacy Hyadex-wrapped inputs are not display titles: preview extraction
-  handles old Codex context without a jobs snapshot and Cursor's complete
-  instruction/current-prompt/tool-binding envelopes. Known human quotations and
+  handles old Codex context without a jobs snapshot. Known human quotations and
   incomplete wrappers remain intact. This is display-only; existing transcripts,
   imported timeline events and reconciliation fingerprints are unchanged.
-- Resume by session ID reads existing titles for Claude, Codex, and Cursor before
+- Resume by session ID reads existing titles for Claude and Codex before
   returning the new chat. Explicit custom names win. For compatibility with
   existing clients, the exact generated `Resumed <Provider> <first 8 ID chars>`
   label is treated as a placeholder **only at creation**. A later manual rename,
@@ -37,13 +36,6 @@ explicitly named imports, forks, and child agents are not retroactively renamed.
 - These are bounded local metadata reads, not title-generation requests. Busy,
   missing, or changed stores do not prevent resume. Discovery does not modify
   provider conversations, rename existing Hyadex chats, or spend model usage.
-
-Cursor additionally supports opt-in **CLI local discovery and bulk import of an
-initial public-text snapshot**. Existing clients still receive Claude/Codex only;
-compatible clients request `include_cursor=true` after checking the separate
-capability. Native resume retains the original ID/workspace. This is not Cursor
-IDE/cloud import or automatic external-history synchronization. See the
-[Cursor import contract](CURSOR_LOCAL_IMPORT.md) for requirements and limits.
 
 ### Import discovery safeguards on the 1.0 release line
 
@@ -86,21 +78,7 @@ same failure reproduced on the unchanged `7d44880` title-branch baseline (2.49s)
 so it is recorded separately, not hidden by relaxing the assertion. Syntax and
 diff checks passed. No full-suite or client UI success is claimed.
 
-### Cursor metadata compatibility
-
-The CLI 2026.09.18 local format was verified read-only: configuration directory
-`chats/<md5(absolute working directory)>/<session ID>/store.db`, `meta` key `0`,
-hex-encoded UTF-8 JSON containing `agentId` and `name`. Configuration root
-precedence matches the CLI: `CURSOR_CONFIG_DIR`, `XDG_CONFIG_HOME/cursor`, then
-`~/.cursor`. `CURSOR_DATA_DIR` is not the chat metadata root in this version.
-
-The reader checks the exact workspace and ID, excludes subagent metadata,
-rejects symlinked chat paths and unknown schemas, bounds the metadata row and SQL
-work, and opens SQLite read-only. It never reads/decrypts conversation blobs or
-returns other metadata. This is a best-effort private-format adapter, not a
-guarantee for all future Cursor versions or the separate Cursor IDE history.
-
-## Background generation: Cursor and Codex
+## Background generation: Codex
 
 - Uses the chat's provider/model and existing connection. Custom provider
   bindings remain isolated; no separate title API key is required.
@@ -134,22 +112,6 @@ The generated native schema must advertise the isolation fields, and the
 provider must confirm an ephemeral thread with no history path before the
 request is made. Older/unsupported runtimes keep the fallback.
 
-**Cursor:** a fresh Ask-mode CLI request in disposable HOME/config/data/workspace
-directories. Ask mode alone is not tool-free: deny rules plus fail-closed
-`preToolUse` hooks block tools, with additional read/shell/MCP/subagent hooks.
-No main-chat resume, shell auto-approval, or MCP approval is used. Inherited
-hooks, MCP settings, and Hyadex run credentials are not forwarded. Only the
-selected model and supported login/transport inputs are reused. Machine-managed
-hooks cause optional naming to be skipped rather than bypassing policy.
-
-Cursor currently requires CLI **2026.09.18 or newer**, the first tested build
-with these enforcement semantics. With macOS native login, the exact Cursor
-access/refresh pair is privately read from Keychain into the temporary profile;
-file-based login and `CURSOR_API_KEY` are also supported. An expired/unknown
-access-token format skips optional naming; it is not used to repair or refresh
-the user's login. Credentials are never logged, and the disposable profile is
-removed after success, error, timeout, or cancellation.
-
 ### When the new title appears
 
 Generation starts after the main reply finishes, without delaying that reply.
@@ -164,7 +126,6 @@ mobile push of title-only updates would be a separate client improvement.
 | --- | --- |
 | Claude | Bounded exact-session transcript head/tail reads of `custom-title` / `ai-title` records. No additional generation request. SDK sessions may not produce these records. |
 | Codex | App-server start/resume/read names, `thread/name/updated`, and existing `session_index.jsonl`. Custom providers use their own manager cache. Native names take precedence over generated fallback names. |
-| Cursor | Exact-workspace, exact-ID read-only CLI naming metadata (see above). Stream-json exposes no supported title event. Conversation blobs are not decoded; the independent request above remains the fallback when no usable native name exists. |
 
 Native metadata is checked before normal terminal events and when idle history
 is reopened. Child-name notifications continue updating child identities, never
@@ -176,12 +137,12 @@ live metadata.
 
 Focused tests cover provider-specific title precedence, exact session/workspace
 matching, original prompt fallback, malformed/oversized/deeply nested metadata,
-Cursor read-only SQLite and WAL visibility, symlink rejection, missing/busy stores,
+symlink rejection, missing/busy stores,
 manual-name preservation, the resume deadline, and cancellation before creation.
 Each provider's synthetic metadata is also exercised through session creation.
 Tests use isolated temporary state and do not need model calls or a live server.
 The focused 384-test run passed across import labels, native/generated naming,
-Cursor parsing/execution, provider-history synchronization, Codex history repair,
+provider-history synchronization, Codex history repair,
 and the Codex app-server adapter. This is not a full-suite or client UI test.
 
 ## Earlier background-generation rollout verification
@@ -210,7 +171,8 @@ the deny-hook error, the canary content was not disclosed, and the file remained
 unchanged. After the local server installation, the user also confirmed that
 the new naming behavior worked in the client.
 
-References: [Codex app-server](https://developers.openai.com/codex/app-server/),
-[Cursor CLI parameters](https://cursor.com/docs/cli/reference/parameters),
-[Cursor permissions](https://cursor.com/docs/cli/reference/permissions),
-[Cursor hooks](https://cursor.com/docs/hooks).
+References: [Codex app-server](https://developers.openai.com/codex/app-server/).
+
+Cursor runtime/title generation and its native metadata adapter have been removed.
+Earlier rollout verification above is historical; it does not describe current
+Cursor support. This removal does not delete native profiles or stored chat titles.
