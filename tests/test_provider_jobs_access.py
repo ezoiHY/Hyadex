@@ -1602,9 +1602,9 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
             "create",
             AsyncMock(return_value=job),
         ) as create:
-            response = await agent_server.create_session_job(
-                "source",
-                agent_server.CreateScopedJobRequest(
+            response = await agent_server.create_job(
+                agent_server.CreateJobRequest(
+                    session_id="source",
                     title="Human-created",
                     prompt="Run",
                     interval_seconds=60,

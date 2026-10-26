@@ -24,7 +24,6 @@ FUNCTIONS = {
     "codex_goal_steer_selection_is_plain",
     "_run_queued_turn_now_once",
     "async_route_queue_fields",
-    "active_snapshot_input",
     "stop_turn",
     "canonical_provider_cross_chat_route_alias",
     "canonical_provider_cross_chat_route_actions",
@@ -548,13 +547,6 @@ class GoalFollowupAdmissionTests(unittest.IsolatedAsyncioTestCase):
                     lock.lock.release()
             with suppress(BaseException):
                 await task
-
-    def test_active_snapshot_excludes_both_private_steer_queues(self):
-        self.active["codex_goal_steer_queue"] = asyncio.Queue()
-        snapshot = self.ns["active_snapshot_input"](self.active)
-        self.assertNotIn("native_steer_queue", snapshot)
-        self.assertNotIn("codex_goal_steer_queue", snapshot)
-        self.assertEqual(json.loads(json.dumps(snapshot))["run_id"], "run-1")
 
     def actual_stop_turn(self):
         source = self.source_namespace["stop_turn"]

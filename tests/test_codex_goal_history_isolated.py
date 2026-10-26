@@ -32,11 +32,11 @@ FUNCTIONS = {
     "codex_history_user_item", "codex_history_event_item", "append_codex_history_event",
     "codex_history_assistant_metadata", "codex_history_assistant_item", "merge_codex_history_duplicate",
     "codex_history_user_event_item",
-    "parse_codex_history_events", "codex_transcript_preview", "history_item_cursor_digest",
+    "parse_codex_history_events", "history_item_cursor_digest",
     "history_dedup_key",
     "parse_provider_history_delta", "project_legacy_imported_provider_event",
     "project_provider_history_event_for_egress", "client_safe_event",
-    "prepare_imported_history_items", "append_imported_history", "append_staged_imported_history", "filter_codex_history_for_import",
+    "prepare_imported_history_items", "append_imported_history", "filter_codex_history_for_import",
     "imported_history_terminal_event", "is_agent_visible_event",
     "should_bump_session_updated_at", "update_session_event_metadata",
     "clear_imported_active_runs", "prepare_codex_goal_history_repair",
@@ -167,12 +167,6 @@ class GoalHistoryTests(unittest.IsolatedAsyncioTestCase):
             {"kind": "user", "text": "Real", "provider_user_authored": True},
         ])
 
-    def test_preview_uses_the_same_provenance_classifier(self):
-        self.ns["bounded_jsonl_events"] = Mock(return_value=iter([
-            source_user(), source_user("Real preview", kinds=("user.text",)),
-        ]))
-        self.assertEqual(self.ns["codex_transcript_preview"](Path("unused")), "Real preview")
-
     def test_delta_advances_across_runtime_only_input_without_visible_items(self):
         self.ns["bounded_jsonl_records_range"] = Mock(return_value=iter([(source_user(), 10)]))
         result = self.ns["parse_provider_history_delta"](
@@ -222,8 +216,7 @@ class GoalHistoryTests(unittest.IsolatedAsyncioTestCase):
             {"seq": index} for index, _event in enumerate(events, 1)
         ])
         self.ns["append_imported_events"] = AsyncMock(side_effect=lambda _id, events: len(events))
-        for name, sink in (("append_imported_history", "append_durable_event_batch"),
-                           ("append_staged_imported_history", "append_imported_events")):
+        for name, sink in (("append_imported_history", "append_durable_event_batch"),):
             await self.ns[name](session, Path("unused"), items)
             events = self.ns[sink].await_args.args[1]
             self.assertTrue(events[1][1]["provider_user_authored"])

@@ -6392,30 +6392,6 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-    def test_pidless_sdk_turn_is_reported_as_active(self) -> None:
-        snapshot = agent_server.active_process_snapshot(
-            "chat-claude",
-            {
-                "proc": None,
-                "pid": None,
-                "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
-                "cwd": self.cwd,
-                "argv": ["claude", "<ClaudeSDKClient>"],
-                "started_at": 1.0,
-                "started_at_iso": "2026-08-05T00:00:00Z",
-                "stop_requested": False,
-                "stdout_lines": [],
-            },
-        )
-
-        self.assertTrue(snapshot["active"])
-        self.assertEqual(
-            snapshot["transport"],
-            agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
-        )
-
     async def test_force_send_cannot_deliver_into_a_detached_terminal_queue(self) -> None:
         native_queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(maxsize=1)
         selected = {

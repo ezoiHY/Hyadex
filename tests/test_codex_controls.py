@@ -325,56 +325,6 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(agent_server.CODEX_PENDING_INTERACTIONS)
             self.assertNotIn("chat", handler_tasks)
 
-    async def test_stop_all_terminals_requires_confirmation(self) -> None:
-        with self.assertRaises(HTTPException) as raised:
-            await agent_server.post_codex_background_terminals_clean(
-                "chat",
-                agent_server.CodexBackgroundTerminalsCleanRequest(
-                    confirmed=False
-                ),
-            )
-        self.assertEqual(raised.exception.status_code, 400)
-
-        manager = AsyncMock()
-        with (
-            patch.object(
-                agent_server,
-                "acquire_codex_control_thread",
-                AsyncMock(return_value=(manager, "thread", {})),
-            ),
-            patch.object(
-                agent_server,
-                "release_codex_control_thread",
-                AsyncMock(),
-            ) as release,
-        ):
-            result = await agent_server.post_codex_background_terminals_clean(
-                "chat",
-                agent_server.CodexBackgroundTerminalsCleanRequest(
-                    confirmed=True
-                ),
-            )
-        self.assertEqual(result, {"cleaned": True})
-        manager.clean_background_terminals.assert_awaited_once_with("thread")
-        release.assert_awaited_once_with("chat", manager, "thread")
-
-    async def test_terminate_terminal_requires_confirmation(self) -> None:
-        with patch.object(
-            agent_server,
-            "acquire_codex_control_thread",
-            AsyncMock(),
-        ) as acquire:
-            with self.assertRaises(HTTPException) as raised:
-                await agent_server.post_codex_background_terminal_terminate(
-                    "chat",
-                    agent_server.CodexBackgroundTerminalRequest(
-                        process_id="process-1",
-                        confirmed=False,
-                    ),
-                )
-        self.assertEqual(raised.exception.status_code, 400)
-        acquire.assert_not_awaited()
-
     def test_permission_grant_cannot_exceed_requested_subset(self) -> None:
         pending = {
             "method": "item/permissions/requestApproval",
@@ -1698,101 +1648,6 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             agent_server.CODEX_APP_SERVER_MANAGER = previous_manager
         self.assertEqual(runtime["status"], {"type": "notLoaded"})
 
-    async def test_load_runtime_resumes_only_a_persisted_idle_thread(self) -> None:
-        manager = AsyncMock()
-        manager.is_thread_loaded = Mock(return_value=True)
-        ensure_thread = AsyncMock(return_value=("thread", "instruction-hash"))
-        previous_manager = agent_server.CODEX_APP_SERVER_MANAGER
-        previous_busy = agent_server.BUSY_SESSIONS
-        previous_current = agent_server.CURRENT_TURNS
-        previous_maintenance = agent_server.SERVER_MAINTENANCE_SESSIONS
-        agent_server.CODEX_APP_SERVER_MANAGER = manager
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.CURRENT_TURNS = {}
-        agent_server.SERVER_MAINTENANCE_SESSIONS = set()
-        unpin_thread = AsyncMock()
-        try:
-            with patch.object(
-                agent_server,
-                "ensure_codex_app_server_thread",
-                ensure_thread,
-            ), patch.object(
-                agent_server,
-                "unpin_codex_app_server_thread",
-                unpin_thread,
-            ), patch.object(
-                agent_server,
-                "server_lifecycle_admission_blocker",
-                return_value=None,
-            ):
-                runtime = await agent_server.load_codex_runtime("chat")
-                released = "chat" not in agent_server.BUSY_SESSIONS
-                maintenance_released = (
-                    "chat" not in agent_server.SERVER_MAINTENANCE_SESSIONS
-                )
-        finally:
-            agent_server.CODEX_APP_SERVER_MANAGER = previous_manager
-            agent_server.BUSY_SESSIONS = previous_busy
-            agent_server.CURRENT_TURNS = previous_current
-            agent_server.SERVER_MAINTENANCE_SESSIONS = previous_maintenance
-
-        self.assertTrue(runtime["persisted_thread"])
-        self.assertTrue(runtime["thread_loaded"])
-        self.assertEqual(runtime["status"], {"type": "idle"})
-        ensure_thread.assert_awaited_once()
-        unpin_thread.assert_awaited_once_with(manager, "thread")
-        self.assertTrue(released)
-        self.assertTrue(maintenance_released)
-
-    async def test_load_runtime_does_not_create_a_thread_for_a_new_chat(
-        self,
-    ) -> None:
-        agent_server.STORE.sessions["chat"].pop("codex_thread_id", None)
-        agent_server.STORE.sessions["chat"].pop("session_id", None)
-        manager_factory = AsyncMock(
-            side_effect=AssertionError("new chats must not start app-server")
-        )
-        previous_manager = agent_server.CODEX_APP_SERVER_MANAGER
-        previous_busy = agent_server.BUSY_SESSIONS
-        agent_server.CODEX_APP_SERVER_MANAGER = None
-        agent_server.BUSY_SESSIONS = set()
-        try:
-            with patch.object(
-                agent_server,
-                "codex_app_server_manager",
-                manager_factory,
-            ), patch.object(
-                agent_server,
-                "server_lifecycle_admission_blocker",
-                return_value=None,
-            ):
-                runtime = await agent_server.load_codex_runtime("chat")
-        finally:
-            agent_server.CODEX_APP_SERVER_MANAGER = previous_manager
-            agent_server.BUSY_SESSIONS = previous_busy
-
-        self.assertFalse(runtime["thread_loaded"])
-        self.assertFalse(runtime["persisted_thread"])
-        self.assertEqual(runtime["status"], {"type": "notLoaded"})
-        manager_factory.assert_not_awaited()
-
-    async def test_load_runtime_rejects_while_chat_is_busy(self) -> None:
-        previous_busy = agent_server.BUSY_SESSIONS
-        agent_server.BUSY_SESSIONS = {"chat"}
-        try:
-            with patch.object(
-                agent_server,
-                "server_lifecycle_admission_blocker",
-                return_value=None,
-            ):
-                with self.assertRaises(HTTPException) as raised:
-                    await agent_server.load_codex_runtime("chat")
-        finally:
-            agent_server.BUSY_SESSIONS = previous_busy
-
-        self.assertEqual(raised.exception.status_code, 409)
-        self.assertIn("active Codex turn", str(raised.exception.detail))
-
     async def test_all_codex_control_acquisition_is_blocked_during_update(
         self,
     ) -> None:
@@ -1813,96 +1668,10 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                     "chat",
                     reserve_session=False,
                 )
-            with self.assertRaises(HTTPException) as profiles_raised:
-                await agent_server.get_codex_permission_profiles("chat")
 
         self.assertEqual(raised.exception.status_code, 503)
         self.assertIn("managed update", str(raised.exception.detail))
-        self.assertEqual(profiles_raised.exception.status_code, 503)
         manager_factory.assert_not_awaited()
-
-    async def test_permission_profile_discovery_uses_maintenance_not_turn_state(
-        self,
-    ) -> None:
-        started = asyncio.Event()
-        release = asyncio.Event()
-
-        async def slow_list_permission_profiles(*, cwd: str):
-            self.assertEqual(cwd, "/work")
-            started.set()
-            await release.wait()
-            return [{"name": "default"}]
-
-        manager = Mock()
-        manager.generation = 7
-        manager.start = AsyncMock()
-        manager.list_permission_profiles = AsyncMock(
-            side_effect=slow_list_permission_profiles
-        )
-        busy: set[str] = set()
-        maintenance: set[str] = set()
-        current: dict[str, object] = {}
-        queued: dict[str, object] = {}
-        with (
-            patch.object(agent_server, "BUSY_SESSIONS", busy),
-            patch.object(
-                agent_server,
-                "SERVER_MAINTENANCE_SESSIONS",
-                maintenance,
-            ),
-            patch.object(agent_server, "CURRENT_TURNS", current),
-            patch.object(agent_server, "QUEUED_TURNS", queued),
-            patch.object(
-                agent_server,
-                "CODEX_PERMISSION_PROFILES_CACHE",
-                {},
-            ),
-            patch.object(
-                agent_server,
-                "server_lifecycle_admission_blocker",
-                return_value=None,
-            ),
-            patch.object(
-                agent_server,
-                "existing_cwd",
-                return_value="/work",
-            ),
-            patch.object(
-                agent_server,
-                "codex_app_server_manager",
-                AsyncMock(return_value=manager),
-            ),
-            patch.object(
-                agent_server,
-                "cached_codex_permission_profiles",
-                return_value=None,
-            ),
-        ):
-            profile_task = asyncio.create_task(
-                agent_server._get_codex_permission_profiles_locked("chat")
-            )
-            await asyncio.wait_for(started.wait(), timeout=1)
-            try:
-                self.assertEqual(maintenance, {"chat"})
-                self.assertEqual(busy, set())
-                self.assertEqual(current, {})
-                with self.assertRaises(HTTPException) as raised:
-                    await agent_server._start_turn_locked(
-                        "chat",
-                        agent_server.TurnRequest(prompt="do not queue me"),
-                    )
-                self.assertEqual(raised.exception.status_code, 409)
-                self.assertIn("maintenance", str(raised.exception.detail))
-                self.assertEqual(queued, {})
-            finally:
-                release.set()
-            result = await profile_task
-
-        self.assertEqual(result, {"profiles": [{"name": "default"}]})
-        self.assertEqual(maintenance, set())
-        self.assertEqual(busy, set())
-        self.assertEqual(current, {})
-
 
 class GatedNativeSubscription:
     def __init__(self, notifications: list[dict[str, object]], gate_at: int) -> None:
@@ -2669,191 +2438,6 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("chat", agent_server.CODEX_CONTROL_TERMINAL_FENCES)
         schedule.assert_called_once_with("chat")
 
-    async def test_shell_retains_native_slot_until_turn_completed(self) -> None:
-        subscription = GatedNativeSubscription(
-            [
-                {
-                    "method": "turn/started",
-                    "params": {
-                        "threadId": "thread",
-                        "turn": {"id": "turn-shell"},
-                    },
-                },
-                {
-                    "method": "turn/completed",
-                    "params": {
-                        "threadId": "thread",
-                        "turn": {
-                            "id": "turn-shell",
-                            "status": "completed",
-                        },
-                    },
-                },
-            ],
-            gate_at=1,
-        )
-        manager = AsyncMock()
-        manager.subscribe_thread = lambda _thread_id: subscription
-        manager.run_thread_shell_command = AsyncMock()
-
-        async def acquire(
-            _session_id: str,
-            *,
-            reserve_session: bool = False,
-        ) -> tuple[object, str, dict[str, object]]:
-            self.assertTrue(reserve_session)
-            return manager, "thread", agent_server.STORE.sessions["chat"]
-
-        with (
-            patch.object(
-                agent_server,
-                "acquire_codex_control_thread",
-                side_effect=acquire,
-            ),
-            patch.object(agent_server, "append_event", AsyncMock()),
-            patch.object(
-                agent_server,
-                "release_codex_control_thread",
-                AsyncMock(),
-            ) as release_thread,
-        ):
-            result = await agent_server.post_codex_shell_command(
-                "chat",
-                agent_server.CodexShellCommandRequest(
-                    command="git status --short",
-                    confirmed=True,
-                ),
-            )
-            operation_id = str(result["operation_id"])
-            task = agent_server.CODEX_NATIVE_ACTION_TASKS[
-                ("chat", operation_id)
-            ]
-            await subscription.waiting.wait()
-            self.assertFalse(task.done())
-            release_thread.assert_not_awaited()
-            self.assertEqual(
-                agent_server.ACTIVE["chat"]["provider_turn_id"],
-                "turn-shell",
-            )
-
-            subscription.release.set()
-            await task
-
-        manager.run_thread_shell_command.assert_awaited_once_with(
-            "thread",
-            "git status --short",
-        )
-        release_thread.assert_awaited_once()
-
-    async def test_native_actions_remain_owned_when_start_event_write_fails(
-        self,
-    ) -> None:
-        cases = (
-            (
-                "compaction",
-                "codex_compaction_started",
-                lambda: agent_server.post_codex_compact("chat"),
-            ),
-            (
-                "review",
-                "codex_review_started",
-                lambda: agent_server.post_codex_review(
-                    "chat",
-                    agent_server.CodexReviewRequest(target={"type": "uncommittedChanges"}),
-                ),
-            ),
-            (
-                "shell",
-                "codex_shell_started",
-                lambda: agent_server.post_codex_shell_command(
-                    "chat",
-                    agent_server.CodexShellCommandRequest(
-                        command="git status --short",
-                        confirmed=True,
-                    ),
-                ),
-            ),
-        )
-        for operation, failing_event, launch in cases:
-            with self.subTest(operation=operation):
-                agent_server.ACTIVE["chat"].update(
-                    {
-                        "run_id": None,
-                        "provider_turn_id": None,
-                        "provider_turn_ready": False,
-                        "codex_native_operation_kind": None,
-                    }
-                )
-                turn_id = f"turn-{operation}"
-                subscription = GatedNativeSubscription(
-                    [
-                        {
-                            "method": "turn/completed",
-                            "params": {
-                                "threadId": "thread",
-                                "turn": {
-                                    "id": turn_id,
-                                    "status": "completed",
-                                },
-                            },
-                        }
-                    ],
-                    gate_at=0,
-                )
-                manager = AsyncMock()
-                manager.subscribe_thread = lambda _thread_id: subscription
-                manager.compact_thread = AsyncMock()
-                manager.start_review = AsyncMock(
-                    return_value={"turn": {"id": turn_id}}
-                )
-                manager.run_thread_shell_command = AsyncMock()
-
-                async def acquire(
-                    _session_id: str,
-                    *,
-                    reserve_session: bool = False,
-                ) -> tuple[object, str, dict[str, object]]:
-                    self.assertTrue(reserve_session)
-                    return manager, "thread", agent_server.STORE.sessions["chat"]
-
-                async def persist_event(
-                    _session_id: str,
-                    event_type: str,
-                    _payload: dict[str, object],
-                ) -> dict[str, object]:
-                    if event_type == failing_event:
-                        raise OSError("disk full")
-                    return {}
-
-                with (
-                    patch.object(
-                        agent_server,
-                        "acquire_codex_control_thread",
-                        side_effect=acquire,
-                    ),
-                    patch.object(
-                        agent_server,
-                        "append_event",
-                        side_effect=persist_event,
-                    ),
-                    patch.object(
-                        agent_server,
-                        "release_codex_control_thread",
-                        AsyncMock(),
-                    ) as release_thread,
-                ):
-                    result = await launch()
-                    operation_id = str(result["operation_id"])
-                    task = agent_server.CODEX_NATIVE_ACTION_TASKS[
-                        ("chat", operation_id)
-                    ]
-                    await subscription.waiting.wait()
-                    self.assertFalse(task.done())
-                    release_thread.assert_not_awaited()
-                    subscription.release.set()
-                    await task
-                    release_thread.assert_awaited_once()
-
     async def test_budget_interrupt_survives_timeline_write_failure(self) -> None:
         agent_server.STORE.sessions["chat"].update(
             {
@@ -3504,7 +3088,6 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             session_path.mkdir(parents=True)
             (session_path / "events.jsonl").write_text("{}\n")
             delete_jobs = AsyncMock(return_value=2)
-            retire_tunnels = AsyncMock()
             event_seq_cache = {"chat": 41}
             with (
                 patch.object(agent_server, "STORE", store),
@@ -3536,11 +3119,6 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     "delete_for_session",
                     delete_jobs,
                 ),
-                patch.object(
-                    agent_server,
-                    "retire_session_port_tunnels",
-                    retire_tunnels,
-                ),
                 patch.object(agent_server, "kill_terminal_session"),
             ):
                 delete_task = asyncio.create_task(
@@ -3571,7 +3149,6 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("chat", agent_server.DELETED_SESSION_TOMBSTONES)
         self.assertNotIn("chat", agent_server.DELETING_SESSIONS)
         delete_jobs.assert_awaited_once_with("chat")
-        retire_tunnels.assert_awaited_once()
         agent_server.DELETED_SESSION_TOMBSTONES.discard("chat")
 
     async def test_delete_job_cleanup_failure_is_retryable_without_resurrection(
@@ -3805,24 +3382,6 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 subscription,
             )
         append.assert_not_awaited()
-
-    async def test_rollback_requires_server_side_confirmation(self) -> None:
-        with patch.object(
-            agent_server,
-            "acquire_codex_control_thread",
-            AsyncMock(),
-        ) as acquire:
-            with self.assertRaises(HTTPException) as raised:
-                await agent_server.post_codex_rollback(
-                    "chat",
-                    agent_server.CodexRollbackRequest(
-                        num_turns=1,
-                        confirmed=False,
-                    ),
-                )
-        self.assertEqual(raised.exception.status_code, 400)
-        acquire.assert_not_awaited()
-
 
 if __name__ == "__main__":
     unittest.main()

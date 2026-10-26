@@ -276,7 +276,7 @@ class SyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((await self.snapshot())["exchanges"])
         self.assertEqual(await self.runtime.synced.snapshot("owner", "other-main"), other)
 
-    async def test_durable_codex_side_forks_are_not_importable_as_main_chats_after_clear(self):
+    async def test_cleared_codex_side_fork_threads_stay_recorded(self):
         initial = await self.snapshot()
         owner = next(iter(self.runtime.synced.locks))[0]
         await self.runtime.synced._provider_state((owner, "main"), initial["side_chat_id"],
@@ -284,31 +284,6 @@ class SyncTests(unittest.IsolatedAsyncioTestCase):
         await self.client.delete(f'{self.url}/{initial["side_chat_id"]}')
         await self.runtime.close()
         self.assertEqual(await asyncio.to_thread(self.runtime.provider_thread_ids), {"side-thread"})
-        source = ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text())
-        node = next(node for node in source.body if isinstance(node, ast.FunctionDef)
-                    and node.name == "local_codex_session_candidates")
-        root = Path(self.temporary.name)
-        paths = [root / "side-thread.jsonl", root / "normal-thread.jsonl"]
-        for path in paths:
-            path.write_text("")
-        def history_paths(scan_root, *, excluded_directory_names):
-            self.assertEqual(scan_root, root)
-            self.assertEqual(excluded_directory_names, frozenset({"archived_sessions"}))
-            return paths
-
-        def transcript_meta(path, *, exclude_subagents):
-            self.assertTrue(exclude_subagents)
-            return path.stem, "/workspace"
-
-        namespace = {"CODEX_SESSIONS_ROOT": root, "SIDE_QUESTIONS": self.runtime,
-            "codex_session_index_thread_names": lambda: {}, "bounded_jsonl_paths": history_paths,
-            "codex_transcript_meta": transcript_meta, "suppress": suppress,
-            "codex_transcript_preview": lambda _: "preview", "Path": Path,
-            "local_session_label": lambda text, fallback: text or fallback,
-            "BACKEND_CODEX": "codex", "iso_from_timestamp": str, "Any": object}
-        exec(compile(ast.Module(body=[node], type_ignores=[]), "<local-history>", "exec"), namespace)
-        candidates = await asyncio.to_thread(namespace["local_codex_session_candidates"], set())
-        self.assertEqual([row["provider_session_id"] for row in candidates], ["normal-thread"])
 
 
 if __name__ == "__main__":

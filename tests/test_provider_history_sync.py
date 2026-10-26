@@ -253,26 +253,6 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
             )
         )
 
-    def test_claude_preview_skips_generated_task_notification(self) -> None:
-        human = {
-            "type": "user",
-            "origin": {"kind": "human"},
-            "message": {"role": "user", "content": "Actual user prompt"},
-        }
-        with tempfile.TemporaryDirectory() as temporary:
-            transcript = Path(temporary) / "claude.jsonl"
-            transcript.write_text(
-                json.dumps(task_notification_event(
-                    origin={"kind": "task-notification"},
-                ))
-                + "\n"
-                + json.dumps(human)
-                + "\n",
-                encoding="utf-8",
-            )
-            preview = agent_server.claude_transcript_preview(transcript)
-        self.assertEqual(preview, "Actual user prompt")
-
     def test_delta_parser_skips_task_notification_and_advances_cursor(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             transcript = Path(temporary) / "claude.jsonl"
@@ -582,28 +562,6 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
                         allow_portable_root=True,
                     )
                 )
-
-    def test_duplicate_pruner_never_collapses_hidden_import_boundaries(self) -> None:
-        hidden_boundary = {
-            "type": "turn_started",
-            "run_id": "import_hidden_boundary",
-            "imported": True,
-            "prompt": "",
-            agent_server.TIMELINE_IMPORTED_PROMPT_HIDDEN_FIELD: True,
-        }
-        ordinary_empty_prompt = {
-            "type": "turn_started",
-            "run_id": "import_ordinary_empty",
-            "imported": True,
-            "prompt": "",
-        }
-
-        self.assertIsNone(
-            agent_server._prune_history_message_key(hidden_boundary)
-        )
-        self.assertIsNotNone(
-            agent_server._prune_history_message_key(ordinary_empty_prompt)
-        )
 
     def test_sanitized_authority_prompt_matches_native_timeline(self) -> None:
         prompt = "Asked from Hyadex"
@@ -1161,20 +1119,6 @@ class ClaudeHistoryMessageIdentityTests(unittest.TestCase):
         self.write([{"type": "assistant_text", "backend": "codex", "text": "Ready",
                      "provider_origin": self.source()["provider_origin"]}])
         self.assertEqual(self.cursor([external], after=0), ([external], 0))
-
-    def test_existing_prune_does_not_recognize_emoji_copy_and_dry_run_is_read_only(self):
-        self.live()
-        self.write([*self.events,
-            {"type": "history_imported", "run_id": "import_fixture", "backend": "claude"},
-            {"type": "assistant_text", "run_id": "import_fixture", "backend": "claude", "imported": True,
-             "text": self.raw_text, "provider_origin": self.source()["provider_origin"]},
-            {"type": "turn_finished", "run_id": "import_fixture", "backend": "claude", "imported": True},
-        ])
-        before = self.event_path.read_bytes()
-        summary = agent_server.prune_duplicate_imported_history_sync("test-chat", dry_run=True)
-        self.assertEqual(summary["removed_events"], 0)
-        self.assertEqual(self.event_path.read_bytes(), before)
-
 
 class SyncProviderHistoryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:

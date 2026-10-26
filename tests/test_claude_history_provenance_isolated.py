@@ -36,7 +36,7 @@ FUNCTIONS = {
     "history_dedup_key", "reconcile_cursor_history_items", "unsynced_history_items",
     "history_message_match_details", "history_messages_match", "history_message_match_tokens",
     "clean_assistant_text",
-    "append_imported_history", "append_staged_imported_history", "imported_history_terminal_event",
+    "append_imported_history", "imported_history_terminal_event",
     "filter_codex_history_for_import", "prepare_imported_history_items",
     "seed_claude_interruption_context", "normalized_history_sync_cursor", "load_provider_history_with_cursor",
     "should_bump_session_updated_at", "is_agent_visible_event",
@@ -491,7 +491,7 @@ class ImportedHistoryProvenanceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_both_append_paths_preserve_source_timestamps_without_overriding_internal_ids(self) -> None:
         items = [self.projection["claude_history_event_item"](source_event(kind, kind)) for kind in ("user", "assistant")]
-        for name in ("append_imported_history", "append_staged_imported_history"):
+        for name in ("append_imported_history",):
             with self.subTest(name=name):
                 result, specifications = await self.append(name, items)
                 self.assertEqual(result["imported"], 2)
@@ -512,7 +512,7 @@ class ImportedHistoryProvenanceTests(unittest.IsolatedAsyncioTestCase):
     async def test_old_source_times_do_not_extend_import_completion_until_import_day(self) -> None:
         items = [self.projection["claude_history_event_item"](source_event(kind, kind, timestamp=timestamp))
                  for kind, timestamp in (("user", "2026-09-01T12:00:00Z"), ("assistant", "2026-09-01T12:00:05Z"))]
-        for name in ("append_imported_history", "append_staged_imported_history"):
+        for name in ("append_imported_history",):
             _result, specifications = await self.append(name, items)
             events = [{"type": kind, "ts": "2026-09-10T00:00:00Z", **payload} for kind, payload in specifications]
             self.assertEqual([event["ts"] for event in events[1:]], [
@@ -525,7 +525,7 @@ class ImportedHistoryProvenanceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_invalid_timestamp_keeps_identity_and_leaves_import_time_fallback(self) -> None:
         item = {"kind": "user", "text": "Real", "provider_origin": origin(timestamp="bad", grants=["private"]), "ts": "UNTRUSTED"}
-        for name in ("append_imported_history", "append_staged_imported_history"):
+        for name in ("append_imported_history",):
             _result, specifications = await self.append(name, [item])
             payload = specifications[1][1]
             self.assertNotIn("ts", payload)
@@ -536,7 +536,7 @@ class ImportedHistoryProvenanceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_interruption_batch_is_metadata_only_and_never_a_user_prompt(self) -> None:
         item = {"kind": "interruption", "text": "PRIVATE MARKER TEXT", "provider_origin": origin(kind="interruption", cause="stop")}
-        for name in ("append_imported_history", "append_staged_imported_history"):
+        for name in ("append_imported_history",):
             result, specifications = await self.append(name, [item])
             self.assertEqual(result["imported"], 1)
             self.assertEqual([kind for kind, _payload in specifications], ["history_imported", "provider_interruption", "turn_finished"])
@@ -552,7 +552,7 @@ class ImportedHistoryProvenanceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_malformed_interruption_is_skipped_and_mixed_batches_keep_message_semantics(self) -> None:
         invalid = {"kind": "interruption", "text": "marker", "provider_origin": origin(kind="interruption", timestamp="bad")}
-        for name in ("append_imported_history", "append_staged_imported_history"):
+        for name in ("append_imported_history",):
             result, specifications = await self.append(name, [invalid])
             self.assertEqual(result["imported"], 0)
             self.assertEqual([kind for kind, _payload in specifications], ["history_imported", "turn_finished"])

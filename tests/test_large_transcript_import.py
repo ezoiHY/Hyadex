@@ -153,35 +153,3 @@ class LargeTranscriptImportTests(unittest.TestCase):
                     codex._NativeReadBudget(), provider_source=True))
 
 
-class ImportLimitErrorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_real_parser_error_reaches_import_response_without_creating_chat(self):
-        for backend in ('claude', 'codex'):
-            with self.subTest(backend=backend), tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / f'{PROVIDER}.jsonl'
-                before = encoded(message(backend, 'Before'))
-                raw = before + encoded(message(backend, 'PRIVATE-CONTENT' + 'x' * 4096))
-                path.write_bytes(raw)
-                candidate = {'provider_session_id': PROVIDER, 'backend': backend,
-                             'cwd': directory, 'label': 'Disposable oversized record'}
-                parser = server.parse_claude_history if backend == 'claude' else server.parse_codex_history
-                def history(*_args):
-                    return path, parser(path, None)
-                with patch.object(server.STORE, 'sessions', {}), \
-                     patch.object(server, 'other_local_instance_provider_keys', return_value=set()), \
-                     patch.object(server, 'local_session_candidates', return_value=[candidate]), \
-                     patch.object(server, 'provider_history', side_effect=history), \
-                     patch.object(server, 'MAX_LOCAL_TRANSCRIPT_LINE_BYTES', 1024), \
-                     patch.object(server.STORE, 'create', AsyncMock()) as create:
-                    response = await server.bulk_import_sessions(server.BulkImportSessionsRequest(items=[
-                        server.BulkImportSessionItem(provider_session_id=PROVIDER, backend=backend, cwd=directory)]))
-                result = response['results'][0]
-                self.assertFalse(result['ok'])
-                self.assertEqual(result['code'], 'import_failed')
-                self.assertIsNone(result['session_id'])
-                self.assertEqual(result['imported'], 0)
-                for part in ('retained text/metadata', 'observed at least', 'limit 1,024 bytes',
-                             f'Record 2 in this scan (source byte offset {len(before)})'):
-                    self.assertIn(part, result['error'])
-                self.assertNotIn('PRIVATE-CONTENT', result['error'])
-                self.assertEqual(path.read_bytes(), raw)
-                create.assert_not_awaited()

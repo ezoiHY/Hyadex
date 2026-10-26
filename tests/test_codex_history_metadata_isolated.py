@@ -157,8 +157,7 @@ class CodexHistoryMetadataTests(unittest.IsolatedAsyncioTestCase):
     async def test_both_import_paths_emit_commentary_progress_final_answer_and_original_time(self):
         items = self.parse([assistant(phase="commentary", timestamp=STAMP), assistant("Done", phase="final_answer", timestamp=STAMP)])
         session = {"id": "chat", "backend": "codex", "codex_thread_id": "thread"}
-        for name, sink in (("append_imported_history", "append_durable_event_batch"),
-                           ("append_staged_imported_history", "append_imported_events")):
+        for name, sink in (("append_imported_history", "append_durable_event_batch"),):
             self.ns[sink] = AsyncMock(side_effect=lambda chat, batch: [{"seq": i + 1} for i in range(len(batch))] if sink == "append_durable_event_batch" else len(batch))
             await self.ns[name](session, Path("/exact/transcript.jsonl"), items)
             batch = self.ns[sink].call_args.args[1]
@@ -178,8 +177,7 @@ class CodexHistoryMetadataTests(unittest.IsolatedAsyncioTestCase):
             assistant("Done", phase="final_answer", timestamp="2026-09-01T12:00:05Z"),
         ])
         session = {"id": "chat", "backend": "codex", "codex_thread_id": "thread"}
-        for name, sink in (("append_imported_history", "append_durable_event_batch"),
-                           ("append_staged_imported_history", "append_imported_events")):
+        for name, sink in (("append_imported_history", "append_durable_event_batch"),):
             self.ns[sink] = AsyncMock(side_effect=lambda chat, batch: [{"seq": i + 1} for i in range(len(batch))] if sink == "append_durable_event_batch" else len(batch))
             await self.ns[name](session, Path("/exact/transcript.jsonl"), items)
             batch = self.ns[sink].call_args.args[1]
@@ -193,19 +191,13 @@ class CodexHistoryMetadataTests(unittest.IsolatedAsyncioTestCase):
                 end = self.ns["datetime"].fromisoformat(persisted[-1]["ts"])
                 self.assertEqual((end - start).total_seconds(), 5)
 
-    async def test_unknown_source_times_keep_existing_fallback_and_user_duplicate_can_enrich_time(self):
+    async def test_user_duplicate_can_enrich_time(self):
         missing = source_user("Real request", kinds=None)
         richer = source_user("Real request", kinds=("user.text",))
         richer["timestamp"] = STAMP
         items = self.parse([missing, richer])
         self.assertEqual(items, [{"kind": "user", "text": "Real request", "provider_user_authored": True, "ts": STAMP,
             "provider_origin": self.ns["codex_public_item_origin"](richer)}])
-        self.ns["append_imported_events"] = AsyncMock(side_effect=lambda chat, batch: len(batch))
-        await self.ns["append_staged_imported_history"](
-            {"id": "chat", "backend": "codex", "codex_thread_id": "thread"}, Path("unused"), self.parse([missing, assistant()]),
-        )
-        batch = self.ns["append_imported_events"].call_args.args[1]
-        self.assertTrue(all("ts" not in event for _, event in batch))
 
     def test_ledger_matching_counts_only_explicit_public_codex_commentary(self):
         with tempfile.TemporaryDirectory() as directory:

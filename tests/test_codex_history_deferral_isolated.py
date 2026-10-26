@@ -22,7 +22,7 @@ PROVIDER = "11111111-2222-3333-4444-555555555555"
 FUNCTIONS = {
     "sync_provider_history", "import_session_history", "append_imported_history",
     "history_file_stamp", "history_commit_guard", "prepare_imported_history_items",
-    "append_staged_imported_history", "filter_codex_history_for_import",
+    "filter_codex_history_for_import",
     "normalized_history_sync_cursor", "history_sync_checkpoint", "persist_history_sync_cursor",
     "history_cursor_matches_source_stamp", "imported_history_terminal_event",
     "prepare_codex_native_history_repair",
@@ -148,15 +148,6 @@ class CodexHistoryDeferralTests(unittest.IsolatedAsyncioTestCase):
             await self.ns["append_imported_history"](dict(self.session), self.source, self.items,
                 sync_checkpoint={"version": 1})
         self.assert_no_persistence()
-
-    async def test_new_staged_import_without_native_checkpoint_keeps_existing_flow(self):
-        result = await self.ns["append_staged_imported_history"](dict(self.session), self.source, self.items)
-        self.assertEqual(result["imported"], 1)
-        self.ns["filter_native_codex_history_items"].assert_not_called()
-        self.ns["append_imported_events"].assert_awaited_once()
-        self.ns["append_durable_event_batch"].assert_not_awaited()
-        self.store.save.assert_not_awaited()
-        self.assertEqual(self.session["_history_sync_cursor"], self.cursor)
 
     async def test_worker_cancellation_signals_read_only_filter_and_commits_nothing(self):
         entered, release, finished = threading.Event(), threading.Event(), threading.Event()

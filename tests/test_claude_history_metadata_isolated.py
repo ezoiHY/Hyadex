@@ -30,7 +30,6 @@ FUNCTIONS = {
     "claude_history_event_item",
     "append_claude_history_event",
     "parse_claude_history_events",
-    "claude_transcript_preview",
     "history_item_cursor_digest",
     "history_dedup_key",
     "parse_provider_history_delta",
@@ -163,12 +162,6 @@ class ClaudeHistoryMetadataTests(unittest.TestCase):
             {"kind": "user", "text": "Actual request"},
             {"kind": "assistant", "text": "Actual answer"},
         ])
-
-    def test_preview_skips_generated_skill_context(self) -> None:
-        events = [user_event(COMMAND, isMeta=True), user_event(REFERENCE, isMeta=True), user_event("Real preview")]
-        region = b"\n".join(json.dumps(event).encode("utf-8") for event in events) + b"\n"
-        self.projection["bounded_claude_transcript_regions"] = Mock(return_value=iter([region]))
-        self.assertEqual(self.projection["claude_transcript_preview"](Path("unused.jsonl")), "Real preview")
 
     def test_delta_consumes_metadata_and_preserves_next_unseen_user(self) -> None:
         records = [

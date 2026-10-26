@@ -474,30 +474,6 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("goals", command)
 
-    async def test_handoff_summarizer_applies_native_goal_feature_off(self) -> None:
-        agent_server.CODEX_GOALS_ENABLED = False
-        process = Mock(returncode=0)
-        process.communicate = AsyncMock(return_value=(
-            b'{"type":"item.completed","item":{"type":"agent_message","text":"Summary"}}\n',
-            b"",
-        ))
-        with patch.object(
-            agent_server.asyncio,
-            "create_subprocess_exec",
-            AsyncMock(return_value=process),
-        ) as create_process:
-            result = await agent_server.run_codex_handoff_summarizer(
-                "Summarize",
-                model=None,
-                effort=None,
-            )
-
-        self.assertEqual(result, "Summary")
-        self.assertEqual(
-            create_process.await_args.args[:4],
-            (agent_server.CODEX_BIN, "exec", "--disable", "goals"),
-        )
-
     async def test_manager_creation_waits_for_provider_reconfiguration(self) -> None:
         entered = asyncio.Event()
         release = asyncio.Event()

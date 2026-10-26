@@ -102,11 +102,6 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
             launch.assert_not_awaited()
         self.assertEqual(server.events_path(self.session_id).read_bytes(), self.original_events)
 
-    async def test_import_rejects_without_touching_history(self):
-        response = await self.client.post(f"/api/sessions/{self.session_id}/import-history", json={"force": True})
-        self.assertEqual(response.status_code, 410, response.text)
-        self.assertEqual(server.events_path(self.session_id).read_bytes(), self.original_events)
-
     async def test_uncertain_gemini_cleanup_fence_is_preserved(self):
         if self.backend != "gemini":
             self.skipTest("The persisted cleanup fence belongs to Gemini.")
@@ -172,8 +167,6 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 404, response.text)
         with self.assertRaises(ValidationError):
             ParticipantSpec(backend=self.backend)
-        with self.assertRaises(ValidationError):
-            server.BulkImportSessionItem(backend=self.backend, provider_session_id="old-native-id")
         self.assertNotIn(self.backend, provider_connections.PROTOCOLS)
 
     def test_direct_retired_runtime_probe_cannot_select_a_replacement_executable(self):

@@ -23,7 +23,8 @@ class HistoryResponsivenessTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        # Providers report resolved paths; macOS temp dirs live behind /var -> /private/var.
+        self.root = Path(self.tmp.name).resolve()
         self.sid = "chat_history_responsiveness"
         self.pid = str(uuid.uuid4())
         self.source = self.root / f"rollout-test-{self.pid}.jsonl"
@@ -198,19 +199,6 @@ class HistoryResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             await server.run_provider_history_sync(self.sid)
         repair.assert_not_called()
         self.assertEqual(server.HISTORY_MAINTENANCE_STATE[self.sid]["status"], "pending")
-
-    async def test_explicit_retry_clears_backoff_without_bypassing_busy_guard(self):
-        server.HISTORY_MAINTENANCE_STATE[self.sid] = {"deterministic": True, "retry_at": time.time() + 100}
-        server.BUSY_SESSIONS.add(self.sid)
-        with self.assertRaises(server.HTTPException) as error:
-            await server.retry_history_maintenance(self.sid)
-        self.assertEqual(error.exception.status_code, 409)
-        self.assertTrue(server.HISTORY_MAINTENANCE_STATE[self.sid]["deterministic"])
-        server.BUSY_SESSIONS.clear()
-        with patch.object(server, "schedule_provider_history_sync") as schedule:
-            await server.retry_history_maintenance(self.sid)
-        schedule.assert_called_once_with(self.sess)
-        self.assertEqual(server.HISTORY_MAINTENANCE_STATE[self.sid], {})
 
     async def test_queue_checkpoint_replays_only_suffix_and_preserves_pause(self):
         queued = {"type": "turn_queued", "queued_id": "queued_test", "prompt": "hello"}

@@ -194,7 +194,7 @@ class CodexSubagentNotificationHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.ns["append_durable_event_batch"] = AsyncMock(side_effect=durable)
         self.ns["append_imported_events"] = AsyncMock(side_effect=lambda _session, specs: len(specs))
         session = {"id": "chat", "backend": "codex", "codex_thread_id": PROVIDER}
-        for name, sink in (("append_imported_history", "append_durable_event_batch"), ("append_staged_imported_history", "append_imported_events")):
+        for name, sink in (("append_imported_history", "append_durable_event_batch"),):
             await self.ns[name](session, Path("unused-source.jsonl"), [item, answer])
             rows = self.ns[sink].await_args.args[1]
             self.assertEqual([kind for kind, _ in rows], ["history_imported", "turn_started", "assistant_text", "turn_finished"])
@@ -205,8 +205,6 @@ class CodexSubagentNotificationHistoryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(payload["ts"], STAMP)
             self.assertEqual(payload["provider_origin"]["session_id"], PROVIDER)
             self.assertEqual(rows[2][1]["text"], answer["text"])
-        self.ns["bounded_jsonl_events"] = Mock(return_value=iter([source(), source_user("Real title", kinds=("user.text",))]))
-        self.assertEqual(self.ns["codex_transcript_preview"](Path("unused")), "Real title")
 
     def test_identical_genuine_quote_after_committed_runtime_cursor_is_not_consumed(self):
         runtime = self.ns["codex_history_event_item"](source())

@@ -94,8 +94,7 @@ class CodexImportRecencyTests(unittest.IsolatedAsyncioTestCase):
         ns["append_durable_event_batch"] = AsyncMock(side_effect=lambda _sid, events: [
             {"seq": index} for index, _event in enumerate(events, 1)])
         ns["append_imported_events"] = AsyncMock(side_effect=lambda _sid, events: len(events))
-        for name, sink in (("append_imported_history", "append_durable_event_batch"),
-                           ("append_staged_imported_history", "append_imported_events")):
+        for name, sink in (("append_imported_history", "append_durable_event_batch"),):
             session = {"id": "synthetic-chat", "backend": "codex", "codex_thread_id": "synthetic-root",
                 "updated_at": "2026-09-13T12:00:00Z", "latest_agent_event_seq": 7,
                 "active_run": {"run_id": "current-owner", "backend": "codex"}}

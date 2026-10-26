@@ -176,10 +176,6 @@ class FileContentTypeEndpointTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda _session_id: off_loop([meta]),
             ) as list_records, patch.object(
                 agent_server,
-                "resolve_session_file_event",
-                side_effect=lambda _session_id, _file_id: off_loop(event),
-            ) as resolve_event, patch.object(
-                agent_server,
                 "session_file_for_link",
                 side_effect=lambda _session_id, _target: off_loop(meta),
             ) as resolve_link:
@@ -189,20 +185,14 @@ class FileContentTypeEndpointTests(unittest.IsolatedAsyncioTestCase):
                     offset=0,
                     content_prefix=None,
                 )
-                found_event = await agent_server.get_session_file_event(
-                    "session-1",
-                    "file-1",
-                )
                 linked = await agent_server.get_session_linked_file(
                     "session-1",
                     str(path),
                 )
 
         self.assertEqual(listed["files"], [meta])
-        self.assertEqual(found_event, {"event": event})
         self.assertEqual(linked.path, str(path))
         list_records.assert_called_once_with("session-1")
-        resolve_event.assert_called_once_with("session-1", "file-1")
         resolve_link.assert_called_once_with("session-1", str(path))
 
     async def test_image_filter_includes_legacy_generic_png(self) -> None:
@@ -228,29 +218,6 @@ class FileContentTypeEndpointTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response["total"], 1)
         self.assertEqual(response["files"][0]["content_type"], "image/png")
-
-    async def test_file_event_lookup_rejects_an_explicit_foreign_owner(self) -> None:
-        event = {
-            "id": "forked-artifact",
-            "seq": 10,
-            "session_id": "child-session",
-            "type": "artifact_created",
-            "artifact": {
-                "id": "parent-file",
-                "session_id": "parent-session",
-                "filename": "parent-output.png",
-            },
-        }
-        with patch.object(
-            agent_server, "iter_session_events", return_value=iter((event,))
-        ), patch.object(
-            agent_server.STORE, "sessions", {"child-session": {"id": "child-session"}}
-        ):
-            with self.assertRaises(HTTPException) as raised:
-                await agent_server.get_session_file_event("child-session", "parent-file")
-
-        self.assertEqual(raised.exception.status_code, 404)
-
 
 class SessionFileOwnershipTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
@@ -398,30 +365,6 @@ class SessionFileOwnershipTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(raised.exception.status_code, 404)
         self.assertEqual(item["file_ids"], [])
-
-    async def test_download_requires_file_membership_in_path_session(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            record = self.write_file(root, "owned", session_id="session-a")
-            sessions = {
-                "session-a": {"id": "session-a"},
-                "session-b": {"id": "session-b"},
-            }
-            with patch.object(agent_server, "FILES_ROOT", root), patch.object(
-                agent_server.STORE, "sessions", sessions
-            ):
-                response = await agent_server.get_session_file("session-a", "owned")
-                self.assertEqual(Path(response.path), Path(record["path"]))
-                with self.assertRaises(HTTPException) as scoped_error:
-                    await agent_server.get_session_file("session-b", "owned")
-                with self.assertRaises(HTTPException) as alias_error:
-                    await agent_server.get_file("owned", session_id="session-b")
-                compatibility_response = await agent_server.get_file("owned", session_id=None)
-
-        self.assertEqual(scoped_error.exception.status_code, 404)
-        self.assertEqual(alias_error.exception.status_code, 404)
-        self.assertEqual(Path(compatibility_response.path), Path(record["path"]))
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -153,7 +153,8 @@ class ExecutionInstallTests(unittest.TestCase):
         self.assertEqual(manifest["socket_path"], str(self.layout.runtime_dir / "worker.socket"))
 
     def test_existing_unsafe_runtime_or_token_is_not_repaired(self) -> None:
-        self.layout.runtime_dir.mkdir(mode=0o755)
+        self.layout.runtime_dir.mkdir()
+        self.layout.runtime_dir.chmod(0o755)  # mkdir's mode is masked by a strict umask.
         with self.assertRaises(PermissionError):
             install.prepare_runtime(self.layout)
         self.assertEqual(stat.S_IMODE(self.layout.runtime_dir.stat().st_mode), 0o755)

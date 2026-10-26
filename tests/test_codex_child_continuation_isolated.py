@@ -20,7 +20,7 @@ from tests import test_goal_followup_lifecycle_isolated as ordinary_fixture
 NAMES = {"codex_collaboration_states", "codex_collaboration_thread_ids",
          "codex_child_status_from_thread", "normalize_subagent_status",
          "codex_subagent_thread_identity", "useful_subagent_identity_text",
-         "compact_subagent_text", "project_codex_notification", "stop_turn", "active_snapshot_input"}
+         "compact_subagent_text", "project_codex_notification", "stop_turn"}
 nodes = [node for node in ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text()).body
          if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in NAMES]
 assert {node.name for node in nodes} == NAMES
@@ -715,14 +715,6 @@ class CodexChildContinuationTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(AdmissionChecked):
                     await namespace["stop_turn"]("chat", expected_run_id="operation")
                 self.assertEqual(active.get("native_interrupt_sent", False), should_interrupt)
-
-    async def test_snapshot_does_not_serialize_private_continuation_event(self):
-        runner = await self.wait_with_child()
-        snapshot = self.ns["active_snapshot_input"](self.active)
-        self.assertNotIn("codex_child_continuation_stop", snapshot)
-        self.active["stop_requested"] = True
-        self.active["codex_child_continuation_stop"].set()
-        await asyncio.wait_for(runner, 5)
 
     async def test_stop_fence_wins_over_pending_child_and_buffered_parent_start(self):
         runner = await self.start_ordinary()

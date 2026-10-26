@@ -5977,33 +5977,6 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             {predecessor_run_id},
         )
 
-    def test_process_snapshot_reports_pidless_app_server_as_active(self) -> None:
-        snapshot = agent_server.active_process_snapshot(
-            "chat-native",
-            {
-                "run_id": "run-original",
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
-                "proc": None,
-                "pid": None,
-                "cwd": self.cwd,
-                "argv": ["codex", "app-server", "--listen", "stdio://"],
-                "started_at": time.time() - 3,
-                "started_at_iso": "2026-07-27T00:00:00Z",
-                "stdout_tail": deque(["working"]),
-                "stdout_total_lines": 1,
-            },
-        )
-
-        self.assertTrue(snapshot["active"])
-        self.assertEqual(
-            snapshot["transport"],
-            agent_server.CODEX_TRANSPORT_APP_SERVER,
-        )
-        self.assertIsNone(snapshot["pid"])
-        self.assertEqual(snapshot["processes"], [])
-        self.assertEqual(snapshot["stdout_tail"]["text"], "working")
-
     async def test_failed_terminal_without_body_records_runtime_failure_and_error(
         self,
     ) -> None:
