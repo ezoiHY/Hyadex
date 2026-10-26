@@ -3,6 +3,32 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Independent schedule calculation and fast package checks
+
+- Moved interval, cron, RRULE and timezone calculations into
+  `hyadex/jobs/schedules.py`. Their algorithms, limits and validation errors
+  remain unchanged. Job context policy now receives the caller's current
+  backend allowlist and default explicitly through `hyadex/jobs/context.py`.
+- Removed the old definitions and calendar imports from the server. Calendar
+  tests import the package directly, while integration tests retain the
+  scheduler/admission coverage.
+- Added an isolated 98-case fast package suite that rejects server-runtime
+  imports. Its temporary home and Git/XDG configuration are independent of the
+  developer's profile. The existing full suite remains required for integration.
+- Updated all runtime inventories and nested-directory validation.
+
+**Validation.** 131 focused cases and the 98-case fast suite pass. The full
+isolated suite ran 5,329 cases (62 skipped), retaining the nine inherited
+failures with no new failures or errors. All 371 Python sources compile;
+lock, shell, inventory and AST-equivalence checks pass. Independent Claude
+static review found no blocker; its isolation and directory-guard suggestions
+were applied and checked.
+
+Both real native providers completed timer-triggered group jobs on an isolated
+server: exactly one attributed message and answer per job, followed by
+`max_runs` disabling it. No run-now endpoint or mocked scheduler was used.
+Desktop/mobile clients were not exercised. **Availability:** source only.
+
 ## 2026-10-26 — Independent cross-chat persistence
 
 - Moved the durable cross-chat ledger into `hyadex/store/cross_chat.py` with

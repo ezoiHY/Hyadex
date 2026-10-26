@@ -20,6 +20,17 @@ Run one test module with its package name:
 HOME="$(mktemp -d)" PYTHONDONTWRITEBYTECODE=1 uv run --python 3.13 python -m unittest tests.test_group_chat -v
 ```
 
+For a quick check of the extracted packages, run:
+
+```bash
+.venv/bin/python scripts/run_fast_tests.py
+```
+
+This runner creates a temporary home and rejects imports of `agent_server`.
+It covers calendar and job policy, group/Autopilot engines and routes, the app
+factory, transcript parsing and runtime inventories. It does not replace the
+full integration/provider/installer suite above; `--list` shows its exact scope.
+
 Several modules read the home directory when `agent_server` is imported, so
 always use a temporary `HOME`; never point tests at installed services or real
 chat history. On macOS a few inherited suites (installer and memory-admission checks) depend on Linux or on free memory and may fail

@@ -16,6 +16,9 @@ EXECUTION_MODULES = {
     "execution_manage.py", "execution_ownership.py", "execution_service.py", "execution_transport.py",
 }
 NEW_MODULES = {
+    "hyadex/jobs/__init__.py",
+    "hyadex/jobs/schedules.py",
+    "hyadex/jobs/context.py",
     "hyadex/store/cross_chat.py",
     "hyadex/app.py", "hyadex/store/__init__.py",
     "hyadex/__init__.py", "hyadex/groups.py", "hyadex/autopilot.py",
@@ -122,6 +125,12 @@ class ReleaseFileManifestTests(unittest.TestCase):
     def test_staged_and_direct_deploy_compile_lists_cover_new_modules(self):
         runtime = {name.removeprefix("$SCRIPT_DIR/") for name in shell_array(self.deployer, "RUNTIME_FILES")}
         self.assertTrue(NEW_MODULES | EXECUTION_MODULES <= runtime)
+        directory_guard = re.search(r"(?m)^for directory in ([^;\n]+); do$", self.installer)
+        self.assertIsNotNone(directory_guard)
+        guarded = set(shlex.split(directory_guard[1]))
+        required = {str(parent) for name in self.manifest["FILES"]
+                    for parent in Path(name).parents if str(parent) != "."}
+        self.assertTrue(required <= guarded, required - guarded)
         for name in NEW_MODULES | EXECUTION_MODULES:
             with self.subTest(name=name):
                 self.assertIn(f'"$STAGE_DIR/{name}"', self.installer)

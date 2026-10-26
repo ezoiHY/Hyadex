@@ -10,6 +10,8 @@ route collection, authorization middleware and lifespan to the application facto
 | `hyadex/store/cross_chat.py` | Durable cross-chat ledger, transactions and migrations | Explicit `CrossChatBindings`; mailbox SQL |
 | `hyadex/store/mailbox.py` | Same-server mailbox SQL | Caller-owned SQLite transaction |
 | `hyadex/store/transcripts.py` | Bounded JSONL parsing | Caller-owned binary streams |
+| `hyadex/jobs/schedules.py` | Interval, cron, RRULE and timezone calculations | Calendar libraries; no runtime state |
+| `hyadex/jobs/context.py` | Chat/standalone provider context policy | Explicit default backend and allowed backends |
 | `hyadex/groups.py` | Group models, timeline, dispatch, recovery | `GroupRuntime` supplied by the application |
 | `hyadex/autopilot.py` | Planning, approval, verification, review, worktree checkpoints | Group engine |
 | `hyadex/routes/groups.py` | Group HTTP and WebSocket endpoints | Group engine and explicit WebSocket callbacks |
