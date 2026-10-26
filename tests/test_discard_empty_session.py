@@ -34,7 +34,8 @@ class DiscardEmptySessionTests(unittest.IsolatedAsyncioTestCase):
         for key, value in (("title", "Keep me"), ("backend_locked", True), ("pinned", True),
                            ("archived", True), ("codex_thread_id", "native"),
                            ("claude_session_id", "native"), ("cursor_session_id", "native"),
-                           ("opencode_session_id", "native"), ("updated_at", "v2")):
+                           ("opencode_session_id", "native"), ("gemini_session_id", "native"),
+                           ("updated_at", "v2")):
             with self.subTest(key=key), patch.dict(self.session, {key: value}):
                 with self.assertRaises(HTTPException) as raised:
                     await server.ensure_discardable_empty_session("empty", "v1")

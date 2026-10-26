@@ -70,28 +70,7 @@ class NativeTitleReaders(unittest.TestCase):
             self.assertEqual(server.read_native_session_title(session("codex")), "Refactor auth")
             self.assertIsNone(server.read_native_session_title({**session("codex"), "session_id": "missing"}))
 
-    def test_opencode_exact_main_session_read_only(self):
-        database = self.root / "opencode" / "opencode.db"
-        database.parent.mkdir()
-        with sqlite3.connect(database) as connection:
-            connection.execute("CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, parent_id TEXT)")
-            connection.executemany("INSERT INTO session VALUES (?, ?, ?)", [
-                ("provider-title", "OpenCode native name", None),
-                ("child", "Child name", "provider-title"),
-                ("other", "Other name", None),
-            ])
-        connection.close()
-        before = database.read_bytes()
-        with patch.dict(os.environ, {"XDG_DATA_HOME": str(self.root)}):
-            self.assertEqual(server.read_native_session_title(session("opencode")), "OpenCode native name")
-            for provider_id in ("child", "unknown", "../../escape"):
-                self.assertIsNone(server.read_native_session_title({**session("opencode"), "session_id": provider_id}))
-        self.assertEqual(database.read_bytes(), before)
 
-    def test_missing_opencode_db_is_not_created(self):
-        with patch.dict(os.environ, {"XDG_DATA_HOME": str(self.root)}):
-            self.assertIsNone(server.read_native_session_title(session("opencode")))
-        self.assertEqual(list(self.root.iterdir()), [])
 
     def test_cursor_missing_metadata_keeps_fallback(self):
         with patch.dict(os.environ, {"CURSOR_CONFIG_DIR": str(self.root / "missing")}):

@@ -44,20 +44,21 @@ class SettingsTests(unittest.IsolatedAsyncioTestCase):
 
     def test_switching_api_backend_before_first_turn_gets_new_binding_not_old_provider_credentials(self):
         from tests.test_codex_provider_sessions_isolated import make_namespace
-        selected = {**INPUT, "api_key": "synthetic-opencode-key"}
+        selected = {**INPUT, "api_key": "synthetic-cursor-key", "protocol": "cursor",
+                    "base_url": "https://api2.cursor.sh", "model": None}
         self.store.write("claude", 0, INPUT, "verified")
-        self.store.write("opencode", 0, selected, "verified")
+        self.store.write("cursor", 0, selected, "verified")
         ns = make_namespace(Path(self.temp.name))
-        ns["VALID_BACKENDS"].add("opencode")
+        ns["VALID_BACKENDS"].add("cursor")
         ns["PROVIDER_CONNECTION_STORE"] = self.store
         preview = ns["preview_session_runtime_update"]
         original = preview({"backend": "claude"}, {"provider_connection": "custom"})
-        switched = preview(original, {"backend": "opencode", "provider_connection": "custom", "model": None, "effort": None})
+        switched = preview(original, {"backend": "cursor", "provider_connection": "custom", "model": None, "effort": None})
         self.assertNotEqual(switched["provider_connection_revision"], original["provider_connection_revision"])
         self.assertEqual(self.store.for_session(switched)["api_key"], selected["api_key"])
         self.assertEqual(self.store.for_session(original)["api_key"], KEY)
         with self.assertRaises(HTTPException):
-            preview({**original, "backend_locked": True}, {"backend": "opencode", "provider_connection": "custom"})
+            preview({**original, "backend_locked": True}, {"backend": "cursor", "provider_connection": "custom"})
 
 
     def test_success_persists_private_key_and_returns_only_metadata(self):
@@ -70,7 +71,7 @@ class SettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.read("claude")["api_key"], KEY)
         self.assertEqual((self.store.root / "claude.json").stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.store.root.stat().st_mode & 0o777, 0o700)
-        self.assertFalse(self.store.public("opencode")["configured"])
+        self.assertFalse(self.store.public("cursor")["configured"])
         self.ns["codex_app_server_manager"].assert_not_awaited()
 
     def test_cursor_route_checks_selected_key_only_and_forget_is_revision_fenced(self):
@@ -94,13 +95,13 @@ class SettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.store.public("claude")["configured"])
 
     def test_account_metadata_requires_native_admin_and_never_changes_auth(self):
-        path = "/api/admin/provider-accounts/opencode"
+        path = "/api/admin/provider-accounts/claude"
         self.assertNotEqual(self.client.get(path).status_code, 200)
         self.assertEqual(self.client.get(path, headers={**NATIVE, "Origin": "https://example.test"}).status_code, 403)
         result = self.client.get(path, headers=NATIVE)
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.headers["cache-control"], "no-store")
-        self.assertEqual(result.json(), {"backend": "opencode", "email": None, "plan_type": None, "source": "unavailable"})
+        self.assertEqual(result.json(), {"backend": "claude", "email": None, "plan_type": None, "source": "unavailable"})
         self.check.assert_not_awaited()
     def test_cached_claude_fields_are_allowlisted_and_env_identity_is_not_misattributed(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -255,8 +256,8 @@ class WireProbeTests(unittest.IsolatedAsyncioTestCase):
             app.middleware("http")(fixture.ns["require_agent_token"])
             app.include_router(connections.create_router(authorize=fixture.ns["require_native_admin_control"], store=store))
             with TestClient(app) as client:
-                route = "/api/admin/provider-connections/opencode"
-                models = "/api/admin/provider-models/opencode"
+                route = "/api/admin/provider-connections/claude"
+                models = "/api/admin/provider-models/claude"
                 response = client.put(route, headers=NATIVE, json={**INPUT, "base_url": self.base, "model": None})
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertFalse(response.json()["ok"])
@@ -266,7 +267,7 @@ class WireProbeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(listed.json()["models"], [{"value": "fixture/model", "label": "fixture/model"}])
                 self.assertIsNone(listed.json()["default_model"])
                 self.assertTrue(all(call[2] is None for call in self.calls))
-                self.assertFalse(store.catalog("opencode")["available"])
+                self.assertFalse(store.catalog("claude")["available"])
                 chosen = client.put(models, headers=NATIVE, json={"model": "fixture/model", "expected_revision": 1})
                 self.assertEqual(chosen.status_code, 200, chosen.text)
                 self.assertTrue(all(call[2] is None for call in self.calls))
@@ -278,7 +279,7 @@ class WireProbeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(posts[0][2]["model"], "fixture/model")
                 self.assertEqual(posts[0][2]["max_tokens"], 256)
                 self.assertNotIn(KEY, verified.text)
-                self.assertEqual(store.bind({"backend": "opencode", "provider_connection": "custom"})["model"], "fixture/model")
+                self.assertEqual(store.bind({"backend": "claude", "provider_connection": "custom"})["model"], "fixture/model")
 
     async def test_real_http_protocol_paths_headers_and_response_validation(self):
         cases = [("anthropic", "bearer", "/api", "/api/v1/messages", {"type": "message", "content": [{"type": "text", "text": "OK"}]}),
@@ -342,7 +343,7 @@ class WireProbeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await connections.probe({**INPUT, "base_url": self.base, "protocol": protocol}), "invalid_response")
                 self.assertEqual(len(self.calls), before + 1)
 
-    async def test_anthropic_check_catalog_and_opencode_runtime_share_api_prefix(self):
+    async def test_anthropic_check_and_catalog_share_api_prefix(self):
         for suffix in ("", "/v1", "/proxy/anthropic", "/proxy/anthropic/v1"):
             for auth in ("bearer", "x-api-key"):
                 with self.subTest(suffix=suffix, auth=auth), tempfile.TemporaryDirectory() as directory:
@@ -352,16 +353,6 @@ class WireProbeTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(await connections.probe(selected), "verified")
                     checked_path = self.calls[-1][0]
                     self.assertEqual(checked_path, expected_prefix + "/messages")
-                    store = connections.ConnectionStore(Path(directory) / "private")
-                    store.write("opencode", 0, selected, "verified")
-                    chat = {"backend": "opencode", "provider_connection": "custom"}
-                    chat["provider_connection_revision"] = store.bind(chat)["credential_id"]
-                    original = store.for_session(chat)
-                    env = store.opencode_overrides(chat, {})
-                    config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
-                    runtime_base = config["provider"]["hyadex_custom"]["options"]["baseURL"]
-                    self.assertEqual(runtime_base + "/messages", self.base + checked_path)
-                    self.assertEqual(store.for_session(chat), original)
                     self.payload = {"data": [{"id": "test/model"}]}
                     self.assertEqual(await connections.probe_credentials(selected), "verified")
                     self.assertEqual(self.calls[-1][0], expected_prefix + "/models")

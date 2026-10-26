@@ -63,7 +63,7 @@ class InteractiveChatNativeGlueTests(unittest.IsolatedAsyncioTestCase):
             "read_semantic_timeline_page": Mock(return_value={"events": [self.row, {"id": "file-one", "session_id": "chat-one", "type": "file_uploaded", "seq": 2}], "semantic_total": 2, "semantic_omitted_before": 1, "next_semantic_before": 1}),
             "public_session": lambda value: dict(value), "DEFAULT_BACKEND": "codex",
             "BACKEND_CODEX": "codex", "BACKEND_CLAUDE": "claude", "BACKEND_CURSOR": "cursor",
-            "VALID_BACKENDS": {"claude", "codex", "cursor", "opencode"},
+            "VALID_BACKENDS": {"claude", "codex", "cursor"},
             "CURSOR_PERMISSION_MODES": ("default", "full_access", "plan"),
             "CURSOR_DEFAULT_PERMISSION_MODE": "default",
             "RUNTIME_DIAGNOSTICS": {}, "RUNTIME_DIAGNOSTICS_LOCK": threading.RLock(),

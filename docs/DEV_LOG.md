@@ -3,6 +3,40 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Retire the OpenCode runtime
+
+- Removed OpenCode execution, stream translation, CLI probing, native title
+  reading, skill scanning, custom API configuration and provider-specific
+  settings. Removed its live verification scripts and runtime inventory entries.
+- Old OpenCode chats retain their backend, native identity and timeline. They
+  remain readable and can be organized; runtime changes and execution reject
+  the retired backend. Saved jobs, including backend overrides on supported
+  parent chats, stay paused across reloads. Identity-only records remain
+  protected from automatic empty-chat cleanup.
+- Native profiles, credentials and old private per-turn instruction files are
+  retained as data. This server no longer reads them to launch OpenCode. No
+  replacement provider, transcript migration or native-file deletion is used.
+- Independent Claude static review caught a shared native-import/custom-API
+  guard removed with an OpenCode branch. It was restored for all remaining
+  native identity aliases, with regressions and real HTTP checks. Retired-job
+  override coverage and code formatting were also improved.
+
+**Validation.** The final isolated full suite ran 5,036 cases (12 skipped),
+with eight inherited failures, no errors, and one parallel-load timing failure;
+all six cases in that timeline module passed serially. All 257 fast-package
+cases and 237 post-review focused cases pass, including the unchanged Cursor
+runner. All 339 Python sources compile; dependency-lock, shell and inventory checks pass.
+Eleven native runner/event/group delivery functions retain their previous ASTs.
+
+Real isolated HTTP acceptance passed old native/custom history reads, metadata
+edits, execution/import/fork rejection, durable job pause and a server restart
+with identical history bytes and identities. Claude/Cursor native-session
+imports into a custom API reject before endpoint binding or chat creation.
+Real Claude/Codex acceptance passed file editing and receipt, handoff,
+contextual follow-up, parallel replies, Stop, queued messages, group-job
+execution and 47 ordered WebSocket events. Desktop/mobile clients and a live
+OpenCode runtime were not exercised. **Availability:** source only.
+
 ## 2026-10-26 — Handle an exhausted Git snapshot budget
 
 Corrected the timeout exception's constructor when the shared snapshot budget

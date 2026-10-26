@@ -293,7 +293,6 @@ class RuntimeProbeTimeoutTests(unittest.TestCase):
         self.assertTrue(started)
         self.assertEqual(set(result["backends"]), agent_server.VALID_BACKENDS)
         self.assertEqual(result["backends"]["claude"]["diagnostic"]["status"], "unknown")
-        self.assertEqual(result["backends"]["opencode"]["diagnostic"]["status"], "unknown")
         self.assertNotIn("opencode", agent_server.RUNTIME_DIAGNOSTICS)
         self.assertTrue(result["backends"]["claude"]["models"])
         self.assertIsNone(agent_server.RUNTIME_CATALOG_DEADLINE.get())
@@ -318,7 +317,7 @@ class RuntimeProbeTimeoutTests(unittest.TestCase):
         self.assertEqual(seen, {backend: (True, 123.0) for backend in agent_server.VALID_BACKENDS})
         self.assertEqual(agent_server.RUNTIME_CATALOG_DEADLINE.get(), 123.0)
 
-    def test_slow_peer_diagnostic_cannot_starve_healthy_opencode_models(self):
+    def test_slow_peer_diagnostic_cannot_starve_healthy_codex_models(self):
         slow_started = threading.Event()
         models_finished = threading.Event()
         static = {"models": [], "efforts": []}
@@ -330,19 +329,19 @@ class RuntimeProbeTimeoutTests(unittest.TestCase):
                 return {"backend": backend, "status": "error"}
             return {"backend": backend, "status": "ready", "_executable": "/test/" + backend}
 
-        def opencode_models(**_kwargs):
+        def codex_models(**_kwargs):
             self.assertTrue(slow_started.wait(timeout=5))
             models_finished.set()
-            return {"models": [{"value": "opencode/test", "label": "Test"}], "efforts": []}
+            return {"models": [{"value": "codex/test", "label": "Test"}], "efforts": []}
 
         with patch.object(agent_server, "runtime_diagnostic", side_effect=diagnostic), patch.object(
             agent_server, "parse_claude_help_catalog", return_value=dict(static),
-        ), patch.object(agent_server, "discover_codex_catalog", return_value=dict(static)), patch.object(
-            agent_server, "discover_opencode_catalog", side_effect=opencode_models,
+        ), patch.object(
+            agent_server, "discover_codex_catalog", side_effect=codex_models,
         ):
             result = agent_server.discover_runtime_catalog(force_runtime_probe=True)
-        self.assertEqual(result["backends"]["opencode"]["models"][0]["value"], "opencode/test")
-        self.assertTrue(result["backends"]["opencode"]["available"])
+        self.assertEqual(result["backends"]["codex"]["models"][0]["value"], "codex/test")
+        self.assertTrue(result["backends"]["codex"]["available"])
 
     def test_http_catalog_route_propagates_budget_to_worker_and_returns_json(self):
         seen = []

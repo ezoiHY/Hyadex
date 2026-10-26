@@ -20,21 +20,21 @@ class CrossChatConnectionTests(unittest.TestCase):
                    "CLAUDE_TRANSPORT": "agent-sdk", "CLAUDE_TRANSPORT_PRINT": "print",
                    "claude_sdk_dependency_available": lambda: True,
                    "BACKEND_CODEX": "codex", "BACKEND_CLAUDE": "claude",
-                   "BACKEND_CURSOR": "cursor", "BACKEND_OPENCODE": "opencode",
+                   "BACKEND_CURSOR": "cursor",
                    "RUNTIME_DIAGNOSTICS": {}, "RUNTIME_DIAGNOSTICS_LOCK": threading.RLock(),
                    "PROVIDER_CONNECTION_STORE": self.store, "HTTPException": HTTPException}
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), self.ns)
 
     def test_verified_api_supports_cross_chat_without_native_login(self):
         self.store.public.return_value = {"configured": True, "last_result": "verified"}
-        for backend in ("cursor", "opencode"):
+        for backend in ("cursor",):
             with self.subTest(backend=backend):
                 self.ns["RUNTIME_DIAGNOSTICS"] = {backend: {"status": "unauthenticated", "installed": True}}
                 self.assertIn(backend, self.ns["cross_chat_supported_target_backends"]())
                 self.assertEqual(self.ns["RUNTIME_DIAGNOSTICS"][backend]["status"], "unauthenticated")
 
     def test_missing_cli_forgotten_or_unverified_api_cannot_enable_transport(self):
-        for backend in ("cursor", "opencode"):
+        for backend in ("cursor",):
             for installed, configured, result in ((False, True, "verified"),
                     (True, False, None), (True, True, "authentication_failed"), (True, True, None)):
                 with self.subTest(backend=backend, installed=installed, configured=configured, result=result):
@@ -83,7 +83,7 @@ class RuntimeBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(HTTPException, "disconnected"): reloaded.for_session(chat)
 
     def test_legacy_forget_revokes_and_inflight_output_still_redacts(self):
-        for backend in ("claude", "opencode"):
+        for backend in ("claude",):
             chat = self.chat(backend)
             (self.store.root / f"{backend}.json").write_text(json.dumps({"revision": 2, "configured": False}))
             with self.assertRaisesRegex(HTTPException, "disconnected"): self.store.for_session(chat)
@@ -111,7 +111,6 @@ class RuntimeBindingTests(unittest.TestCase):
     def test_native_chat_has_no_overrides_or_writes(self):
         self.assertEqual(self.store.for_session({"backend": "claude"}), {})
         self.assertEqual(self.store.claude_overrides({"backend": "claude"}), ({}, None))
-        self.assertEqual(self.store.opencode_overrides({"backend": "opencode"}, {}), {})
         self.assertFalse(self.store.root.exists())
 
     def test_summary_never_duplicates_cached_endpoint_inventory_or_probes(self):
@@ -143,15 +142,6 @@ class RuntimeBindingTests(unittest.TestCase):
         self.assertEqual(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "vendor/model")
         self.assertEqual(env["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"], "2")
 
-    def test_opencode_uses_dedicated_provider_and_preserves_permission_config(self):
-        chat = self.chat("opencode")
-        env = self.store.opencode_overrides(chat, {"OPENCODE_CONFIG_CONTENT": '{"permission":{"bash":"deny"}}'})
-        config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
-        self.assertNotIn("synthetic-first-key", env["OPENCODE_CONFIG_CONTENT"])
-        self.assertEqual(config["permission"]["bash"], "deny")
-        self.assertEqual(config["enabled_providers"], ["hyadex_custom"])
-        self.assertEqual(config["model"], "hyadex_custom/vendor/model")
-        self.assertEqual(env["HYADEX_CUSTOM_API_KEY"], "synthetic-first-key")
 
     def test_custom_without_model_cannot_borrow_native_default(self):
         self.input["model"] = None
@@ -159,25 +149,11 @@ class RuntimeBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(HTTPException, "Choose a model"):
             self.store.claude_overrides(chat)
 
-    def test_opencode_openai_adapters_do_not_gain_an_anthropic_prefix(self):
-        for protocol, adapter in (("responses", "@ai-sdk/openai"), ("chat_completions", "@ai-sdk/openai-compatible")):
-            with self.subTest(protocol=protocol), tempfile.TemporaryDirectory() as directory:
-                store = connections.ConnectionStore(Path(directory) / "private")
-                store.write("opencode", 0, {**self.input, "protocol": protocol}, "verified")
-                chat = {"backend": "opencode", "provider_connection": "custom"}
-                chat["provider_connection_revision"] = store.bind(chat)["credential_id"]
-                env = store.opencode_overrides(chat, {})
-                provider = json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"]["hyadex_custom"]
-                self.assertEqual(provider["options"]["baseURL"], self.input["base_url"])
-                self.assertEqual(provider["npm"], adapter)
 
-    def test_claude_still_receives_root_while_opencode_receives_api_prefix(self):
+    def test_claude_receives_root_for_anthropic_api_prefix(self):
         self.input["base_url"] += "/v1"
         claude = self.chat("claude")
-        opencode = self.chat("opencode")
         self.assertEqual(self.store.claude_overrides(claude)[0]["ANTHROPIC_BASE_URL"], "https://gateway.invalid/api")
-        env = self.store.opencode_overrides(opencode, {})
-        self.assertEqual(json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"]["hyadex_custom"]["options"]["baseURL"], self.input["base_url"])
 
     def test_public_catalog_has_no_keys_and_session_projection_never_networks(self):
         chat = self.chat()
@@ -190,9 +166,6 @@ class RuntimeBindingTests(unittest.TestCase):
         self.assertNotIn("synthetic-first-key", json.dumps(self.store.public("claude")))
         self.assertEqual(self.store.public("claude")["scope"], "per_chat")
 
-    def test_opencode_free_runtime_is_not_mislabeled_signed_in(self):
-        with patch.object(Path, "home", return_value=Path(self.temp.name)), patch.dict(connections.os.environ, {}, clear=True):
-            self.assertFalse(connections.native_credentials_present("opencode", {"installed": True, "authenticated": True}))
 
     def test_custom_claude_success_is_not_proof_of_native_login(self):
         with patch.object(Path, "home", return_value=Path(self.temp.name)), patch.dict(connections.os.environ, {}, clear=True), patch.object(connections.sys, "platform", "linux"):

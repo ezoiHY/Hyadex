@@ -358,7 +358,7 @@ class DigestDeliveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_rejects_opencode_target_before_job_event_or_turn(self) -> None:
         agent_server.STORE.sessions["target-1"]["backend"] = (
-            agent_server.BACKEND_OPENCODE
+            "opencode"
         )
         create_job = AsyncMock()
         append_event = AsyncMock()
@@ -612,7 +612,7 @@ class DigestDeliveryTests(unittest.IsolatedAsyncioTestCase):
             delivery = asyncio.create_task(deliver_handoff_digest(job, digest))
             await entered.wait()
             agent_server.STORE.sessions["target-1"]["backend"] = (
-                agent_server.BACKEND_OPENCODE
+                agent_server.BACKEND_CODEX
             )
             release.set()
             with self.assertRaises(agent_server.HTTPException) as raised:
@@ -658,7 +658,7 @@ class DigestDeliveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_digest_delivery_cannot_override_the_target_runtime(self) -> None:
         request = agent_server.TurnRequest(
             prompt="digest",
-            backend=agent_server.BACKEND_OPENCODE,
+            backend="opencode",
             purpose="handoff_digest_delivery",
             digest_job_id="digest-1",
             source_session_id="source-1",
@@ -697,7 +697,7 @@ class DigestDeliveryTests(unittest.IsolatedAsyncioTestCase):
 
         async def update_wins_before_fallback(*_args: object, **_kwargs: object) -> None:
             agent_server.STORE.sessions["target-1"]["backend"] = (
-                agent_server.BACKEND_OPENCODE
+                "opencode"
             )
             raise agent_server.ManagedServerUpdatePendingError()
 

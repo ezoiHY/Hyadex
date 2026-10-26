@@ -16,6 +16,7 @@ from hyadex.groups import ParticipantSpec
 
 
 class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
+    backend = "gemini"
     async def asyncSetUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="retired-provider-")
         self.addCleanup(self.directory.cleanup)
@@ -24,16 +25,16 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
         self.jobs = server.JobStore()
         self.session_id = "sess_retired_provider"
         self.session = {
-            "id": self.session_id, "backend": "gemini", "title": "Saved conversation",
-            "session_id": "old-native-id", "gemini_session_id": "old-native-id",
+            "id": self.session_id, "backend": self.backend, "title": "Saved conversation",
+            "session_id": "old-native-id", self.backend + "_session_id": "old-native-id",
             "backend_locked": True, "cwd": str(self.root), "folder": "General",
             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00",
             "provider_connection": "custom", "provider_connection_revision": "a" * 32,
         }
         self.events = [
-            {"seq": 1, "type": "turn_started", "run_id": "old-run", "backend": "gemini", "prompt": "Saved question"},
-            {"seq": 2, "type": "assistant_text", "run_id": "old-run", "backend": "gemini", "text": "Saved answer"},
-            {"seq": 3, "type": "turn_finished", "run_id": "old-run", "backend": "gemini", "exit_code": 0},
+            {"seq": 1, "type": "turn_started", "run_id": "old-run", "backend": self.backend, "prompt": "Saved question"},
+            {"seq": 2, "type": "assistant_text", "run_id": "old-run", "backend": self.backend, "text": "Saved answer"},
+            {"seq": 3, "type": "turn_finished", "run_id": "old-run", "backend": self.backend, "exit_code": 0},
         ]
         for name, value in (
             ("STATE_DIR", self.root), ("SESSIONS_FILE", self.root / "sessions.json"),
@@ -66,7 +67,7 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
                             {"archived": True}, {"archived": False}):
                 response = await self.client.patch(f"/api/sessions/{self.session_id}", json=changes)
                 self.assertEqual(response.status_code, 200, response.text)
-                self.assertEqual(response.json()["session"]["backend"], "gemini")
+                self.assertEqual(response.json()["session"]["backend"], self.backend)
             for changes in ({"backend": "codex"}, {"provider_connection": "default"}, {"model": "new"}):
                 response = await self.client.patch(f"/api/sessions/{self.session_id}", json=changes)
                 self.assertEqual(response.status_code, 410, response.text)
@@ -101,9 +102,14 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
             launch.assert_not_awaited()
         self.assertEqual(server.events_path(self.session_id).read_bytes(), self.original_events)
 
-    async def test_import_rejects_and_uncertain_cleanup_fence_is_preserved(self):
+    async def test_import_rejects_without_touching_history(self):
         response = await self.client.post(f"/api/sessions/{self.session_id}/import-history", json={"force": True})
         self.assertEqual(response.status_code, 410, response.text)
+        self.assertEqual(server.events_path(self.session_id).read_bytes(), self.original_events)
+
+    async def test_uncertain_gemini_cleanup_fence_is_preserved(self):
+        if self.backend != "gemini":
+            self.skipTest("The persisted cleanup fence belongs to Gemini.")
         self.store.sessions[self.session_id]["gemini_cleanup_pending_run_id"] = "old-unconfirmed-run"
         result = await server.stop_turn(self.session_id)
         self.assertFalse(result["stopped"])
@@ -113,19 +119,37 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(self.session_id, self.store.sessions)
         self.assertEqual(server.events_path(self.session_id).read_bytes(), self.original_events)
 
+    async def test_retired_job_override_on_a_supported_parent_stays_paused(self):
+        self.store.sessions["supported-parent"] = {"id": "supported-parent", "backend": "codex"}
+        server.JOBS_FILE.write_text(json.dumps({"old-override": {
+            "id": "old-override", "session_id": "supported-parent", "backend": self.backend,
+            "context_mode": "standalone", "title": "Old override", "prompt": "Never launch",
+            "interval_seconds": 60, "loop": True, "enabled": True, "manual_run_pending": True,
+        }}))
+        for _ in range(2):
+            await self.jobs.load()
+            job = self.jobs.jobs["old-override"]
+            self.assertFalse(job["enabled"])
+            self.assertFalse(job["manual_run_pending"])
+            self.assertEqual(job["disabled_reason"], "provider_removed")
+            with self.assertRaises(HTTPException) as raised:
+                await self.jobs.request_manual_run("old-override")
+            self.assertEqual(raised.exception.status_code, 410)
+        self.assertEqual(self.store.sessions["supported-parent"]["backend"], "codex")
+
     async def test_saved_chat_load_and_http_read_preserve_identity_and_event_bytes(self):
         for _ in range(2):
             response = await self.client.get(f"/api/sessions/{self.session_id}")
             self.assertEqual(response.status_code, 200, response.text)
             value = response.json()
-            self.assertEqual(value["session"]["backend"], "gemini")
+            self.assertEqual(value["session"]["backend"], self.backend)
             self.assertEqual(value["session"]["session_id"], "old-native-id")
             self.assertTrue(any(event.get("text") == "Saved answer" for event in value["events"]))
             self.assertEqual(server.events_path(self.session_id).read_bytes(), self.original_events)
-        self.assertEqual(self.store.sessions[self.session_id]["gemini_session_id"], "old-native-id")
+        self.assertEqual(self.store.sessions[self.session_id][self.backend + "_session_id"], "old-native-id")
         await self.store.save(durable=True)
         await self.store.load()
-        self.assertEqual(self.store.sessions[self.session_id]["backend"], "gemini")
+        self.assertEqual(self.store.sessions[self.session_id]["backend"], self.backend)
         self.assertEqual(server.events_path(self.session_id).read_bytes(), self.original_events)
 
     async def test_turn_and_fork_reject_without_invoking_a_replacement_runtime(self):
@@ -138,23 +162,42 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(server.events_path(self.session_id).read_bytes(), self.original_events)
 
     async def test_removed_provider_is_absent_from_admission_and_admin_contracts(self):
-        with patch.dict(os.environ, {"HYADEX_ENABLED_BACKENDS": "claude,codex,gemini"}):
-            self.assertNotIn("gemini", server.enabled_backends())
-            response = await self.client.post("/api/sessions", json={"backend": "gemini"})
+        with patch.dict(os.environ, {"HYADEX_ENABLED_BACKENDS": "claude,codex," + self.backend}):
+            self.assertNotIn(self.backend, server.enabled_backends())
+            response = await self.client.post("/api/sessions", json={"backend": self.backend})
             self.assertEqual(response.status_code, 400, response.text)
-        response = await self.client.get("/api/admin/provider-connections/gemini")
+        response = await self.client.get("/api/admin/provider-connections/" + self.backend)
         self.assertEqual(response.status_code, 400, response.text)
-        response = await self.client.get(f"/api/sessions/{self.session_id}/gemini/runtime")
+        response = await self.client.get(f"/api/sessions/{self.session_id}/{self.backend}/runtime")
         self.assertEqual(response.status_code, 404, response.text)
         with self.assertRaises(ValidationError):
-            ParticipantSpec(backend="gemini")
+            ParticipantSpec(backend=self.backend)
         with self.assertRaises(ValidationError):
-            server.BulkImportSessionItem(backend="gemini", provider_session_id="old-native-id")
-        self.assertNotIn("gemini", provider_connections.PROTOCOLS)
+            server.BulkImportSessionItem(backend=self.backend, provider_session_id="old-native-id")
+        self.assertNotIn(self.backend, provider_connections.PROTOCOLS)
 
     async def test_direct_runtime_admission_fails_before_any_probe(self):
         with patch.object(server, "runtime_diagnostic", new=Mock()) as probe:
             with self.assertRaises(HTTPException) as raised:
-                await server.ensure_runtime_available("gemini", session=self.session)
+                await server.ensure_runtime_available(self.backend, session=self.session)
             self.assertEqual(raised.exception.status_code, 410)
             probe.assert_not_called()
+
+    async def test_native_identity_cannot_be_imported_into_a_custom_connection(self):
+        before = set(self.store.sessions)
+        with patch.dict(os.environ, {"HYADEX_ENABLED_BACKENDS": "claude,codex,cursor"}), patch.object(
+            server.PROVIDER_CONNECTION_STORE, "bind", side_effect=AssertionError("Must reject before endpoint binding"),
+        ):
+            for backend in ("claude", "cursor"):
+                for field in ("provider_session_id", "session_id", backend + "_session_id"):
+                    with self.subTest(backend=backend, field=field):
+                        response = await self.client.post("/api/sessions", json={
+                            "backend": backend, "provider_connection": "custom", field: "old-native-id",
+                        })
+                        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(set(self.store.sessions), before)
+        self.assertEqual(server.events_path(self.session_id).read_bytes(), self.original_events)
+
+
+class RetiredOpenCodeTests(RetiredProviderTests):
+    backend = "opencode"

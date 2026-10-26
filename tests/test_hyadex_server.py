@@ -25,7 +25,7 @@ class HyadexDefaultsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raised.exception.status_code, 400)
             self.assertEqual(agent_server.require_enabled_backend("codex"), "codex")
         with patch.dict(os.environ, {"HYADEX_ENABLED_BACKENDS": "claude,codex,opencode,bogus"}):
-            self.assertEqual(agent_server.enabled_backends(), {"claude", "codex", "opencode"})
+            self.assertEqual(agent_server.enabled_backends(), {"claude", "codex"})
 
     async def test_in_app_updates_are_disabled_unless_explicitly_enabled(self) -> None:
         with patch.dict(os.environ, {"HYADEX_MANAGED_UPDATES": ""}):

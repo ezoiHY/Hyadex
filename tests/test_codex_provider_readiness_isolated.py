@@ -39,7 +39,7 @@ class CodexProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
             "provider_connections": SimpleNamespace(native_credentials_present=lambda *args: False),
             "PROVIDER_CONNECTION_STORE": SimpleNamespace(catalog=lambda *args, **kwargs: {}),
             "BACKEND_CODEX": "codex", "BACKEND_CLAUDE": "claude", "BACKEND_CURSOR": "cursor",
-            "BACKEND_OPENCODE": "opencode", "VALID_BACKENDS": {"claude", "codex", "cursor", "opencode"},
+            "VALID_BACKENDS": {"claude", "codex", "cursor"},
             "ThreadPoolExecutor": ThreadPoolExecutor, "copy_context": copy_context,
             "RUNTIME_CATALOG_DEADLINE": ContextVar("test_catalog_deadline", default=None),
             "RUNTIME_CATALOG_BUDGET_SECONDS": 25.0,
@@ -51,8 +51,7 @@ class CodexProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
             "runtime_diagnostic": Mock(return_value={"status": "unauthenticated", "installed": True}),
             "public_runtime_diagnostic": lambda value: value,
             "runtime_option": lambda value, label: {"value": value, "label": label},
-            "CURSOR_PERMISSION_MODES": [], "CURSOR_DEFAULT_PERMISSION_MODE": "default",
-            "OPENCODE_PERMISSION_MODES": [], "OPENCODE_DEFAULT_PERMISSION_MODE": "default"}
+            "CURSOR_PERMISSION_MODES": [], "CURSOR_DEFAULT_PERMISSION_MODE": "default"}
         exec(CODE, self.ns)
 
     def test_normal_codex_uses_its_login_despite_saved_or_broken_optional_provider(self):
@@ -92,7 +91,7 @@ class CodexProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
             self.ns.update(PROVIDER_CONNECTION_STORE=store, CODEX_PROVIDER_STORE=codex,
                            provider_connections=provider_connections)
             self.ns["runtime_diagnostic"].return_value = {"status": "ready", "installed": True}
-            for backend in ("claude", "opencode", "cursor", "codex"):
+            for backend in ("claude", "cursor", "codex"):
                 session = {"backend": backend, "model": "fixture/model"}
                 if backend == "codex":
                     codex.save({"base_url": "https://synthetic.invalid/v1", "api_key": "synthetic", "model": "fixture/model"})

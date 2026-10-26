@@ -165,7 +165,6 @@ mobile push of title-only updates would be a separate client improvement.
 | Claude | Bounded exact-session transcript head/tail reads of `custom-title` / `ai-title` records. No additional generation request. SDK sessions may not produce these records. |
 | Codex | App-server start/resume/read names, `thread/name/updated`, and existing `session_index.jsonl`. Custom providers use their own manager cache. Native names take precedence over generated fallback names. |
 | Cursor | Exact-workspace, exact-ID read-only CLI naming metadata (see above). Stream-json exposes no supported title event. Conversation blobs are not decoded; the independent request above remains the fallback when no usable native name exists. |
-| OpenCode | Fixture-tested read-only exact-ID SQLite metadata reader only. This beta.9 runtime does not expose OpenCode as a provider. |
 
 Native metadata is checked before normal terminal events and when idle history
 is reopened. Child-name notifications continue updating child identities, never

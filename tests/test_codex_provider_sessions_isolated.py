@@ -24,7 +24,6 @@ from tests import test_codex_subagent_config_isolated as config_fixture
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
 FUNCTIONS = {"preview_session_runtime_update", "session_backend_locked", "public_session", "title_runtime_key",
-    "effective_opencode_permission_mode", "ensure_opencode_permission_mode_update_allowed",
     "session_subagent_limit_control", "validate_session_subagent_limit",
     "record_codex_subagent_limit_application",
     "create_session", "create_session_with_history", "update_session", "_update_session", "ensure_backend_update_allowed", "codex_runtime_settings", "_fork_session_locked"}
@@ -64,8 +63,7 @@ def make_namespace(root: Path):
         "HTTPException": HTTPException, "codex_provider": codex_provider,
         "MAX_SESSION_SYSTEM_PROMPT_CHARS": 10000, "DEFAULT_BACKEND": "codex",
         "BACKEND_CODEX": "codex", "BACKEND_CLAUDE": "claude", "BACKEND_CURSOR": "cursor",
-        "BACKEND_OPENCODE": "opencode",
-        "VALID_BACKENDS": {"codex", "claude", "cursor", "opencode"}, "DEFAULT_CWD": str(root),
+        "VALID_BACKENDS": {"codex", "claude", "cursor"}, "DEFAULT_CWD": str(root),
         "CODEX_TRANSPORT": "app-server", "CODEX_TRANSPORT_EXEC": "exec",
         "CODEX_PROVIDER_STORE": codex_provider.ProviderStore(root / "providers"),
         "normalize_runtime_effort_for_model": lambda backend, model, effort, **kwargs: effort,
@@ -75,7 +73,6 @@ def make_namespace(root: Path):
         "clean_session_system_prompt": lambda value: value, "append_event": AsyncMock(),
         "CLAUDE_DEFAULT_PERMISSION_MODE": "default", "CLAUDE_PERMISSION_MODES": {"default"},
         "CURSOR_DEFAULT_PERMISSION_MODE": "default", "CURSOR_PERMISSION_MODES": ["default"],
-        "OPENCODE_DEFAULT_PERMISSION_MODE": "default", "OPENCODE_PERMISSION_MODES": ["default", "full_access", "plan"],
         "CODEX_DEFAULT_APPROVAL_POLICY": "never", "CODEX_APPROVAL_POLICIES": {"never"},
         "CODEX_DEFAULT_SANDBOX_MODE": "read-only", "CODEX_SANDBOX_MODES": {"read-only"},
         "CODEX_DEFAULT_PERMISSION_PROFILE": None, "CODEX_DEFAULT_APPROVALS_REVIEWER": "user",

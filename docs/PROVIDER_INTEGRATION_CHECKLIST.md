@@ -96,7 +96,7 @@ Describe differences and extra provider usage for server-provided equivalents.
   history import, later native-history reconciliation and fork. Resume working
   does not prove the other four work. Distinguish CLI, IDE and cloud histories;
   never assume they share a format. Apply this checklist to Claude, Codex,
-  Cursor, OpenCode and each future adapter, including explicitly unsupported items.
+  Cursor and each future adapter, including explicitly unsupported items.
 - [ ] Keep the original provider ID and exact workspace when resuming; test a
   contextual follow-up against the same native conversation. A missing workspace
   or unreadable store must not silently create a fresh thread or replay history

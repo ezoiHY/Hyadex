@@ -40,7 +40,6 @@ NEW_MODULES = {
     "claude_background_reconciliation.py",
     "claude_model_catalog.py",
     "claude_goals.py",
-    "opencode_agent_client.py",
     "hyadex/store/transcripts.py", "claude_history_repair.py", "claude_history_provenance.py", "codex_history_repair.py", "public_chat_shares.py",
     "public_chat_transcript.py", "public_chat_share_routes.py",
     "interactive_chat_shares.py", "interactive_chat_share_routes.py",
@@ -148,15 +147,6 @@ class ReleaseFileManifestTests(unittest.TestCase):
         self.assertRegex(installer_smoke, rf"\bimport [^'\n;]*\b{module}\b")
         self.assertRegex(deploy_smoke, rf"\bimport [^'\n;]*\b{module}\b")
 
-    def test_opencode_translation_layer_is_import_smoked_before_activation(self):
-        module = "opencode_agent_client"
-        installer_smoke = self.installer.split('PYTHONPATH="$STAGE_DIR"')[-1]
-        deploy_smoke = "\n".join(
-            line for line in self.deployer.splitlines()
-            if "PYTHONPATH='$REMOTE_SERVER_DIR'" in line
-        )
-        self.assertRegex(installer_smoke, rf"\bimport [^'\n;]*\b{module}\b")
-        self.assertRegex(deploy_smoke, rf"\bimport [^'\n;]*\b{module}\b")
 
     def test_staging_does_not_execute_library_modules_after_chmod(self):
         staging = self.installer.split('chmod 755 "$STAGE_DIR/agent_server.py"', 1)[1]

@@ -28,7 +28,7 @@ MAX_BODY_BYTES = 16 * 1024
 # Reasoning can consume output tokens before the short visible check answer.
 # Keep this explicit probe bounded and single-shot, including for such models.
 MODEL_CHECK_MAX_OUTPUT_TOKENS = 256
-PROTOCOLS = {"claude": {"anthropic"}, "opencode": {"anthropic", "chat_completions", "responses"}, "cursor": {"cursor"}}
+PROTOCOLS = {"claude": {"anthropic"}, "cursor": {"cursor"}}
 RESULTS = {"verified", "authentication_failed", "rate_limited", "unsupported", "connection_failed", "invalid_response", "model_required", "cli_update_required"}
 
 
@@ -274,21 +274,6 @@ class ConnectionStore:
         from cursor_api_key import overrides
         return overrides(self.for_session(session)["api_key"])
 
-    def opencode_overrides(self, session: dict, env: dict) -> dict:
-        value = self.for_session(session)
-        if not value:
-            return {}
-        model = require_model(value)
-        config = json.loads(env.get("OPENCODE_CONFIG_CONTENT") or "{}")
-        adapter = {"anthropic": "@ai-sdk/anthropic", "chat_completions": "@ai-sdk/openai-compatible", "responses": "@ai-sdk/openai"}[value["protocol"]]
-        options = {"baseURL": endpoint_api_base_url(value["base_url"], value["protocol"]), "apiKey": "{env:HYADEX_CUSTOM_API_KEY}"}
-        if value["protocol"] == "anthropic" and value["auth_header"] == "bearer":
-            options["headers"] = {"Authorization": "Bearer {env:HYADEX_CUSTOM_API_KEY}", "x-api-key": ""}
-        config.setdefault("provider", {})["hyadex_custom"] = {"npm": adapter, "name": "Custom endpoint", "options": options, "models": {model: {"name": model}}}
-        config["model"] = "hyadex_custom/" + model
-        config["small_model"] = config["model"]
-        config["enabled_providers"] = ["hyadex_custom"]
-        return {"HYADEX_CUSTOM_API_KEY": value["api_key"], "OPENCODE_CONFIG_CONTENT": json.dumps(config)}
 
     def redact(self, session: dict, value):
         if session.get("provider_connection") != "custom":
@@ -325,9 +310,9 @@ def native_credentials_present(backend: str, diagnostic: dict) -> bool:
     """Presence only, not a paid/auth-refresh probe; never return credential data."""
     if diagnostic.get("installed") is not True:
         return False
-    # Claude/OpenCode successful turns may have used a chat-local custom API.
-    # Their runtime-ready cache is not proof of a separate native login.
-    if backend not in {"claude", "opencode"} and diagnostic.get("authenticated") is True:
+    # Claude successful turns may have used a chat-local custom API.
+    # Its runtime-ready cache is not proof of a separate native login.
+    if backend != "claude" and diagnostic.get("authenticated") is True:
         return True
     try:
         if backend == "claude":
@@ -342,13 +327,6 @@ def native_credentials_present(backend: str, diagnostic: dict) -> bool:
             if sys.platform == "darwin":
                 # Omit -w/-g: test existence without extracting a Keychain secret.
                 return subprocess.run(["/usr/bin/security", "find-generic-password", "-s", "Claude Code-credentials"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2).returncode == 0
-        if backend == "opencode":
-            if any(os.environ.get(key) for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY")):
-                return True
-            path = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "opencode/auth.json"
-            if path.is_file() and path.stat().st_size < 65536:
-                value = json.loads(path.read_text())
-                return isinstance(value, dict) and any(isinstance(item, dict) and (item.get("key") or item.get("access")) for item in value.values())
     except Exception:
         pass
     return False
@@ -453,9 +431,8 @@ def native_account_metadata(backend: str, *, env=None, cursor_executable=None, c
     """Allowlisted account display fields only; never log in or renew credentials.
 
     Claude's profile is cached metadata, not proof of current authentication.
-    OpenCode can hold several providers and has no single email/subscription.
     """
-    if backend not in {"claude", "cursor", "opencode"}:
+    if backend not in {"claude", "cursor"}:
         raise HTTPException(400, "Unsupported CLI account.")
     env = os.environ if env is None else env
     result = {"backend": backend, "email": None, "plan_type": None, "source": "unavailable"}
@@ -547,7 +524,7 @@ def create_router(*, authorize, store: ConnectionStore, check=probe, account=nat
         return JSONResponse(value, headers={"Cache-Control": "no-store"})
 
     async def model_selection(backend, session_id=None):
-        if backend not in {"codex", "claude", "opencode", "cursor"}:
+        if backend not in {"codex", "claude", "cursor"}:
             raise HTTPException(400, "Unsupported custom endpoint.")
         session = session_lookup(session_id) if session_id and session_lookup else None
         if session_id and (not session or session.get("backend") != backend):
@@ -620,7 +597,7 @@ def create_router(*, authorize, store: ConnectionStore, check=probe, account=nat
     @router.get("/api/admin/provider-accounts/{backend}")
     async def native_account(backend: str, request: Request):
         authorize(request)
-        if backend not in {"claude", "cursor", "opencode"}:
+        if backend not in {"claude", "cursor"}:
             raise HTTPException(400, "Unsupported CLI account.")
         return reply(await asyncio.to_thread(account, backend))
 

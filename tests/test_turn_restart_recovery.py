@@ -226,9 +226,7 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 "purpose": "scheduled_job",
                 "job_id": "job-1",
             },
-        ), patch.object(agent_server, "append_event", append_event), patch.object(
-            agent_server, "cleanup_opencode_turn_instruction_files", return_value=0
-        ):
+        ), patch.object(agent_server, "append_event", append_event):
             recovered = await agent_server.recover_abandoned_turns_after_start()
 
         self.assertEqual(recovered, 1)
@@ -251,9 +249,7 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
             agent_server,
             "abandoned_turn_after_restart",
             return_value={"run_id": "run-orphan", "backend": "codex"},
-        ), patch.object(agent_server, "append_event", append_event), patch.object(
-            agent_server, "cleanup_opencode_turn_instruction_files", return_value=0
-        ):
+        ), patch.object(agent_server, "append_event", append_event):
             recovered = await agent_server.recover_abandoned_turns_after_start(
                 forced_restart_request_id="restart-request-1",
             )
@@ -266,7 +262,7 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["restart_request_id"], "restart-request-1")
         self.assertIn("forcibly interrupted", payload["message"])
 
-    async def test_abandoned_opencode_chat_quarantines_resume_pointer(self) -> None:
+    async def test_abandoned_retired_chat_preserves_native_identity(self) -> None:
         sessions = {
             "chat-1": {
                 "id": "chat-1",
@@ -287,21 +283,18 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 "backend": "opencode",
                 "provider_context_mode": "chat",
             },
-        ), patch.object(agent_server, "append_event", append_event), patch.object(
-            agent_server, "cleanup_opencode_turn_instruction_files", return_value=0
-        ):
+        ), patch.object(agent_server, "append_event", append_event):
             recovered = await agent_server.recover_abandoned_turns_after_start()
 
         self.assertEqual(recovered, 1)
-        self.assertIsNone(sessions["chat-1"]["opencode_session_id"])
+        self.assertEqual(sessions["chat-1"]["opencode_session_id"], "ses-contaminated")
         reset_calls = [
             call for call in append_event.await_args_list
             if call.args[1] == "provider_session_reset"
         ]
-        self.assertEqual(len(reset_calls), 1)
-        self.assertEqual(reset_calls[0].args[2]["run_id"], "run-orphan")
+        self.assertEqual(reset_calls, [])
 
-    async def test_abandoned_opencode_standalone_preserves_parent_pointer(self) -> None:
+    async def test_abandoned_retired_standalone_preserves_parent_pointer(self) -> None:
         for mode_key in ("provider_context_mode", "job_context_mode"):
             with self.subTest(mode_key=mode_key):
                 sessions = {
@@ -322,9 +315,7 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
                         "backend": "opencode",
                         mode_key: "standalone",
                     },
-                ), patch.object(agent_server, "append_event", append_event), patch.object(
-                    agent_server, "cleanup_opencode_turn_instruction_files", return_value=0
-                ):
+                ), patch.object(agent_server, "append_event", append_event):
                     recovered = await agent_server.recover_abandoned_turns_after_start()
 
                 self.assertEqual(recovered, 1)

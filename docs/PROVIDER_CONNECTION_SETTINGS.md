@@ -7,7 +7,7 @@ Cursor consumer subscription. Never paste a real key into chat or a screenshot.
 
 ## Start without an existing endpoint
 
-One option covering three runtimes is [OpenRouter](https://openrouter.ai).
+One option covering Codex and Claude Code is [OpenRouter](https://openrouter.ai).
 Create an account, create a key in [Keys](https://openrouter.ai/settings/keys),
 set a spending limit and add credits if your selected model requires them.
 Choose a model from its catalog after connecting. Only send data to a gateway you
@@ -17,10 +17,9 @@ trust; it and its upstream provider receive the requests you submit.
 | --- | --- | --- |
 | Codex | `https://openrouter.ai/api/v1` | Responses; OpenRouter API key |
 | Claude Code | `https://openrouter.ai/api` | Anthropic Messages; Bearer; OpenRouter API key |
-| OpenCode | `https://openrouter.ai/api/v1` | Chat Completions; Bearer; OpenRouter API key |
 | Cursor | Not a generic OpenRouter endpoint | Native Cursor login / Cursor-issued CLI key |
 
-Claude Code and OpenCode custom APIs can now be selected **per chat**. Select the
+Claude Code custom APIs can be selected **per chat**. Select the
 intended server, open **Settings → My Agents → Configure API**, enter the
 URL and key, and choose **Connect**. Protocol, authentication header and an
 optional model ID live in **Advanced**. Saving does not alter native login or
@@ -34,14 +33,13 @@ A green API check means the last explicit credential check passed; it does
 not certify every model or tool. Merely saving a legacy configuration cannot
 turn it green. The native account card is independent of custom API billing.
 
-Four collapsed provider rows show a check when either login method is detected
+Three collapsed provider rows show a check when either login method is detected
 or connected. Expand to distinguish native credentials from a checked API.
 Only unsigned native providers show a short CLI sign-in command and a Read more
 link. Run the command as the
 user owning the selected server: [Codex](https://developers.openai.com/codex/auth),
 [Claude Code](https://code.claude.com/docs/en/authentication),
-[Cursor](https://cursor.com/docs/cli/reference/authentication), or
-[OpenCode](https://opencode.ai/docs/cli/#auth). They do not start a local login
+or [Cursor](https://cursor.com/docs/cli/reference/authentication). They do not start a local login
 on a potentially unrelated client machine or claim login succeeded. Claude
 continues to verify authentication on actual sends, not a background recheck.
 
@@ -54,16 +52,15 @@ URL, exact model ID and authentication header instead of guessing these.
 A default connection check uses a read-only authenticated route: OpenRouter's
 private `/api/v1/key`, or a protected model catalog for other APIs. A public
 model list alone never produces a verified state. If a gateway cannot check
-keys this way, Claude/OpenCode offer an explicit model request via Model ID.
+keys this way, Claude offers an explicit model request via Model ID.
 A successful check does **not** establish native agent login, tool use,
 streaming, reasoning, context continuity or full runtime compatibility.
 The UI labels this **Connected**, not “logged in”; it records the last explicit
 check, not continuous verification.
 
 Desktop configuration shows URL, protocol and authentication as separate fields,
-with required/optional labels. Provider-fixed protocols remain read-only. Known
-public OpenCode Zen catalogs require a model ID for connection verification;
-other gateways can first try the read-only check. A URL alone does not identify
+with required/optional labels. Provider-fixed protocols remain read-only.
+Gateways can first try the read-only check. A URL alone does not identify
 which protocol a particular model supports.
 
 Non-secret drafts (URL, protocol, authentication choice and model ID) are kept
@@ -74,26 +71,18 @@ or fragments are not persisted in drafts. Keys are still cleared after checks
 and when leaving the form. Draft writes are debounced and flushed on close.
 
 For Anthropic protocol, a root URL or a URL ending in `/v1` resolves to the
-same `/v1/messages` API for model checks and OpenCode runs. Gateway path prefixes
+same `/v1/messages` API for model checks. Gateway path prefixes
 are retained (for example, `/proxy/anthropic` becomes `/proxy/anthropic/v1`).
 Claude Code still receives the root URL expected by its own SDK. This does not
 rewrite stored URLs, credential identities or chat bindings; OpenAI-compatible
 protocols continue to use the exact API prefix supplied by the user.
 
-An OpenCode step with an unknown/invalid completion reason is a failed response,
-not a successful turn. The server stops that process to bound repeated requests
-and suggests checking the URL, protocol and streaming support. This can happen
-when a gateway returns an HTML page with HTTP 200; the CLI does not always expose
-the response content type, so the error does not claim HTML was confirmed.
-Provider error events retain an available HTTP status, without dumping headers
-or raw response bodies. Partial assistant text stays in the timeline.
-
-One custom connection still has one protocol. Explicit Claude/OpenCode model
+One custom connection still has one protocol. Explicit Claude model
 checks allow up to 256 output tokens, including reasoning, with no automatic
 retry. Empty or reasoning-only responses still cannot verify a connection;
 models requiring more reasoning may still exhaust this bounded check. Checks
-do not establish the runtime model's output/context limits. This fix does not
-add per-model protocols or override OpenCode's token limits.
+do not establish the runtime model's output/context limits. Checks do not
+add per-model protocols or override runtime token limits.
 
 Checks happen only on explicit user actions. Optional model checks can incur
 a small charge; default read-only checks do not run inference. Checks
@@ -105,8 +94,7 @@ details belong only to CLI Login, never to an independent API key. Codex reports
 email and plan through its account API. Claude can expose saved profile email
 and subscription metadata, labeled as cached; this does not run auth-status,
 renew credentials or assert freshness. Cursor reports email from `status` and
-plan from `about` when available. OpenCode has no universal email/plan across
-its many providers; missing fields stay absent. Optional account reads occur
+plan from `about` when available. Missing fields stay absent. Optional account reads occur
 on expanding a connected CLI card, use native-only administration and are fenced
 to the selected server. Failure to read details does not invalidate the login.
 
@@ -153,7 +141,7 @@ new settings revision. Existing chats retain their original credentials/model;
 refreshing their catalog uses their own saved binding, not the new global key.
 Cursor does not expose this generic custom-endpoint flow.
 
-The native-only `/api/admin/provider-models/{codex|claude|opencode}` route supports
+The native-only `/api/admin/provider-models/{codex|claude}` route supports
 GET for inventory (optional `session_id`) and PUT with only `model` and
 `expected_revision` to change the default. Lists are bounded to five pages,
 512 models, 8 MiB and a ten-second discovery deadline. Pagination stays on the
@@ -165,12 +153,11 @@ Private historical credential records remain for in-flight redaction and history
 identity, but durable revocation prevents using them for new requests, including
 after restart. Legacy empty settings from an earlier Forget are also revoked.
 
-Claude/OpenCode/Cursor bindings are private immutable snapshots, retained across
+Claude/Cursor bindings are private immutable snapshots, retained across
 profile replacement but revoked by removal. Endpoint changes require a new chat after the
 first turn. Forks inherit the original binding. Importing a native conversation
 directly into a custom API is rejected. Claude uses chat-local process env and a
-private flag-settings file; OpenCode uses a dedicated custom provider namespace,
-explicit model, and process-local config. Neither rewrites global CLI settings.
+private flag-settings file. Global CLI settings are not rewritten.
 
 On macOS/Linux, desktop startup also discovers this OS user's managed default
 and named HyadexServer installations. It reads only owned private credentials,
@@ -202,7 +189,7 @@ supported generic-URL contract for this integration.
   the server token. HTTPS is required except for loopback development APIs.
   API requests do not follow redirects or implicitly use environment proxies.
 - The optional native bridge uses
-  `/api/admin/provider-connections/{claude|opencode}`: GET for metadata, PUT
+  `/api/admin/provider-connections/claude`: GET for metadata, PUT
   for verify-and-save, DELETE to forget, POST `/check` for a saved check.
   Mutations require `expected_revision`; successful writes increment it.
 - Removal affects only this connection profile, not native provider history
@@ -218,10 +205,9 @@ References: [OpenRouter Codex](https://openrouter.ai/docs/cookbook/coding-agents
 [OpenRouter key status](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key),
 [OpenRouter Claude Code](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration),
 [Claude gateways](https://code.claude.com/docs/en/llm-gateway-connect),
-[OpenCode providers](https://opencode.ai/docs/providers#custom-provider),
 [Cursor CLI authentication](https://cursor.com/docs/cli/reference/authentication).
 
-Gemini execution and endpoint management were removed. Existing private Gemini
-connection/profile files are retained as user configuration; this code cleanup
+Gemini and OpenCode execution and endpoint management were removed. Their
+existing private connection/profile files are retained as user configuration; this code cleanup
 does not erase credentials or native history. They are no longer read to launch
 turns or generate titles.

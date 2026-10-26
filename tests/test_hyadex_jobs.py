@@ -14,7 +14,7 @@ import hyadex_jobs
 class HyadexJobsCLITests(unittest.TestCase):
     def test_supported_backend_selectors_use_the_existing_job_contract(self):
         parser = hyadex_jobs.build_parser()
-        for backend in ("claude", "codex", "opencode"):
+        for backend in ("claude", "codex"):
             for argv in (["create", "--title", "Fixture", "--prompt", "Fixture", "--interval-seconds", "60", "--backend", backend],
                          ["update", "job_fixture", "--backend", backend]):
                 with self.subTest(argv=argv):

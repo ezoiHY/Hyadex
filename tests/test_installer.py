@@ -749,7 +749,6 @@ exit 0
         self.assertIn('"$SCRIPT_DIR/hyadex/providers/codex.py"', source)
         self.assertIn('"$SCRIPT_DIR/cursor_agent_client.py"', source)
         self.assertIn('"$SCRIPT_DIR/cursor_provider_mcp.py"', source)
-        self.assertIn('"$SCRIPT_DIR/opencode_agent_client.py"', source)
         self.assert_smoke_check_imports(
             source, {"claude_agent_sdk", "croniter", "cryptography", "dateutil", "tzdata"},
         )
@@ -761,7 +760,6 @@ exit 0
         self.assertIn("'$REMOTE_SERVER_DIR/hyadex/providers/claude.py'", source)
         self.assertIn("'$REMOTE_SERVER_DIR/hyadex/providers/codex.py'", source)
         self.assertIn("'$REMOTE_SERVER_DIR/cursor_agent_client.py'", source)
-        self.assertIn("'$REMOTE_SERVER_DIR/opencode_agent_client.py'", source)
         self.assertIn("'$REMOTE_SERVER_DIR/provider_commands.py'", source)
         self.assertIn("'$REMOTE_SERVER_DIR/provider_usage.py'", source)
         self.assert_smoke_check_imports(
