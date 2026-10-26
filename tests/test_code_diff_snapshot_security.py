@@ -374,6 +374,25 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
                     [],
                 )
 
+    def test_deadline_expires_after_discovery_without_leaking_snapshot_objects(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = self.repository(root)
+            # Hold the successful discovery result until the budget is spent.
+            # The real capture/finalizer must handle expiry before the next Git
+            # command and remove the already-created snapshot directory.
+            with self.isolated_state(root), patch.object(
+                agent_server, "_git_stream_stdout",
+                return_value=(0, os.fsencode(repo) + b"\n", False, False),
+            ), patch.object(agent_server.subprocess, "run") as spawn:
+                result = agent_server._capture_git_tree(
+                    "chat", "expired-between-commands", str(repo),
+                    deadline=time.monotonic() - 1,
+                )
+                self.assertIsNone(result)
+                spawn.assert_not_called()
+                self.assertEqual(list(agent_server.code_diffs_dir("chat").iterdir()), [])
+
     def test_all_git_commands_share_one_wall_clock_budget(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

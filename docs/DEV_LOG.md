@@ -3,6 +3,20 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Handle an exhausted Git snapshot budget
+
+Corrected the timeout exception's constructor when the shared snapshot budget
+expires between Git commands. Capture now follows its existing timeout cleanup
+path instead of raising `TypeError`. A deterministic regression failed before
+the correction and passes afterward, checking that no later command starts and
+no snapshot objects remain; all ten snapshot-security cases pass.
+
+Real isolated Claude/Codex acceptance passed a file edit and receipt, handoff,
+contextual follow-up, parallel replies, Stop, queue continuation, a group job
+and ordered WebSocket events. The exact between-command deadline boundary is
+covered by the deterministic test, not by timing a live provider. No client UI
+was exercised. **Availability:** source only.
+
 ## 2026-10-26 — Retire the Gemini runtime
 
 - Removed Gemini ACP/API execution, import, permission, skill and title modules,
