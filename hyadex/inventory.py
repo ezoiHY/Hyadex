@@ -12,7 +12,6 @@ FILES = (
     'execution_transport.py',
     'agent_server.py',
     'local_session_ownership.py',
-    'workspace_git.py',
     'hyadex_jobs.py',
     'hyadex_chats.py',
     'hyadex/store/mailbox.py',

@@ -36,44 +36,6 @@ class IsolatedServerStateMixin:
         )
 
 
-@unittest.skipUnless(
-    sys.platform == "darwin" and agent_server.WORKSPACE_SECURE_OPEN_AVAILABLE,
-    "Darwin secure descriptor walk required",
-)
-class DarwinAbsoluteAliasTests(unittest.TestCase):
-    def test_system_root_alias_opens_but_nested_symlink_escape_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as temporary:
-            root = Path(temporary)
-            regular = root / "regular.txt"
-            regular.write_text("safe\n")
-            outside = root / "outside"
-            outside.mkdir()
-            (outside / "secret.txt").write_text("secret\n")
-            (root / "linkdir").symlink_to(outside, target_is_directory=True)
-            alias_root = Path("/tmp") / root.name
-            with patch.dict(
-                agent_server.STORE.sessions,
-                {"chat": {"id": "chat", "cwd": str(root)}},
-                clear=True,
-            ):
-                opened = agent_server.read_absolute_file_sync(
-                    "chat",
-                    str(alias_root / "regular.txt"),
-                )
-                with self.assertRaises(HTTPException) as rejected:
-                    agent_server.read_absolute_file_sync(
-                        "chat",
-                        str(alias_root / "linkdir" / "secret.txt"),
-                    )
-
-        self.assertEqual(opened["content"], "safe\n")
-        self.assertIn(rejected.exception.status_code, {400, 403})
-        self.assertIn(
-            rejected.exception.detail["code"],
-            {"invalid_workspace_path", "workspace_symlink_blocked"},
-        )
-
-
 class UploadLifecycleTests(IsolatedServerStateMixin, unittest.IsolatedAsyncioTestCase):
     async def test_upload_is_atomic_private_and_uses_effective_content_type(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

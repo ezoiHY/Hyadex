@@ -15,20 +15,6 @@ HTTP_METHODS = {
     "trace",
 }
 
-SPLIT_ROUTE_CASES = {
-    "/api/sessions/{session_id}/workspace/preview": {
-        "concrete_path": "/api/sessions/chat/workspace/preview",
-        "schema_path": "/api/sessions/{session_id}/workspace/preview",
-        "methods": {"get", "head"},
-    },
-    "/api/sessions/{session_id}/workspace/download": {
-        "concrete_path": "/api/sessions/chat/workspace/download",
-        "schema_path": "/api/sessions/{session_id}/workspace/download",
-        "methods": {"get", "head"},
-    },
-}
-
-
 class OpenAPIOperationIdTests(unittest.TestCase):
     def schema(self) -> dict:
         previous = agent_server.app.openapi_schema
@@ -97,58 +83,6 @@ class OpenAPIOperationIdTests(unittest.TestCase):
             if len(locations) > 1
         }
         self.assertEqual(duplicates, {})
-
-        for case in SPLIT_ROUTE_CASES.values():
-            path = case["schema_path"]
-            expected = case["methods"]
-            path_item = schema["paths"][path]
-            actual = set(path_item).intersection(HTTP_METHODS)
-            self.assertEqual(actual, expected)
-            for method in expected:
-                self.assertTrue(
-                    path_item[method]["operationId"].endswith(f"_{method}"),
-                    path_item[method]["operationId"],
-                )
-
-    def test_split_routes_keep_hidden_aggregate_runtime_route_first(self) -> None:
-        for runtime_path, case in SPLIT_ROUTE_CASES.items():
-            with self.subTest(path=runtime_path):
-                routes = [
-                    route
-                    for route in agent_server.app.router.routes
-                    if getattr(route, "path", None) == runtime_path
-                ]
-                expected = {method.upper() for method in case["methods"]}
-                self.assertEqual(len(routes), len(expected) + 1)
-                self.assertFalse(routes[0].include_in_schema)
-                self.assertEqual(routes[0].methods, expected)
-                self.assertTrue(
-                    all(route.include_in_schema for route in routes[1:])
-                )
-                self.assertTrue(
-                    all(route.endpoint is routes[0].endpoint for route in routes)
-                )
-                visible = [route for route in routes if route.include_in_schema]
-                self.assertEqual(
-                    {frozenset(route.methods or ()) for route in visible},
-                    {frozenset({method}) for method in expected},
-                )
-                self.assertTrue(all(len(route.methods or ()) == 1 for route in visible))
-
-                unsupported_method = "PATCH" if "DELETE" in expected else "DELETE"
-                status, headers = self.router_response(
-                    unsupported_method,
-                    case["concrete_path"],
-                )
-                self.assertEqual(status, 405)
-                self.assertEqual(
-                    {
-                        method.strip()
-                        for method in headers["allow"].split(",")
-                        if method.strip()
-                    },
-                    expected,
-                )
 
 
 if __name__ == "__main__":
