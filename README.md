@@ -77,8 +77,9 @@ The installer creates the default server as a user service
 token again. Named instances keep separate state and ports; see
 [named instances](docs/NAMED_INSTANCES_TESTING.md).
 
-In-app updates are disabled until Hyadex publishes a signed release channel.
-Update a checkout with `git pull --ff-only && ./install.sh`.
+In-app updates have been removed.
+For an existing installation, stop the selected service and rerun the source
+installer; see [manual updates](docs/SERVER_REFERENCE.md#updating-hyadexserver).
 
 ## Connect
 
@@ -102,7 +103,6 @@ Settings are environment variables. The installed service also reads
 | `HYADEX_AGENT_PORT`, `HYADEX_AGENT_BIND` | Listening port (default 7870) and address (default `0.0.0.0`) |
 | `HYADEX_AGENT_CWD` | Default working directory for new chats |
 | `HYADEX_ENABLED_BACKENDS` | Backends new chats may use (default `claude,codex`) |
-| `HYADEX_MANAGED_UPDATES` | `1` re-enables in-app updates after you replace `release-public-key.pem` with your own release key |
 
 See the [server reference](docs/SERVER_REFERENCE.md) for the full list and
 [memory admission](docs/MEMORY_ADMISSION.md) for launch thresholds.

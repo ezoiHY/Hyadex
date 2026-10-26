@@ -361,12 +361,12 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
             ))
             stack.enter_context(patch.object(
                 agent_server,
-                "managed_server_update_admission_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ))
             stack.enter_context(patch.object(
                 agent_server,
-                "managed_server_update_scheduled_job_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ))
             stack.enter_context(patch.object(

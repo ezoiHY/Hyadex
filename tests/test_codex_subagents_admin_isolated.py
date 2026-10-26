@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, ValidationError
 
 from tests.test_codex_subagent_config_isolated import code as config_code
+from hyadex.store.files import atomic_json
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -42,10 +43,6 @@ assert {node.name for node in nodes} == FUNCTIONS | MODELS
 for node in nodes:
     node.decorator_list = []
 admin_code = compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), str(SOURCE), "exec")
-atomic_tree = ast.parse(SOURCE.with_name("update_runner.py").read_text(encoding="utf-8"))
-atomic_code = compile(ast.Module(body=[next(node for node in atomic_tree.body
-    if isinstance(node, ast.FunctionDef) and node.name == "atomic_json")], type_ignores=[]),
-    "update_runner.py", "exec")
 
 
 class CodexSubagentsAdminTests(unittest.IsolatedAsyncioTestCase):
@@ -61,7 +58,7 @@ class CodexSubagentsAdminTests(unittest.IsolatedAsyncioTestCase):
             "CODEX_TRANSPORT": "app-server", "CODEX_TRANSPORT_EXEC": "exec",
             "CODEX_GOALS_CONFIG_LOCK": asyncio.Lock(), "CODEX_GOALS_ENABLED": True,
             "CODEX_GOALS_DEFAULT_ENABLED": True, "CODEX_GOALS_RECONFIGURING": False,
-            "update_utc_now": lambda: "2030-01-01T00:00:00Z",
+            "utc_timestamp": lambda: "2030-01-01T00:00:00Z",
             "reserve_codex_goals_reconfiguration": AsyncMock(),
             "release_codex_goals_reconfiguration": AsyncMock(),
             "pause_idle_codex_goals_before_disable": AsyncMock(return_value={}),
@@ -77,8 +74,7 @@ class CodexSubagentsAdminTests(unittest.IsolatedAsyncioTestCase):
             "UNSAFE_HTTP_MUTATION_METHODS": {"POST", "PUT", "PATCH", "DELETE"},
         }
         exec(config_code, self.ns)
-        exec(atomic_code, self.ns)
-        self.ns["atomic_update_json"] = self.ns["atomic_json"]
+        self.ns["atomic_json"] = atomic_json
         exec(admin_code, self.ns)
         self.ns["request_authorized"] = self.ns["request_exact_native_token_header_authorized"]
 
@@ -188,7 +184,7 @@ class CodexSubagentsAdminTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.settings.read_bytes(), before)
         self.write({"goals_enabled": True})
         before = self.settings.read_bytes()
-        self.ns["atomic_update_json"] = Mock(side_effect=OSError(errno.ENOSPC, "synthetic full disk"))
+        self.ns["atomic_json"] = Mock(side_effect=OSError(errno.ENOSPC, "synthetic full disk"))
         with self.assertRaises(HTTPException) as raised:
             await self.put(12)
         self.assertEqual(raised.exception.status_code, 503)

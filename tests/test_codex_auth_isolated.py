@@ -44,7 +44,7 @@ class CodexAuthTests(unittest.IsolatedAsyncioTestCase):
         self.ns.update({"asynccontextmanager": asynccontextmanager, "codex_auth": codex_auth,
             "CodexAppServerManager": object, "ensure_session_not_deleting": lambda session_id: None,
             "CODEX_AUTH_LOCK": asyncio.Lock(), "ACTIVE_LOCK": asyncio.Lock(), "QUEUE_LOCK": asyncio.Lock(),
-            "managed_server_update_admission_blocker": lambda: None, "DEFAULT_BACKEND": "codex",
+            "server_lifecycle_admission_blocker": lambda: None, "DEFAULT_BACKEND": "codex",
             "BACKEND_CODEX": "codex", "STORE": SimpleNamespace(sessions={}),
             "UNSAFE_HTTP_MUTATION_TASKS": {},
             "UNSAFE_HTTP_MUTATION_ADMISSION_LOCK": asyncio.Lock(),

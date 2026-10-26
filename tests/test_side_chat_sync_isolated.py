@@ -311,21 +311,5 @@ class SyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["provider_session_id"] for row in candidates], ["normal-thread"])
 
 
-class ManagedUpdateTests(unittest.IsolatedAsyncioTestCase):
-    async def test_provider_retirement_joins_side_chat_cleanup(self):
-        tree = ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text())
-        node = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef)
-                    and node.name == "close_managed_update_provider_managers")
-        side_close = AsyncMock()
-        namespace = {"asyncio": asyncio,
-                     "managed_update_provider_quiesce_timeout_seconds": lambda: 1,
-                     "close_claude_sdk_manager": AsyncMock(),
-                     "close_codex_app_server_manager": AsyncMock(),
-                     "SIDE_QUESTIONS": SimpleNamespace(close=side_close)}
-        exec(compile(ast.Module(body=[node], type_ignores=[]), "<update-quiesce>", "exec"), namespace)
-        await namespace["close_managed_update_provider_managers"]()
-        side_close.assert_awaited_once()
-
-
 if __name__ == "__main__":
     unittest.main()

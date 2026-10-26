@@ -276,7 +276,7 @@ class DeferredDeliveryRetryTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server, "BUSY_SESSIONS", set()),
             patch.object(
                 agent_server,
-                "managed_server_update_admission_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(

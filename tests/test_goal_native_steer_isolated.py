@@ -276,7 +276,7 @@ class NativeGoalSteerTests(unittest.IsolatedAsyncioTestCase):
                     "LOCAL_CROSS_CHAT_DELIVERY_PURPOSE": "local_delivery",
                     "RUN_NOW_TURNS": {}, "STEERING_SESSIONS": set(), "STEERING_WAIT_TASKS": {},
                     "stop_cleanup_in_progress": lambda _: False,
-                    "managed_server_update_admission_blocker": lambda: None,
+                    "server_lifecycle_admission_blocker": lambda: None,
                     "force_send_conflict_detail": lambda *_args, **kwargs: kwargs,
                     "queued_codex_runtime_matches_active": runtime_check,
                     **forbidden,

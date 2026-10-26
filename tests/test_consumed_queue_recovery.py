@@ -33,7 +33,7 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
             ACTIVE_LOCK=asyncio.Lock(), QUEUE_LOCK=asyncio.Lock(),
             RUN_NOW_REQUEST_LOCK=asyncio.Lock(),
             events_path=lambda _session_id: self.path,
-            managed_server_update_blocker=lambda: None,
+            server_lifecycle_admission_blocker=lambda: None,
             _start_turn_locked=self.launch,
             maybe_start_chat_mailbox_locked=AsyncMock(),
             schedule_next_queued_turn=self.schedule,

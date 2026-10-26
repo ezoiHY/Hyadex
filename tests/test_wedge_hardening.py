@@ -71,7 +71,7 @@ class QueueFenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_reconcile_names_server_restart_fence(self):
         with patch.object(
             agent_server,
-            "managed_server_update_blocker",
+            "server_lifecycle_admission_blocker",
             return_value=agent_server.MANAGED_SERVER_RESTART_ACTIVE_DETAIL,
         ), patch.object(agent_server, "EXPLICIT_STOP_OPERATIONS", {}):
             self.assertEqual(
@@ -80,16 +80,16 @@ class QueueFenceTests(unittest.IsolatedAsyncioTestCase):
             )
         with patch.object(
             agent_server,
-            "managed_server_update_blocker",
-            return_value=agent_server.MANAGED_SERVER_UPDATE_ACTIVE_DETAIL,
+            "server_lifecycle_admission_blocker",
+            return_value=agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
         ), patch.object(agent_server, "EXPLICIT_STOP_OPERATIONS", {}):
             self.assertEqual(
                 agent_server.queue_promotion_fence("chat"),
-                "server_update",
+                "server_lifecycle",
             )
         with patch.object(
             agent_server,
-            "managed_server_update_blocker",
+            "server_lifecycle_admission_blocker",
             return_value=None,
         ), patch.object(agent_server, "EXPLICIT_STOP_OPERATIONS", {}):
             self.assertIsNone(agent_server.queue_promotion_fence("chat"))
@@ -110,7 +110,7 @@ class QueueFenceTests(unittest.IsolatedAsyncioTestCase):
              patch.object(agent_server, "CURRENT_TURNS", {}), \
              patch.object(
                  agent_server,
-                 "managed_server_update_blocker",
+                 "server_lifecycle_admission_blocker",
                  return_value=None,
              ), \
              patch.object(agent_server, "schedule_next_queued_turn") as schedule, \
@@ -254,12 +254,12 @@ class ExplicitStopDeadlineTests(unittest.IsolatedAsyncioTestCase):
              patch.object(agent_server, "schedule_next_queued_turn") as schedule, \
              patch.object(
                  agent_server,
-                 "managed_server_update_blocker",
+                 "server_lifecycle_admission_blocker",
                  return_value=None,
              ), \
              patch.object(
                  agent_server,
-                 "managed_server_update_scheduled_job_blocker",
+                 "server_lifecycle_admission_blocker",
                  return_value=None,
              ), \
              self.assertLogs(agent_server.logger, level="ERROR") as logs:
@@ -325,7 +325,7 @@ class ExplicitStopDeadlineTests(unittest.IsolatedAsyncioTestCase):
              ) as schedule, \
              patch.object(
                  agent_server,
-                 "managed_server_update_blocker",
+                 "server_lifecycle_admission_blocker",
                  return_value=None,
              ):
             result = await agent_server.stop_turn_endpoint("chat")
@@ -334,67 +334,14 @@ class ExplicitStopDeadlineTests(unittest.IsolatedAsyncioTestCase):
         schedule.assert_called_once_with("chat")
 
 
-class PendingUpdateSelectiveDrainTests(unittest.IsolatedAsyncioTestCase):
-    async def test_pending_reservation_allows_automatic_and_manual_jobs(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            with patch.object(
-                agent_server,
-                "SERVER_UPDATE_STATUS_FILE",
-                root / "status.json",
-            ), patch.object(agent_server, "BUSY_SESSIONS", {"busy-chat"}), \
-                 patch.object(agent_server, "MAX_ACTIVE_AGENT_RUNS", 0), \
-                 patch.object(agent_server, "JOB_MAX_ACTIVE_RUNS", 0), \
-                 patch.object(
-                     agent_server,
-                     "host_pressure_snapshot",
-                     return_value={"available_mem_mb": 1_000_000},
-                 ):
-                agent_server.write_fresh_server_update_status(
-                    phase="pending",
-                    schedule_id="e" * 32,
-                    target_version="1.1.0",
-                    track="stable",
-                    when_idle=True,
-                    pending_at=utc(3600),
-                )
-                self.assertTrue(agent_server.managed_server_update_is_pending())
-                self.assertIsNone(agent_server.managed_server_update_admission_blocker())
-                self.assertIsNone(await agent_server.turn_start_blocker())
-                self.assertIsNone(
-                    await agent_server.scheduled_job_blocker("other-chat"),
-                )
-                self.assertIsNone(
-                    await agent_server.scheduled_job_blocker(
-                        "other-chat",
-                        manual=True,
-                    )
-                )
+class LifecycleAdmissionTests(unittest.IsolatedAsyncioTestCase):
 
-    async def test_active_update_still_fences(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            with patch.object(
-                agent_server,
-                "SERVER_UPDATE_STATUS_FILE",
-                root / "status.json",
-            ):
-                agent_server.write_fresh_server_update_status(
-                    phase="installing",
-                    update_id="update-1",
-                    track="stable",
-                )
-                self.assertEqual(
-                    agent_server.managed_server_update_admission_blocker(),
-                    agent_server.MANAGED_SERVER_UPDATE_ACTIVE_DETAIL,
-                )
-                self.assertEqual(
-                    await agent_server.scheduled_job_blocker(
-                        "other-chat",
-                        manual=True,
-                    ),
-                    agent_server.MANAGED_SERVER_UPDATE_ACTIVE_DETAIL,
-                )
+    async def test_worker_maintenance_fences_manual_jobs(self):
+        with patch.object(agent_server, "execution_maintenance_blocks_work", return_value=True):
+            self.assertEqual(agent_server.server_lifecycle_admission_blocker(),
+                             agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
+            self.assertEqual(await agent_server.scheduled_job_blocker("other-chat", manual=True),
+                             agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
 
     async def test_active_restart_still_fences_manual_jobs(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -403,10 +350,6 @@ class PendingUpdateSelectiveDrainTests(unittest.IsolatedAsyncioTestCase):
                 agent_server,
                 "SERVER_RESTART_STATUS_FILE",
                 root / "restart.json",
-            ), patch.object(
-                agent_server,
-                "SERVER_UPDATE_STATUS_FILE",
-                root / "update.json",
             ):
                 agent_server.write_server_restart_status(
                     phase="signaling",

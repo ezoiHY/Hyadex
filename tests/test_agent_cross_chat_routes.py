@@ -1194,7 +1194,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server.STORE, "save", AsyncMock()),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
@@ -1225,7 +1225,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(agent_server.STORE, "save", AsyncMock()),
                 patch.object(
                     agent_server,
-                    "managed_server_update_blocker",
+                    "server_lifecycle_admission_blocker",
                     return_value=None,
                 ),
                 patch.object(
@@ -1278,7 +1278,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
             self.native_transports(),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
         ):
@@ -1303,7 +1303,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
             self.native_transports(),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
@@ -3658,7 +3658,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
             self.native_transports(),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(agent_server, "append_durable_event", append),
@@ -3818,7 +3818,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(agent_server.STORE, "save", AsyncMock()),
                 patch.object(
                     agent_server,
-                    "managed_server_update_blocker",
+                    "server_lifecycle_admission_blocker",
                     return_value=None,
                 ),
                 patch.object(
@@ -4141,7 +4141,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server.STORE, "save", AsyncMock()),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
@@ -4198,7 +4198,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(agent_server.STORE, "save", AsyncMock()),
                 patch.object(
                     agent_server,
-                    "managed_server_update_blocker",
+                    "server_lifecycle_admission_blocker",
                     return_value=None,
                 ),
                 patch.object(
@@ -4288,7 +4288,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server.STORE, "save", AsyncMock()),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
@@ -4456,7 +4456,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
         agent_server.QUEUED_TURNS = {"source": deque([item])}
         append = AsyncMock()
         with (
-            patch.object(agent_server, "managed_server_update_blocker", return_value=None),
+            patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
             patch.object(agent_server, "append_durable_event", append),
         ):
             updated = await agent_server.update_queued_turn(
@@ -4473,7 +4473,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
 
         # Adding the capability later cannot manufacture an admission snapshot.
         with (
-            patch.object(agent_server, "managed_server_update_blocker", return_value=None),
+            patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
             patch.object(agent_server, "append_durable_event", AsyncMock()),
         ):
             added = await agent_server.update_queued_turn(
@@ -4529,7 +4529,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(agent_server, "append_durable_event", AsyncMock()),
@@ -4574,7 +4574,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
         }
         agent_server.QUEUED_TURNS = {"source": deque([item])}
         with (
-            patch.object(agent_server, "managed_server_update_blocker", return_value=None),
+            patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
             patch.object(
                 agent_server,
                 "append_durable_event",
@@ -4618,7 +4618,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
                 "provider_cross_chat_route_snapshot": queued_snapshot,
             }])
             with (
-                patch.object(agent_server, "managed_server_update_blocker", return_value=None),
+                patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
                 patch.object(
                     agent_server,
                     "queued_codex_runtime_matches_active",

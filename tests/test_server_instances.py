@@ -1265,7 +1265,7 @@ class RuntimeBindingTests(unittest.TestCase):
         # Extract just these pure/probe functions. Never import/start the server.
         source = (ROOT / "agent_server.py").read_text()
         tree = ast.parse(source)
-        names = {"terminal_session_name", "run_tmux", "server_update_runner_environment"}
+        names = {"terminal_session_name", "run_tmux", "server_instance_environment"}
         cls.functions = compile(ast.Module(body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names], type_ignores=[]), "instance-runtime", "exec", flags=__import__("__future__").annotations.compiler_flag)
 
     def namespace(self, name):
@@ -1289,7 +1289,7 @@ class RuntimeBindingTests(unittest.TestCase):
     def test_update_runner_receives_exact_binding_on_mac_and_linux(self):
         for platform in ("darwin", "linux"):
             with patch.object(sys, "platform", platform), patch.dict(os.environ, {"HYADEX_SERVER_INSTALL_DIR": "/synthetic/runtime", "XDG_RUNTIME_DIR": "/synthetic/user", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/synthetic/bus"}):
-                result = self.namespace("work")["server_update_runner_environment"]()
+                result = self.namespace("work")["server_instance_environment"]()
             self.assertEqual(result["HYADEX_SERVER_INSTANCE"], "work")
             self.assertEqual(result["HYADEX_SERVER_INSTALL_DIR"], "/synthetic/runtime")
             self.assertEqual(result["HYADEX_SERVER_CONFIG_DIR"], "/synthetic/config")

@@ -22,9 +22,9 @@ and the desired provider CLIs. It runs as the current user without `sudo`.
 
 The npm entrypoint only permits a fresh default installation. It refuses an
 existing managed installation, legacy service, or custom installation roots;
-changing directories does not create a second service. Use Hyadex's managed
-update controls for an existing server. Multiple named services are not enabled
-by this package.
+changing directories does not create a second service. Existing servers use the
+source installer after the selected service has been stopped. Multiple named
+services are not enabled by this package.
 
 ## Recover a failed 1.0.4 migration
 
@@ -35,34 +35,20 @@ the server's user, on the computer hosting it:
 npx @hyadex/server@1.0.5 recover
 ```
 
-Then choose **Retry server update** in Hyadex's Settings → Updates. This
+Check the recovered server before attempting a source reinstall. This
 command does not install or upgrade a server. It validates the exact unfinished
 default installation transaction and only repairs migrations that failed before
 service takeover, preserving the running server. It refuses later-phase,
 custom-root or unsafe recovery; it does not restart services. If no unfinished
 transaction exists, it makes no changes. Do not use `sudo`.
 
-## Managed updates
+## Updating an existing server
 
-Prefer Hyadex's update control. For automation, the explicit CLI accepts a
-reviewed, signed release descriptor and binds the request to a known server and
-its current process instance:
-
-```sh
-hyadex-server update --server-url https://server.example \
-  --server-identity ID --server-instance-id INSTANCE \
-  --token-file /private/path/server-token \
-  --manifest hyadex-server-npm-manifest.json \
-  --signature hyadex-server-npm-manifest.sig
-```
-
-The token file must be a current-user-owned regular file readable only by that
-user, containing the server token alone. HTTPS is required except for literal
-loopback addresses and localhost. Redirects are refused. The command checks the
-authenticated server identity, then submits the signed descriptor to its managed
-update endpoint. The server verifies the signature and waits for idle before
-activating an update. A pending response means scheduled, not installed. No
-registry tag, unsigned descriptor, or local installer bypasses this lifecycle.
+The managed update command and its server API are removed. Neither
+`hyadex-server update` nor updating this npm package upgrades a running service.
+Use the source checkout's manual installation workflow, stopping the selected
+service first. See [the server reference](../docs/SERVER_REFERENCE.md#updating-hyadexserver).
+The source installer and recovery helpers remain until their replacement is complete.
 
 ## Packaging
 

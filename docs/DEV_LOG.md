@@ -3,6 +3,42 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Retire in-app update orchestration
+
+- Removed update endpoints, background scheduling, startup resumption, health
+  advertisements and schedule-bound force updates. Old update settings cannot
+  re-enable them. The public API contract is 29; the release version is unchanged.
+- Removed the npm update commands and their token/signature HTTP transport.
+  They reject before reading credentials or contacting a server. Fresh install
+  and existing recovery commands remain while the installer is replaced.
+- Retained ordinary restart and worker-maintenance admission, durable queues,
+  HTTP mutation leases and native provider work checks. Old update receipts,
+  logs and preparations remain untouched. Exact legacy parked job occurrences
+  resume at startup; later user edits keep their schedule.
+- Moved the existing fsynced atomic JSON writer into `hyadex/store/files.py`
+  and registered it in every runtime inventory. Server imports no longer load
+  the updater. Native execution, event allocation/delivery, group runtime and
+  recovery definitions retain their behavior.
+- Actual acceptance: two isolated server starts with synthetic old active and
+  force-pending update state verified route removal, contract 29 health, native
+  auth, rejection of retired restart fields, ordinary mutations, retained
+  evidence and exact job recovery. Real Claude/Codex runs covered file edits,
+  receipts, handoff, incremental context, parallel replies, Stop, busy queues,
+  a manually triggered group job and ordered WebSocket delivery.
+- Claude's static review found no loss of non-update protection. Its remaining
+  npm entrypoint and installation/recovery documentation findings were addressed.
+  Manual source updates currently require stopping the selected service first;
+  the installer and its activation dependencies remain for the next stage.
+- Validation: 444 focused tests passed (one platform skip), including real
+  gateway/worker maintenance acquisition, public rejection and exact release.
+  All 257 fast package tests and 51 Node CLI tests passed. The full Python suite
+  ran 4,391 tests with 13 skips and the same eight inherited failures, with no
+  new failures or errors. Compilation, shell syntax, dependency-lock, runtime
+  inventories and whitespace checks passed.
+- Availability: source only. No release, deployment or installed service was
+  changed. Desktop/mobile UI and native OS service installation were not
+  exercised; acceptance used isolated server/provider and worker/gateway processes.
+
 ## 2026-10-26 — Remove browser chat sharing
 
 - Removed public snapshot and interactive sharing routes, browser bundles,

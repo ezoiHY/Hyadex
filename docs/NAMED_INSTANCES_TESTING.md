@@ -19,14 +19,12 @@ Verify that it starts with no Hyadex chats or paired connections. Native
 provider login/history may still be visible: same-user CLI profiles are shared,
 not copied or isolated by this feature. Do not import a provider session that
 is actively running in the default server during this first trial.
-Leave optional Team Network hosting disabled for the trial. Enabling it later
-requires a separate unused secure-peer port as well as the main HTTP port.
 
 Test a new chat, then `./instances.sh restart local-test`: its own history should
 remain. The default server should stay running on 7870 and its token should
 still work. `./instances.sh update local-test` reinstalls the code from the
-checkout containing that command; it does not fetch a newer release. The normal
-in-app signed updater is still the route for published-version upgrades.
+checkout containing that command; it does not fetch a newer release. In-app
+update routes have been retired.
 
 ## Import exclusion across instances
 

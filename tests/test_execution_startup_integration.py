@@ -32,7 +32,7 @@ SOURCE = Path(__file__).resolve().parents[1]
 SESSION_ID = "chat_startup_fixture"
 QUEUED_ID = "queued_startup_fixture"
 JOB_ID = "job_startup_fixture"
-MAINTENANCE_DETAIL = "HyadexServer is preparing a managed update"
+MAINTENANCE_DETAIL = "HyadexServer execution worker is in maintenance"
 
 
 class ExecutionStartupProcessTests(unittest.IsolatedAsyncioTestCase):
@@ -231,8 +231,8 @@ class ExecutionStartupProcessTests(unittest.IsolatedAsyncioTestCase):
             jobs = json.loads((self.state / "jobs.json").read_text())
             queue_wait = any(event.get("type") == "turn_deferred"
                 and event.get("queued_id") == QUEUED_ID
-                and "managed update" in event.get("message", "") for event in events)
-            job_wait = "managed update" in jobs[JOB_ID].get("last_defer_reason", "")
+                and "worker is in maintenance" in event.get("message", "") for event in events)
+            job_wait = "worker is in maintenance" in jobs[JOB_ID].get("last_defer_reason", "")
             return (events, jobs) if queue_wait and job_wait else None
         events, jobs = await self.eventually(deferred)
         self.assertEqual(jobs[JOB_ID]["run_count"], 0)

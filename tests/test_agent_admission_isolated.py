@@ -41,8 +41,7 @@ def load_admission(env=None):
         "os": SimpleNamespace(environ=dict(env or {})),
         "ACTIVE_LOCK": asyncio.Lock(),
         "BUSY_SESSIONS": {f"busy-{index}" for index in range(100)},
-        "managed_server_update_admission_blocker": lambda: None,
-        "managed_server_update_scheduled_job_blocker": lambda **_: None,
+        "server_lifecycle_admission_blocker": lambda: None,
         "host_pressure_snapshot": lambda: {"available_mem_mb": 16384},
         "STORE": SimpleNamespace(sessions={}),
         "CODEX_GOALS_RECONFIGURING": False,
@@ -178,16 +177,16 @@ class AgentAdmissionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await ns["turn_start_blocker"]())
             self.assertIsNone(await ns["scheduled_job_blocker"]("new-cron"))
 
-    async def test_count_and_update_guards_remain_independent(self):
+    async def test_count_and_lifecycle_guards_remain_independent(self):
         ns = load_admission({"HYADEX_MAX_ACTIVE_AGENT_RUNS": "100"})
         ns["host_pressure_snapshot"] = lambda: {"available_mem_mb": 2048}
         self.assertEqual(await ns["turn_start_blocker"](), "server already has 100 active agent run(s)")
         self.assertIsNone(await ns["turn_start_blocker"](ignore_session_id="busy-0"))
         ns["host_pressure_snapshot"] = lambda: {"available_mem_mb": 567}
-        ns["managed_server_update_admission_blocker"] = lambda: "update activating"
-        self.assertEqual(await ns["turn_start_blocker"](), "update activating")
-        ns["managed_server_update_scheduled_job_blocker"] = lambda **_: "scheduled update pending"
-        self.assertEqual(await ns["scheduled_job_blocker"]("new-cron"), "scheduled update pending")
+        ns["server_lifecycle_admission_blocker"] = lambda: "worker maintenance"
+        self.assertEqual(await ns["turn_start_blocker"](), "worker maintenance")
+        ns["server_lifecycle_admission_blocker"] = lambda **_: "server restarting"
+        self.assertEqual(await ns["scheduled_job_blocker"]("new-cron"), "server restarting")
 
     async def test_provider_maintenance_stop_and_codex_goals_guards_remain(self):
         ns = load_admission()
@@ -202,12 +201,12 @@ class AgentAdmissionTests(unittest.IsolatedAsyncioTestCase):
         ns["STORE"].sessions["chat"] = {"backend": "codex"}
         self.assertEqual(await ns["scheduled_job_blocker"]("chat"), "wait for Codex goals configuration to finish")
 
-    async def test_update_drain_and_existing_chat_ownership_remain_protected(self):
+    async def test_lifecycle_fence_and_existing_chat_ownership_remain_protected(self):
         ns = load_admission()
         self.assertEqual(await ns["scheduled_job_blocker"]("busy-0"), "chat already has a running turn")
-        ns["managed_server_update_admission_blocker"] = lambda: "update activating"
-        self.assertEqual(await ns["turn_start_blocker"](), "update activating")
-        self.assertEqual(await ns["scheduled_job_blocker"]("new-cron"), "update activating")
+        ns["server_lifecycle_admission_blocker"] = lambda: "worker maintenance"
+        self.assertEqual(await ns["turn_start_blocker"](), "worker maintenance")
+        self.assertEqual(await ns["scheduled_job_blocker"]("new-cron"), "worker maintenance")
 
     async def test_independent_explicit_cron_cap_is_preserved(self):
         ns = load_admission({"HYADEX_JOB_MAX_ACTIVE_RUNS": "100"})

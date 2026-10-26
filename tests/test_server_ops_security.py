@@ -775,11 +775,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 return_value=False,
             ), patch.object(
                 agent_server,
-                "managed_server_update_blocks_work",
-                return_value=False,
-            ), patch.object(
-                agent_server,
-                "managed_server_force_update_is_pending",
+                "execution_maintenance_blocks_work",
                 return_value=False,
             ), patch.object(
                 agent_server,
@@ -1534,7 +1530,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
              ), \
              patch.object(
                  agent_server,
-                 "managed_server_update_blocks_work",
+                 "execution_maintenance_blocks_work",
                  side_effect=lambda: update_active,
              ):
             response_task = asyncio.create_task(
@@ -1547,7 +1543,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             response = await asyncio.wait_for(response_task, timeout=1)
 
         self.assertEqual(response.status_code, 409)
-        self.assertIn(b"preparing a managed update", response.body)
+        self.assertIn(b"execution worker is in maintenance", response.body)
         self.assertFalse(handler_reached)
         self.assertEqual(agent_server.unsafe_http_mutation_count_locked(), 0)
 
@@ -1587,7 +1583,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
              ), \
              patch.object(
                  agent_server,
-                 "managed_server_update_blocks_work",
+                 "execution_maintenance_blocks_work",
                  return_value=False,
              ):
             response = await agent_server.require_agent_token(
@@ -1599,7 +1595,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observed_count, 1)
         self.assertEqual(agent_server.unsafe_http_mutation_count_locked(), 0)
 
-    async def test_asgi_body_stall_cannot_reserve_update_fence(self):
+    async def test_asgi_body_stall_cannot_reserve_lifecycle_fence(self):
         first_frame_requested = asyncio.Event()
         release_final_frame = asyncio.Event()
         update_active = False
@@ -1624,7 +1620,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                  ), \
                  patch.object(
                      agent_server,
-                     "managed_server_update_blocks_work",
+                     "execution_maintenance_blocks_work",
                      side_effect=lambda: update_active,
                  ):
                 request_task = asyncio.create_task(
@@ -1645,7 +1641,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 response = await asyncio.wait_for(request_task, timeout=1)
 
         self.assertEqual(response.status_code, 409)
-        self.assertIn("preparing a managed update", response.text)
+        self.assertIn("execution worker is in maintenance", response.text)
         self.assertEqual(agent_server.unsafe_http_mutation_count_locked(), 0)
 
     async def test_asgi_final_frame_lease_survives_receiver_task(self):
@@ -1678,7 +1674,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                  ), \
                  patch.object(
                      agent_server,
-                     "managed_server_update_blocks_work",
+                     "execution_maintenance_blocks_work",
                      return_value=False,
                  ), \
                  patch.object(agent_server.STORE, "create", new=slow_create):
@@ -1966,7 +1962,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
              ), \
              patch.object(
                  agent_server,
-                 "SERVER_UPDATE_CODEX_SUBAGENT_SCAN_LIMIT",
+                 "CODEX_SUBAGENT_SCAN_LIMIT",
                  2,
              ):
             first = await agent_server.prepare_provider_background_work_snapshot()
@@ -2084,7 +2080,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(labels, ["Claude provider state too large in claude-chat"])
         fold.assert_not_called()
 
-    async def test_loaded_claude_overflow_blocks_restart_and_update(self):
+    async def test_loaded_claude_overflow_blocks_restart_and_worker_retirement(self):
         session_ids = [f"claude-{index:02d}" for index in range(33)]
         last_session_id = session_ids[-1]
         sessions = {
@@ -2137,194 +2133,20 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(restart_snapshot["has_blockers"])
         self.assertEqual(restart_snapshot["provider_background_count"], 1)
 
-        update_counts = agent_server.server_update_blocker_counts(
+        update_counts = agent_server.server_lifecycle_blocker_counts(
             [],
             0,
             labels,
             0,
         )
-        self.assertTrue(agent_server.server_update_has_blockers(update_counts))
+        self.assertTrue(any(update_counts.values()))
         self.assertEqual(update_counts["provider_background_tasks"], 1)
 
-    def test_update_runner_liveness_accepts_only_exact_live_tmux_probe(self):
-        update_id = "a" * 32
-        status = {"phase": "checking", "update_id": update_id}
-        cases = (
-            ("live", "0\n", True),
-            ("dead", "1\n", False),
-            ("missing_target_blank", "", False),
-            ("unexpected", "unknown\n", False),
-        )
-        for label, stdout, expected in cases:
-            with self.subTest(case=label), patch.object(
-                agent_server,
-                "working_tmux_bin",
-                return_value="/usr/bin/tmux",
-            ), patch.object(
-                agent_server,
-                "run_tmux",
-                return_value=SimpleNamespace(returncode=0, stdout=stdout),
-            ):
-                self.assertEqual(
-                    agent_server.server_update_is_active(status),
-                    expected,
-                )
 
-    def test_update_runner_liveness_rejects_reused_pid(self):
-        update_id = "a" * 32
-        status = {"phase": "checking", "update_id": update_id}
 
-        pid_status = {**status, "runner_pid": 4242}
-        with patch.object(
-            agent_server,
-            "provider_child_process_exists",
-            return_value=True,
-        ), patch.object(
-            agent_server,
-            "provider_child_command_line",
-            return_value=(
-                "python update_runner.py --update-id " + "b" * 32
-            ),
-        ):
-            self.assertFalse(agent_server.server_update_is_active(pid_status))
 
-    def test_update_runner_liveness_accepts_exact_pid_and_expires_failed_legacy_probe(self):
-        update_id = "a" * 32
-        pid_status = {
-            "phase": "checking",
-            "update_id": update_id,
-            "runner_pid": 4242,
-        }
-        with patch.object(
-            agent_server,
-            "provider_child_process_exists",
-            return_value=True,
-        ), patch.object(
-            agent_server,
-            "provider_child_command_line",
-            return_value=(
-                f"python /opt/agents/update_runner.py --update-id {update_id} "
-                "--status-file /tmp/status"
-            ),
-        ), patch.object(agent_server, "working_tmux_bin") as tmux:
-            self.assertTrue(agent_server.server_update_is_active(pid_status))
-        tmux.assert_not_called()
 
-        legacy_status = {"phase": "checking", "update_id": update_id}
-        with patch.object(agent_server, "working_tmux_bin", return_value="/usr/bin/tmux"), \
-             patch.object(agent_server, "run_tmux", side_effect=OSError("probe failed")):
-            self.assertFalse(agent_server.server_update_is_active(legacy_status))
 
-    async def test_startup_does_not_finalize_update_during_runner_grace(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            status_path = Path(temporary) / "server-update.json"
-            with patch.object(
-                agent_server,
-                "SERVER_UPDATE_STATUS_FILE",
-                status_path,
-            ), patch.object(
-                agent_server,
-                "server_update_is_active",
-                return_value=False,
-            ), patch.object(
-                agent_server,
-                "server_update_status_age_seconds",
-                return_value=1.0,
-            ), patch.object(
-                agent_server,
-                "finalize_abandoned_server_update",
-            ) as finalize:
-                agent_server.write_fresh_server_update_status(
-                    phase="starting",
-                    update_id="a" * 32,
-                    target_version="1.2.3",
-                )
-                recovered = (
-                    await agent_server.reconcile_server_update_status_after_startup()
-                )
-
-        self.assertEqual(recovered["phase"], "starting")
-        finalize.assert_not_called()
-
-    async def test_permanent_pending_update_failure_becomes_actionable(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            status_path = Path(temporary) / "server-update.json"
-            schedule_id = "c" * 32
-            with patch.object(
-                agent_server,
-                "SERVER_UPDATE_STATUS_FILE",
-                status_path,
-            ), patch.object(agent_server, "SERVER_VERSION", "1.0.0"):
-                agent_server.write_fresh_server_update_status(
-                    phase="pending",
-                    schedule_id=schedule_id,
-                    target_version="1.1.0",
-                    latest_version="1.1.0",
-                    track="stable",
-                    when_idle=True,
-                    cancelable=True,
-                )
-                failure = HTTPException(
-                    status_code=503,
-                    detail="managed updater prerequisites are unavailable",
-                )
-                with patch.object(
-                    agent_server,
-                    "advance_pending_server_update_once",
-                    new=AsyncMock(side_effect=failure),
-                ), patch.object(
-                    agent_server.asyncio,
-                    "sleep",
-                    new=AsyncMock(side_effect=asyncio.CancelledError()),
-                ):
-                    with self.assertRaises(asyncio.CancelledError):
-                        await agent_server.server_update_pending_waiter_loop()
-                status = agent_server.read_server_update_status()
-
-        self.assertEqual(status["phase"], "available")
-        self.assertIsNone(status["schedule_id"])
-        self.assertEqual(status["latest_version"], "1.1.0")
-        self.assertEqual(status["error_code"], "server_update_pending_http_503")
-        self.assertIn("prerequisites", status["message"])
-        self.assertTrue(status["retryable"])
-        self.assertTrue(status["error_action"])
-
-    async def test_transient_pending_update_failure_remains_scheduled(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            status_path = Path(temporary) / "server-update.json"
-            schedule_id = "d" * 32
-            with patch.object(
-                agent_server,
-                "SERVER_UPDATE_STATUS_FILE",
-                status_path,
-            ):
-                agent_server.write_fresh_server_update_status(
-                    phase="pending",
-                    schedule_id=schedule_id,
-                    target_version="1.1.0",
-                    track="stable",
-                    when_idle=True,
-                    cancelable=True,
-                )
-                transient = HTTPException(
-                    status_code=409,
-                    detail={"code": "server_restart_in_progress"},
-                )
-                with patch.object(
-                    agent_server,
-                    "advance_pending_server_update_once",
-                    new=AsyncMock(side_effect=transient),
-                ), patch.object(
-                    agent_server.asyncio,
-                    "sleep",
-                    new=AsyncMock(side_effect=asyncio.CancelledError()),
-                ):
-                    with self.assertRaises(asyncio.CancelledError):
-                        await agent_server.server_update_pending_waiter_loop()
-                status = agent_server.read_server_update_status()
-
-        self.assertEqual(status["phase"], "pending")
-        self.assertEqual(status["schedule_id"], schedule_id)
 
     def test_job_models_bound_title_and_prompt(self):
         with self.assertRaises(ValidationError):

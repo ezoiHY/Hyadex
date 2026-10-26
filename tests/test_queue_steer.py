@@ -243,7 +243,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                 agent_server.enqueue_turn("chat-1", request, session)
             )
             await asyncio.wait_for(append_entered.wait(), timeout=1)
-            self.assertEqual(agent_server.update_blocking_queued_turn_count_locked(), 1)
+            self.assertEqual(agent_server.restart_blocking_queued_turn_count_locked(), 1)
 
             admission.cancel()
             admission.cancel()
@@ -251,7 +251,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                 await admission
 
             self.assertNotIn("chat-1", queued)
-            self.assertEqual(agent_server.update_blocking_queued_turn_count_locked(), 0)
+            self.assertEqual(agent_server.restart_blocking_queued_turn_count_locked(), 0)
             schedule.assert_not_called()
 
     async def test_successful_queue_append_becomes_restart_durable(self) -> None:
@@ -275,7 +275,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(agent_server.STORE, "sessions", {"chat-1": session}), \
              patch.object(agent_server, "QUEUED_TURNS", queued), \
              patch.object(agent_server, "BUSY_SESSIONS", {"chat-1"}), \
-             patch.object(agent_server, "managed_server_update_blocker", return_value=None), \
+             patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None), \
              patch.object(
                  agent_server,
                  "append_durable_event",
@@ -294,7 +294,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(len(queued["chat-1"]), 1)
             self.assertTrue(queued["chat-1"][0]["_durable"])
-            self.assertEqual(agent_server.update_blocking_queued_turn_count_locked(), 0)
+            self.assertEqual(agent_server.restart_blocking_queued_turn_count_locked(), 0)
             schedule.assert_called_once_with("chat-1")
 
     async def test_pre_spawn_force_send_defers_without_cancelling_the_original_turn(self) -> None:
@@ -400,7 +400,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                     side_effect=gated_descendant_cleanup
                 ),
                 settle_idle_codex_goal_for_stop=AsyncMock(return_value={}),
-                managed_server_update_blocker=lambda: None,
+                server_lifecycle_admission_blocker=lambda: None,
             ),
             patch.object(agent_server, "_start_turn_locked", start_locked),
         ):
@@ -495,7 +495,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 settle_idle_codex_goal_for_stop=AsyncMock(return_value={}),
                 enqueue_turn=enqueue,
-                managed_server_update_blocker=lambda: None,
+                server_lifecycle_admission_blocker=lambda: None,
             ),
             patch.object(agent_server, "schedule_next_queued_turn") as schedule,
         ):
@@ -582,7 +582,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                 cancel_codex_interactions=AsyncMock(),
                 cancel_claude_interactions=AsyncMock(),
                 settle_idle_codex_goal_for_stop=AsyncMock(return_value={}),
-                managed_server_update_blocker=lambda: None,
+                server_lifecycle_admission_blocker=lambda: None,
             ),
             patch.object(agent_server, "schedule_next_queued_turn"),
         ):
@@ -629,7 +629,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                 CODEX_PENDING_INTERACTIONS={},
             ):
                 self.assertEqual(
-                    agent_server.server_update_active_session_ids_locked(),
+                    agent_server.server_lifecycle_active_session_ids_locked(),
                     ["chat-1"],
                 )
                 snapshot = agent_server.server_restart_blocker_snapshot_locked(
@@ -1046,7 +1046,7 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
             agent_server.QUEUED_TURNS = {"chat-edit": deque()}
             agent_server.RUN_NOW_TURNS = {"chat-edit": promoted}
             with patch.object(
-                agent_server, "managed_server_update_blocker", return_value=None
+                agent_server, "server_lifecycle_admission_blocker", return_value=None
             ):
                 snapshot = await agent_server.queued_turns_snapshot("chat-edit")
                 self.assertEqual(snapshot[0]["queued_id"], "queued-promoted")
@@ -1122,7 +1122,7 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
             }
             agent_server.QUEUED_TURNS = {"chat-edit": deque([item])}
             with patch.object(
-                agent_server, "managed_server_update_blocker", return_value=None
+                agent_server, "server_lifecycle_admission_blocker", return_value=None
             ):
                 with self.assertRaisesRegex(HTTPException, "no longer supported"):
                     await agent_server.update_queued_turn(
@@ -1172,7 +1172,7 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
             }
             agent_server.QUEUED_TURNS = {"chat-edit": deque([item])}
             with (
-                patch.object(agent_server, "managed_server_update_blocker", return_value=None),
+                patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
                 patch.object(agent_server, "append_durable_event", append),
             ):
                 response = await agent_server.update_queued_turn(
@@ -1263,7 +1263,7 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
             with (
                 patch.object(
                     agent_server,
-                    "managed_server_update_blocker",
+                    "server_lifecycle_admission_blocker",
                     return_value=None,
                 ),
                 patch.object(agent_server, "append_durable_event", append),
@@ -2380,7 +2380,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             lifecycle_locks,
         ), patch.object(
             agent_server,
-            "managed_server_update_blocker",
+            "server_lifecycle_admission_blocker",
             return_value=None,
         ), patch.object(
             agent_server,
@@ -3604,7 +3604,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         item = agent_server.QUEUED_TURNS["chat-1"][0]
         self.assertTrue(item["_durable"])
         self.assertTrue(item["_paused_after_stop"])
-        self.assertEqual(agent_server.update_blocking_queued_turn_count_locked(), 0)
+        self.assertEqual(agent_server.restart_blocking_queued_turn_count_locked(), 0)
 
     def test_recovery_holds_native_delivery_fence_without_replaying(self) -> None:
         agent_server.QUEUED_TURNS.pop("chat-1", None)
@@ -4075,7 +4075,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("_update_transitioning", restored)
         self.assertNotIn("chat-1", agent_server.RUN_NOW_TURNS)
         self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
-        self.assertEqual(agent_server.update_blocking_queued_turn_count_locked(), 0)
+        self.assertEqual(agent_server.restart_blocking_queued_turn_count_locked(), 0)
         schedule_next.assert_called_once_with("chat-1")
 
 

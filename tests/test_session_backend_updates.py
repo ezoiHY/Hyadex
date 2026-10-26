@@ -285,7 +285,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server.STORE, "update", update),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
@@ -332,8 +332,8 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(agent_server, "MIN_START_AVAILABLE_MEM_MB", minimum),
                 patch.object(agent_server, "MAX_ACTIVE_AGENT_RUNS", 0),
                 patch.object(agent_server, "host_pressure_snapshot", return_value={"available_mem_mb": available}),
-                patch.object(agent_server, "managed_server_update_blocker", return_value=None),
-                patch.object(agent_server, "managed_server_update_admission_blocker", return_value=None),
+                patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
+                patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
                 patch.object(agent_server, "ensure_runtime_available", AsyncMock()),
                 patch.object(agent_server, "run_claude", AsyncMock()) as run,
                 patch.object(agent_server, "append_event", AsyncMock()) as append,
@@ -361,8 +361,8 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server, "MIN_START_AVAILABLE_MEM_MB", 2048),
             patch.object(agent_server, "MAX_ACTIVE_AGENT_RUNS", 0),
             patch.object(agent_server, "host_pressure_snapshot", return_value={"available_mem_mb": 2048}),
-            patch.object(agent_server, "managed_server_update_blocker", return_value=None),
-            patch.object(agent_server, "managed_server_update_admission_blocker", return_value=None),
+            patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
+            patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
             patch.object(agent_server, "ensure_runtime_available", AsyncMock()),
             patch.object(agent_server.STORE, "mark_backend_started", AsyncMock(return_value=self.session)) as mark,
             patch.object(agent_server.STORE, "update", AsyncMock(return_value=self.session)),
@@ -414,7 +414,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
@@ -492,7 +492,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
@@ -595,7 +595,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
@@ -686,7 +686,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
@@ -785,7 +785,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(

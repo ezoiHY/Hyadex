@@ -1089,7 +1089,7 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         agent_server.QUEUED_TURNS = {"source": deque([item])}
         with (
-            patch.object(agent_server, "managed_server_update_blocker", return_value=None),
+            patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
             patch.object(
                 agent_server,
                 "CODEX_TRANSPORT",
@@ -1352,7 +1352,7 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
             {"queued_id": "delivery", "purpose": "cross_chat_handoff_delivery"},
             {"queued_id": "normal", "purpose": None},
         ])
-        with patch.object(agent_server, "managed_server_update_blocker", return_value=None):
+        with patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None):
             with self.assertRaises(HTTPException) as raised:
                 await agent_server.move_queued_turn(
                     "target",
@@ -1372,7 +1372,7 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
         ])
         # The mocked waiter cannot clear its steering fence after admission.
         with patch.object(agent_server, "STEERING_SESSIONS", set()), \
-                patch.object(agent_server, "managed_server_update_admission_blocker", return_value=None), \
+                patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None), \
                 patch.object(agent_server, "stop_turn", new_callable=AsyncMock, return_value={"stopped": False}), \
                 patch.object(agent_server, "append_durable_event", new_callable=AsyncMock), \
                 patch.object(agent_server, "schedule_steered_turn_slot_waiter"):
@@ -1651,7 +1651,7 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
                 with (
                     patch.object(
                         agent_server,
-                        "managed_server_update_blocker",
+                        "server_lifecycle_admission_blocker",
                         return_value=None,
                     ),
                     patch.object(
@@ -1761,7 +1761,7 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
                     ),
                     patch.object(
                         agent_server,
-                        "managed_server_update_blocker",
+                        "server_lifecycle_admission_blocker",
                         return_value=None,
                     ),
                     patch.object(
@@ -1932,7 +1932,7 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 side_effect=AssertionError(
                     "skip must remain available while draining"
                 ),
@@ -6943,7 +6943,7 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
                 "cross_chat_live_heartbeat_seconds",
                 return_value=0.01,
             ),
-            patch.object(agent_server, "managed_server_update_blocks_work", return_value=True),
+            patch.object(agent_server, "execution_maintenance_blocks_work", return_value=True),
             patch.object(agent_server, "managed_server_restart_blocks_work", return_value=True),
             patch.object(agent_server, "append_cross_chat_exchange_leg_terminal_lifecycle", AsyncMock()),
             patch.object(agent_server, "append_cross_chat_exchange_terminal_lifecycle", AsyncMock()),
@@ -8092,12 +8092,12 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
             ))
             patch_stack.enter_context(patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ))
             patch_stack.enter_context(patch.object(
                 agent_server,
-                "managed_server_update_admission_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ))
             patch_stack.enter_context(patch.object(

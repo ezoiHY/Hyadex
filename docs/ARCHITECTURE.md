@@ -9,6 +9,7 @@ route collection, authorization middleware and lifespan to the application facto
 | `hyadex/app.py` | FastAPI construction, middleware and lifespan composition | Explicit `ApplicationBindings` |
 | `hyadex/store/cross_chat.py` | Durable cross-chat ledger, transactions and migrations | Explicit `CrossChatBindings`; mailbox SQL |
 | `hyadex/store/mailbox.py` | Same-server mailbox SQL | Caller-owned SQLite transaction |
+| `hyadex/store/files.py` | Fsynced atomic JSON replacement | Caller-owned path and value |
 | `hyadex/store/transcripts.py` | Bounded JSONL parsing | Caller-owned binary streams |
 | `hyadex/jobs/schedules.py` | Interval, cron, RRULE and timezone calculations | Calendar libraries; no runtime state |
 | `hyadex/jobs/context.py` | Chat/standalone provider context policy | Explicit default backend and allowed backends |
@@ -68,3 +69,12 @@ renderers, media adapters and live projection state. Old sharing ledgers and
 transcripts remain on disk without being opened or migrated. Saved attribution
 on already accepted turns is retained. Side questions use the native session
 lifecycle guard and owner authentication; they do not depend on sharing.
+
+In-app update orchestration, update routes and update health advertisements are
+removed. Runtime admission now names the surviving worker-maintenance and
+restart fences directly. `hyadex/store/files.py` owns the same fsynced atomic JSON
+primitive used by ordinary state writers; importing the server no longer imports
+`update_runner`. The retained installer tools also use that primitive while the
+installer replacement remains pending. Saved update evidence is not opened or
+resumed. The narrow legacy job-park migration restores exact unchanged due
+occurrences and discards obsolete park ownership without overwriting edits.

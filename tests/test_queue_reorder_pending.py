@@ -62,7 +62,7 @@ class PendingQueueReorderTests(unittest.IsolatedAsyncioTestCase):
             "RUN_NOW_TURNS": self.run_now, "CURRENT_TURNS": self.current, "ACTIVE": self.active,
             "CROSS_CHAT_DELIVERY_PURPOSES": {"cross_chat_handoff_delivery", "secure_peer_handoff_delivery"},
             "wait_for_queue_recovery_admission": self.recovery,
-            "managed_server_update_blocker": self.update_blocker,
+            "server_lifecycle_admission_blocker": self.update_blocker,
             "append_durable_event": self.journal,
             "CROSS_CHAT": self.cross_chat,
             "force_send_queued_turn": self.force_send,

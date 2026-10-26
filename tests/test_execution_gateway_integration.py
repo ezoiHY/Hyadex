@@ -401,7 +401,7 @@ class ExecutionProductionControlProcessTests(unittest.IsolatedAsyncioTestCase):
                             "import_history": False, "provider_jobs_access": "blocked"}
                     blocked = await public.post("/api/sessions", json=body)
                     self.assertEqual(blocked.status_code, 409)
-                    self.assertIn("managed update", blocked.json()["detail"])
+                    self.assertIn("worker is in maintenance", blocked.json()["detail"])
                     self.assertEqual((await public.get("/api/sessions")).json()["sessions"], [])
                     # Knowing the local control capability does not expose private routes publicly.
                     hidden = await public.get(status_path, headers={"Authorization": "Bearer " + control_token})

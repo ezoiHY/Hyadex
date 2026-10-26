@@ -25,7 +25,7 @@ class TerminalShellInitializationTests(unittest.TestCase):
             clear=True,
         ), patch.object(
             agent_server,
-            "server_update_runner_environment",
+            "server_instance_environment",
             return_value={"XDG_RUNTIME_DIR": "/run/user/1000"},
         ):
             environment = agent_server.tmux_bootstrap_environment()

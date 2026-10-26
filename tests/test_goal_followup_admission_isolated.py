@@ -170,7 +170,7 @@ class GoalFollowupAdmissionTests(unittest.IsolatedAsyncioTestCase):
             "STEERING_SESSIONS": set(), "STEERING_WAIT_TASKS": {},
             "BUSY_SESSIONS": {"chat"},
             "stop_cleanup_in_progress": Mock(return_value=False),
-            "managed_server_update_admission_blocker": Mock(return_value=None),
+            "server_lifecycle_admission_blocker": Mock(return_value=None),
             "force_send_conflict_detail": Mock(side_effect=lambda *_args, **kwargs: kwargs),
             "queued_codex_runtime_matches_active": Mock(return_value=True),
             "queued_claude_runtime_matches_active": Mock(return_value=False),

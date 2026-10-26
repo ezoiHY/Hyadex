@@ -27,15 +27,6 @@ class HyadexDefaultsTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, {"HYADEX_ENABLED_BACKENDS": "claude,codex,opencode,bogus"}):
             self.assertEqual(agent_server.enabled_backends(), {"claude", "codex"})
 
-    async def test_in_app_updates_are_disabled_unless_explicitly_enabled(self) -> None:
-        with patch.dict(os.environ, {"HYADEX_MANAGED_UPDATES": ""}):
-            self.assertFalse(agent_server.managed_updates_enabled())
-            with self.assertRaises(HTTPException) as raised:
-                await agent_server.check_server_update(None)
-            self.assertEqual(raised.exception.status_code, 409)
-            self.assertIn("disabled", raised.exception.detail)
-        with patch.dict(os.environ, {"HYADEX_MANAGED_UPDATES": "1"}):
-            self.assertTrue(agent_server.managed_updates_enabled())
 
     def test_release_channel_points_at_hyadex(self) -> None:
         import update_runner
@@ -107,8 +98,7 @@ class GroupWiringTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server, "MIN_START_AVAILABLE_MEM_MB", 0),
             patch.object(agent_server, "JOB_MAX_ACTIVE_RUNS", 0),
             patch.object(agent_server, "MAX_ACTIVE_AGENT_RUNS", 0),
-            patch.object(agent_server, "managed_server_update_scheduled_job_blocker", lambda **_: None),
-            patch.object(agent_server, "managed_server_update_admission_blocker", lambda: None),
+            patch.object(agent_server, "server_lifecycle_admission_blocker", lambda: None),
         ):
             self.assertEqual(await agent_server.scheduled_job_blocker("sess_member"), "chat already has a running turn")
             self.assertIsNone(await agent_server.scheduled_job_blocker("sess_member", group=True))

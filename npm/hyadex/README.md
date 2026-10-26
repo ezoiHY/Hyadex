@@ -2,9 +2,8 @@
 
 Install and manage your Hyadex server with one command name. This is the
 public CLI entry point; the desktop app remains a separate signed download.
-The same-version `@hyadex/server` dependency supplies the runtime and the
-existing signed update protocol. Existing scoped-package installations remain
-supported.
+The same-version `@hyadex/server` dependency supplies the runtime and fresh
+installation/recovery commands. In-app updates are retired.
 
 ## Install the command
 
@@ -12,8 +11,7 @@ Run these commands on the **server machine**, which can be the same computer as
 your desktop app. Use Apple silicon macOS with a desktop login, or Linux with a
 working user systemd session. Install [Node.js 22.14 or later with npm](https://nodejs.org/en/download)
 and [uv](https://docs.astral.sh/uv/getting-started/installation/) for the Python
-environment. Install **tmux** for persistent terminals and in-app managed
-updates; basic chats work without it. On macOS with Homebrew, use
+environment. Install **tmux** for persistent terminals; basic chats work without it. On macOS with Homebrew, use
 `brew install node uv tmux`. Run npm as the server owner without `sudo`.
 Client-only devices do not need these prerequisites. The npm server installer
 does not run natively on Windows.
@@ -254,7 +252,6 @@ mailbox/jobs/team tools supplied to agents inside an authorized chat.
 | Start/stop/restart all | `./instances.sh restart --all` (or start/stop) | `hyadex restart --all` (or start/stop) |
 | Exclude an instance from a bulk action | `./instances.sh restart --all --exclude default` | `hyadex restart --all --exclude default` |
 | Uninstall all with confirmation | `./instances.sh remove --all` / bare `./uninstall.sh` | `hyadex remove --all` |
-| Submit a signed managed update | `hyadex-server update` plus required descriptor/identity arguments | `hyadex update` with the same arguments |
 | Guarded pre-activation recovery | `hyadex-server recover` | `hyadex recover` |
 | Installed CLI/package version | `hyadex-server --version` | `hyadex version` or `hyadex --version` |
 | CLI help | `hyadex-server --help` | `hyadex help` / `hyadex --help` / `hyadex -h` |
@@ -270,48 +267,35 @@ Supported options retain their native meanings:
 - `token`/`status`: positional name or `--instance NAME`, never both.
 - `logs`: optional name or `--instance NAME` (default: `default`), `-n`/`--lines`
   and `-f`/`--follow`. No bulk selector or arbitrary log path.
-- `update`: the six required arguments in the example below. Bare `update` or
-  `update work` does not select a registry tag or silently restart a server.
 
 Differences from the old source scripts:
 
 - `setup`/`install` is fresh-default-only. Re-running `./install.sh` on an
   installed service could reinstall it; the public CLI instead refuses that
-  path and keeps signed managed updates separate.
+  path. Stop the selected service and use the source installer for a reinstall.
 - Bare `remove`/`uninstall` refuses an omitted target. Unlike bare
   `./uninstall.sh`, it never implies removing all instances.
 - `version` is the installed CLI/package version, not a remote or already-running
   server's health/version result. `info` reads the selected instance's metadata.
 - Source-only operations are **not yet exposed** as short commands: rebinding or
   changing the port of an existing installation; manifest-based bulk creation
-  (`./instances.sh install --manifest ...`); Team Hub configuration/reactivation;
+  (`./instances.sh install --manifest ...`);
   foreground development `python agent_server.py serve`. There are no implemented
   `hyadex configure`, `hyadex login`, or `hyadex serve`
   commands in this package.
-- Direct checkout reinstalls (`./instances.sh update`, installer's version or
-  custom-root overrides) are not aliases for the signed `update` command. Split
-  runtime preparation/activation and internal recovery flags remain under the
-  managed updater, rather than arbitrary public pass-through arguments.
+- Direct checkout reinstalls (`./instances.sh update`) remain source operations;
+  they are not exposed by this CLI. Existing installer recovery options remain
+  available until the installer replacement is complete.
 - Provider login remains in each provider's native CLI. Existing source scripts
   and the `hyadex-server` command remain available for their original uses.
 
 ## Updates and recovery
 
-Prefer the app's update control. `hyadex update` accepts the same signed
-descriptor, identity and token-file arguments as `hyadex-server update`:
-
-```sh
-hyadex update --server-url https://server.example \
-  --server-identity ID --server-instance-id INSTANCE \
-  --token-file /private/path/server-token \
-  --manifest hyadex-server-npm-manifest.json \
-  --signature hyadex-server-npm-manifest.sig
-```
-
-`hyadex recover` retains the narrowly scoped existing pre-activation recovery
-checks. The CLI does not turn `servers update` or arbitrary installer arguments
-into an unsigned update bypass. Updating this npm command does not itself update
-an already-running server; managed activation remains independent of npm caches.
+The `hyadex update` command and its server endpoints have been removed. Stop
+the selected service and use the source installer for an existing installation;
+see [the server reference](../../docs/SERVER_REFERENCE.md#updating-hyadexserver).
+`hyadex recover` retains its narrowly scoped pre-activation recovery checks.
+Updating the npm command alone does not update a running server.
 
 ## Preparing this package
 

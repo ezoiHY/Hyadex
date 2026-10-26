@@ -597,7 +597,7 @@ class ChatPairTests(unittest.IsolatedAsyncioTestCase):
             "secure_peer_route_snapshots_for_references": lambda *args: [],
             "QUEUE_LOCK": asyncio.Lock(), "QUEUED_TURNS": {}, "RUN_NOW_TURNS": {},
             "ACTIVE_LOCK": asyncio.Lock(), "BUSY_SESSIONS": {"b"},
-            "managed_server_update_blocker": lambda: None,
+            "server_lifecycle_admission_blocker": lambda: None,
             "register_final_result_obligations": AsyncMock(return_value=[]),
             "register_request_reply_exchanges": AsyncMock(return_value=[]),
             "update_cross_chat_delivery_record": AsyncMock(return_value={**message, "status": "queued"}),

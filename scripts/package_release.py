@@ -71,6 +71,7 @@ FILES = (
     "title_generation.py",
     "codex_side_question.py",
     "claude_side_question.py",
+    "hyadex/store/files.py",
     "hyadex/store/transcripts.py",
     "claude_history_repair.py",
     "claude_history_provenance.py",
@@ -214,7 +215,7 @@ def main() -> int:
         "version": version,
         "track": "beta" if "-" in version.split("+", 1)[0] else "stable",
         "prerelease": "-" in version.split("+", 1)[0],
-        "api_contract_version": 28,
+        "api_contract_version": 29,
         "commit": commit,
         "archive": {
             "name": archive_name,

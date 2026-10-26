@@ -25,6 +25,7 @@ from urllib.error import HTTPError, URLError
 from pathlib import Path
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable
+from hyadex.store.files import atomic_json
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -135,26 +136,6 @@ class InstallerRolledBack(RuntimeError):
 
 def utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def atomic_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "w") as stream:
-            json.dump(value, stream, indent=2, sort_keys=True)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-        parent = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(parent)
-        finally:
-            os.close(parent)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 @contextmanager
@@ -734,10 +715,6 @@ def consume_auth_token_file(path: str | None) -> str:
     if not token:
         raise RuntimeError("server update health credential is empty")
     return token
-
-
-
-
 
 
 def version_is_prerelease(version: str) -> bool:

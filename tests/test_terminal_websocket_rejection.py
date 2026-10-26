@@ -299,7 +299,7 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
              patch.object(agent_server, "run_tmux") as run_tmux, \
              patch.object(
                  agent_server,
-                 "managed_server_update_blocks_work",
+                 "execution_maintenance_blocks_work",
                  side_effect=[False, True],
              ):
             owner = asyncio.create_task(
@@ -354,7 +354,7 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
              patch.object(agent_server, "websocket_authorized", return_value=True), \
              patch.object(
                  agent_server,
-                 "managed_server_update_blocks_work",
+                 "execution_maintenance_blocks_work",
                  return_value=False,
              ), \
              patch.object(
@@ -407,7 +407,7 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             agent_server,
-            "managed_server_update_blocks_work",
+            "execution_maintenance_blocks_work",
             return_value=False,
         ), patch.object(
             agent_server,
@@ -427,7 +427,7 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             agent_server,
-            "managed_server_update_blocks_work",
+            "execution_maintenance_blocks_work",
             return_value=False,
         ), patch.object(
             agent_server,
@@ -436,9 +436,7 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
         ):
             await registry.close_admission_and_all(permanent=True)
             reserved = await registry.reserve("shutdown-terminal", websocket)  # type: ignore[arg-type]
-            reopened = await registry.reopen_if_update_inactive(
-                {"phase": "failed"}
-            )
+            reopened = await registry.reopen_if_lifecycle_inactive()
 
         self.assertFalse(reserved)
         self.assertFalse(reopened)

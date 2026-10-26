@@ -19,7 +19,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import update_preparation as preparation
 import update_runner
 from tests import test_execution_preparation as receipt_tests
-from tests import test_server_update_ensure_isolated as ensure_tests
 
 
 class PendingPreparationTests(unittest.TestCase):
@@ -281,52 +280,6 @@ with preparation_lease(Path(directory)) as descriptor:
                 expected_server_identity="server-test", expected_server_version="1.2.3-beta.4")
 
 
-class PreparationAdmissionTests(ensure_tests.ServerUpdateEnsureTests):
-    async def test_idle_handoff_is_sealed_under_admission_locks_before_starting(self):
-        from execution_maintenance import ExecutionMaintenance
-        maintenance = ExecutionMaintenance(self.root / "maintenance.json", "worker-epoch")
-        pending = {**self.status, "phase": "pending", "schedule_id": "c" * 32,
-                   "preparation_id": "d" * 32, "preparation_phase": "ready", "target_version": "1.0.4-beta.12"}
-        runtime = SimpleNamespace(capability=Mock(return_value={}), prepare_maintenance=AsyncMock(return_value=None),
-            reopen_admission_sync=Mock(), reopen_admission=AsyncMock(), clear_maintenance=AsyncMock())
-        self.ns.update(os=SimpleNamespace(environ={"HYADEX_SERVER_INSTALL_DIR": str(self.root.resolve())}),
-            SERVER_ROOT=Path(__file__).resolve().parents[1], prepare_scheduled_server_update=AsyncMock(return_value=(pending, {})),
-            EXECUTION_MAINTENANCE=maintenance, DELETING_SESSIONS=set(), CODEX_GOALS_RECONFIGURING=False,
-            BUSY_SESSIONS=set(), server_update_active_session_ids_locked=lambda: [],
-            server_update_tmux_name=lambda identifier: "fixture-"+identifier,
-            sys=sys, shlex=shlex, Path=Path, SERVER_PORT=7870, SERVER_BIND_ADDRESS="127.0.0.1", AGENT_TOKEN="",
-            server_identity=lambda: "server-current", TEAM_HUB_RUNTIME=runtime,
-            atomic_update_json=update_runner.atomic_json, quiesce_managed_update_service_cgroup=AsyncMock(),
-            server_update_runner_environment=lambda: {}, tmux_bin=lambda: "tmux", run_tmux=Mock())
-        ordinary_write = self.write.side_effect
-
-        def observe_start(**changes):
-            if changes.get("phase") == "starting":
-                self.assertTrue(maintenance.is_held())
-                self.assertTrue(maintenance.lease["sealed"])
-                for lock in ("ACTIVE_LOCK", "QUEUE_LOCK", "UNSAFE_HTTP_MUTATION_ADMISSION_LOCK"):
-                    self.assertTrue(self.ns[lock].locked())
-                self.assertEqual(changes["_execution_handoff"]["lease_id"], maintenance.lease["lease_id"])
-            return ordinary_write(**changes)
-
-        self.write.side_effect = observe_start
-        result = await self.ns["ensure_server_update"](self.request())
-        self.assertEqual(result["phase"], "starting")
-        self.assertEqual(result["preparation_id"], "d" * 32)
-        handoff = next((self.root / ".update-preparations" / ("d" * 32)).glob("handoff-*.json"))
-        self.assertEqual(json.loads(handoff.read_text())["worker_instance_id"], "worker-epoch")
-        self.ns["quiesce_managed_update_service_cgroup"].assert_awaited_once()
-        self.ns["run_tmux"].assert_called_once()
-
-    async def test_preparation_does_not_take_provider_or_turn_admission(self):
-        async def pending(status, **unused):
-            return {"phase": "pending", "preparation_phase": "staging"}, None
-        self.ns.update(os=type("Environment", (), {"environ": {"HYADEX_SERVER_INSTALL_DIR": "/fixture"}}),
-            SERVER_ROOT=Path(__file__).resolve().parents[1], prepare_scheduled_server_update=pending)
-        result = await self.ns["ensure_server_update"](self.request())
-        self.assertEqual(result["phase"], "pending")
-        self.assertEqual(result["preparation_phase"], "staging")
-        self.ns["prepare_provider_background_work_snapshot"].assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1238,7 +1238,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         run_job.assert_not_awaited()
 
-    async def test_scheduler_defers_due_cron_if_update_fences_during_dispatch(
+    async def test_scheduler_defers_due_cron_if_maintenance_fences_during_dispatch(
         self,
     ) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -1273,14 +1273,9 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             if sleep_count > 1:
                 raise asyncio.CancelledError
 
-        update_reason = agent_server.MANAGED_SERVER_UPDATE_PENDING_DETAIL
+        update_reason = agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL
         events = AsyncMock()
         with (
-            patch.object(
-                agent_server,
-                "SERVER_UPDATE_STATUS_FILE",
-                Path(temporary.name) / "status.json",
-            ),
             patch.object(agent_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
@@ -1302,18 +1297,10 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 store,
                 "run_job",
                 new_callable=AsyncMock,
-                side_effect=agent_server.ManagedServerUpdatePendingError(),
+                side_effect=agent_server.HTTPException(status_code=503, detail=agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL),
             ) as run_job,
             patch.object(agent_server, "append_event", events),
         ):
-            agent_server.write_fresh_server_update_status(
-                phase="pending",
-                schedule_id=schedule_id,
-                target_version="1.1.0",
-                track="stable",
-                when_idle=True,
-                cancelable=True,
-            )
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
 
@@ -1326,13 +1313,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             2.0 + max(agent_server.JOB_BUSY_RETRY_SECONDS, 5),
         )
         self.assertEqual(current["last_defer_reason"], update_reason)
-        self.assertEqual(current["_update_park_schedule_id"], schedule_id)
-        self.assertEqual(current["_update_park_occurrence"], occurrence)
-        self.assertEqual(
-            current["_update_park_original_next_run_at"],
-            occurrence,
-        )
-        self.assertEqual(current["_update_park_revision"], current["_revision"])
+        self.assertNotIn("_update_park_schedule_id", current)
         self.assertNotEqual(current["_revision"], original_revision)
         run_job.assert_awaited_once_with("job_due")
         save.assert_awaited_once()
@@ -1448,7 +1429,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             agent_server.scheduled_job_lifecycle_admission_defer_reason(error)
         )
 
-    async def test_scheduler_update_race_does_not_defer_over_edited_cron_revision(
+    async def test_scheduler_maintenance_race_does_not_defer_over_edited_cron_revision(
         self,
     ) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -1489,16 +1470,11 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 "job_due",
                 {"next_run_at": str(edited_occurrence)},
             )
-            raise agent_server.ManagedServerUpdatePendingError()
+            raise agent_server.HTTPException(status_code=503, detail=agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
 
         events = AsyncMock()
         original_defer = store.defer
         with (
-            patch.object(
-                agent_server,
-                "SERVER_UPDATE_STATUS_FILE",
-                Path(temporary.name) / "status.json",
-            ),
             patch.object(agent_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
@@ -1519,14 +1495,6 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             patch.object(store, "defer", wraps=original_defer) as defer,
             patch.object(agent_server, "append_event", events),
         ):
-            agent_server.write_fresh_server_update_status(
-                phase="pending",
-                schedule_id=schedule_id,
-                target_version="1.1.0",
-                track="stable",
-                when_idle=True,
-                cancelable=True,
-            )
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
 
@@ -1542,11 +1510,10 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("_update_park_revision", current)
         defer.assert_awaited_once_with(
             "job_due",
-            agent_server.MANAGED_SERVER_UPDATE_PENDING_DETAIL,
+            agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
             agent_server.JOB_BUSY_RETRY_SECONDS,
             expected_revision=original_revision,
             expected_next_run_at=occurrence,
-            update_schedule_id=schedule_id,
         )
         save.assert_awaited_once()
         self.assertEqual(
@@ -2155,340 +2122,12 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(events.await_args_list[1].args[2]["job"]["manual_run_pending"])
 
-    async def test_pending_update_runs_automatic_and_manual_jobs(
+
+
+    async def test_startup_rearms_all_legacy_update_parks_but_preserves_user_edits(
         self,
     ) -> None:
-        """An update waiting for idle must not suspend scheduled work."""
-
-        store = agent_server.JobStore()
-        store.jobs = {
-            "job_recurring": {
-                "id": "job_recurring",
-                "session_id": "scheduled-chat",
-                "title": "Recurring schedule",
-                "prompt": "Run on the recurring schedule.",
-                "schedule_kind": "interval",
-                "interval_seconds": 300,
-                "schedule_start_at": 1.0,
-                "loop": True,
-                "max_runs": None,
-                "enabled": True,
-                "next_run_at": 1.0,
-                "scheduled_run_at": 1.0,
-                "run_count": 0,
-                "manual_run_pending": False,
-                "_revision": "job_rev_recurring",
-            },
-            # Provider-created schedules follow the same admission policy.
-            "job_provider": {
-                "id": "job_provider",
-                "session_id": "provider-chat",
-                "title": "Provider-created schedule",
-                "prompt": "Run provider-created automation.",
-                "schedule_kind": "interval",
-                "interval_seconds": 600,
-                "schedule_start_at": 1.0,
-                "loop": True,
-                "max_runs": None,
-                "enabled": True,
-                "next_run_at": 1.0,
-                "scheduled_run_at": 1.0,
-                "run_count": 0,
-                "manual_run_pending": False,
-                "_revision": "job_rev_provider",
-            },
-            "job_manual": {
-                "id": "job_manual",
-                "session_id": "manual-job-chat",
-                "title": "Pending manual job",
-                "prompt": "Run this job now even while the update is pending.",
-                "enabled": False,
-                "next_run_at": None,
-                "scheduled_run_at": None,
-                "run_count": 0,
-                "manual_run_pending": True,
-                "manual_run_requested_at": "2026-09-05T12:00:00Z",
-                "_revision": "job_rev_manual",
-            },
-        }
-        sessions = {
-            session_id: {
-                "id": session_id,
-                "backend": agent_server.BACKEND_CODEX,
-                "archived": False,
-            }
-            for session_id in (
-                "long-running-chat",
-                "scheduled-chat",
-                "provider-chat",
-                "manual-job-chat",
-            )
-        }
-        busy = {"long-running-chat"}
-        started_job_ids: list[str] = []
-
-        async def start_job(_session_id, request, **_kwargs):
-            started_job_ids.append(str(request.job_id or ""))
-            return {
-                "run_id": f"run_{request.job_id}",
-                "queued": False,
-            }
-
-        async def run_one_scheduler_iteration() -> None:
-            sleeps = 0
-
-            async def stop_after_iteration(_delay: float) -> None:
-                nonlocal sleeps
-                sleeps += 1
-                if sleeps > 1:
-                    raise asyncio.CancelledError
-
-            with patch.object(
-                agent_server.asyncio,
-                "sleep",
-                side_effect=stop_after_iteration,
-            ):
-                with self.assertRaises(asyncio.CancelledError):
-                    await store.scheduler_loop()
-
-        with tempfile.TemporaryDirectory() as temporary, \
-             patch.object(
-                 agent_server,
-                 "SERVER_UPDATE_STATUS_FILE",
-                 Path(temporary) / "status.json",
-             ), \
-             patch.object(agent_server, "JOBS", store), \
-             patch.object(agent_server.STORE, "sessions", sessions), \
-             patch.object(agent_server, "BUSY_SESSIONS", busy), \
-             patch.object(agent_server, "SERVER_MAINTENANCE_SESSIONS", set()), \
-             patch.object(agent_server, "MAX_ACTIVE_AGENT_RUNS", 0), \
-             patch.object(agent_server, "JOB_MAX_ACTIVE_RUNS", 0), \
-             patch.object(
-                 agent_server,
-                 "host_pressure_snapshot",
-                 return_value={"available_mem_mb": 1_000_000},
-             ), \
-             patch.object(agent_server.time, "time", return_value=2.0), \
-             patch.object(store, "save", new_callable=AsyncMock), \
-             patch.object(agent_server, "start_turn", side_effect=start_job), \
-             patch.object(agent_server, "append_event", new_callable=AsyncMock), \
-             patch.object(
-                 agent_server.TERMINAL_ATTACHMENTS,
-                 "reopen_if_update_inactive",
-                 new=AsyncMock(),
-             ), \
-             patch.object(
-                 agent_server,
-                 "schedule_rebuilt_queued_turns",
-                 return_value=0,
-             ):
-            pending = agent_server.write_fresh_server_update_status(
-                phase="pending",
-                schedule_id="b" * 32,
-                target_version="1.1.0",
-                latest_version="1.1.0",
-                track="stable",
-                when_idle=True,
-                cancelable=True,
-                blocker_counts={"active_runs": 1},
-            )
-
-            await run_one_scheduler_iteration()
-
-            self.assertEqual(
-                set(started_job_ids),
-                {"job_recurring", "job_provider", "job_manual"},
-            )
-            for job_id in ("job_recurring", "job_provider"):
-                job = store.jobs[job_id]
-                self.assertTrue(job["enabled"])
-                self.assertEqual(job["run_count"], 1)
-                self.assertNotIn("_update_park_schedule_id", job)
-            self.assertFalse(store.jobs["job_manual"]["manual_run_pending"])
-            # The update stays pending and existing work is not interrupted.
-            self.assertEqual(agent_server.read_server_update_status()["phase"], "pending")
-            self.assertEqual(busy, {"long-running-chat"})
-            await run_one_scheduler_iteration()
-
-        self.assertEqual(
-            set(started_job_ids),
-            {"job_recurring", "job_provider", "job_manual"},
-        )
-        self.assertEqual(len(started_job_ids), 3)
-        self.assertFalse(store.jobs["job_manual"]["manual_run_pending"])
-
-    async def test_pending_update_race_parks_one_shot_then_runs_it_once(
-        self,
-    ) -> None:
-        """A pending-update race must not consume a one-shot occurrence."""
-
-        store = agent_server.JobStore()
-        schedule_id = "e" * 32
-        occurrence = 1.0
-        initial_revision = "job_rev_pending_one_shot"
-        store.jobs["job_one_shot"] = {
-            "id": "job_one_shot",
-            "session_id": "one-shot-chat",
-            "title": "One-shot after update cancellation",
-            "prompt": "Run this exact occurrence once.",
-            "schedule_kind": "interval",
-            "interval_seconds": 60,
-            "schedule_start_at": occurrence,
-            "loop": False,
-            "max_runs": 1,
-            "enabled": True,
-            "next_run_at": occurrence,
-            "scheduled_run_at": occurrence,
-            "run_count": 0,
-            "_revision": initial_revision,
-        }
-        sessions = {
-            "one-shot-chat": {
-                "id": "one-shot-chat",
-                "backend": agent_server.BACKEND_CODEX,
-                "archived": False,
-            },
-        }
-        attempts: list[str] = []
-        admitted: list[str] = []
-
-        async def reject_once_then_admit(_session_id, request, **_kwargs):
-            attempts.append(str(request.job_id or ""))
-            if len(attempts) == 1:
-                raise agent_server.ManagedServerUpdatePendingError()
-            admitted.append(str(request.job_id or ""))
-            return {"run_id": "run_one_shot", "queued": False}
-
-        async def run_one_scheduler_iteration() -> None:
-            sleeps = 0
-
-            async def stop_after_iteration(_delay: float) -> None:
-                nonlocal sleeps
-                sleeps += 1
-                if sleeps > 1:
-                    raise asyncio.CancelledError
-
-            with patch.object(
-                agent_server.asyncio,
-                "sleep",
-                side_effect=stop_after_iteration,
-            ):
-                with self.assertRaises(asyncio.CancelledError):
-                    await store.scheduler_loop()
-
-        events = AsyncMock()
-        with tempfile.TemporaryDirectory() as temporary, \
-             patch.object(
-                 agent_server,
-                 "SERVER_UPDATE_STATUS_FILE",
-                 Path(temporary) / "status.json",
-             ), \
-             patch.object(agent_server, "JOBS", store), \
-             patch.object(agent_server.STORE, "sessions", sessions), \
-             patch.object(agent_server.time, "time", return_value=2.0), \
-             patch.object(agent_server, "JOB_DEFER_EVENT_MIN_SECONDS", 0), \
-             patch.object(store, "save", new_callable=AsyncMock), \
-             patch.object(
-                 agent_server,
-                 "scheduled_job_blocker",
-                 new_callable=AsyncMock,
-                 return_value=None,
-             ), \
-             patch.object(
-                 agent_server,
-                 "start_turn",
-                 side_effect=reject_once_then_admit,
-             ) as start_turn, \
-             patch.object(agent_server, "append_event", events), \
-             patch.object(
-                 agent_server.TERMINAL_ATTACHMENTS,
-                 "reopen_if_update_inactive",
-                 new=AsyncMock(),
-             ), \
-             patch.object(
-                 agent_server,
-                 "schedule_rebuilt_queued_turns",
-                 return_value=0,
-             ):
-            pending = agent_server.write_fresh_server_update_status(
-                phase="pending",
-                schedule_id=schedule_id,
-                target_version="1.1.0",
-                latest_version="1.1.0",
-                track="stable",
-                when_idle=True,
-                cancelable=True,
-            )
-
-            await run_one_scheduler_iteration()
-
-            parked = store.jobs["job_one_shot"]
-            self.assertTrue(parked["enabled"])
-            self.assertEqual(parked["run_count"], 0)
-            self.assertEqual(parked["scheduled_run_at"], occurrence)
-            self.assertGreater(parked["next_run_at"], occurrence)
-            self.assertEqual(
-                parked["last_defer_reason"],
-                agent_server.MANAGED_SERVER_UPDATE_PENDING_DETAIL,
-            )
-            self.assertEqual(
-                parked["_update_park_schedule_id"],
-                pending["schedule_id"],
-            )
-            self.assertEqual(parked["_update_park_occurrence"], occurrence)
-            self.assertEqual(
-                parked["_update_park_original_next_run_at"],
-                occurrence,
-            )
-            self.assertEqual(
-                parked["_update_park_revision"],
-                parked["_revision"],
-            )
-            self.assertNotEqual(parked["_revision"], initial_revision)
-            self.assertEqual(attempts, ["job_one_shot"])
-            self.assertEqual(admitted, [])
-
-            cancelled = await agent_server.cancel_server_update(
-                agent_server.ServerUpdateCancelRequest(
-                    schedule_id=pending["schedule_id"],
-                )
-            )
-            self.assertEqual(cancelled["phase"], "available")
-            rearmed = store.jobs["job_one_shot"]
-            self.assertEqual(rearmed["next_run_at"], occurrence)
-            self.assertEqual(rearmed["scheduled_run_at"], occurrence)
-            for field in (
-                "_update_park_schedule_id",
-                "_update_park_occurrence",
-                "_update_park_original_next_run_at",
-                "_update_park_revision",
-            ):
-                self.assertNotIn(field, rearmed)
-
-            await run_one_scheduler_iteration()
-
-            completed = store.jobs["job_one_shot"]
-            self.assertEqual(completed["run_count"], 1)
-            self.assertEqual(completed["last_scheduled_run_at"], occurrence)
-            self.assertFalse(completed["enabled"])
-            self.assertIsNone(completed["next_run_at"])
-            self.assertIsNone(completed["scheduled_run_at"])
-            self.assertEqual(admitted, ["job_one_shot"])
-
-            await run_one_scheduler_iteration()
-
-        self.assertEqual(attempts, ["job_one_shot", "job_one_shot"])
-        self.assertEqual(admitted, ["job_one_shot"])
-        self.assertEqual(start_turn.await_count, 2)
-        self.assertEqual(
-            [call.args[1] for call in events.await_args_list],
-            ["job_deferred", "job_ran"],
-        )
-
-    async def test_startup_rearm_keeps_live_park_and_resumes_only_stale_jobs(
-        self,
-    ) -> None:
-        """A restart preserves the current reservation but clears older parks."""
+        """Update retirement rearms exact old occurrences without overwriting edits."""
 
         store = agent_server.JobStore()
         live_schedule_id = "1" * 32
@@ -2536,19 +2175,13 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(agent_server.time, "time", return_value=2.0), \
              patch.object(store, "save", new_callable=AsyncMock) as save:
-            resumed = await store.resume_update_parked(
-                active_schedule_id=live_schedule_id,
-            )
+            resumed = await store.resume_legacy_update_parked()
 
-        self.assertEqual(resumed, 1)
+        self.assertEqual(resumed, 2)
         live = store.jobs["job_live"]
-        self.assertEqual(live["next_run_at"], 62.0)
-        self.assertEqual(live["_revision"], live_revision)
-        self.assertEqual(
-            live["_update_park_schedule_id"],
-            live_schedule_id,
-        )
-        self.assertEqual(live["_update_park_revision"], live_revision)
+        self.assertEqual(live["next_run_at"], 1.0)
+        self.assertNotEqual(live["_revision"], live_revision)
+        self.assertNotIn("_update_park_schedule_id", live)
 
         stale = store.jobs["job_stale"]
         self.assertEqual(stale["next_run_at"], 1.0)
@@ -2569,7 +2202,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("_update_park_schedule_id", edited)
         save.assert_awaited_once()
 
-    async def test_pending_update_race_at_start_turn_preserves_job_occurrence(
+    async def test_maintenance_race_at_start_turn_preserves_job_occurrence(
         self,
     ) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -2602,11 +2235,6 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 raise asyncio.CancelledError
 
         with (
-            patch.object(
-                agent_server,
-                "SERVER_UPDATE_STATUS_FILE",
-                Path(temporary.name) / "status.json",
-            ),
             patch.object(agent_server.STORE, "sessions", {
                 "race-chat": {
                     "id": "race-chat",
@@ -2631,18 +2259,10 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 agent_server,
                 "start_turn",
                 new_callable=AsyncMock,
-                side_effect=agent_server.ManagedServerUpdatePendingError(),
+                side_effect=agent_server.HTTPException(status_code=503, detail=agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL),
             ) as start,
             patch.object(agent_server, "append_event", new_callable=AsyncMock),
         ):
-            agent_server.write_fresh_server_update_status(
-                phase="pending",
-                schedule_id=schedule_id,
-                target_version="1.1.0",
-                track="stable",
-                when_idle=True,
-                cancelable=True,
-            )
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
 
@@ -2651,10 +2271,8 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(job["enabled"])
         self.assertEqual(job["run_count"], 0)
         self.assertEqual(job["scheduled_run_at"], 1.0)
-        self.assertEqual(job["_update_park_schedule_id"], schedule_id)
-        self.assertEqual(job["_update_park_occurrence"], 1.0)
-        self.assertEqual(job["_update_park_original_next_run_at"], 1.0)
-        self.assertEqual(job["_update_park_revision"], job["_revision"])
+        self.assertNotIn("_update_park_schedule_id", job)
+        self.assertEqual(job["last_defer_reason"], agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
         self.assertNotEqual(job["_revision"], "job_rev_race")
 
     async def test_permanent_manual_run_error_clears_pending_and_emits_error(

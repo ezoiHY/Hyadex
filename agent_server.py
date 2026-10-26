@@ -144,16 +144,7 @@ from provider_commands import (
     codex_provider_command_inventory,
     empty_provider_command_inventory,
 )
-from update_runner import atomic_json as atomic_update_json
-from update_runner import (
-    ReleaseRateLimitedError,
-    ReleaseUnavailableError,
-    check_release,
-    server_update_status_lock,
-    utc_now as update_utc_now,
-    version_key,
-    verify_npm_release_envelope,
-)
+from hyadex.store.files import atomic_json
 from claude_history_repair import ClaudeMetadataRepairCache, enrich_interruption_origins, filter_native_claude_mailbox_wake_items
 from codex_history_repair import (
     CodexGoalHistoryRepairCache, CodexNativeHistoryRepairCache, CodexNativeHistoryProofUnavailable,
@@ -382,8 +373,6 @@ CODE_DIFFS_ROOT = STATE_DIR / "code_diffs"
 HOST_HEALTH_FILE = STATE_DIR / "host_health.jsonl"
 SERVER_ADMIN_ROOT = STATE_DIR / "admin"
 SERVER_IDENTITY_FILE = STATE_DIR / "server-identity"
-SERVER_UPDATE_STATUS_FILE = SERVER_ADMIN_ROOT / "server-update.json"
-SERVER_UPDATE_LOG_FILE = SERVER_ADMIN_ROOT / "server-update.log"
 SERVER_RESTART_STATUS_FILE = SERVER_ADMIN_ROOT / "server-restart.json"
 CODEX_SETTINGS_FILE = SERVER_ADMIN_ROOT / "codex-settings.json"
 CODEX_PROVIDER_STORE = codex_provider.ProviderStore(SERVER_ADMIN_ROOT / "codex-provider")
@@ -394,26 +383,8 @@ ABANDONED_FORK_THREADS_FILE = SERVER_ADMIN_ROOT / "abandoned-fork-threads.json"
 # them, so the hard-kill watchdog and the next startup reap them from here.
 PROVIDER_CHILDREN_FILE = SERVER_ADMIN_ROOT / "provider-children.json"
 PROVIDER_CHILD_PROC_ROOT = Path("/proc")
-SERVER_UPDATE_PUBLIC_KEY = SERVER_ROOT / "release-public-key.pem"
 
 
-def managed_updates_enabled() -> bool:
-    """In-app updates install signed releases from the Hyadex release channel.
-
-    Hyadex does not publish signed server releases yet, and the bundled public
-    key is the upstream AgentsDock key, so updates stay off unless an operator
-    explicitly sets HYADEX_MANAGED_UPDATES=1 after replacing the key.
-    """
-    return os.environ.get("HYADEX_MANAGED_UPDATES", "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def require_managed_updates_enabled() -> None:
-    if not managed_updates_enabled():
-        raise HTTPException(
-            status_code=409,
-            detail="In-app updates are disabled in this Hyadex build.",
-        )
-SERVER_UPDATE_RUNNER = SERVER_ROOT / "update_runner.py"
 CLAUDE_PROJECTS_ROOT = Path(
     os.environ.get("CLAUDE_PROJECTS_ROOT")
     or Path(os.environ.get("CLAUDE_CONFIG_DIR") or str(Path.home() / ".claude")).expanduser() / "projects"
@@ -1059,31 +1030,6 @@ TERMINAL_ATTACHMENT_CLOSE_TIMEOUT_SECONDS = max(
     1.0,
     float(hyadex_setting("TERMINAL_ATTACHMENT_CLOSE_TIMEOUT_SECONDS", "6")),
 )
-MANAGED_UPDATE_PROVIDER_QUIESCE_TIMEOUT_SECONDS = max(
-    1.0,
-    float(hyadex_setting("MANAGED_UPDATE_PROVIDER_QUIESCE_TIMEOUT_SECONDS", "8")),
-)
-# Provider shutdown first gives lingering turn/interaction owners their own
-# bounded cleanup window, then retires the underlying SDK/app-server
-# transports.  The managed-update deadline must leave room for both phases;
-# otherwise the outer 8s default always cancels a legitimate 15s inner drain.
-MANAGED_UPDATE_PROVIDER_TEARDOWN_MARGIN_SECONDS = 10.0
-MANAGED_UPDATE_CGROUP_SETTLE_TIMEOUT_SECONDS = max(
-    0.1,
-    float(hyadex_setting("MANAGED_UPDATE_CGROUP_SETTLE_TIMEOUT_SECONDS", "3")),
-)
-MANAGED_UPDATE_CGROUP_SETTLE_INTERVAL_SECONDS = max(
-    0.01,
-    min(
-        MANAGED_UPDATE_CGROUP_SETTLE_TIMEOUT_SECONDS,
-        float(
-            hyadex_setting(
-                "MANAGED_UPDATE_CGROUP_SETTLE_INTERVAL_SECONDS",
-                "0.05",
-            )
-        ),
-    ),
-)
 PORT_TUNNEL_READ_CHUNK_BYTES = 64 * 1024
 PORT_TUNNEL_MAX_CLIENT_FRAME_BYTES = 1024 * 1024
 PORT_TUNNEL_CLOSE_INVALID_REQUEST = 4400
@@ -1156,15 +1102,9 @@ CLAUDE_STOP_FENCE_ATTEMPT_TIMEOUT_SECONDS = max(
 HEALTH_QUEUE_RECONCILE_INTERVAL_SECONDS = float(
     hyadex_setting("HEALTH_QUEUE_RECONCILE_INTERVAL_SECONDS", "15")
 )
-# A pending update-when-idle reservation remains passive for user work: it
-# never fences ordinary turns, Force Send, or provider controls. Autonomous
-# scheduled jobs are deferred so recurring work cannot replenish the active
-# set forever and starve the update. Earlier releases parked every new turn
-# behind the reservation, which locked every chat out for 27 minutes on
-# 2026-09-04 while one long turn ran.
 QUEUE_FENCE_LOG_INTERVAL_SECONDS = 60.0
-# Hidden cross-chat/secure-peer delivery rows retry admission when the target
-# chat is busy or the server is updating. A row whose admission keeps failing
+# Hidden cross-chat delivery rows retry admission when the target
+# chat is busy or server lifecycle admission is closed. A row whose admission keeps failing
 # for another reason used to retry forever (2026-09-04). After this many
 # consecutive deferrals the delivery is failed visibly instead. The user's own
 # queued messages are never discarded by this bound.
@@ -1345,7 +1285,7 @@ PROVIDER_TOOL_DESCRIPTION = (
     "by an accepted receipt with message_id; a tool error is not delivery confirmation. "
 
 )
-API_CONTRACT_VERSION = 28
+API_CONTRACT_VERSION = 29
 SESSION_ORDER_STEP = 1000.0
 LOCAL_CROSS_CHAT_DELIVERY_PURPOSE = "cross_chat_handoff_delivery"
 CROSS_CHAT_DELIVERY_PURPOSES = {
@@ -7844,46 +7784,6 @@ class AgentUpdateJobRequest(UpdateJobRequest):
     )
 
 
-class ServerUpdateTargetExpectation(BaseModel):
-    expected_server_identity: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=128,
-    )
-    expected_server_instance_id: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=128,
-    )
-
-
-class ServerUpdateRequest(ServerUpdateTargetExpectation):
-    version: str | None = None
-    track: Literal["stable", "beta"] | None = None
-    when_idle: bool = False
-
-
-class ServerUpdateCancelRequest(ServerUpdateTargetExpectation):
-    model_config = {"extra": "forbid"}
-
-    schedule_id: str = Field(
-        min_length=32,
-        max_length=32,
-        pattern=r"^[0-9a-f]{32}$",
-    )
-
-
-class ServerUpdateCheckRequest(ServerUpdateTargetExpectation):
-    track: Literal["stable", "beta"] | None = None
-
-
-class ServerUpdateEnsureRequest(ServerUpdateTargetExpectation):
-    model_config = {"extra": "forbid"}
-
-    manifest_base64: str = Field(min_length=1, max_length=10_924)
-    signature_base64: str = Field(min_length=88, max_length=88)
-
-
 class ServerRestartRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -7898,12 +7798,6 @@ class ServerRestartRequest(BaseModel):
         min_length=64,
         max_length=64,
         pattern=r"^[0-9a-f]{64}$",
-    )
-    expected_update_schedule_id: str | None = Field(
-        default=None,
-        min_length=32,
-        max_length=32,
-        pattern=r"^[0-9a-f]{32}$",
     )
 
     @field_validator("confirmed", mode="before")
@@ -7933,13 +7827,6 @@ class ServerRestartRequest(BaseModel):
         if self.expected_blocker_revision is not None and self.force is not True:
             raise ValueError(
                 "expected_blocker_revision requires a forced restart"
-            )
-        if (
-            self.expected_update_schedule_id is not None
-            and self.force is not True
-        ):
-            raise ValueError(
-                "expected_update_schedule_id requires a forced restart"
             )
         return self
 
@@ -8107,7 +7994,7 @@ def write_abandoned_fork_thread_ids(
 ) -> None:
     """Atomically persist provider forks that must be retired."""
 
-    atomic_update_json(
+    atomic_json(
         path or ABANDONED_FORK_THREADS_FILE,
         {"thread_ids": sorted(thread_ids)},
     )
@@ -10012,7 +9899,7 @@ def write_jobs_registry(jobs: dict[str, dict[str, Any]]) -> None:
     """Atomically serialize the job registry outside the asyncio event loop."""
 
     ensure_dirs()
-    atomic_update_json(JOBS_FILE, jobs)
+    atomic_json(JOBS_FILE, jobs)
 
 
 class JobStore:
@@ -11057,7 +10944,6 @@ class JobStore:
         *,
         expected_revision: str | None = None,
         expected_next_run_at: float | None = None,
-        update_schedule_id: str | None = None,
     ) -> bool:
         delay = int(delay_seconds or JOB_BUSY_RETRY_SECONDS)
         emit_event = False
@@ -11082,34 +10968,7 @@ class JobStore:
                 if not same_occurrence:
                     return False
             now = time.time()
-            if update_schedule_id is not None:
-                occurrence = job.get("scheduled_run_at")
-                if occurrence is None:
-                    occurrence = expected_next_run_at
-                try:
-                    clean_occurrence = float(occurrence)
-                    original_next_run_at = float(
-                        job.get("_update_park_original_next_run_at")
-                        if (
-                            job.get("_update_park_schedule_id")
-                            == update_schedule_id
-                            and job.get("_update_park_original_next_run_at")
-                            is not None
-                        )
-                        else job.get("next_run_at")
-                    )
-                except (TypeError, ValueError) as exc:
-                    raise RuntimeError(
-                        "scheduled update park lost its occurrence"
-                    ) from exc
-                if not math.isfinite(clean_occurrence) or not math.isfinite(
-                    original_next_run_at
-                ):
-                    raise RuntimeError(
-                        "scheduled update park has an invalid occurrence"
-                    )
-            else:
-                clear_job_update_park(job)
+            clear_job_update_park(job)
             job["next_run_at"] = now + max(delay, 5)
             job["last_deferred_at"] = now_iso()
             job["last_defer_reason"] = reason
@@ -11121,13 +10980,6 @@ class JobStore:
             job["updated_at"] = now_iso()
             revision = new_job_revision()
             job["_revision"] = revision
-            if update_schedule_id is not None:
-                job["_update_park_schedule_id"] = update_schedule_id
-                job["_update_park_occurrence"] = clean_occurrence
-                job["_update_park_original_next_run_at"] = (
-                    original_next_run_at
-                )
-                job["_update_park_revision"] = revision
             await self.save()
         if emit_event and event_job and event_job.get("session_id"):
             await append_event(str(event_job["session_id"]), "job_deferred", {
@@ -11137,43 +10989,8 @@ class JobStore:
             })
         return True
 
-    async def defer_for_pending_server_update(
-        self,
-        jid: str,
-        reason: str,
-        *,
-        expected_revision: str | None,
-        expected_next_run_at: float | None,
-    ) -> bool:
-        """Durably park one unchanged automatic occurrence for an exact update.
 
-        Cancellation takes the same operation lock before clearing the update
-        reservation and rearming these markers. The two operations therefore
-        cannot strand a park on the wrong side of cancellation.
-        """
-
-        async with SERVER_UPDATE_OPERATION_LOCK:
-            status = read_server_update_status()
-            if not managed_server_update_is_pending(status):
-                return False
-            schedule_id = str(status.get("schedule_id") or "").strip()
-            if not schedule_id:
-                return False
-            return await self.defer(
-                jid,
-                reason,
-                JOB_BUSY_RETRY_SECONDS,
-                expected_revision=expected_revision,
-                expected_next_run_at=expected_next_run_at,
-                update_schedule_id=schedule_id,
-            )
-
-    async def resume_update_parked(
-        self,
-        schedule_id: str | None = None,
-        *,
-        active_schedule_id: str | None = None,
-    ) -> int:
+    async def resume_legacy_update_parked(self) -> int:
         """Rearm unchanged occurrences parked by an ended idle reservation."""
 
         resumed = 0
@@ -11185,13 +11002,7 @@ class JobStore:
                 parked_schedule_id = str(
                     job.get("_update_park_schedule_id") or ""
                 ).strip()
-                if not parked_schedule_id or (
-                    schedule_id is not None
-                    and parked_schedule_id != schedule_id
-                ) or (
-                    active_schedule_id is not None
-                    and parked_schedule_id == active_schedule_id
-                ):
+                if not parked_schedule_id:
                     continue
                 changed = True
                 parked_revision = str(
@@ -11772,13 +11583,6 @@ class JobStore:
                 if blocker:
                     if manual_run_pending:
                         await self._record_manual_run_deferred(jid, blocker)
-                    elif blocker == MANAGED_SERVER_UPDATE_PENDING_DETAIL:
-                        await self.defer_for_pending_server_update(
-                            jid,
-                            blocker,
-                            expected_revision=due_revision,
-                            expected_next_run_at=due_next_run_at,
-                        )
                     else:
                         await self.defer(
                             jid,
@@ -11916,13 +11720,6 @@ class JobStore:
                             await self._record_manual_run_deferred(
                                 jid,
                                 lifecycle_defer_reason,
-                            )
-                        elif isinstance(e, ManagedServerUpdatePendingError):
-                            await self.defer_for_pending_server_update(
-                                jid,
-                                lifecycle_defer_reason,
-                                expected_revision=due_revision,
-                                expected_next_run_at=due_next_run_at,
                             )
                         else:
                             # Preserve the canonical occurrence and use the due
@@ -12877,11 +12674,11 @@ def queue_promotion_fence(session_id: str) -> str | None:
 
     if stop_cleanup_in_progress(session_id):
         return "explicit_stop"
-    blocker = managed_server_update_blocker()
+    blocker = server_lifecycle_admission_blocker()
     if blocker == MANAGED_SERVER_RESTART_ACTIVE_DETAIL:
         return "server_restart"
     if blocker:
-        return "server_update"
+        return "server_lifecycle"
     return None
 
 
@@ -13803,12 +13600,10 @@ async def enqueue_turn(
             display_prompt = conversation_fields["message_body"][:4096]
             req.display_prompt = display_prompt
     async with QUEUE_LOCK:
-        # A pending update fences execution, not durable intake. Messages that
-        # arrive while existing work drains are persisted for the replacement
-        # process; active update/restart phases still reject new mutations.
-        update_blocker = managed_server_update_blocker()
-        if update_blocker:
-            raise HTTPException(status_code=503, detail=update_blocker)
+        # Recheck lifecycle admission under the durable queue write lock.
+        lifecycle_blocker = server_lifecycle_admission_blocker()
+        if lifecycle_blocker:
+            raise HTTPException(status_code=503, detail=lifecycle_blocker)
         try:
             if req.purpose is None:
                 pass
@@ -14213,9 +14008,9 @@ async def unqueue_turn(session_id: str, queued_id: str) -> dict[str, Any]:
 
     removed: dict[str, Any] | None = None
     async with QUEUE_LOCK:
-        update_blocker = managed_server_update_blocker()
-        if update_blocker:
-            raise HTTPException(status_code=503, detail=update_blocker)
+        lifecycle_blocker = server_lifecycle_admission_blocker()
+        if lifecycle_blocker:
+            raise HTTPException(status_code=503, detail=lifecycle_blocker)
         reject_promoted_queue_mutation(session_id, queued_id)
         queue = QUEUED_TURNS.get(session_id)
         if queue:
@@ -17818,7 +17613,7 @@ async def update_async_queued_message(session_id: str, queued_id: str, req: Upda
         for position, item in enumerate(queue, 1):
             if item.get("queued_id") != queued_id or not async_route_queue_fields(item):
                 continue
-            blocker = managed_server_update_blocker()
+            blocker = server_lifecycle_admission_blocker()
             if blocker:
                 raise HTTPException(status_code=503, detail=blocker)
             if item.get("_native_delivery_fenced") is True or item.get("_update_transitioning") is True:
@@ -18037,9 +17832,9 @@ async def update_queued_turn(session_id: str, queued_id: str, req: UpdateQueuedT
     cancelled_obligations: list[dict[str, Any]] = []
     cancelled_exchanges: list[dict[str, Any]] = []
     async with QUEUE_LOCK:
-        update_blocker = managed_server_update_blocker()
-        if update_blocker:
-            raise HTTPException(status_code=503, detail=update_blocker)
+        lifecycle_blocker = server_lifecycle_admission_blocker()
+        if lifecycle_blocker:
+            raise HTTPException(status_code=503, detail=lifecycle_blocker)
         reject_promoted_queue_mutation(session_id, queued_id)
         queue = QUEUED_TURNS.get(session_id)
         if queue:
@@ -18418,9 +18213,9 @@ async def move_queued_turn(session_id: str, queued_id: str, req: MoveQueuedTurnR
     moved: dict[str, Any] | None = None
     positions: list[dict[str, Any]] = []
     async with QUEUE_LOCK:
-        update_blocker = managed_server_update_blocker()
-        if update_blocker:
-            raise HTTPException(status_code=503, detail=update_blocker)
+        lifecycle_blocker = server_lifecycle_admission_blocker()
+        if lifecycle_blocker:
+            raise HTTPException(status_code=503, detail=lifecycle_blocker)
         reject_promoted_queue_mutation(session_id, queued_id)
         queue = QUEUED_TURNS.get(session_id)
         if queue:
@@ -19582,9 +19377,9 @@ async def _run_queued_turn_now_once(
     )
     remaining: int
     async with QUEUE_LOCK:
-        update_blocker = managed_server_update_admission_blocker()
-        if update_blocker:
-            raise HTTPException(status_code=503, detail=update_blocker)
+        lifecycle_blocker = server_lifecycle_admission_blocker()
+        if lifecycle_blocker:
+            raise HTTPException(status_code=503, detail=lifecycle_blocker)
         promoted_owner = RUN_NOW_TURNS.get(session_id)
         if session_id in STEERING_SESSIONS or promoted_owner is not None:
             waiter_entry = STEERING_WAIT_TASKS.get(session_id)
@@ -20243,7 +20038,7 @@ async def pause_queued_turns_after_explicit_stop(session_id: str) -> int:
                     )
                 return 0
             # Persist before changing the in-memory scheduling state. If durable
-            # storage fails, mark the entries provisional so the managed updater
+            # storage fails, mark the entries provisional so restart admission
             # remains fail-closed, while Stop can still terminate the parent.
             durable = True
             try:
@@ -20667,7 +20462,7 @@ async def discard_delivery_after_repeated_deferrals(
     if (
         session_id in BUSY_SESSIONS
         or stop_cleanup_in_progress(session_id)
-        or managed_server_update_admission_blocker() is not None
+        or server_lifecycle_admission_blocker() is not None
     ):
         return False
     failures = int(item.get("_admission_failures") or 0) + 1
@@ -21028,15 +20823,6 @@ def schedule_next_queued_turn(session_id: str) -> None:
     if SERVER_SHUTTING_DOWN:
         return
     asyncio.create_task(start_next_queued_turn(session_id))
-
-
-def schedule_rebuilt_queued_turns() -> int:
-    scheduled = 0
-    for session_id, queue in list(QUEUED_TURNS.items()):
-        if queue:
-            schedule_next_queued_turn(session_id)
-            scheduled += 1
-    return scheduled
 
 
 def should_schedule_queue_after_finish(session_id: str, stopped: bool) -> bool:
@@ -22831,8 +22617,8 @@ def tmux_capability(*, use_cache: bool = False) -> dict[str, Any]:
         "available": False,
         "required": False,
         "message": (
-            "tmux was not found or failed its version check, so the persistent chat terminal, tmux-pane inspection, "
-            "and in-app managed updates are unavailable. The rest of HyadexServer works without it."
+            "tmux was not found or failed its version check, so the persistent chat terminal "
+            "and tmux-pane inspection are unavailable. The rest of HyadexServer works without it."
         ),
         "action": action,
     }
@@ -22915,172 +22701,6 @@ def cgroup_is_within(path: str, ancestor: str) -> bool:
     clean_path = "/" + path.strip("/")
     clean_ancestor = "/" + ancestor.strip("/")
     return clean_path == clean_ancestor or clean_path.startswith(clean_ancestor + "/")
-
-
-def linux_process_ids(proc_root: Path = Path("/proc")) -> tuple[int, ...] | None:
-    """Return a stable-enough Linux PID snapshot, or ``None`` on probe failure."""
-
-    if not sys.platform.startswith("linux"):
-        return ()
-    try:
-        entries = tuple(proc_root.iterdir())
-    except OSError:
-        return None
-    return tuple(sorted(
-        int(entry.name)
-        for entry in entries
-        if entry.name.isdigit() and int(entry.name) > 0
-    ))
-
-
-def linux_process_still_exists(
-    pid: int,
-    proc_root: Path = Path("/proc"),
-) -> bool | None:
-    """Distinguish an exited process from an unreadable live /proc entry."""
-
-    try:
-        (proc_root / str(pid)).stat()
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return None
-    return True
-
-
-def systemd_worker_preserves_descendants(service_cgroup: str) -> bool:
-    """Prove the effective stop policy of this exact native worker, read-only.
-
-    Never infer policy from an on-disk unit: runtime drop-ins and an unloaded
-    replacement can differ. Unknown/malformed ownership retains the existing
-    requirement that the service cgroup contain no other processes.
-    """
-
-    if not sys.platform.startswith("linux"):
-        return False
-    properties = {"LoadState", "ActiveState", "MainPID", "ControlGroup", "KillMode", "SendSIGKILL"}
-    try:
-        result = subprocess.run(
-            ["systemctl", "--user", "show", HYADEX_SERVER_SYSTEMD_UNIT, "--no-pager",
-             "--property=" + ",".join(sorted(properties))],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True,
-            timeout=2.0, check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if result.returncode != 0 or len(result.stdout) > 16_384:
-        return False
-    values: dict[str, str] = {}
-    for line in result.stdout.splitlines():
-        key, separator, value = line.partition("=")
-        if not separator or key in values or key not in properties:
-            return False
-        values[key] = value
-    return values == {
-        "LoadState": "loaded", "ActiveState": "active", "MainPID": str(os.getpid()),
-        "ControlGroup": service_cgroup, "KillMode": "process", "SendSIGKILL": "no",
-    } and hyadex_server_systemd_cgroup() == service_cgroup
-
-
-def managed_update_service_cgroup_state(
-    *,
-    service_cgroup: str | None = None,
-) -> dict[str, Any]:
-    """Inspect residual processes that could delay a Linux managed update.
-
-    Public callers receive only a boolean, a bounded count, and an inspection
-    label. PID and cgroup details remain process-private.
-    """
-
-    state: dict[str, Any] = {
-        "safe": True,
-        "unknown_descendant_count": 0,
-        "inspection": "not-systemd-managed",
-        "_service_cgroup": None,
-        "_unknown_descendant_pids": (),
-    }
-    if not sys.platform.startswith("linux"):
-        return state
-    selected_cgroup = service_cgroup
-    if selected_cgroup is None:
-        self_paths = process_cgroup_paths(os.getpid())
-        if not self_paths:
-            state.update({
-                "safe": False,
-                "unknown_descendant_count": None,
-                "inspection": "self-cgroup-unavailable",
-            })
-            return state
-        selected_cgroup = hyadex_server_systemd_cgroup_from_paths(self_paths)
-    state["_service_cgroup"] = selected_cgroup
-    if selected_cgroup is None:
-        # A readable non-service cgroup is an ordinary direct/non-systemd
-        # launch.
-        return state
-    pids = linux_process_ids()
-    if pids is None or os.getpid() not in pids:
-        state.update({
-            "safe": False,
-            "unknown_descendant_count": None,
-            "inspection": "process-list-unavailable",
-        })
-        return state
-    service_pids: set[int] = set()
-    for pid in pids:
-        paths = process_cgroup_paths(pid)
-        if not paths:
-            # Exiting processes are no longer capable of delaying the unit.
-            # A still-present but unreadable process remains an unknown
-            # membership candidate and must fail closed.
-            if linux_process_still_exists(pid) is not False:
-                state.update({
-                    "safe": False,
-                    "unknown_descendant_count": None,
-                    "inspection": "process-cgroup-unavailable",
-                })
-                return state
-            continue
-        if any(
-            cgroup_is_within(path, selected_cgroup)
-            for path in paths
-        ):
-            service_pids.add(pid)
-    if os.getpid() not in service_pids:
-        state.update({
-            "safe": False,
-            "unknown_descendant_count": None,
-            "inspection": "service-membership-unavailable",
-        })
-        return state
-    unknown = tuple(sorted(service_pids - {os.getpid()}))
-    preserved = bool(unknown) and systemd_worker_preserves_descendants(selected_cgroup)
-    state.update({
-        "safe": not unknown or preserved,
-        "unknown_descendant_count": len(unknown),
-        "inspection": "verified-preserved" if preserved else "verified",
-        "_unknown_descendant_pids": unknown,
-    })
-    return state
-
-
-def public_managed_update_service_cgroup_state(
-    state: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    current = (
-        state
-        if isinstance(state, dict)
-        else managed_update_service_cgroup_state()
-    )
-    raw_count = current.get("unknown_descendant_count")
-    return {
-        "safe": current.get("safe") is True,
-        "unknown_descendant_count": (
-            min(SERVER_RESTART_COUNT_LIMIT, max(0, raw_count))
-            if isinstance(raw_count, int) and not isinstance(raw_count, bool)
-            else None
-        ),
-        "inspection": str(current.get("inspection") or "unknown")[:80],
-    }
 
 
 def tmux_server_pid() -> int | None:
@@ -23187,7 +22807,7 @@ def bootstrap_isolated_tmux_server() -> bool:
     """Best-effort bootstrap of a missing tmux server outside our service.
 
     A tmux daemon first spawned by HyadexServer inherits hyadex-server.service's
-    cgroup. systemd then kills that daemon (and a detached updater pane) when
+    cgroup. systemd then kills that daemon and its terminal sessions when
     the service restarts. A transient user scope gives the shared tmux daemon
     an independent lifetime. Existing servers are never moved or replaced.
     """
@@ -23251,7 +22871,7 @@ def bootstrap_isolated_tmux_server() -> bool:
     run_tmux(["kill-session", "-t", sentinel], check=False)
     if not isolated:
         logger.warning(
-            "tmux bootstrap did not escape %s; managed updates remain disabled",
+            "tmux bootstrap did not escape service cgroup %s",
             service_cgroup,
         )
     return isolated
@@ -23285,7 +22905,7 @@ def tmux_bootstrap_environment() -> dict[str, str]:
         for key, value in os.environ.items()
         if key in exact_names or key.startswith("LC_")
     }
-    environment.update(server_update_runner_environment())
+    environment.update(server_instance_environment())
     for name in PROVIDER_SECRET_ENV_NAMES:
         environment.pop(name, None)
     return environment
@@ -23708,22 +23328,20 @@ class TerminalAttachmentRegistry:
         if owner_task is None:
             raise RuntimeError("terminal attachment has no owning task")
         async with self._lock:
-            update_blocked = managed_server_update_blocks_work()
+            maintenance_blocked = execution_maintenance_blocks_work()
             restart_blocked = managed_server_restart_blocks_work()
             if (
                 not self._permanently_closed
                 and not self._admission_open
-                and not update_blocked
+                and not maintenance_blocked
                 and not restart_blocked
             ):
-                # A detached runner can fail after launch while the original
-                # server remains healthy. Its terminal status is durable, so a
-                # later reconnect may self-heal this in-memory admission gate.
+                # A released maintenance lease reopens terminal admission.
                 self._admission_open = True
             if (
                 self._permanently_closed
                 or not self._admission_open
-                or update_blocked
+                or maintenance_blocked
                 or restart_blocked
             ):
                 return False
@@ -23769,7 +23387,7 @@ class TerminalAttachmentRegistry:
             # Cancelling an asyncio to_thread waiter does not stop its worker.
             # Shield it and explicitly reap a late result before propagating
             # cancellation, otherwise an attach client can appear after the
-            # updater has already proven the service cgroup empty.
+            # server has already finished terminal cleanup.
             spawned = await asyncio.shield(spawn_task)
             process, master_fd, _name = spawned
             async with self._lock:
@@ -23897,7 +23515,7 @@ class TerminalAttachmentRegistry:
         # ``asyncio.to_thread`` keeps running after its waiter is cancelled.
         # The endpoint owns a shielded spawn task plus an independent cleanup
         # task, both retained in the registry until their worker has finished.
-        # Join those exact tasks before the updater is allowed to prove the
+        # Join those exact tasks before lifecycle cleanup can consider the
         # service cgroup empty. A late spawn can therefore never materialize
         # after that proof.
         async with self._lock:
@@ -23975,15 +23593,12 @@ class TerminalAttachmentRegistry:
 
         return len(entries)
 
-    async def reopen_if_update_inactive(
-        self,
-        status: dict[str, Any] | None = None,
-    ) -> bool:
+    async def reopen_if_lifecycle_inactive(self) -> bool:
         async with self._lock:
             if self._permanently_closed:
                 return False
             if (
-                managed_server_update_blocks_work(status)
+                execution_maintenance_blocks_work()
                 or managed_server_restart_blocks_work()
             ):
                 return False
@@ -23991,7 +23606,7 @@ class TerminalAttachmentRegistry:
             return True
 
     async def reopen_admission(self) -> None:
-        await self.reopen_if_update_inactive()
+        await self.reopen_if_lifecycle_inactive()
 
     async def snapshot(self) -> dict[str, Any]:
         async with self._lock:
@@ -32236,40 +31851,7 @@ async def configured_route_reciprocal_grant_for_delivery(
 
 
 async def start_turn_durably(session_id: str, req: TurnRequest) -> dict[str, Any]:
-    while True:
-        try:
-            return await start_turn(session_id, req, queue_if_busy=True)
-        except ManagedServerUpdatePendingError:
-            async with session_lifecycle_lock(session_id):
-                ensure_session_not_deleting(session_id)
-                sess = STORE.sessions.get(session_id)
-                if not sess:
-                    raise HTTPException(status_code=404, detail="session not found")
-                if sess.get("archived"):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="archived chats cannot start turns",
-                    )
-                if not managed_server_update_is_pending():
-                    continue
-                if req.purpose == "handoff_digest_delivery":
-                    validate_handoff_digest_delivery_admission(
-                        session_id,
-                        req,
-                        sess,
-                        provider_context_mode="chat",
-                    )
-                return await enqueue_turn(
-                    session_id,
-                    req,
-                    sess,
-                    reciprocal_route_grant=(
-                        await configured_route_reciprocal_grant_for_delivery(
-                            session_id,
-                            req,
-                        )
-                    ),
-                )
+    return await start_turn(session_id, req, queue_if_busy=True)
 
 
 def handoff_digest_target_client_capabilities(
@@ -35792,7 +35374,7 @@ async def defer_cross_chat_live_wait_after_observation(
 
     # This is completion/cleanup of an already-admitted mutation, not admission
     # of new work. Like exact queued-delivery cancellation, it must finish even
-    # after an update/restart drain closes the new-work gate or the HTTP caller
+    # after a lifecycle drain closes the new-work gate or the HTTP caller
     # disconnects.
     completion = asyncio.create_task(detach())
     try:
@@ -41740,7 +41322,7 @@ async def generate_session_title(session_id: str, snapshot: dict, reply: str) ->
         async with STORE._lock:
             current = STORE.sessions.get(session_id)
             if (not current or not generated_title_eligible(current)
-                    or managed_server_update_scheduled_job_blocker()
+                    or server_lifecycle_admission_blocker()
                     or title_runtime_key(current) != title_runtime_key(snapshot)
                     or current.get("title") != snapshot.get("title")):
                 return
@@ -41754,7 +41336,7 @@ async def generate_session_title(session_id: str, snapshot: dict, reply: str) ->
                 raise
         # A forced restart may close admission during the awaited save. These
         # optional requests must not start a new provider after that fence.
-        if SERVER_SHUTTING_DOWN or managed_server_update_scheduled_job_blocker():
+        if SERVER_SHUTTING_DOWN or server_lifecycle_admission_blocker():
             return
         options = {"model": snapshot.get("model"), "env": runner_env()}
         options["model"] = codex_runtime_settings(snapshot)[0]
@@ -41774,7 +41356,7 @@ async def generate_session_title(session_id: str, snapshot: dict, reply: str) ->
 def schedule_generated_session_title(session_id: str, event: dict) -> None:
     sess = STORE.sessions.get(session_id)
     if (not sess or not generated_title_eligible(sess)
-            or managed_server_update_scheduled_job_blocker()
+            or server_lifecycle_admission_blocker()
             or session_id in GENERATED_TITLE_TASKS or len(GENERATED_TITLE_TASKS) >= 16
             or event.get("purpose") or event.get("job_id") or event.get("imported")
             or event.get("stopped") or event.get("exit_code") != 0
@@ -45353,7 +44935,7 @@ def read_timeline_pin_state_sync(session_id: str) -> dict[str, Any]:
 
 def write_timeline_pin_state_sync(session_id: str, state: dict[str, Any]) -> None:
     try:
-        atomic_update_json(timeline_pins_path(session_id), {
+        atomic_json(timeline_pins_path(session_id), {
             "schema_version": 1,
             "revision": int(state["revision"]),
             "updated_at": state.get("updated_at"),
@@ -45874,11 +45456,9 @@ async def scheduled_job_blocker(
     group: bool = False,
 ) -> str | None:
     async with ACTIVE_LOCK:
-        update_blocker = managed_server_update_scheduled_job_blocker(
-            manual=manual,
-        )
-        if update_blocker:
-            return update_blocker
+        lifecycle_blocker = server_lifecycle_admission_blocker()
+        if lifecycle_blocker:
+            return lifecycle_blocker
         # A group job only posts a message (busy members queue it), so only
         # the server-wide limits below apply, not its anchor chat's state.
         if not group:
@@ -45923,9 +45503,9 @@ async def scheduled_job_blocker(
 
 async def turn_start_blocker(*, ignore_session_id: str | None = None) -> str | None:
     async with ACTIVE_LOCK:
-        update_blocker = managed_server_update_admission_blocker()
-        if update_blocker:
-            return update_blocker
+        lifecycle_blocker = server_lifecycle_admission_blocker()
+        if lifecycle_blocker:
+            return lifecycle_blocker
         active_count = len(BUSY_SESSIONS - ({ignore_session_id} if ignore_session_id else set()))
 
     if MAX_ACTIVE_AGENT_RUNS > 0 and active_count >= MAX_ACTIVE_AGENT_RUNS:
@@ -48891,7 +48471,7 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
 def ensure_provider_manager_factory_admission(*, codex: bool = False) -> None:
     """Reject even read-route lazy starts while provider teardown owns state."""
 
-    blocker = managed_server_update_admission_blocker()
+    blocker = server_lifecycle_admission_blocker()
     if blocker or (codex and (CODEX_MANAGER_CLOSING or CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH is not None)):
         raise HTTPException(
             status_code=503,
@@ -49527,7 +49107,7 @@ async def stop_idle_claude_background_subagents(
     ResultMessage. Explicit Stop is stronger: if the durable snapshot still
     has live background children, retire only this chat's supervisor and add
     a durable fence so those historical child states cannot block a later
-    managed update.
+    worker retirement or restart.
     """
 
     result = empty_subagent_stop_result()
@@ -50008,19 +49588,9 @@ async def acquire_codex_control_thread(
     maintenance_reserved = False
     active_thread_id = ""
     async with ACTIVE_LOCK:
-        # Existing active-turn controls remain available while a pending update
-        # drains, but new provider maintenance is fenced with other new work.
-        update_blocker = (
-            managed_server_update_blocker()
-            if (
-                session_id in BUSY_SESSIONS
-                and allow_active_goal_mutation
-                and not reserve_session
-            )
-            else managed_server_update_admission_blocker()
-        )
-        if update_blocker:
-            raise HTTPException(status_code=503, detail=update_blocker)
+        lifecycle_blocker = server_lifecycle_admission_blocker()
+        if lifecycle_blocker:
+            raise HTTPException(status_code=503, detail=lifecycle_blocker)
         if CODEX_GOALS_RECONFIGURING:
             raise HTTPException(
                 status_code=409,
@@ -63229,24 +62799,9 @@ async def _start_turn_locked(
                 )
             )
     async with ACTIVE_LOCK:
-        automatic_scheduled_job = (
-            req.purpose == "scheduled_job"
-            and scheduled_job_revision is not None
-            and not scheduled_job_manual_run
-        )
-        update_blocker = (
-            managed_server_update_scheduled_job_blocker(manual=False)
-            if automatic_scheduled_job
-            else managed_server_update_admission_blocker()
-        )
-        if update_blocker:
-            if update_blocker == MANAGED_SERVER_UPDATE_PENDING_DETAIL:
-                # The scheduler normally observes this before dispatch. Keep
-                # the turn-level check under ACTIVE_LOCK as the authoritative
-                # race fence when an update is scheduled between that probe
-                # and reservation of the provider slot.
-                raise ManagedServerUpdatePendingError()
-            raise HTTPException(status_code=503, detail=update_blocker)
+        lifecycle_blocker = server_lifecycle_admission_blocker()
+        if lifecycle_blocker:
+            raise HTTPException(status_code=503, detail=lifecycle_blocker)
         requested_backend = str(
             req.backend or sess.get("backend") or DEFAULT_BACKEND
         ).strip().lower()
@@ -64133,55 +63688,7 @@ async def _start_turn_locked(
         raise
 
 
-SERVER_UPDATE_ACTIVE_PHASES = {"starting", "checking", "downloading", "verifying", "installing", "restarting"}
-SERVER_UPDATE_PENDING_PHASE = "pending"
-SERVER_UPDATE_PENDING_POLL_SECONDS = 1.0
-SERVER_UPDATE_ATTEMPT_HISTORY_LIMIT = 8
-SERVER_UPDATE_ATTEMPT_FIELDS = (
-    "update_id", "schedule_id", "phase", "current_version", "target_version",
-    "installed_version", "message", "error_code", "error_action",
-    "started_at", "finished_at", "updated_at",
-)
-SERVER_UPDATE_PER_RUN_STATUS_FIELDS = (
-    "preparation_id", "preparation_phase", "preparation_heartbeat_at", "preparation_runner_pid",
-    "schedule_id",
-    "update_id",
-    "target_version",
-    "installed_version",
-    "pending_at",
-    "started_at",
-    "finished_at",
-    "heartbeat_at",
-    "elapsed_seconds",
-    "runner_pid",
-    "when_idle",
-    "cancelable",
-    "blocker_counts",
-    "team_hub_id",
-    "team_hub_host_server_identity",
-    "team_hub_snapshot_generation",
-    "team_hub_transport",
-    "team_hub_url",
-    "team_hub_direct_ip_url",
-    "team_hub_routes",
-    "team_hub_repair_mode",
-    "error_code",
-    "error_action",
-    "retryable",
-)
-SERVER_UPDATE_PRIVATE_PER_RUN_STATUS_FIELDS = (
-    "_prepared_update", "_execution_handoff", "_activation_recovery",
-    "_npm_release",
-    "_force_restart_request_id",
-    "_force_restart_requested_at",
-)
-SERVER_UPDATE_OPERATION_LOCK = asyncio.Lock()
-MANAGED_UPDATE_PROVIDER_QUIESCE_STRAGGLERS: dict[
-    str,
-    asyncio.Task[Any],
-] = {}
-MANAGED_UPDATE_PROVIDER_FENCE_RELEASE_TASKS: set[asyncio.Task[Any]] = set()
-SERVER_UPDATE_START_GRACE_SECONDS = 45.0
+SERVER_LIFECYCLE_OPERATION_LOCK = asyncio.Lock()
 SERVER_RESTART_PHASES = {"idle", "accepted", "signaling", "complete", "failed"}
 SERVER_RESTART_ACTIVE_PHASES = {"accepted", "signaling"}
 SERVER_RESTART_SIGNAL_DELAY_SECONDS = 0.5
@@ -64237,20 +63744,16 @@ SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS = 2.0
 SERVER_RESTART_MAX_BODY_BYTES = 2_048
 SERVER_RESTART_BLOCKER_SNAPSHOT_VERSION = 2
 SERVER_RESTART_COUNT_LIMIT = 1_000_000
-PRIVILEGED_NATIVE_UPDATE_MAX_BODY_BYTES = 4_096
 CODEX_GOALS_ADMIN_MAX_BODY_BYTES = 256
 UNSAFE_HTTP_MUTATION_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 UNSAFE_HTTP_MUTATION_ADMISSION_LOCK = asyncio.Lock()
 # Exact leases replace the old scalar counter. A request task can be cancelled
 # again while unwinding its middleware ``finally`` block, so any cleanup that
 # awaits this admission lock can be cancelled before decrementing and strand a
-# permanent update/restart blocker. Lease cleanup is synchronous and exact;
+# permanent lifecycle blocker. Lease cleanup is synchronous and exact;
 # completed tasks are also pruned defensively by every authoritative reader.
 UNSAFE_HTTP_MUTATION_TASKS: dict[str, asyncio.Task[Any] | None] = {}
-MANAGED_SERVER_UPDATE_PENDING_DETAIL = (
-    "HyadexServer is waiting for existing work to finish before updating"
-)
-MANAGED_SERVER_UPDATE_ACTIVE_DETAIL = "HyadexServer is preparing a managed update"
+EXECUTION_MAINTENANCE_ACTIVE_DETAIL = "HyadexServer execution worker is in maintenance"
 MANAGED_SERVER_RESTART_ACTIVE_DETAIL = "HyadexServer is restarting"
 MANAGED_SERVER_SERVICE_KIND_CACHE: str | None = None
 EXECUTION_MAINTENANCE: Any = None
@@ -64266,18 +63769,8 @@ class TransientAdmissionWait(HTTPException):
     """
 
 
-class ManagedServerUpdatePendingError(HTTPException):
-    """Dedicated admission result used to durably park an interactive turn."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=503,
-            detail=MANAGED_SERVER_UPDATE_PENDING_DETAIL,
-        )
-
-
 class UnsafeMutationAdmissionRejected(RuntimeError):
-    """A body finished only after update/restart admission had closed."""
+    """A body finished only after lifecycle admission had closed."""
 
     def __init__(self, response: JSONResponse) -> None:
         super().__init__("unsafe HTTP mutation admission closed")
@@ -64289,7 +63782,7 @@ def scheduled_job_lifecycle_admission_defer_reason(
 ) -> str | None:
     """Return a retry reason for a transient turn-admission fence.
 
-    The scheduler checks its blockers before dispatch, but the managed updater
+    The scheduler checks its blockers before dispatch, but worker maintenance
     or another transient admission path can establish its fence after that
     check and before ``start_turn`` reserves the chat. That rejection did not
     execute the due occurrence, so it must be parked rather than recorded as a
@@ -64302,10 +63795,8 @@ def scheduled_job_lifecycle_admission_defer_reason(
     if not isinstance(error, HTTPException) or error.status_code != 503:
         return None
     reason = str(error.detail or "").strip()
-    if isinstance(error, ManagedServerUpdatePendingError):
-        return reason
     if reason in {
-        MANAGED_SERVER_UPDATE_ACTIVE_DETAIL,
+        EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
         MANAGED_SERVER_RESTART_ACTIVE_DETAIL,
     }:
         return reason
@@ -64324,17 +63815,9 @@ def scheduled_job_runtime_unavailable_reason(error: Exception) -> str | None:
     return message or "The selected provider runtime is unavailable."
 
 
-def managed_server_update_blocks_work(
-    status: dict[str, Any] | None = None,
-) -> bool:
-    """Return whether this process is draining for a managed replacement."""
-
-    current = status if status is not None else read_server_update_status()
-    return (
-        str(current.get("phase") or "") in SERVER_UPDATE_ACTIVE_PHASES
-        or managed_update_provider_quiesce_in_progress()
-        or (EXECUTION_MAINTENANCE is not None and EXECUTION_MAINTENANCE.is_held())
-    )
+def execution_maintenance_blocks_work() -> bool:
+    """Return whether the owned execution worker is reserved for retirement."""
+    return EXECUTION_MAINTENANCE is not None and EXECUTION_MAINTENANCE.is_held()
 
 
 async def execution_maintenance_control(
@@ -64351,9 +63834,9 @@ async def execution_maintenance_control(
     async with ACTIVE_LOCK:
         async with QUEUE_LOCK:
             async with UNSAFE_HTTP_MUTATION_ADMISSION_LOCK:
-                blockers = server_update_blocker_counts(
-                    server_update_active_session_ids_locked(),
-                    update_blocking_queued_turn_count_locked(),
+                blockers = server_lifecycle_blocker_counts(
+                    server_lifecycle_active_session_ids_locked(),
+                    restart_blocking_queued_turn_count_locked(),
                     provider_background_work_labels_from_snapshot(provider_snapshot),
                     unsafe_http_mutation_count_locked(),
                 )
@@ -64361,11 +63844,6 @@ async def execution_maintenance_control(
                     "session_deletions": len(DELETING_SESSIONS),
                     "goals_reconfiguration": int(CODEX_GOALS_RECONFIGURING),
                     "managed_restart": int(managed_server_restart_blocks_work()),
-                    "managed_update": int(
-                        str(read_server_update_status().get("phase") or "")
-                        in SERVER_UPDATE_ACTIVE_PHASES
-                        or managed_update_provider_quiesce_in_progress()
-                    ),
                 })
                 if action is None:
                     return EXECUTION_MAINTENANCE.status(blockers)
@@ -64374,76 +63852,12 @@ async def execution_maintenance_control(
                 )
 
 
-def managed_server_update_is_pending(
-    status: dict[str, Any] | None = None,
-) -> bool:
-    """Return whether a durable update-when-idle reservation exists."""
-
-    current = status if status is not None else read_server_update_status()
-    return str(current.get("phase") or "") == SERVER_UPDATE_PENDING_PHASE
-
-
-def managed_server_force_update_is_pending(
-    status: dict[str, Any] | None = None,
-) -> bool:
-    """Return whether an exact pending update was armed for forced restart."""
-
-    current = status if status is not None else read_server_update_status()
-    if (
-        not managed_server_update_is_pending(current)
-        or current.get("cancelable") is not False
-        or re.fullmatch(
-            r"[0-9a-f]{32}",
-            str(current.get("schedule_id") or ""),
-        )
-        is None
-    ):
-        return False
-    request_id = str(current.get("_force_restart_request_id") or "").strip()
-    try:
-        return str(uuid.UUID(request_id)) == request_id
-    except (ValueError, AttributeError):
-        return False
-
-
-def managed_server_update_blocker() -> str | None:
-    if managed_server_update_blocks_work():
-        return MANAGED_SERVER_UPDATE_ACTIVE_DETAIL
+def server_lifecycle_admission_blocker() -> str | None:
+    if execution_maintenance_blocks_work():
+        return EXECUTION_MAINTENANCE_ACTIVE_DETAIL
     if managed_server_restart_blocks_work():
         return MANAGED_SERVER_RESTART_ACTIVE_DETAIL
     return None
-
-
-def managed_server_update_admission_blocker() -> str | None:
-    """Fence new agent work only while an update or restart replaces this process.
-
-    An ordinary pending update-when-idle reservation is deliberately NOT a
-    blocker. The exception is a schedule-bound force update: its cleanup
-    restart has already been explicitly confirmed, so execution stays fenced
-    while user messages continue through the durable queue fallback. Automatic
-    scheduled jobs use the narrower durable deferral path below.
-    """
-
-    blocker = managed_server_update_blocker()
-    if blocker:
-        return blocker
-    if managed_server_force_update_is_pending():
-        return MANAGED_SERVER_UPDATE_PENDING_DETAIL
-    return None
-
-
-def managed_server_update_scheduled_job_blocker(
-    *,
-    manual: bool = False,
-) -> str | None:
-    """Apply the same update admission policy to scheduled and manual work.
-
-    Waiting for idle must not manufacture idle by suspending recurring jobs.
-    Only an actual replacement/restart (or an explicitly confirmed force
-    update) fences new work, just as it does for ordinary user turns.
-    """
-
-    return managed_server_update_admission_blocker()
 
 
 def live_unsafe_http_mutation_ids_locked() -> list[str]:
@@ -64513,10 +63927,7 @@ def request_route_parses_body(request: Request) -> bool:
     return False
 
 
-def unsafe_http_mutation_blocked_response(
-    *,
-    durable_turn_route: bool = False,
-) -> JSONResponse | None:
+def unsafe_http_mutation_blocked_response() -> JSONResponse | None:
     if managed_server_restart_blocks_work():
         return JSONResponse(
             {
@@ -64532,35 +63943,16 @@ def unsafe_http_mutation_blocked_response(
             },
             status_code=409,
         )
-    if managed_server_update_blocks_work():
+    if execution_maintenance_blocks_work():
         return JSONResponse(
-            {"detail": "HyadexServer is preparing a managed update"},
-            status_code=409,
-        )
-    if managed_server_force_update_is_pending() and not durable_turn_route:
-        return JSONResponse(
-            {
-                "detail": server_update_error_detail(
-                    "server_force_update_armed",
-                    (
-                        "HyadexServer is restarting to apply a confirmed "
-                        "force update and is not accepting server changes."
-                    ),
-                    action="Wait for the managed update to finish, then retry.",
-                    retryable=True,
-                )
-            },
+            {"detail": EXECUTION_MAINTENANCE_ACTIVE_DETAIL},
             status_code=409,
         )
     return None
 
 
 def managed_server_restart_is_planned() -> bool:
-    status = read_server_update_status()
-    return (
-        str(status.get("phase") or "") in {"installing", "restarting"}
-        or managed_server_restart_blocks_work()
-    )
+    return managed_server_restart_blocks_work()
 
 
 def official_server_release_tree() -> bool:
@@ -64695,6 +64087,10 @@ def server_restart_capability(
     return capability
 
 
+def utc_timestamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def read_server_restart_status() -> dict[str, Any]:
     try:
         value = json.loads(SERVER_RESTART_STATUS_FILE.read_text())
@@ -64710,8 +64106,8 @@ def read_server_restart_status() -> dict[str, Any]:
 def write_server_restart_status(**changes: Any) -> dict[str, Any]:
     value = read_server_restart_status()
     value.update(changes)
-    value["updated_at"] = update_utc_now()
-    atomic_update_json(SERVER_RESTART_STATUS_FILE, value)
+    value["updated_at"] = utc_timestamp()
+    atomic_json(SERVER_RESTART_STATUS_FILE, value)
     return value
 
 
@@ -64747,11 +64143,6 @@ def public_server_restart_status(
         raw_audit = current.get("_forced_audit")
         if isinstance(raw_audit, dict):
             result["forced_audit"] = public_forced_restart_audit(raw_audit)
-        update_schedule_id = str(
-            current.get("_update_schedule_id") or ""
-        ).strip()
-        if re.fullmatch(r"[0-9a-f]{32}", update_schedule_id):
-            result["update_schedule_id"] = update_schedule_id
     if blocker_snapshot is not None:
         result["blocker_snapshot"] = blocker_snapshot
     for name in (
@@ -64827,7 +64218,7 @@ def reconcile_stale_server_restart_acceptance() -> dict[str, Any]:
                     "HyadexServer could not begin the accepted restart. "
                     "Retry after refreshing the server connection."
                 ),
-                failed_at=update_utc_now(),
+                failed_at=utc_timestamp(),
             )
     return status
 
@@ -64843,14 +64234,14 @@ def reconcile_server_restart_status_after_startup() -> dict[str, Any]:
         return write_server_restart_status(
             phase="failed",
             message="The previous server restart record was incomplete.",
-            failed_at=update_utc_now(),
+            failed_at=utc_timestamp(),
         )
     if source_instance_id == SERVER_INSTANCE_ID:
         return status
     return write_server_restart_status(
         phase="complete",
         message="HyadexServer restarted successfully.",
-        completed_at=update_utc_now(),
+        completed_at=utc_timestamp(),
     )
 
 
@@ -64909,8 +64300,7 @@ FORCED_RESTART_AUDIT_FLAGS = (
     "safety_blockers_overridden",
     "cooldown_overridden",
     "superseded_pending_restart",
-    "update_in_progress_overridden",
-    "team_hub_snapshot_skipped",
+    "execution_maintenance_overridden",
 )
 
 
@@ -64925,9 +64315,6 @@ def public_forced_restart_audit(audit: dict[str, Any]) -> dict[str, Any]:
         result["snapshot_degraded_reasons"] = [
             str(reason)[:64] for reason in reasons[:8] if str(reason).strip()
         ]
-    update_phase = str(audit.get("update_phase") or "").strip()
-    if update_phase:
-        result["update_phase"] = update_phase[:64]
     return result
 
 
@@ -65002,7 +64389,7 @@ def server_restart_blocker_snapshot_locked(
             else active_provider_background_work_labels()
         )
         if str(label) not in duplicate_provider_labels
-    ][:SERVER_UPDATE_PROVIDER_WORK_LABEL_LIMIT]
+    ][:PROVIDER_WORK_LABEL_LIMIT]
     live_mutation_ids = live_unsafe_http_mutation_ids_locked()
     mutation_count = len(live_mutation_ids)
     codex_goals_reconfiguring = bool(CODEX_GOALS_RECONFIGURING)
@@ -65233,7 +64620,6 @@ def server_restart_request_fingerprint(body: ServerRestartRequest) -> str:
             "expected_server_instance_id": body.expected_server_instance_id,
             "forced": body.force is True and body.force_confirmed is True,
             "expected_blocker_revision": body.expected_blocker_revision,
-            "expected_update_schedule_id": body.expected_update_schedule_id,
         },
         ensure_ascii=True,
         separators=(",", ":"),
@@ -65364,7 +64750,7 @@ def read_provider_children_registry() -> list[dict[str, Any]]:
 
 
 def write_provider_children_registry(children: list[dict[str, Any]]) -> None:
-    atomic_update_json(PROVIDER_CHILDREN_FILE, {"children": list(children)})
+    atomic_json(PROVIDER_CHILDREN_FILE, {"children": list(children)})
 
 
 def provider_host_boot_identity() -> str:
@@ -65519,7 +64905,7 @@ def register_provider_child(
             "pid": int(pid),
             "pgid": int(pgid),
             "kind": kind,
-            "started_at": update_utc_now(),
+            "started_at": utc_timestamp(),
             "owner_pid": os.getpid(),
             "boot_identity": boot_identity,
             "process_start_identity": process_start_identity,
@@ -65745,7 +65131,7 @@ def signal_managed_server_restart(request_id: str) -> None:
             write_server_restart_status(
                 phase="failed",
                 message="Managed service ownership changed before restart.",
-                failed_at=update_utc_now(),
+                failed_at=utc_timestamp(),
             )
             return
         write_server_restart_status(
@@ -65782,57 +65168,17 @@ def signal_managed_server_restart(request_id: str) -> None:
                 message=(
                     "HyadexServer could not signal its managed process to restart."
                 ),
-                failed_at=update_utc_now(),
+                failed_at=utc_timestamp(),
             )
 
 
-def server_update_work_message(
-    active_session_ids: list[str],
-    queued_turn_count: int,
-    provider_work_labels: list[str] | None = None,
-    mutation_count: int = 0,
-) -> str:
-    parts: list[str] = []
-    if active_session_ids:
-        count = len(active_session_ids)
-        parts.append(f"{count} active agent run{'s' if count != 1 else ''}")
-    if queued_turn_count:
-        parts.append(
-            f"{queued_turn_count} queued turn{'s' if queued_turn_count != 1 else ''}"
-        )
-    provider_labels = [
-        str(label).strip()[:200]
-        for label in (provider_work_labels or [])
-        if str(label).strip()
-    ]
-    if provider_labels:
-        count = len(provider_labels)
-        preview = ", ".join(provider_labels[:3])
-        if count > 3:
-            preview += f", and {count - 3} more"
-        parts.append(
-            f"{count} provider background task{'s' if count != 1 else ''} "
-            f"({preview})"
-        )
-    if mutation_count:
-        parts.append(
-            f"{mutation_count} in-flight server change"
-            f"{'s' if mutation_count != 1 else ''}"
-        )
-    detail = " and ".join(parts) or "agent work"
-    return (
-        f"server update deferred: {detail} must finish or be removed before "
-        "HyadexServer can restart"
-    )
-
-
-def server_update_blocker_counts(
+def server_lifecycle_blocker_counts(
     active_session_ids: list[str],
     queued_turn_count: int,
     provider_work_labels: list[str] | None = None,
     mutation_count: int = 0,
 ) -> dict[str, int]:
-    """Return the bounded public blocker summary for a pending update."""
+    """Return the bounded public blocker summary for a lifecycle operation."""
 
     return {
         "active_runs": max(0, len(active_session_ids)),
@@ -65845,8 +65191,8 @@ def server_update_blocker_counts(
     }
 
 
-def server_update_active_session_ids_locked() -> list[str]:
-    """Return chat-scoped work that must drain before a managed update."""
+def server_lifecycle_active_session_ids_locked() -> list[str]:
+    """Return chat-scoped work that must drain before worker retirement."""
 
     return sorted(
         BUSY_SESSIONS
@@ -65855,108 +65201,11 @@ def server_update_active_session_ids_locked() -> list[str]:
     )
 
 
-def server_update_has_blockers(blocker_counts: dict[str, int]) -> bool:
-    return any(max(0, int(value)) for value in blocker_counts.values())
-
-
-def server_update_pending_message(
-    target_version: str,
-    blocker_counts: dict[str, int],
-) -> str:
-    waiting = sum(max(0, int(value)) for value in blocker_counts.values())
-    if waiting:
-        return (
-            f"HyadexServer {target_version} is scheduled and will install "
-            "when current work finishes."
-        )
-    return f"HyadexServer {target_version} is scheduled and ready to start."
-
-
-def server_update_error_detail(
-    code: str,
-    message: str,
-    *,
-    action: str | None = None,
-    retryable: bool = False,
-    **details: Any,
-) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        "code": code,
-        "message": message[:500],
-        "retryable": retryable,
-    }
-    if action:
-        result["action"] = action[:500]
-    result.update(details)
-    return result
-
-
-def require_server_update_target(
-    expected_server_identity: str | None,
-    expected_server_instance_id: str | None,
-) -> None:
-    """Fail closed when a client-bound update target is absent or stale."""
-
-    if expected_server_identity is None and expected_server_instance_id is None:
-        # Compatibility for clients predating identity-bound update controls.
-        return
-    if (
-        not isinstance(expected_server_identity, str)
-        or not 1 <= len(expected_server_identity) <= 128
-        or not isinstance(expected_server_instance_id, str)
-        or not 1 <= len(expected_server_instance_id) <= 128
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=server_update_error_detail(
-                "server_update_target_incomplete",
-                "Server update target identity and instance must be supplied together.",
-                action="Refresh the server connection before trying again.",
-                retryable=True,
-            ),
-        )
-    if (
-        expected_server_identity != server_identity()
-        or expected_server_instance_id != SERVER_INSTANCE_ID
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail=server_update_error_detail(
-                "server_update_target_changed",
-                "The connected HyadexServer instance changed before the update request.",
-                action="Refresh the server connection before trying again.",
-                retryable=True,
-            ),
-        )
-
-
-def require_exact_server_update_target(
-    expected_server_identity: str | None,
-    expected_server_instance_id: str | None,
-) -> None:
-    """Require a fresh target binding for desktop-only update operations."""
-
-    if expected_server_identity is None and expected_server_instance_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail=server_update_error_detail(
-                "server_update_target_required",
-                "Server identity and instance are required for this update operation.",
-                action="Refresh the server connection before trying again.",
-                retryable=True,
-            ),
-        )
-    require_server_update_target(
-        expected_server_identity,
-        expected_server_instance_id,
-    )
-
-
-def update_blocking_queued_turn_count_locked() -> int:
+def restart_blocking_queued_turn_count_locked() -> int:
     """Count only queue entries that are not yet restart-durable.
 
     Callers hold QUEUE_LOCK. Durable turns are reconstructed from events after
-    replacement, so treating them as active work can defer an update forever
+    replacement, so treating them as active work can defer worker retirement forever
     after their parent was explicitly stopped.
     """
 
@@ -65972,438 +65221,7 @@ def update_blocking_queued_turn_count_locked() -> int:
     )
 
 
-def server_release_track(version: str) -> Literal["stable", "beta"]:
-    return "beta" if "-" in str(version).split("+", 1)[0] else "stable"
-
-
-def server_release_transition_allowed(
-    target: str,
-    current: str,
-    track: Literal["stable", "beta"],
-) -> bool:
-    if target == current or server_release_track(target) != track:
-        return False
-    try:
-        if version_key(target) > version_key(current):
-            return True
-        return track == "stable" and server_release_track(current) == "beta"
-    except ValueError:
-        return target != current
-
-
-def read_server_update_status() -> dict[str, Any]:
-    try:
-        value = json.loads(SERVER_UPDATE_STATUS_FILE.read_text())
-        if not isinstance(value, dict):
-            value = {}
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        value = {}
-    value.setdefault("phase", "idle")
-    if value.get("track") not in {"stable", "beta"}:
-        value["track"] = server_release_track(SERVER_VERSION)
-    value["current_version"] = SERVER_VERSION
-    value["api_contract_version"] = API_CONTRACT_VERSION
-    # Older detached runners left the pre-install availability bit behind on
-    # their terminal success row.  Derive the public invariant from the
-    # verified installed/target version so an upgraded server self-heals the
-    # stale durable record without requiring another update check.
-    if str(value.get("phase") or "") == "current" or (
-        str(value.get("phase") or "") == "complete"
-        and SERVER_VERSION
-        in {
-            str(value.get("installed_version") or ""),
-            str(value.get("target_version") or ""),
-        }
-    ):
-        value["update_available"] = False
-    return value
-
-
-def public_server_update_status(status: dict[str, Any]) -> dict[str, Any]:
-    """Attach the live responder identity without persisting process identity."""
-
-    return {
-        **{
-            key: value
-            for key, value in status.items()
-            if key not in {
-                "_prepared_update", "_execution_handoff", "_activation_recovery",
-                "_npm_release",
-                "_force_restart_request_id",
-                "_force_restart_requested_at",
-            }
-        },
-        "server_identity": server_identity(),
-        "server_instance_id": SERVER_INSTANCE_ID,
-    }
-
-
-def server_update_health_projection() -> dict[str, str | None]:
-    """Expose bounded receipt changes through the existing health refresh."""
-    status = read_server_update_status()
-    return {
-        name: value if isinstance(value := status.get(name), str) and len(value) <= 160 else None
-        for name in ("phase", "update_id", "schedule_id", "target_version", "updated_at")
-    }
-
-
-def _write_server_update_status_unlocked(**changes: Any) -> dict[str, Any]:
-    value = read_server_update_status()
-    # A check/retry must not erase the only receipt for a failed detached
-    # runner. Keep a small, scalar-only history in the existing status file;
-    # never copy credentials, process arguments, or private restart markers.
-    previous_id = value.get("update_id") or value.get("schedule_id")
-    next_id = changes.get("update_id", value.get("update_id")) or changes.get(
-        "schedule_id", value.get("schedule_id"),
-    )
-    if previous_id and previous_id != next_id and (
-        value.get("phase") in {"failed", "complete"}
-        or changes.get("error_code")
-    ):
-        receipt = dict(value)
-        if value.get("phase") not in {"failed", "complete"}:
-            # Fresh availability rows deliberately clear the old run fields.
-            # Archive the failed run's target/timestamps, not those nulls.
-            receipt.update({
-                key: changes[key]
-                for key in ("message", "error_code", "error_action", "finished_at")
-                if isinstance(changes.get(key), str)
-            })
-            receipt["phase"] = "failed"
-            receipt["updated_at"] = update_utc_now()
-        raw_history = value.get("attempt_history")
-        history = raw_history[-SERVER_UPDATE_ATTEMPT_HISTORY_LIMIT:] if isinstance(raw_history, list) else []
-        history = [
-            item for item in history if isinstance(item, dict)
-            and (item.get("update_id") or item.get("schedule_id")) != previous_id
-        ]
-        history.append(receipt)
-        value["attempt_history"] = [
-            {
-                key: item[key][:2000 if key in {"message", "error_action"} else 160]
-                for key in SERVER_UPDATE_ATTEMPT_FIELDS
-                if isinstance(item.get(key), str)
-            }
-            for item in history[-SERVER_UPDATE_ATTEMPT_HISTORY_LIMIT:]
-        ]
-    value.update(changes)
-    value["updated_at"] = update_utc_now()
-    atomic_update_json(SERVER_UPDATE_STATUS_FILE, value)
-    return value
-
-
-def write_server_update_status(**changes: Any) -> dict[str, Any]:
-    with server_update_status_lock(SERVER_UPDATE_STATUS_FILE):
-        return _write_server_update_status_unlocked(**changes)
-
-
-def _write_fresh_server_update_status_unlocked(
-    **changes: Any,
-) -> dict[str, Any]:
-    """Start a new public status row without leaking an older run's fields."""
-
-    clean = {
-        name: None
-        for name in (
-            *SERVER_UPDATE_PER_RUN_STATUS_FIELDS,
-            *SERVER_UPDATE_PRIVATE_PER_RUN_STATUS_FIELDS,
-        )
-    }
-    clean.update(changes)
-    return _write_server_update_status_unlocked(**clean)
-
-
-def write_fresh_server_update_status(**changes: Any) -> dict[str, Any]:
-    with server_update_status_lock(SERVER_UPDATE_STATUS_FILE):
-        return _write_fresh_server_update_status_unlocked(**changes)
-
-
-def server_update_tmux_name(update_id: str) -> str:
-    clean = re.sub(r"[^A-Za-z0-9_-]", "", update_id)[:32]
-    return f"hyadex_server_update_{clean or 'current'}"
-
-
-def server_update_runner_command_matches(
-    command: str,
-    update_id: str,
-) -> bool:
-    """Bind a live runner pid to this exact update instead of a reused pid."""
-
-    return bool(
-        "update_runner.py" in command
-        and re.search(
-            rf"(?:^|\s)--update-id\s+{re.escape(update_id)}(?:\s|$)",
-            command,
-        )
-    )
-
-
-def server_update_is_active(status: dict[str, Any]) -> bool:
-    if str(status.get("phase") or "") not in SERVER_UPDATE_ACTIVE_PHASES:
-        return False
-    update_id = str(status.get("update_id") or "")
-    if not update_id:
-        return False
-    runner_pid = status.get("runner_pid")
-    if (
-        isinstance(runner_pid, int)
-        and not isinstance(runner_pid, bool)
-        and runner_pid > 1
-    ):
-        if not provider_child_process_exists(runner_pid):
-            return False
-        command = provider_child_command_line(runner_pid)
-        if command:
-            return server_update_runner_command_matches(command, update_id)
-
-    # Legacy rows have no pid. Inspect the pane itself so a user's
-    # remain-on-exit setting cannot make a dead updater look live forever.
-    # The callers retain a newly launched row for their bounded startup grace,
-    # so a missing or failed legacy probe becomes inactive after that grace
-    # instead of wedging managed updates forever.
-    if working_tmux_bin(use_cache=True) is None:
-        return False
-    try:
-        probe = run_tmux(
-            [
-                "display-message",
-                "-p",
-                "-t",
-                server_update_tmux_name(update_id),
-                "#{pane_dead}",
-            ],
-            check=False,
-        )
-    except (HTTPException, OSError, subprocess.SubprocessError):
-        return False
-    if probe.returncode != 0:
-        return False
-    pane_dead = str(probe.stdout or "").strip()
-    return pane_dead == "0"
-
-
-def server_update_status_age_seconds(status: dict[str, Any]) -> float:
-    try:
-        updated_at = datetime.fromisoformat(str(status.get("updated_at") or "").replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return float("inf")
-    if updated_at.tzinfo is None:
-        updated_at = updated_at.replace(tzinfo=timezone.utc)
-    return max(0.0, (datetime.now(timezone.utc) - updated_at).total_seconds())
-
-
-def finalize_abandoned_server_update(status: dict[str, Any]) -> dict[str, Any]:
-    """Release a stale update drain after its detached runner disappeared."""
-
-    if status.get("_activation_recovery"):
-        from update_recovery import journal_present
-        if journal_present(Path(os.environ["HYADEX_SERVER_INSTALL_DIR"]).expanduser().resolve()):
-            raise RuntimeError("interrupted activation requires its retained installer recovery")
-    expected_update_id = str(status.get("update_id") or "")
-    with server_update_status_lock(SERVER_UPDATE_STATUS_FILE):
-        current = read_server_update_status()
-        if str(current.get("update_id") or "") != expected_update_id:
-            return current
-        if str(current.get("phase") or "") not in SERVER_UPDATE_ACTIVE_PHASES:
-            return current
-        # Before install begins, the exact update-owned snapshot/fence is
-        # itself sufficient authority to abandon the drain: no Hub bytes have
-        # been replaced yet. Requiring a live Hub capability here made a Hub
-        # initialization failure permanently pin the update in an active
-        # phase. Once the target binary may be installed, retain the stronger
-        # identity verification before declaring recovery complete.
-        target_version = str(current.get("target_version") or "")
-        completed = target_version == SERVER_VERSION
-        maintenance = globals().get("EXECUTION_MAINTENANCE")
-        if completed and (maintenance is not None or current.get("_execution_handoff")):
-            # A same-version repair can lose its runner with the original
-            # worker still sealed, or before the paired gateway is activated.
-            # A matching API version alone proves neither completion nor
-            # restored admission. Keep the exact handoff available for retry.
-            from execution_update_status import current_components
-            try:
-                completed = maintenance is not None and current_components(
-                    Path(os.environ["HYADEX_SERVER_INSTALL_DIR"]).expanduser().resolve(),
-                    target_version=target_version,
-                    expected_server_identity=server_identity(),
-                    expected_worker_instance=maintenance.worker_instance_id,
-                )
-            except Exception:
-                completed = False
-        if completed:
-            pass
-        if completed:
-            return _write_server_update_status_unlocked(
-                phase="complete",
-                update_available=False,
-                installed_version=SERVER_VERSION,
-                message=f"HyadexServer {SERVER_VERSION} is installed and healthy.",
-                heartbeat_at=None,
-                elapsed_seconds=None,
-                runner_pid=None,
-                error_code=None,
-                error_action=None,
-                retryable=None,
-                finished_at=current.get("finished_at") or update_utc_now(),
-            )
-        return _write_server_update_status_unlocked(
-            phase="failed",
-            message=(
-                "The detached updater exited before reporting completion. "
-                "See server-update.log."
-            ),
-            heartbeat_at=None,
-            elapsed_seconds=None,
-            runner_pid=None,
-            **({"error_code": "server_update_handoff_release_failed", "retryable": True,
-                "error_action": "Retry the update to finish releasing its execution hold."}
-               if current.get("_execution_handoff") else {}),
-            finished_at=update_utc_now(),
-        )
-
-
-def reconcile_pending_server_update_after_startup(
-    status: dict[str, Any],
-) -> dict[str, Any]:
-    """Validate a durable idle reservation before its waiter is re-armed."""
-
-    if not managed_server_update_is_pending(status):
-        return status
-    with server_update_status_lock(SERVER_UPDATE_STATUS_FILE):
-        current = read_server_update_status()
-        # A startup/waiter worker can outlive the snapshot that launched it.
-        # Compare the complete normalized row while holding the same lock as
-        # its replacement so it can never erase a newer pending/starting run.
-        if current != status or not managed_server_update_is_pending(current):
-            return current
-        schedule_id = str(current.get("schedule_id") or "").strip()
-        target = str(current.get("target_version") or "").strip()
-        track = str(current.get("track") or "").strip()
-        force_marker_present = any(
-            current.get(name) is not None
-            for name in (
-                "_force_restart_request_id",
-                "_force_restart_requested_at",
-            )
-        )
-        valid = (
-            re.fullmatch(r"[0-9a-f]{32}", schedule_id) is not None
-            and track in {"stable", "beta"}
-            and bool(target)
-            and current.get("when_idle") is True
-        )
-        if force_marker_present:
-            requested_at = str(
-                current.get("_force_restart_requested_at") or ""
-            ).strip()
-            try:
-                datetime.fromisoformat(requested_at.replace("Z", "+00:00"))
-            except (TypeError, ValueError):
-                force_requested_at_valid = False
-            else:
-                force_requested_at_valid = True
-            valid = (
-                valid
-                and managed_server_force_update_is_pending(current)
-                and force_requested_at_valid
-            )
-        if valid:
-            try:
-                version_key(target)
-            except ValueError:
-                valid = False
-        if valid and server_release_track(target) != track:
-            valid = False
-        if valid and current.get("_npm_release") is not None:
-            try:
-                npm_manifest = verify_npm_release_envelope(
-                    current["_npm_release"], SERVER_UPDATE_PUBLIC_KEY, expected_version=target,
-                )
-                valid = npm_manifest["track"] == track
-            except Exception:
-                valid = False
-        if not valid:
-            return _write_fresh_server_update_status_unlocked(
-                phase="failed",
-                track=(
-                    track
-                    if track in {"stable", "beta"}
-                    else server_release_track(SERVER_VERSION)
-                ),
-                latest_version=(target or None),
-                update_available=bool(target),
-                message=(
-                    (
-                        "The saved force-update reservation was incomplete "
-                        "and was not resumed."
-                    )
-                    if force_marker_present
-                    else (
-                        "The saved update-when-idle reservation was incomplete "
-                        "and was not resumed."
-                    )
-                ),
-                error_code="server_update_schedule_invalid",
-                error_action=(
-                    "Check for updates and schedule the update again."
-                ),
-                retryable=True,
-                finished_at=update_utc_now(),
-            )
-        if not server_release_transition_allowed(
-            target,
-            SERVER_VERSION,
-            track,
-        ):
-            return _write_fresh_server_update_status_unlocked(
-                phase="current",
-                track=track,
-                current_track=server_release_track(SERVER_VERSION),
-                latest_version=target,
-                update_available=False,
-                message=f"HyadexServer {SERVER_VERSION} is current.",
-                checked_at=update_utc_now(),
-            )
-        return current
-
-
-async def reconcile_server_update_status_after_startup() -> dict[str, Any]:
-    """Resolve an update phase orphaned by a crash or power loss."""
-
-    async with SERVER_UPDATE_OPERATION_LOCK:
-        status = read_server_update_status()
-        try:
-            recovered = await resume_server_update_activation(status)
-            if recovered is not None:
-                return recovered
-            if managed_server_update_is_pending(status):
-                return await asyncio.to_thread(
-                    reconcile_pending_server_update_after_startup,
-                    status,
-                )
-            if str(status.get("phase") or "") not in SERVER_UPDATE_ACTIVE_PHASES:
-                return status
-            if await asyncio.to_thread(server_update_is_active, status):
-                return status
-            if (
-                server_update_status_age_seconds(status)
-                < SERVER_UPDATE_START_GRACE_SECONDS
-            ):
-                # The replacement process can answer health before the tmux
-                # server exposes its runner pane (or before the runner records
-                # its pid). Match the public status endpoint's grace period so
-                # startup cannot steal ownership from a healthy installer.
-                return status
-            return await asyncio.to_thread(finalize_abandoned_server_update, status)
-        except Exception as exc:
-            logger.error(
-                "server update maintenance reconciliation failed error_type=%s",
-                type(exc).__name__,
-            )
-            return status
-
-
-def server_update_runner_environment() -> dict[str, str]:
+def server_instance_environment() -> dict[str, str]:
     """Preserve Linux's user-service bus when the detached tmux server is stale."""
     result = {
         "HYADEX_SERVER_INSTANCE": SERVER_INSTANCE_NAME,
@@ -66427,558 +65245,6 @@ def server_update_runner_environment() -> dict[str, str]:
     if bus_address:
         result["DBUS_SESSION_BUS_ADDRESS"] = bus_address
     return result
-
-
-def unsafe_update_tmux_detail(
-    *,
-    bootstrap_failed: bool = False,
-    verification_failed: bool = False,
-) -> dict[str, Any]:
-    if bootstrap_failed:
-        message = (
-            "Managed update cannot safely start because HyadexServer could not "
-            "create the default tmux server outside hyadex-server.service."
-        )
-        action = (
-            "From a login shell, start a detached tmux session outside the "
-            "HyadexServer service, then retry the update."
-        )
-    elif verification_failed:
-        message = (
-            "Managed update cannot safely start because HyadexServer could not "
-            "verify the detached tmux server's cgroup."
-        )
-        action = "Retry after confirming the tmux server is running from a login shell."
-    else:
-        message = (
-            "Managed update cannot start because the detached tmux server is "
-            "inside hyadex-server.service and would be terminated by the restart."
-        )
-        action = (
-            "Finish or record any required terminal and tunnel commands, stop "
-            "the tmux daemon from a login shell, then retry. HyadexServer will "
-            "recreate tmux in a separate user scope when systemd-run is available."
-        )
-    return {
-        "code": "unsafe_update_tmux_cgroup",
-        "message": message,
-        "action": action,
-        "retryable": True,
-    }
-
-
-def ensure_managed_update_tmux_isolated() -> str | None:
-    """Fail closed when systemd restart would also kill the updater."""
-
-    service_cgroup = hyadex_server_systemd_cgroup()
-    if service_cgroup is None:
-        state = ensure_managed_update_service_cgroup_clear(service_cgroup=None)
-        service_cgroup = state.get("_service_cgroup")
-        if not isinstance(service_cgroup, str):
-            return None
-    pid = tmux_server_pid()
-    if pid is None:
-        if bootstrap_isolated_tmux_server():
-            return service_cgroup
-        raise HTTPException(
-            status_code=409,
-            detail=unsafe_update_tmux_detail(bootstrap_failed=True),
-        )
-    tmux_cgroups = process_cgroup_paths(pid)
-    if not tmux_cgroups:
-        raise HTTPException(
-            status_code=409,
-            detail=unsafe_update_tmux_detail(verification_failed=True),
-        )
-    if any(cgroup_is_within(path, service_cgroup) for path in tmux_cgroups):
-        raise HTTPException(
-            status_code=409,
-            detail=unsafe_update_tmux_detail(),
-        )
-    return service_cgroup
-
-
-def unsafe_update_service_cgroup_detail(
-    state: dict[str, Any],
-) -> dict[str, Any]:
-    count = state.get("unknown_descendant_count")
-    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
-        message = (
-            "Managed update cannot safely start because an untracked process "
-            "remains inside hyadex-server.service."
-            if count == 1
-            else (
-                "Managed update cannot safely start because untracked processes "
-                "remain inside hyadex-server.service."
-            )
-        )
-        action = (
-            "Let current provider cleanup finish, then retry. If this repeats, "
-            "restart HyadexServer from the host before updating."
-        )
-    else:
-        message = (
-            "Managed update cannot safely start because HyadexServer could not "
-            "verify that its service cgroup is free of child processes."
-        )
-        action = "Retry after checking the host's systemd user service."
-    return {
-        "code": "unsafe_update_service_cgroup",
-        "message": message,
-        "action": action,
-        "retryable": True,
-    }
-
-
-def public_server_update_launch_error(exc: BaseException) -> dict[str, Any]:
-    """Normalize a prelaunch exception without serializing internal objects."""
-
-    detail = exc.detail if isinstance(exc, HTTPException) else None
-    if isinstance(detail, dict):
-        message = str(detail.get("message") or "").strip()
-        action = str(detail.get("action") or "").strip()
-        code = str(detail.get("code") or "").strip()
-        return {
-            "message": message or "HyadexServer could not safely start the updater.",
-            "error_code": code or None,
-            "error_action": action or None,
-            "retryable": detail.get("retryable") is True,
-        }
-    if isinstance(detail, str) and detail.strip():
-        return {
-            "message": detail.strip()[:1000],
-            "error_code": None,
-            "error_action": None,
-            "retryable": False,
-        }
-    return {
-        "message": "HyadexServer could not start the detached updater.",
-        "error_code": None,
-        "error_action": None,
-        "retryable": False,
-    }
-
-
-def managed_update_provider_quiesce_timeout_detail() -> dict[str, Any]:
-    return {
-        "code": "provider_quiesce_timeout",
-        "message": (
-            "HyadexServer could not finish stopping its idle provider "
-            "supervisors before the update deadline."
-        ),
-        "action": "Retry the update after current provider cleanup finishes.",
-        "retryable": True,
-    }
-
-
-def managed_update_provider_quiesce_failure_detail() -> dict[str, Any]:
-    return {
-        "code": "provider_quiesce_failed",
-        "message": "HyadexServer could not safely finish provider cleanup.",
-        "action": "Restart HyadexServer from the host, then retry the update.",
-        "retryable": True,
-    }
-
-
-def restore_pending_server_update_after_provider_quiesce_timeout(
-    *,
-    expected_update_id: str,
-    reservation: dict[str, Any],
-    public_error: dict[str, Any],
-) -> dict[str, Any] | None:
-    """CAS a failed idle-update launch back to its exact reservation."""
-
-    if public_error.get("error_code") != "provider_quiesce_timeout":
-        return None
-    schedule_id = str(reservation.get("schedule_id") or "").strip()
-    target = str(reservation.get("target_version") or "").strip()
-    if not schedule_id or not target or not expected_update_id:
-        return None
-
-    with server_update_status_lock(SERVER_UPDATE_STATUS_FILE):
-        current = read_server_update_status()
-        if (
-            str(current.get("phase") or "") != "starting"
-            or str(current.get("update_id") or "") != expected_update_id
-            or str(current.get("schedule_id") or "") != schedule_id
-        ):
-            # Another exact owner changed the journal while failure cleanup
-            # was settling.  Its row wins; never overwrite it with this retry.
-            return current
-
-        # The admission snapshot already proved ordinary work idle.  Do not
-        # revive stale counts from the earlier reservation; the only known
-        # blocker now is this provider teardown attempt.
-        counts = server_update_blocker_counts(
-            [],
-            0,
-            ["provider cleanup"],
-            0,
-        )
-        track: Literal["stable", "beta"] = (
-            "beta" if reservation.get("track") == "beta" else "stable"
-        )
-        return _write_fresh_server_update_status_unlocked(
-            **{name: reservation.get(name) for name in (
-                "preparation_id", "preparation_phase", "preparation_heartbeat_at",
-                "preparation_runner_pid", "_prepared_update")},
-            schedule_id=schedule_id,
-            phase=SERVER_UPDATE_PENDING_PHASE,
-            track=track,
-            current_track=server_release_track(SERVER_VERSION),
-            channel_switch=(track != server_release_track(SERVER_VERSION)),
-            target_version=target,
-            latest_version=target,
-            update_available=True,
-            when_idle=True,
-            cancelable=reservation.get("cancelable") is True,
-            pending_at=reservation.get("pending_at"),
-            blocker_counts=counts,
-            _npm_release=reservation.get("_npm_release"),
-            _force_restart_request_id=reservation.get(
-                "_force_restart_request_id"
-            ),
-            _force_restart_requested_at=reservation.get(
-                "_force_restart_requested_at"
-            ),
-            message=(
-                f"HyadexServer {target} remains scheduled while idle provider "
-                "cleanup finishes; the update will retry automatically."
-            ),
-            error_code="provider_quiesce_timeout",
-            error_action=public_error.get("error_action"),
-            retryable=True,
-            checked_at=reservation.get("checked_at"),
-        )
-
-
-def managed_update_provider_quiesce_timeout_seconds() -> float:
-    """Cover the nested task drain plus bounded provider transport teardown."""
-
-    return max(
-        MANAGED_UPDATE_PROVIDER_QUIESCE_TIMEOUT_SECONDS,
-        CODEX_SESSION_CLEANUP_TIMEOUT_SECONDS
-        + MANAGED_UPDATE_PROVIDER_TEARDOWN_MARGIN_SECONDS,
-    )
-
-
-def managed_update_provider_quiesce_in_progress() -> bool:
-    """Return whether an old provider close still lacks successful proof."""
-
-    return bool(MANAGED_UPDATE_PROVIDER_QUIESCE_STRAGGLERS)
-
-
-def managed_update_provider_quiesce_failed() -> bool:
-    """Return whether retained teardown proof completed unsuccessfully."""
-
-    for task in MANAGED_UPDATE_PROVIDER_QUIESCE_STRAGGLERS.values():
-        if task.cancelled():
-            return True
-        if task.done() and task.exception() is not None:
-            return True
-    return False
-
-
-def ensure_managed_update_provider_quiesce_failure_status(
-    status: dict[str, Any],
-) -> dict[str, Any]:
-    """Keep the restart-required teardown failure visible in update status."""
-
-    changes: dict[str, Any] = {
-        "message": (
-            "HyadexServer could not safely finish provider cleanup; managed "
-            "updates remain fenced."
-        ),
-        "error_code": "provider_quiesce_failed",
-        "error_action": managed_update_provider_quiesce_failure_detail()["action"],
-        "retryable": True,
-    }
-    if managed_server_update_is_pending(status):
-        changes["blocker_counts"] = server_update_blocker_counts(
-            [],
-            0,
-            ["provider cleanup failed"],
-            0,
-        )
-    return write_server_update_status(**changes)
-
-
-async def reopen_after_managed_update_provider_quiesce() -> None:
-    """Release the temporary hard fence after every old close task settles."""
-
-    async with SERVER_UPDATE_OPERATION_LOCK:
-        # Keep the authoritative read and terminal-registry decision in the
-        # same order as start/status/cancel.  A pending waiter cannot switch
-        # to ``starting`` between this read and the registry lock acquisition.
-        status = read_server_update_status()
-        reopened = await TERMINAL_ATTACHMENTS.reopen_if_update_inactive(status)
-        if reopened:
-            schedule_rebuilt_queued_turns()
-
-
-async def record_managed_update_provider_quiesce_failure(name: str) -> None:
-    """Expose a failed retained close while keeping its hard fence installed."""
-
-    async with SERVER_UPDATE_OPERATION_LOCK:
-        current = read_server_update_status()
-        if str(current.get("phase") or "") not in {
-            SERVER_UPDATE_PENDING_PHASE,
-            "available",
-        }:
-            return
-        ensure_managed_update_provider_quiesce_failure_status(current)
-
-
-def track_managed_update_provider_fence_task(
-    awaitable: Any,
-    *,
-    name: str,
-) -> None:
-    task = asyncio.create_task(awaitable, name=name)
-    MANAGED_UPDATE_PROVIDER_FENCE_RELEASE_TASKS.add(task)
-
-    def settled(completed: asyncio.Task[Any]) -> None:
-        MANAGED_UPDATE_PROVIDER_FENCE_RELEASE_TASKS.discard(completed)
-        with suppress(BaseException):
-            completed.result()
-
-    task.add_done_callback(settled)
-
-
-def retain_managed_update_provider_quiesce_straggler(
-    name: str,
-    task: asyncio.Task[Any],
-) -> None:
-    """Fence replacement providers until a cancellation-hostile close ends."""
-
-    MANAGED_UPDATE_PROVIDER_QUIESCE_STRAGGLERS[name] = task
-
-    def settled(completed: asyncio.Task[Any]) -> None:
-        try:
-            completed.result()
-        except BaseException as exc:
-            logger.error(
-                "managed update provider cleanup failed manager=%s error_type=%s",
-                name,
-                type(exc).__name__,
-            )
-            track_managed_update_provider_fence_task(
-                record_managed_update_provider_quiesce_failure(name),
-                name="managed-update-provider-fence-failure",
-            )
-            return
-        if MANAGED_UPDATE_PROVIDER_QUIESCE_STRAGGLERS.get(name) is completed:
-            MANAGED_UPDATE_PROVIDER_QUIESCE_STRAGGLERS.pop(name, None)
-        if (
-            MANAGED_UPDATE_PROVIDER_QUIESCE_STRAGGLERS
-            or SERVER_SHUTTING_DOWN
-        ):
-            return
-        track_managed_update_provider_fence_task(
-            reopen_after_managed_update_provider_quiesce(),
-            name="managed-update-provider-fence-release",
-        )
-
-    task.add_done_callback(settled)
-
-
-def ensure_managed_update_service_cgroup_clear(
-    *,
-    service_cgroup: str | None = None,
-) -> dict[str, Any]:
-    """Require no children, or prove this worker's stop policy preserves them."""
-
-    state = managed_update_service_cgroup_state(
-        service_cgroup=service_cgroup,
-    )
-    if state.get("safe") is True:
-        return state
-    raise HTTPException(
-        status_code=409,
-        detail=unsafe_update_service_cgroup_detail(state),
-    )
-
-
-async def wait_for_managed_update_service_cgroup_clear(
-    *,
-    service_cgroup: str,
-) -> dict[str, Any]:
-    """Allow reaped children to leave /proc, then retain the fail-closed proof."""
-
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + MANAGED_UPDATE_CGROUP_SETTLE_TIMEOUT_SECONDS
-    last_error: HTTPException | None = None
-    while True:
-        try:
-            return await asyncio.to_thread(
-                ensure_managed_update_service_cgroup_clear,
-                service_cgroup=service_cgroup,
-            )
-        except HTTPException as exc:
-            last_error = exc
-        remaining = deadline - loop.time()
-        if remaining <= 0:
-            assert last_error is not None
-            raise last_error
-        await asyncio.sleep(
-            min(MANAGED_UPDATE_CGROUP_SETTLE_INTERVAL_SECONDS, remaining)
-        )
-
-
-async def close_managed_update_provider_managers() -> None:
-    """Bound provider retirement so a bad supervisor cannot pin the drain."""
-
-    timeout_seconds = managed_update_provider_quiesce_timeout_seconds()
-    tasks = {
-        "side-chats": asyncio.create_task(
-            SIDE_QUESTIONS.close(),
-            name="managed-update-close-side-chats",
-        ),
-        "claude-sdk": asyncio.create_task(
-            close_claude_sdk_manager(),
-            name="managed-update-close-claude-sdk",
-        ),
-        "codex-app-server": asyncio.create_task(
-            close_codex_app_server_manager(),
-            name="managed-update-close-codex-app-server",
-        ),
-    }
-    _done, pending = await asyncio.wait(
-        set(tasks.values()),
-        timeout=timeout_seconds,
-    )
-    failed_names: list[str] = []
-    for name, task in tasks.items():
-        if task in pending:
-            continue
-        try:
-            task.result()
-        except BaseException:
-            failed_names.append(name)
-            retain_managed_update_provider_quiesce_straggler(name, task)
-    if failed_names:
-        for name, task in tasks.items():
-            if task in pending:
-                retain_managed_update_provider_quiesce_straggler(name, task)
-        logger.error(
-            "managed update provider quiesce failed managers=%s "
-            "still_running=%s",
-            ",".join(failed_names),
-            ",".join(
-                name for name, task in tasks.items() if task in pending
-            ) or "none",
-        )
-        raise HTTPException(
-            status_code=502,
-            detail=managed_update_provider_quiesce_failure_detail(),
-        )
-    if pending:
-        pending_names = [
-            name for name, task in tasks.items() if task in pending
-        ]
-        for name, task in tasks.items():
-            if task in pending:
-                retain_managed_update_provider_quiesce_straggler(name, task)
-        logger.error(
-            "managed update provider quiesce timed out after %.1fs "
-            "pending_managers=%s",
-            timeout_seconds,
-            ",".join(pending_names),
-        )
-        raise HTTPException(
-            status_code=504,
-            detail=managed_update_provider_quiesce_timeout_detail(),
-        )
-
-
-async def quiesce_managed_update_service_cgroup(
-    *,
-    service_cgroup: str | None,
-) -> None:
-    """Retire owned transports and supervisors, then prove the cgroup empty.
-
-    The caller has already written the durable update drain, so no new turn or
-    unsafe mutation can start while these known server-owned processes close.
-    Closing an attachment never kills its external tmux daemon, session, pane,
-    or shell; clients reconnect to that preserved session after replacement.
-    """
-
-    if service_cgroup is None:
-        return
-    retired_terminals = await TERMINAL_ATTACHMENTS.close_admission_and_all()
-    if retired_terminals:
-        logger.info(
-            "server update retired terminal attachment transports count=%d",
-            retired_terminals,
-        )
-    await close_managed_update_provider_managers()
-    await wait_for_managed_update_service_cgroup_clear(
-        service_cgroup=service_cgroup,
-    )
-
-
-RELEASE_CHECK_CACHE_SECONDS = 300.0
-_RELEASE_CHECK_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
-_RELEASE_CHECK_TASKS: dict[tuple[str, str], asyncio.Task[dict[str, Any]]] = {}
-_RELEASE_CHECK_RETRY_AT = 0.0
-
-
-def release_check_rate_limit_error() -> HTTPException:
-    delay = max(1, math.ceil(_RELEASE_CHECK_RETRY_AT - time.monotonic()))
-    return HTTPException(
-        status_code=429,
-        detail={
-            "code": "server_update_release_rate_limited",
-            "message": f"GitHub temporarily limited update requests. Try again in {delay} seconds. Your server is still running.",
-            "action": f"Try the update again in {delay} seconds. No server restart is needed.",
-            "retryable": True,
-            "retry_after_seconds": delay,
-        },
-        headers={"Retry-After": str(delay)},
-    )
-
-
-async def _fetch_signed_release_manifest(key: tuple[str, str]) -> dict[str, Any]:
-    global _RELEASE_CHECK_RETRY_AT
-    try:
-        manifest = await asyncio.to_thread(check_release, Path(key[0]), key[1])
-        _RELEASE_CHECK_CACHE[key] = (
-            time.monotonic() + RELEASE_CHECK_CACHE_SECONDS, copy.deepcopy(manifest),
-        )
-        return manifest
-    except ReleaseRateLimitedError as exc:
-        _RELEASE_CHECK_RETRY_AT = max(
-            _RELEASE_CHECK_RETRY_AT, time.monotonic() + exc.retry_after_seconds,
-        )
-        raise release_check_rate_limit_error() from exc
-    except ReleaseUnavailableError as exc:
-        _RELEASE_CHECK_CACHE.pop(key, None)
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"signed release check failed: {exc}") from exc
-    finally:
-        _RELEASE_CHECK_TASKS.pop(key, None)
-
-
-async def signed_release_manifest(
-    track: Literal["stable", "beta"] = "stable", *, refresh: bool = False,
-) -> dict[str, Any]:
-    if not SERVER_UPDATE_PUBLIC_KEY.is_file():
-        raise HTTPException(status_code=503, detail="release verification key is missing from this server installation")
-    key = (str(SERVER_UPDATE_PUBLIC_KEY.resolve()), track)
-    cached = _RELEASE_CHECK_CACHE.get(key)
-    if not refresh and cached is not None and time.monotonic() < cached[0]:
-        return copy.deepcopy(cached[1])
-    if time.monotonic() < _RELEASE_CHECK_RETRY_AT:
-        raise release_check_rate_limit_error()
-    task = _RELEASE_CHECK_TASKS.get(key)
-    if task is None:
-        task = asyncio.create_task(_fetch_signed_release_manifest(key))
-        _RELEASE_CHECK_TASKS[key] = task
-        # Closing a Settings request must not cancel another client's check.
-        # Consume errors even if every requesting client disconnects.
-        task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
-    return copy.deepcopy(await asyncio.shield(task))
 
 
 HYADEX_SERVER_DISPLAY_NAME = canonical_server_display_name(
@@ -67139,7 +65405,6 @@ async def lifespan(app: FastAPI):
     )
     reconcile_server_restart_status_after_startup()
     clear_imported_active_runs()
-    startup_update_status = await reconcile_server_update_status_after_startup()
     abandoned_compaction_count = (
         await recover_abandoned_codex_compactions_after_start(
             forced_restart_request_id=(forced_restart_request_id or None),
@@ -67148,31 +65413,8 @@ async def lifespan(app: FastAPI):
     abandoned_turn_count = await recover_abandoned_turns_after_start(
         forced_restart_request_id=(forced_restart_request_id or None),
     )
-    if managed_server_force_update_is_pending(startup_update_status):
-        # Give an explicitly confirmed force update first admission after its
-        # cleanup restart. Durable queued turns are reconstructed later, and
-        # the force marker keeps every provider start fenced if preflight must
-        # retry instead of allowing recovery work to starve the update again.
-        try:
-            startup_update_status = await advance_pending_server_update_once()
-        except Exception as exc:
-            logger.warning(
-                "startup force update advance deferred error_type=%s detail=%s",
-                type(exc).__name__,
-                concise_error_message(exc),
-            )
-            startup_update_status = read_server_update_status()
-    active_update_schedule_id = (
-        str(startup_update_status.get("schedule_id") or "").strip()
-        if managed_server_force_update_is_pending(startup_update_status)
-        else None
-    )
-    # Older releases parked automatic jobs while merely waiting for idle.
-    # Restore those unchanged occurrences even if that reservation still exists.
-    # Preserve only an explicitly confirmed force update's admission fence.
-    await JOBS.resume_update_parked(
-        active_schedule_id=active_update_schedule_id,
-    )
+    # Retire old update reservations without losing their due job occurrences.
+    await JOBS.resume_legacy_update_parked()
     removed_authority_files = (
         await purge_cross_chat_authority_files_after_restart()
     )
@@ -67207,10 +65449,6 @@ async def lifespan(app: FastAPI):
         name="queued-turn-startup-recovery",
     )
     QUEUE_RECOVERY_TASK = queue_recovery_task
-    server_update_pending_waiter_task = asyncio.create_task(
-        server_update_pending_waiter_loop(),
-        name="server-update-pending-waiter",
-    )
 
     async def reconcile_digests_after_queue_recovery() -> None:
         with suppress(Exception):
@@ -67322,7 +65560,6 @@ async def lifespan(app: FastAPI):
         history_tasks = (*HISTORY_MAINTENANCE_TASKS.values(), *(item[1] for item in TURN_RECEIPT_TASKS.values()))
         for task in history_tasks:
             task.cancel()
-        server_update_pending_waiter_task.cancel()
         await bounded_shutdown_phase(
             "startup-reconciliation",
             join_cancelled_tasks(
@@ -67332,7 +65569,6 @@ async def lifespan(app: FastAPI):
                 queue_recovery_task,
                 queue_checkpoint_task,
                 *history_tasks,
-                server_update_pending_waiter_task,
                 *(
                     (health_queue_reconcile_task,)
                     if isinstance(health_queue_reconcile_task, asyncio.Task)
@@ -67464,7 +65700,7 @@ def is_agent_helper_route(method: str, path: str) -> bool:
 
 
 def privileged_native_browser_request_forbidden(request: Request) -> bool:
-    """Keep native update/settings authority out of ambient browser requests."""
+    """Keep native settings authority out of ambient browser requests."""
 
     return any(
         bytes(name).lower() in {b"origin", b"cookie"}
@@ -67700,10 +65936,6 @@ def privileged_native_json_transport(
 
 
 async def require_agent_token(request: Request, call_next):
-    server_update_admin_route = (
-        request.url.path == "/api/admin/update"
-        or request.url.path.startswith("/api/admin/update/")
-    )
     codex_goals_admin_route = request.url.path in {
         "/api/admin/codex/goals", "/api/admin/codex/subagents",
         "/api/admin/codex/auth", "/api/admin/codex/auth/api-key",
@@ -67715,12 +65947,8 @@ async def require_agent_token(request: Request, call_next):
     codex_provider_mcp_route = (
         request.url.path == CODEX_PROVIDER_MCP_PATH
     )
-    if request.method == "OPTIONS" and False:
-        return JSONResponse({"detail": "forbidden"}, status_code=403)
     if request.method == "OPTIONS" and (
-        server_update_admin_route
-        or False
-        or codex_goals_admin_route
+        codex_goals_admin_route
         or codex_provider_mcp_route
     ):
         return JSONResponse({"detail": "forbidden"}, status_code=403)
@@ -67801,9 +66029,7 @@ async def require_agent_token(request: Request, call_next):
                 return JSONResponse({"detail": detail}, status_code=status_code)
 
     if (
-        server_update_admin_route
-        or False
-        or codex_goals_admin_route
+        codex_goals_admin_route
     ):
         if privileged_native_browser_request_forbidden(request):
             return JSONResponse({"detail": "forbidden"}, status_code=403)
@@ -67819,29 +66045,7 @@ async def require_agent_token(request: Request, call_next):
             )
         if not request_exact_native_token_header_authorized(request):
             return JSONResponse({"detail": "unauthorized"}, status_code=401)
-        if server_update_admin_route and request.method.upper() == "POST":
-            update_body_limit = (
-                16_384 if request.url.path == "/api/admin/update/ensure"
-                else PRIVILEGED_NATIVE_UPDATE_MAX_BODY_BYTES
-            )
-            declared_size, transport_error = privileged_native_json_transport(
-                request,
-                max_body_bytes=update_body_limit,
-                label="server update",
-                require_content_length=False,
-            )
-            if transport_error is not None:
-                status_code, detail = transport_error
-                return JSONResponse({"detail": detail}, status_code=status_code)
-            body_error = await prebuffer_bounded_request_body(
-                request,
-                max_body_bytes=update_body_limit,
-                declared_size=declared_size,
-            )
-            if body_error is not None:
-                status_code, detail = body_error
-                return JSONResponse({"detail": detail}, status_code=status_code)
-        elif request.url.path in {"/api/admin/codex/auth/api-key", "/api/admin/codex/auth/reload"} and request.method.upper() == "POST":
+        if request.url.path in {"/api/admin/codex/auth/api-key", "/api/admin/codex/auth/reload"} and request.method.upper() == "POST":
             declared_size, transport_error = privileged_native_json_transport(
                 request, max_body_bytes=codex_auth.MAX_BODY_BYTES,
                 label="Codex authentication", require_content_length=True,
@@ -67947,18 +66151,10 @@ async def require_agent_token(request: Request, call_next):
         request.method.upper() in UNSAFE_HTTP_MUTATION_METHODS
         and request.url.path not in {
             "/api/admin/restart",
-            "/api/admin/update/cancel",
-            "/api/admin/update/check",
-            "/api/admin/update/start",
-            "/api/admin/update/ensure",
         }
     )
     if not unsafe_mutation:
         return await call_next(request)
-    durable_turn_route = re.fullmatch(
-        r"/api/sessions/[^/]+/turns",
-        request.url.path,
-    ) is not None
     mutation_id = ""
     mutation_task: asyncio.Task[Any] | None = None
     mutation_registry = UNSAFE_HTTP_MUTATION_TASKS
@@ -67969,11 +66165,6 @@ async def require_agent_token(request: Request, call_next):
         original_receive is not None
         and request_route_parses_body(request)
         and not getattr(request.state, "bounded_body_prebuffered", False)
-        # Mounted transports have their own strict request-body contracts and
-        # can begin durable work while consuming a stream. Keep their lease at
-        # request admission instead of assuming FastAPI parses the whole body.
-        and True
-        and True
     )
 
     async def admit_unsafe_http_mutation(
@@ -67986,9 +66177,7 @@ async def require_agent_token(request: Request, call_next):
         async with UNSAFE_HTTP_MUTATION_ADMISSION_LOCK:
             if mutation_id:
                 return
-            blocked = unsafe_http_mutation_blocked_response(
-                durable_turn_route=durable_turn_route,
-            )
+            blocked = unsafe_http_mutation_blocked_response()
             if blocked is not None:
                 admission_rejected_response = blocked
                 raise UnsafeMutationAdmissionRejected(blocked)
@@ -68001,7 +66190,7 @@ async def require_agent_token(request: Request, call_next):
     try:
         if defer_admission_until_body_received:
             # Authentication and transport validation above are header-only.
-            # Do not let a client reserve the global update/restart fence merely
+            # Do not let a client reserve the global lifecycle fence merely
             # by opening a request and withholding its body. FastAPI always
             # consumes a route's declared body before invoking the handler, so
             # atomically acquire the lease at the final request-body frame.
@@ -68024,9 +66213,7 @@ async def require_agent_token(request: Request, call_next):
             downstream_task = asyncio.create_task(call_next(request))
         else:
             async with UNSAFE_HTTP_MUTATION_ADMISSION_LOCK:
-                blocked = unsafe_http_mutation_blocked_response(
-                    durable_turn_route=durable_turn_route,
-                )
+                blocked = unsafe_http_mutation_blocked_response()
                 if blocked is not None:
                     return blocked
                 # Own the downstream operation independently from the HTTP
@@ -68327,11 +66514,9 @@ async def health() -> dict[str, Any]:
         active = sorted(BUSY_SESSIONS)
     async with bounded_lock(QUEUE_LOCK, SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS):
         queued = {sid: len(queue) for sid, queue in QUEUED_TURNS.items() if queue}
-        update_blocking_queued_count = update_blocking_queued_turn_count_locked()
     restart_blocker_snapshot = await current_server_restart_blocker_snapshot()
     pressure = host_pressure_snapshot()
     tmux = tmux_capability(use_cache=True)
-    update_service_cgroup = public_managed_update_service_cgroup_state()
     port_tunnel_status = await PORT_TUNNELS.snapshot()
     return {
         "ok": True,
@@ -68341,17 +66526,10 @@ async def health() -> dict[str, Any]:
         "server_identity": server_identity(),
         "server_instance_id": SERVER_INSTANCE_ID,
         "server_name": HYADEX_SERVER_DISPLAY_NAME,
-        "server_update": server_update_health_projection(),
         "state_dir": str(STATE_DIR),
         "default_backend": DEFAULT_BACKEND,
         "default_cwd": existing_cwd(DEFAULT_CWD),
         "auth_required": bool(AGENT_TOKEN),
-        "managed_updates": (
-            managed_updates_enabled()
-            and SERVER_UPDATE_RUNNER.is_file()
-            and SERVER_UPDATE_PUBLIC_KEY.is_file()
-            and bool(tmux["available"])
-        ),
         "capabilities": {
             "group_discussions_v1": {"version": 1, "modes": ["sequential", "parallel"], "jobs": True,
                                      "goals": True, "enabled_backends": sorted(enabled_backends())},
@@ -68442,34 +66620,6 @@ async def health() -> dict[str, Any]:
             "server_restart": server_restart_capability(
                 restart_blocker_snapshot
             ),
-            "server_updates": {
-                "available": (
-                    SERVER_UPDATE_RUNNER.is_file()
-                    and SERVER_UPDATE_PUBLIC_KEY.is_file()
-                    and bool(tmux["available"])
-                ),
-                "required": False,
-                "message": "Signed Stable and Beta HyadexServer channels are available.",
-                "action": None,
-                # v11 adds an exact schedule-bound force-update restart. v10
-                # keeps human work passive while ordinary pending updates
-                # defer autonomous scheduled-job admission.
-                "version": 11,
-                "tracks": ["stable", "beta"],
-            },
-            "server_update_ensure_v1": {
-                "available": (
-                    SERVER_UPDATE_RUNNER.is_file()
-                    and SERVER_UPDATE_PUBLIC_KEY.is_file()
-                    and bool(tmux["available"])
-                    and bool(AGENT_TOKEN)
-                ),
-                "version": 1,
-                "transports": ["npm"],
-                "package": "@hyadex/server",
-                "api_contract_policy": "exact",
-                "activation_recovery": True,
-            },
             "tmux": tmux,
             "workspace_files": {
                 "available": WORKSPACE_SECURE_OPEN_AVAILABLE,
@@ -68645,11 +66795,6 @@ async def health() -> dict[str, Any]:
         "active_count": len(active),
         "claude_stop_fence_count": len(CLAUDE_STOP_FENCE_SESSIONS),
         "queued": queued,
-        # Additive updater contract. Older clients continue to render the
-        # complete queue map, while beta.8+ detached runners distinguish
-        # durable preserved messages from restart-blocking provisional work.
-        "update_blocking_queued_count": update_blocking_queued_count,
-        "update_service_cgroup": update_service_cgroup,
         "jobs": len(JOBS.jobs),
         "job_guard": {**pressure, **scheduled_job_resource_diagnostics(pressure, len(active))},
         "host_health_log": str(HOST_HEALTH_FILE),
@@ -68736,9 +66881,9 @@ async def put_codex_subagents_admin(req: CodexSubagentsAdminRequest) -> dict[str
             settings["thread_config"] = config
         else:
             settings.pop("thread_config", None)
-        settings["updated_at"] = update_utc_now()
+        settings["updated_at"] = utc_timestamp()
         try:
-            atomic_update_json(CODEX_SETTINGS_FILE, settings)
+            atomic_json(CODEX_SETTINGS_FILE, settings)
         except OSError as exc:
             raise HTTPException(status_code=503, detail="Codex settings could not be saved") from exc
         return codex_subagents_admin_status()
@@ -68830,9 +66975,9 @@ def active_codex_work_labels() -> list[str]:
     return sorted(labels)
 
 
-SERVER_UPDATE_PROVIDER_WORK_LABEL_LIMIT = 32
-SERVER_UPDATE_CODEX_SUBAGENT_SCAN_LIMIT = SUBAGENT_SNAPSHOT_STATE_LIMIT
-SERVER_UPDATE_CODEX_SUBAGENT_SCAN_TIMEOUT_SECONDS = 5.0
+PROVIDER_WORK_LABEL_LIMIT = 32
+CODEX_SUBAGENT_SCAN_LIMIT = SUBAGENT_SNAPSHOT_STATE_LIMIT
+CODEX_SUBAGENT_SCAN_TIMEOUT_SECONDS = 5.0
 MAX_CLAUDE_BACKGROUND_EVENT_SCAN_BYTES = 64 * 1024 * 1024
 CLAUDE_PROVIDER_INSPECTION_OVERFLOW_LABEL = (
     "Claude provider state exceeds safe inspection limit"
@@ -69010,7 +67155,7 @@ async def prepare_codex_subagent_terminal_snapshot(
             if prior is None or prior[0] not in terminal_statuses:
                 pending.append((-1 if prior is None else prior[1], index, candidate))
     pending.sort()
-    inspection_batch = pending[:SERVER_UPDATE_CODEX_SUBAGENT_SCAN_LIMIT]
+    inspection_batch = pending[:CODEX_SUBAGENT_SCAN_LIMIT]
 
     async def latest_turn_status(index: int, candidate: tuple[Any, ...]):
         manager = scopes[index][0]
@@ -69031,7 +67176,7 @@ async def prepare_codex_subagent_terminal_snapshot(
     results = []
     if inspection_batch:
         try:
-            timeout = (SERVER_UPDATE_CODEX_SUBAGENT_SCAN_TIMEOUT_SECONDS if timeout_seconds is None
+            timeout = (CODEX_SUBAGENT_SCAN_TIMEOUT_SECONDS if timeout_seconds is None
                        else max(0.0, float(timeout_seconds)))
             results = await asyncio.wait_for(asyncio.gather(*(
                 latest_turn_status(index, candidate) for _, index, candidate in inspection_batch
@@ -69098,19 +67243,19 @@ def loaded_claude_background_session_state(
         try:
             loaded = manager.is_loaded(session_id)
         except Exception:
-            if len(unknown_labels) < SERVER_UPDATE_PROVIDER_WORK_LABEL_LIMIT:
+            if len(unknown_labels) < PROVIDER_WORK_LABEL_LIMIT:
                 unknown_labels.append(
                     f"Claude provider state unknown in {session_id}"
                 )
             continue
         if loaded:
-            if len(loaded_session_ids) < SERVER_UPDATE_PROVIDER_WORK_LABEL_LIMIT:
+            if len(loaded_session_ids) < PROVIDER_WORK_LABEL_LIMIT:
                 loaded_session_ids.append(session_id)
                 continue
             # Scanning arbitrary numbers of histories makes restart/update
             # admission unbounded. One extra loaded supervisor is sufficient
             # proof that the capped scan cannot establish an idle state.
-            if len(unknown_labels) < SERVER_UPDATE_PROVIDER_WORK_LABEL_LIMIT:
+            if len(unknown_labels) < PROVIDER_WORK_LABEL_LIMIT:
                 unknown_labels.append(
                     CLAUDE_PROVIDER_INSPECTION_OVERFLOW_LABEL
                 )
@@ -69152,19 +67297,19 @@ def claude_event_file_fingerprints(
 def active_provider_background_work_labels() -> list[str]:
     """Return bounded provider-owned work that survives its parent turn.
 
-    The managed updater already excludes active and queued parent turns. Codex
+    Lifecycle admission already checks active and queued parent turns. Codex
     can additionally own native operations and live child threads, while a
     loaded Claude SDK supervisor can retain background subagents after its
     parent ResultMessage. Only loaded Claude supervisors are considered: event
-    history alone must never turn into a permanent update blocker after the
+    history alone must never turn into a permanent lifecycle blocker after the
     provider process has been evicted or the server has restarted.
     """
 
     labels = sorted(set(
         active_codex_work_labels() + active_generated_title_work_labels()
         + SIDE_QUESTIONS.active_work_labels()
-    ))[:SERVER_UPDATE_PROVIDER_WORK_LABEL_LIMIT]
-    remaining = SERVER_UPDATE_PROVIDER_WORK_LABEL_LIMIT - len(labels)
+    ))[:PROVIDER_WORK_LABEL_LIMIT]
+    remaining = PROVIDER_WORK_LABEL_LIMIT - len(labels)
     manager = CLAUDE_SDK_MANAGER
     if remaining <= 0 or manager is None:
         return labels
@@ -69339,8 +67484,8 @@ def provider_background_work_labels_from_snapshot(
             labels = [label for label in labels if label not in terminal_labels]
     labels = sorted(set(
         labels + active_generated_title_work_labels() + SIDE_QUESTIONS.active_work_labels()
-    ))[:SERVER_UPDATE_PROVIDER_WORK_LABEL_LIMIT]
-    remaining = SERVER_UPDATE_PROVIDER_WORK_LABEL_LIMIT - len(labels)
+    ))[:PROVIDER_WORK_LABEL_LIMIT]
+    remaining = PROVIDER_WORK_LABEL_LIMIT - len(labels)
     if remaining <= 0:
         return labels
 
@@ -69357,10 +67502,10 @@ def provider_background_work_labels_from_snapshot(
     if not snapshot_is_current:
         snapshot["stale"] = True
         labels.append("Claude provider state changed during inspection")
-        return labels[:SERVER_UPDATE_PROVIDER_WORK_LABEL_LIMIT]
+        return labels[:PROVIDER_WORK_LABEL_LIMIT]
 
     labels.extend(unknown_labels[:remaining])
-    remaining = SERVER_UPDATE_PROVIDER_WORK_LABEL_LIMIT - len(labels)
+    remaining = PROVIDER_WORK_LABEL_LIMIT - len(labels)
     if remaining > 0:
         labels.extend(
             list(snapshot.get("claude_labels") or ())[:remaining]
@@ -69380,9 +67525,9 @@ async def reserve_codex_goals_reconfiguration() -> None:
 
     global CODEX_GOALS_RECONFIGURING
     async with ACTIVE_LOCK:
-        update_blocker = managed_server_update_admission_blocker()
-        if update_blocker:
-            raise HTTPException(status_code=503, detail=update_blocker)
+        lifecycle_blocker = server_lifecycle_admission_blocker()
+        if lifecycle_blocker:
+            raise HTTPException(status_code=503, detail=lifecycle_blocker)
         if CODEX_GOALS_RECONFIGURING:
             raise HTTPException(
                 status_code=409,
@@ -69825,9 +67970,9 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
 
 
 def require_side_question_admission():
-    # Reuse the main provider admission boundary only during actual process
-    # replacement. An ordinary update waiting for idle leaves side chats usable.
-    blocker = managed_server_update_admission_blocker()
+    # Side questions share worker-maintenance and restart admission with
+    # ordinary provider work.
+    blocker = server_lifecycle_admission_blocker()
     if SERVER_SHUTTING_DOWN or blocker:
         raise side_questions.SideQuestionError(503, blocker or "Server is shutting down")
 
@@ -70114,106 +68259,6 @@ def require_server_restart_control(request: Request) -> None:
         )
 
 
-def force_update_schedule_changed(
-    expected_schedule_id: str,
-    status: dict[str, Any],
-) -> HTTPException:
-    """Return the fail-closed response for a stale force-update confirmation."""
-
-    actual_schedule_id = str(status.get("schedule_id") or "").strip()
-    return HTTPException(
-        status_code=409,
-        detail=server_restart_error_detail(
-            "server_force_update_changed",
-            (
-                "The scheduled server update changed before force update "
-                "confirmation. HyadexServer was not restarted."
-            ),
-            action="Refresh update status and confirm the force update again.",
-            retryable=True,
-            expected_update_schedule_id=expected_schedule_id,
-            update_schedule_id=(actual_schedule_id or None),
-            update_phase=str(status.get("phase") or "idle")[:64],
-        ),
-    )
-
-
-def validate_schedule_bound_force_update(
-    expected_schedule_id: str,
-    request_id: str,
-    status: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Validate exact ownership without converting force into a generic restart."""
-
-    current = status if status is not None else read_server_update_status()
-    actual_schedule_id = str(current.get("schedule_id") or "").strip()
-    marker = str(current.get("_force_restart_request_id") or "").strip()
-    target = str(current.get("target_version") or "").strip()
-    track = str(current.get("track") or "").strip()
-    marker_valid = not marker
-    if marker == request_id and managed_server_force_update_is_pending(current):
-        requested_at = str(
-            current.get("_force_restart_requested_at") or ""
-        ).strip()
-        try:
-            datetime.fromisoformat(requested_at.replace("Z", "+00:00"))
-        except (TypeError, ValueError):
-            marker_valid = False
-        else:
-            marker_valid = True
-    target_valid = bool(target) and track in {"stable", "beta"}
-    if target_valid:
-        try:
-            version_key(target)
-        except ValueError:
-            target_valid = False
-        else:
-            target_valid = (
-                server_release_track(target) == track
-                and server_release_transition_allowed(
-                    target,
-                    SERVER_VERSION,
-                    track,
-                )
-            )
-    if (
-        not managed_server_update_is_pending(current)
-        or actual_schedule_id != expected_schedule_id
-        or current.get("when_idle") is not True
-        or not target_valid
-        or not marker_valid
-        or (not marker and current.get("cancelable") is not True)
-    ):
-        raise force_update_schedule_changed(expected_schedule_id, current)
-    return current
-
-
-def arm_schedule_bound_force_update(
-    expected_schedule_id: str,
-    request_id: str,
-) -> dict[str, Any]:
-    """Atomically make one pending reservation noncancelable across restart."""
-
-    with server_update_status_lock(SERVER_UPDATE_STATUS_FILE):
-        current = validate_schedule_bound_force_update(
-            expected_schedule_id,
-            request_id,
-            read_server_update_status(),
-        )
-        if managed_server_force_update_is_pending(current):
-            return current
-        target = str(current.get("target_version") or "").strip()
-        return _write_server_update_status_unlocked(
-            cancelable=False,
-            _force_restart_request_id=request_id,
-            _force_restart_requested_at=update_utc_now(),
-            message=(
-                f"Force update to HyadexServer {target} was accepted; "
-                "HyadexServer is restarting before installing it."
-            ),
-        )
-
-
 def signal_forced_server_restart(request_id: str) -> None:
     """Signal an emergency restart without depending on the restart journal.
 
@@ -70274,7 +68319,7 @@ async def accept_forced_server_restart(
     request_id: str,
     request_fingerprint: str,
 ) -> dict[str, Any]:
-    """Accept an emergency restart or an exact schedule-bound force update.
+    """Accept an audited emergency restart.
 
     Guarantees for ``force: true`` + ``force_confirmed: true``:
 
@@ -70282,13 +68327,11 @@ async def accept_forced_server_restart(
       checked by ``require_server_restart_control``) and the exact target
       identity/instance are required.
     * Everything the cooperative path refuses on is audited instead: the
-      restart cooldown, a pending or stale restart record, an active managed
-      update, safety-critical work (maintenance, deletions, HTTP mutations,
+      restart cooldown, a pending or stale restart record, worker maintenance,
+      safety-critical work (session maintenance, deletions, HTTP mutations,
       goal reconfiguration), and a stale or omitted blocker revision.
-    * No lock or probe is awaited beyond its bounded timeout. A generic
-      emergency restart degrades a wedged lock into an audited snapshot, but
-      a schedule-bound force update refuses without restarting because exact
-      validation and durable arming must be atomic.
+    * No lock or probe is awaited beyond its bounded timeout. An emergency
+      restart degrades a wedged lock into an audited snapshot.
     * The journal is best effort: if it cannot be written the restart still
       proceeds, because the journal exists to explain the restart, not to
       authorize it.
@@ -70310,31 +68353,14 @@ async def accept_forced_server_restart(
             ),
         )
 
-    expected_schedule_id = body.expected_update_schedule_id
     audit: dict[str, Any] = {}
     degraded_reasons: list[str] = []
     async with bounded_lock(
-        SERVER_UPDATE_OPERATION_LOCK,
+        SERVER_LIFECYCLE_OPERATION_LOCK,
         SERVER_RESTART_FORCE_LOCK_TIMEOUT_SECONDS,
     ) as operation_lock_held:
         if not operation_lock_held:
-            if expected_schedule_id is not None:
-                raise HTTPException(
-                    status_code=503,
-                    detail=server_restart_error_detail(
-                        "server_force_update_busy",
-                        (
-                            "HyadexServer could not atomically reserve the "
-                            "scheduled force update. It was not restarted."
-                        ),
-                        action=(
-                            "Refresh update status and retry the force update."
-                        ),
-                        retryable=True,
-                        expected_update_schedule_id=expected_schedule_id,
-                    ),
-                )
-            degraded_reasons.append("update_operation_lock")
+            degraded_reasons.append("lifecycle_operation_lock")
         try:
             restart_status = reconcile_stale_server_restart_acceptance()
         except Exception:
@@ -70367,14 +68393,6 @@ async def accept_forced_server_restart(
                 start_forced_server_restart_signal_thread(request_id)
             return public_server_restart_status(restart_status)
 
-        if expected_schedule_id is not None:
-            # Cancellation, pending advancement, and this reservation all use
-            # SERVER_UPDATE_OPERATION_LOCK. Holding it through journal commit
-            # makes the schedule check and noncancelable arming one operation.
-            validate_schedule_bound_force_update(
-                expected_schedule_id,
-                request_id,
-            )
 
         phase = str(restart_status.get("phase") or "")
         if phase in SERVER_RESTART_ACTIVE_PHASES:
@@ -70385,13 +68403,8 @@ async def accept_forced_server_restart(
             < SERVER_RESTART_COOLDOWN_SECONDS
         ):
             audit["cooldown_overridden"] = True
-        try:
-            update_status = read_server_update_status()
-        except Exception:
-            update_status = {}
-        if managed_server_update_blocks_work(update_status):
-            audit["update_in_progress_overridden"] = True
-            audit["update_phase"] = str(update_status.get("phase") or "")
+        if execution_maintenance_blocks_work():
+            audit["execution_maintenance_overridden"] = True
 
         snapshot = await current_server_restart_blocker_snapshot(
             lock_timeout_seconds=SERVER_RESTART_FORCE_LOCK_TIMEOUT_SECONDS,
@@ -70414,35 +68427,18 @@ async def accept_forced_server_restart(
             audit["snapshot_degraded"] = True
             audit["snapshot_degraded_reasons"] = degraded_reasons
 
-        now = update_utc_now()
-        if expected_schedule_id is not None:
-            # No await may separate this durable arm from restart acceptance.
-            # If the restart journal write fails, the emergency signal still
-            # proceeds and the replacement process owns the exact reservation.
-            arm_schedule_bound_force_update(
-                expected_schedule_id,
-                request_id,
-            )
+        now = utc_timestamp()
         journal_changes: dict[str, Any] = dict(
             phase="accepted",
             request_id=request_id,
             _source_instance_id=SERVER_INSTANCE_ID,
             _request_fingerprint=request_fingerprint,
             _forced=True,
-            _update_schedule_id=expected_schedule_id,
             _forced_work_snapshot=public_server_restart_work_counts(snapshot),
             _forced_audit=audit,
             message=(
-                (
-                    "HyadexServer accepted the force update and is restarting "
-                    "before installing the exact scheduled release; active "
-                    "work will be interrupted."
-                )
-                if expected_schedule_id is not None
-                else (
-                    "HyadexServer accepted the forced restart; any active work "
-                    "will be interrupted while its user service relaunches."
-                )
+                "HyadexServer accepted the forced restart; any active work "
+                "will be interrupted while its user service relaunches."
             ),
             requested_at=now,
             completed_at=None,
@@ -70535,7 +68531,7 @@ async def _restart_server_endpoint_impl(
             request_fingerprint=request_fingerprint,
         )
 
-    async with SERVER_UPDATE_OPERATION_LOCK:
+    async with SERVER_LIFECYCLE_OPERATION_LOCK:
         restart_status = reconcile_stale_server_restart_acceptance()
         if str(restart_status.get("request_id") or "") == request_id:
             accepted_fingerprint = str(
@@ -70626,13 +68622,13 @@ async def _restart_server_endpoint_impl(
                     action="Reconnect or reinstall the supported HyadexServer user service.",
                 ),
             )
-        if managed_server_update_blocks_work():
+        if execution_maintenance_blocks_work():
             raise HTTPException(
                 status_code=409,
                 detail=server_restart_error_detail(
-                    "server_update_in_progress",
-                    "HyadexServer cannot restart while a managed update is in progress.",
-                    action="Wait for the update to finish, then retry.",
+                    "execution_maintenance_in_progress",
+                    "HyadexServer cannot restart while its execution worker is in maintenance.",
+                    action="Wait for worker maintenance to finish, then retry.",
                     retryable=True,
                 ),
             )
@@ -70660,13 +68656,13 @@ async def _restart_server_endpoint_impl(
                                 retryable=True,
                             ),
                         )
-                    if managed_server_update_blocks_work():
+                    if execution_maintenance_blocks_work():
                         raise HTTPException(
                             status_code=409,
                             detail=server_restart_error_detail(
-                                "server_update_in_progress",
-                                "HyadexServer cannot restart while a managed update is in progress.",
-                                action="Wait for the update to finish, then retry.",
+                                "execution_maintenance_in_progress",
+                                "HyadexServer cannot restart while its execution worker is in maintenance.",
+                                action="Wait for worker maintenance to finish, then retry.",
                                 retryable=True,
                             ),
                         )
@@ -70780,7 +68776,7 @@ async def _restart_server_endpoint_impl(
                                 blocker_snapshot=blocker_snapshot,
                             ),
                         )
-                    now = update_utc_now()
+                    now = utc_timestamp()
                     forced_work_snapshot = public_server_restart_work_counts(
                         blocker_snapshot
                     )
@@ -70791,7 +68787,6 @@ async def _restart_server_endpoint_impl(
                             _source_instance_id=SERVER_INSTANCE_ID,
                             _request_fingerprint=request_fingerprint,
                             _forced=forced,
-                            _update_schedule_id=None,
                             _forced_work_snapshot=(
                                 forced_work_snapshot if forced else None
                             ),
@@ -70812,1342 +68807,6 @@ async def _restart_server_endpoint_impl(
 
         background_tasks.add_task(signal_managed_server_restart, request_id)
         return public_server_restart_status(restart_status)
-
-
-async def server_update_status(
-    expected_server_identity: str | None = None,
-    expected_server_instance_id: str | None = None,
-) -> dict[str, Any]:
-    require_server_update_target(
-        expected_server_identity,
-        expected_server_instance_id,
-    )
-    if SERVER_UPDATE_OPERATION_LOCK.locked():
-        # Release checks may await slow network metadata while owning the
-        # operation lock. The atomically replaced durable receipt is safe to
-        # read without it; all reconciliation and mutations stay locked below.
-        return public_server_update_status(read_server_update_status())
-    async with bounded_lock(
-        SERVER_UPDATE_OPERATION_LOCK,
-        SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS,
-    ) as operation_lock_held:
-        require_server_update_target(
-            expected_server_identity,
-            expected_server_instance_id,
-        )
-        if not operation_lock_held:
-            return public_server_update_status(read_server_update_status())
-        status = read_server_update_status()
-        if managed_update_provider_quiesce_failed():
-            status = ensure_managed_update_provider_quiesce_failure_status(status)
-            return public_server_update_status(status)
-        phase = str(status.get("phase") or "")
-        if phase in SERVER_UPDATE_ACTIVE_PHASES:
-            updater_active = await asyncio.to_thread(server_update_is_active, status)
-            updater_stale = (
-                not updater_active
-                and server_update_status_age_seconds(status)
-                >= SERVER_UPDATE_START_GRACE_SECONDS
-            )
-            if updater_stale:
-                try:
-                    recovered = await resume_server_update_activation(status) if status.get("_activation_recovery") else None
-                    status = recovered if recovered is not None else await asyncio.to_thread(
-                        finalize_abandoned_server_update, status)
-                except Exception as exc:
-                    logger.error(
-                        "server update finalization failed error_type=%s",
-                        type(exc).__name__,
-                    )
-        # A detached runner can publish a terminal failure while this original
-        # server process remains alive. Reconcile that durable phase with the
-        # process-local terminal gate so clients need neither a restart nor a
-        # second update attempt before reconnecting.
-        public_status = public_server_update_status(status)
-        await TERMINAL_ATTACHMENTS.reopen_if_update_inactive(public_status)
-        if managed_server_force_update_is_pending(status):
-            await JOBS.resume_update_parked(
-                active_schedule_id=str(status.get("schedule_id") or "").strip(),
-            )
-        elif not managed_server_update_blocks_work(status):
-            await JOBS.resume_update_parked()
-        return public_status
-
-
-async def check_server_update(
-    body: ServerUpdateCheckRequest | None = None,
-) -> dict[str, Any]:
-    require_managed_updates_enabled()
-    async with SERVER_UPDATE_OPERATION_LOCK:
-        require_server_update_target(
-            body.expected_server_identity if body is not None else None,
-            body.expected_server_instance_id if body is not None else None,
-        )
-        if managed_server_restart_blocks_work():
-            raise HTTPException(
-                status_code=409,
-                detail="HyadexServer is restarting",
-            )
-        status = read_server_update_status()
-        if managed_update_provider_quiesce_failed():
-            status = ensure_managed_update_provider_quiesce_failure_status(status)
-            return public_server_update_status(status)
-        if managed_server_update_is_pending(status):
-            return public_server_update_status(status)
-        if str(status.get("phase") or "") in SERVER_UPDATE_ACTIVE_PHASES:
-            updater_active = await asyncio.to_thread(server_update_is_active, status)
-            if (
-                updater_active
-                or server_update_status_age_seconds(status)
-                < SERVER_UPDATE_START_GRACE_SECONDS
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail="a server update is already running",
-                )
-            try:
-                status = await asyncio.to_thread(
-                    finalize_abandoned_server_update,
-                    status,
-                )
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=503,
-                    detail="the previous server update could not be safely finalized",
-                ) from exc
-        track: Literal["stable", "beta"] = (
-            body.track
-            if body is not None and body.track is not None
-            else status["track"]
-        )
-        keep_failure = status.get("phase") == "failed" or bool(status.get("error_code"))
-        try:
-            manifest = await signed_release_manifest(track)
-        except HTTPException as exc:
-            if exc.status_code != 404:
-                raise
-            if keep_failure:
-                return public_server_update_status(write_server_update_status(
-                    track=track,
-                    latest_version=None,
-                    update_available=False,
-                    checked_at=update_utc_now(),
-                ))
-            return public_server_update_status(
-                write_fresh_server_update_status(
-                    phase="unavailable",
-                    track=track,
-                    update_available=False,
-                    message=str(exc.detail),
-                    checked_at=update_utc_now(),
-                )
-            )
-        latest = str(manifest["version"])
-        current_track = server_release_track(SERVER_VERSION)
-        channel_switch = track != current_track
-        update_available = server_release_transition_allowed(
-            latest,
-            SERVER_VERSION,
-            track,
-        )
-        if update_available and channel_switch:
-            message = (
-                f"Switch to {track} HyadexServer {latest}."
-            )
-        elif update_available:
-            message = f"HyadexServer {latest} is available."
-        else:
-            message = f"HyadexServer {SERVER_VERSION} is current on {track}."
-        if keep_failure:
-            # Refresh availability, not the outcome of the last attempt.
-            # The existing error stays visible until an explicit new start;
-            # that start archives its receipt before clearing per-run fields.
-            return public_server_update_status(write_server_update_status(
-                track=track,
-                current_track=current_track,
-                latest_version=latest,
-                update_available=update_available,
-                channel_switch=channel_switch,
-                checked_at=update_utc_now(),
-            ))
-        return public_server_update_status(
-            write_fresh_server_update_status(
-                phase="available" if update_available else "current",
-                track=track,
-                current_track=current_track,
-                latest_version=latest,
-                update_available=update_available,
-                channel_switch=channel_switch,
-                message=message,
-                checked_at=update_utc_now(),
-            )
-        )
-
-
-async def resume_server_update_activation(
-    status: dict[str, Any], *, explicit: bool = False,
-) -> dict[str, Any] | None:
-    """Re-arm only an existing admitted journal under the operation lock."""
-    if not status.get("_activation_recovery"):
-        return None
-    from update_recovery import recovery_context
-    root = Path(os.environ["HYADEX_SERVER_INSTALL_DIR"]).expanduser().resolve()
-    context = await asyncio.to_thread(recovery_context, root, status, server_identity=server_identity())
-    if context is None:
-        return None
-    from execution_recovery import resume_owner
-    native_owner = await asyncio.to_thread(resume_owner, root, context["transaction_id"])
-    if native_owner is not None:
-        # The independent native owner also operates while both application
-        # services are stopped. Joining it prevents a restarting worker from
-        # launching a competing tmux recovery over the same journal. Finish
-        # an interrupted registration before joining; a service file alone
-        # does not prove that a native recovery process can make progress.
-        return status
-    failed_recovery = status.get("error_code") in {
-        "server_update_recovery_failed", "server_update_recovery_launch_failed"}
-    if (await asyncio.to_thread(server_update_is_active, status)
-            or (not failed_recovery and status.get("phase") in SERVER_UPDATE_ACTIVE_PHASES
-                and server_update_status_age_seconds(status) < SERVER_UPDATE_START_GRACE_SECONDS)):
-        return status
-    if (status.get("phase") == "failed" or failed_recovery) and not explicit:
-        return status
-    await asyncio.to_thread(ensure_managed_update_tmux_isolated)
-    update_id = str(status["update_id"])
-    token_file = SERVER_UPDATE_STATUS_FILE.with_name(f".server-recovery-{update_id}-{uuid.uuid4().hex}.auth.json")
-    command = [sys.executable, str(SERVER_UPDATE_RUNNER), "--recover-only",
-        "--recovery-transaction", context["transaction_id"],
-        "--status-file", str(SERVER_UPDATE_STATUS_FILE), "--public-key", str(SERVER_UPDATE_PUBLIC_KEY),
-        "--port", str(SERVER_PORT), "--bind", SERVER_BIND_ADDRESS,
-        "--expected-version", context["release_version"], "--track", status["track"],
-        "--expected-server-identity", server_identity(), "--update-id", update_id,
-        "--auth-token-file", str(token_file)]
-    environment = {**server_update_runner_environment(), "HYADEX_SERVER_INSTALL_DIR": str(root)}
-    for name in ("HYADEX_SERVER_CONFIG_DIR", "HYADEX_STATE_DIR"):
-        if os.environ.get(name):
-            environment[name] = os.environ[name]
-    command = ["env", *(f"{name}={value}" for name, value in environment.items()), *command]
-    with server_update_status_lock(SERVER_UPDATE_STATUS_FILE):
-        current = read_server_update_status()
-        if current != status:
-            return current
-        atomic_update_json(token_file, {"token": AGENT_TOKEN})
-        status = _write_server_update_status_unlocked(phase="restarting", runner_pid=None,
-            heartbeat_at=update_utc_now(), error_code=None, error_action=None, retryable=None,
-            message="Resuming the interrupted server activation.")
-    shell = f"{shlex.quote(tmux_bin())} set-option -w remain-on-exit off >/dev/null 2>&1 && exec {shlex.join(command)}"
-    launch = asyncio.create_task(asyncio.to_thread(run_tmux, ["new-session", "-d", "-s",
-        f"hyadex_server_recovery_{update_id[:20]}_{uuid.uuid4().hex[:8]}", shell]))
-    try:
-        await asyncio.shield(launch)
-    except asyncio.CancelledError as cancellation:
-        await join_task_despite_caller_cancellation(launch)
-        raise cancellation
-    except Exception as exc:
-        token_file.unlink(missing_ok=True)
-        with server_update_status_lock(SERVER_UPDATE_STATUS_FILE):
-            current = read_server_update_status()
-            if current == status:
-                _write_server_update_status_unlocked(phase="installing", runner_pid=None,
-                    error_code="server_update_recovery_launch_failed", retryable=True,
-                    error_action="Retry recovery from the application update settings.",
-                    message="The server could not start activation recovery.", finished_at=update_utc_now())
-        raise HTTPException(503, "could not resume the interrupted server activation") from exc
-    return status
-
-
-async def prepare_scheduled_server_update(
-    status: dict[str, Any], *, requested: str, track: str,
-    npm_release: dict[str, str] | None,
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Join/resume one preparation without taking turn or mutation admission."""
-    from update_preparation import preparation_is_active, verify_prepared_status
-
-    maintenance = globals().get("EXECUTION_MAINTENANCE")
-    if maintenance is not None and maintenance.is_held():
-        raise HTTPException(409, "HyadexServer maintenance must finish before an update can be prepared")
-    root = Path(os.environ["HYADEX_SERVER_INSTALL_DIR"]).expanduser().resolve()
-    if status.get("phase") != SERVER_UPDATE_PENDING_PHASE or not status.get("preparation_id"):
-        status = write_fresh_server_update_status(
-            phase=SERVER_UPDATE_PENDING_PHASE, schedule_id=status.get("schedule_id") or uuid.uuid4().hex,
-            preparation_id=uuid.uuid4().hex, preparation_phase="checking", preparation_heartbeat_at=None,
-            target_version=requested, latest_version=requested, track=track,
-            current_track=server_release_track(SERVER_VERSION), when_idle=True, cancelable=True,
-            update_available=True, pending_at=status.get("pending_at") or update_utc_now(),
-            _npm_release=npm_release, message="Preparing the server update; agents can keep working.",
-        )
-    if status.get("preparation_phase") == "ready":
-        # Candidate hashing is potentially expensive. A busy worker needs only
-        # the durable ready receipt; validate all bytes once work has drained.
-        provider_snapshot = await prepare_provider_background_work_snapshot()
-        async with ACTIVE_LOCK:
-            async with QUEUE_LOCK:
-                async with UNSAFE_HTTP_MUTATION_ADMISSION_LOCK:
-                    blockers = server_update_blocker_counts(
-                        server_update_active_session_ids_locked(), update_blocking_queued_turn_count_locked(),
-                        provider_background_work_labels_from_snapshot(provider_snapshot), unsafe_http_mutation_count_locked(),
-                    )
-        if server_update_has_blockers(blockers):
-            return write_server_update_status(blocker_counts=blockers,
-                message=server_update_pending_message(requested, blockers)), None
-        try:
-            prepared = await asyncio.to_thread(verify_prepared_status, status, root=root, public_key=SERVER_UPDATE_PUBLIC_KEY)
-        except Exception:
-            failed = write_server_update_status(phase="failed", retryable=True,
-                error_code="server_update_preparation_invalid",
-                error_action="Retry the update to prepare a new verified candidate.",
-                message="Prepared server update validation failed; running agents were left untouched.",
-                finished_at=update_utc_now())
-            return failed, None
-        return status, prepared
-    preparation_id = str(status["preparation_id"])
-    active = await asyncio.to_thread(preparation_is_active, root, preparation_id)
-    timestamp = status.get("preparation_heartbeat_at")
-    recent = bool(timestamp and server_update_status_age_seconds({"updated_at": timestamp}) < SERVER_UPDATE_START_GRACE_SECONDS)
-    if active or recent:
-        return status, None
-    command = [sys.executable, str(SERVER_ROOT / "update_preparation.py"),
-        "--status-file", str(SERVER_UPDATE_STATUS_FILE), "--install-root", str(root),
-        "--public-key", str(SERVER_UPDATE_PUBLIC_KEY), "--preparation-id", preparation_id]
-    environment = {**server_update_runner_environment(), "HYADEX_SERVER_INSTALL_DIR": str(root)}
-    # The long-lived tmux environment may belong to another configured server.
-    for name in ("HYADEX_SERVER_CONFIG_DIR", "HYADEX_STATE_DIR"):
-        if os.environ.get(name):
-            environment[name] = os.environ[name]
-    command = ["env", *(f"{name}={value}" for name, value in environment.items()), *command]
-    status = write_server_update_status(preparation_heartbeat_at=update_utc_now())
-    shell = f"{shlex.quote(tmux_bin())} set-option -w remain-on-exit off >/dev/null 2>&1 && exec {shlex.join(command)}"
-    launch = asyncio.create_task(asyncio.to_thread(run_tmux,
-        ["new-session", "-d", "-s", f"hyadex_server_prepare_{preparation_id}", shell]))
-    try:
-        await asyncio.shield(launch)
-    except asyncio.CancelledError as cancellation:
-        await join_task_despite_caller_cancellation(launch)
-        raise cancellation
-    return status, None
-
-
-async def _start_server_update(
-    body: ServerUpdateRequest,
-    *,
-    expected_schedule_id: str | None = None,
-    npm_release: dict[str, str] | None = None,
-    ensure: bool = False,
-) -> dict[str, Any]:
-    require_managed_updates_enabled()
-    async with SERVER_UPDATE_OPERATION_LOCK:
-        require_server_update_target(
-            body.expected_server_identity,
-            body.expected_server_instance_id,
-        )
-        npm_manifest: dict[str, Any] | None = None
-        if npm_release is not None:
-            try:
-                npm_manifest = await asyncio.to_thread(
-                    verify_npm_release_envelope, npm_release, SERVER_UPDATE_PUBLIC_KEY,
-                    expected_version=body.version,
-                )
-            except Exception as exc:
-                raise HTTPException(400, server_update_error_detail(
-                    "server_update_descriptor_invalid", "The signed server release descriptor is invalid.",
-                    action="Download the application release again.", retryable=False,
-                )) from exc
-            body = ServerUpdateRequest(
-                version=npm_manifest["version"], track=npm_manifest["track"], when_idle=True,
-                expected_server_identity=body.expected_server_identity,
-                expected_server_instance_id=body.expected_server_instance_id,
-            )
-        if managed_server_restart_blocks_work():
-            raise HTTPException(
-                status_code=409,
-                detail="HyadexServer is restarting",
-            )
-        status = read_server_update_status()
-        if ensure:
-            if npm_manifest is None:
-                raise HTTPException(400, "a signed npm release descriptor is required")
-            if status.get("phase") == "failed" and status.get("error_code") == "server_update_handoff_release_failed":
-                from update_handoff import retry_failed_handoff
-                try:
-                    await asyncio.to_thread(retry_failed_handoff,
-                        Path(os.environ["HYADEX_SERVER_INSTALL_DIR"]).expanduser().resolve(),
-                        SERVER_UPDATE_STATUS_FILE, status)
-                except Exception as exc:
-                    raise HTTPException(503, server_update_error_detail(
-                        "server_update_handoff_release_failed",
-                        "The previous update's execution hold could not be released safely.",
-                        action="Retry after the previous update has settled.", retryable=True)) from exc
-                with server_update_status_lock(SERVER_UPDATE_STATUS_FILE):
-                    current = read_server_update_status()
-                    if current != status:
-                        return {**current, "reconciliation": "pending"}
-                    status = _write_server_update_status_unlocked(
-                        _execution_handoff=None, error_code=None, error_action=None, retryable=None,
-                        message="The previous update's execution hold was released.")
-            if status.get("_activation_recovery"):
-                recovered = await resume_server_update_activation(status, explicit=True)
-                if recovered is not None:
-                    return {**recovered, "reconciliation": "started"}
-            if version_key(SERVER_VERSION) >= version_key(npm_manifest["version"]):
-                if API_CONTRACT_VERSION != npm_manifest["api_contract_version"]:
-                    raise HTTPException(409, server_update_error_detail(
-                        "server_update_incompatible", "The installed server uses a different API contract.",
-                        action="Use a compatible application release.", retryable=False,
-                    ))
-                maintenance = globals().get("EXECUTION_MAINTENANCE")
-                if maintenance is not None:
-                    from execution_update_status import current_components
-                    try:
-                        components_current = await asyncio.to_thread(
-                            current_components,
-                            Path(os.environ["HYADEX_SERVER_INSTALL_DIR"]).expanduser().resolve(),
-                            target_version=npm_manifest["version"],
-                            expected_server_identity=server_identity(),
-                            expected_worker_instance=maintenance.worker_instance_id,
-                        )
-                    except Exception:
-                        components_current = False
-                    if not components_current:
-                        # A candidate worker can start before its paired gateway
-                        # or the outer installer transaction has finished.
-                        if ((status.get("phase") in SERVER_UPDATE_ACTIVE_PHASES
-                                or managed_server_update_is_pending(status))
-                                and status.get("track") == body.track
-                                and status.get("target_version") == npm_manifest["version"]):
-                            return {**status, "reconciliation": "pending" if managed_server_update_is_pending(status) else "started"}
-                        raise HTTPException(409, server_update_error_detail(
-                            "server_update_recovery_required",
-                            "The paired server update has not finished activating.",
-                            action="Reconnect to resume the existing update or retry its recovery.",
-                            retryable=True,
-                        ))
-                return {
-                    **status, "phase": "current", "reconciliation": "current",
-                    "update_available": False, "message": f"HyadexServer {SERVER_VERSION} satisfies this application release.",
-                }
-        if ensure:
-            if (status.get("phase") in SERVER_UPDATE_ACTIVE_PHASES
-                    or managed_server_update_is_pending(status)):
-                target = str(status.get("target_version") or "")
-                try:
-                    joins = status.get("track") == body.track and version_key(target) >= version_key(body.version or "")
-                except ValueError:
-                    joins = False
-                active = (managed_server_update_is_pending(status)
-                          or await asyncio.to_thread(server_update_is_active, status)
-                          or server_update_status_age_seconds(status) < SERVER_UPDATE_START_GRACE_SECONDS)
-                if active:
-                    if joins:
-                        return {**status, "reconciliation": "pending" if managed_server_update_is_pending(status) else "started"}
-                    raise HTTPException(409, server_update_error_detail(
-                        "server_update_pending", "Another server update must finish before this release can be reconciled.",
-                        action="Observe the existing update, then retry automatically.", retryable=True,
-                        schedule_id=status.get("schedule_id"), target_version=status.get("target_version"),
-                        update_id=status.get("update_id"), track=status.get("track"), phase=status.get("phase"),
-                    ))
-        if managed_update_provider_quiesce_failed():
-            ensure_managed_update_provider_quiesce_failure_status(status)
-            raise HTTPException(
-                status_code=503,
-                detail=managed_update_provider_quiesce_failure_detail(),
-            )
-        if str(status.get("phase") or "") in SERVER_UPDATE_ACTIVE_PHASES:
-            updater_active = await asyncio.to_thread(server_update_is_active, status)
-            if (
-                updater_active
-                or server_update_status_age_seconds(status)
-                < SERVER_UPDATE_START_GRACE_SECONDS
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail="a server update is already running",
-                )
-            try:
-                status = await asyncio.to_thread(
-                    finalize_abandoned_server_update,
-                    status,
-                )
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=503,
-                    detail="the previous server update could not be safely finalized",
-                ) from exc
-        pending_schedule_id = (
-            str(status.get("schedule_id") or "").strip()
-            if managed_server_update_is_pending(status)
-            else ""
-        )
-        pending_reservation = (
-            dict(status) if pending_schedule_id else None
-        )
-        if (
-            expected_schedule_id is not None
-            and pending_schedule_id != expected_schedule_id
-        ):
-            # A stale waiter lost its durable compare-and-swap ownership.
-            return status
-        if managed_update_provider_quiesce_in_progress():
-            if pending_schedule_id:
-                return status
-            raise HTTPException(
-                status_code=409,
-                detail=server_update_error_detail(
-                    "server_update_in_progress",
-                    "HyadexServer is still finishing the previous provider cleanup.",
-                    action="Wait briefly, then retry the managed update.",
-                    retryable=True,
-                ),
-            )
-        track: Literal["stable", "beta"] = body.track or status["track"]
-        requested = str(body.version or status.get("latest_version") or "").strip()
-        if not requested:
-            raise HTTPException(status_code=409, detail="check for a signed server update before installing")
-        if (npm_release is None and pending_schedule_id and status.get("_npm_release") is not None
-                and requested == status.get("target_version") and track == status.get("track")):
-            npm_release = status["_npm_release"]
-            try:
-                npm_manifest = verify_npm_release_envelope(
-                    npm_release, SERVER_UPDATE_PUBLIC_KEY, expected_version=requested,
-                )
-                if npm_manifest["track"] != track:
-                    raise ValueError("release channel changed")
-            except Exception as exc:
-                raise HTTPException(400, "the saved signed npm release descriptor is invalid") from exc
-        try:
-            version_key(requested)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="the requested server version is invalid") from exc
-        if server_release_track(requested) != track:
-            raise HTTPException(
-                status_code=400,
-                detail=f"the requested server version is not on the {track} track",
-            )
-        if pending_schedule_id:
-            pending_matches = (
-                requested == str(status.get("target_version") or "").strip()
-                and track == status.get("track")
-            )
-            if not pending_matches or (
-                expected_schedule_id is None and not body.when_idle
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail=server_update_error_detail(
-                        "server_update_pending",
-                        "A different update is already scheduled for when the server is idle.",
-                        action="Cancel the scheduled update before choosing another release.",
-                        retryable=True,
-                        schedule_id=pending_schedule_id,
-                        target_version=status.get("target_version"),
-                        track=status.get("track"),
-                    ),
-                )
-        if not server_release_transition_allowed(requested, SERVER_VERSION, track):
-            return write_fresh_server_update_status(
-                phase="current",
-                track=track,
-                latest_version=requested,
-                update_available=False,
-                message=(
-                    f"HyadexServer {SERVER_VERSION} is current; managed updates "
-                    "only move forward or switch from beta to the latest stable release."
-                ),
-                checked_at=update_utc_now(),
-            )
-        if (
-            npm_manifest is None
-            and track == "stable"
-            and server_release_track(SERVER_VERSION) == "beta"
-            and version_key(requested) < version_key(SERVER_VERSION)
-        ):
-            # Beta-to-stable is the only transition allowed to move backward
-            # in SemVer precedence. Resolve the signed channel again at the
-            # exact admission point so a caller or a recovered idle schedule
-            # cannot use that exception to select an arbitrary old release.
-            latest_manifest = await signed_release_manifest("stable", refresh=True)
-            latest_stable = str(latest_manifest.get("version") or "").strip()
-            if latest_stable != requested:
-                raise HTTPException(
-                    status_code=409,
-                    detail=server_update_error_detail(
-                        "server_update_target_superseded",
-                        (
-                            f"Stable HyadexServer {latest_stable} is now the latest "
-                            f"signed release; {requested} will not be installed."
-                        ),
-                        action=(
-                            "Refresh the server update status and retry the latest "
-                            "stable release."
-                        ),
-                        retryable=True,
-                        latest_version=latest_stable,
-                    ),
-                )
-        tmux = tmux_capability()
-        if not tmux["available"]:
-            raise HTTPException(status_code=503, detail=f"{tmux['message']} {tmux['action']}")
-        if not SERVER_UPDATE_RUNNER.is_file() or not SERVER_UPDATE_PUBLIC_KEY.is_file():
-            raise HTTPException(status_code=503, detail="this server installation predates managed updates; run the installer once")
-        # Check before closing admission or writing a durable drain phase. A
-        # detached updater in this service cgroup cannot survive install.sh's
-        # systemctl --user restart.
-        service_cgroup = await asyncio.to_thread(
-            ensure_managed_update_tmux_isolated
-        )
-        prepared_update: dict[str, Any] | None = None
-        if (body.when_idle and os.environ.get("HYADEX_SERVER_INSTALL_DIR")
-                and (SERVER_ROOT / "update_preparation.py").is_file()):
-            status, prepared_update = await prepare_scheduled_server_update(
-                status, requested=requested, track=track, npm_release=npm_release,
-            )
-            if prepared_update is None:
-                return status
-            pending_schedule_id = str(status["schedule_id"])
-            pending_reservation = dict(status)
-        provider_work_snapshot = (
-            await prepare_provider_background_work_snapshot()
-        )
-
-        update_id = ""
-        tmux_name = ""
-        command: list[str] = []
-        auth_token_file: Path | None = None
-        channel_switch = track != server_release_track(SERVER_VERSION)
-        execution_handoff: dict[str, Any] | None = None
-        # Close admission and establish the durable update phase while holding
-        # the same lock used to reserve turns.  This removes the race where a
-        # turn could start after an idle check but before the detached updater
-        # was launched.
-        async with ACTIVE_LOCK:
-            async with QUEUE_LOCK:
-                async with UNSAFE_HTTP_MUTATION_ADMISSION_LOCK:
-                    active_session_ids = (
-                        server_update_active_session_ids_locked()
-                    )
-                    # An idle update waits behind queued work too; persistence
-                    # across restart is not permission to jump ahead of it.
-                    queued_turn_count = (
-                        sum(len(queue) for queue in QUEUED_TURNS.values())
-                        + len(RUN_NOW_TURNS)
-                        if body.when_idle and not managed_server_force_update_is_pending(status)
-                        else update_blocking_queued_turn_count_locked()
-                    )
-                    mutation_count = unsafe_http_mutation_count_locked()
-                    duplicate_provider_labels = {
-                        *(f"active chat {session_id}" for session_id in BUSY_SESSIONS),
-                        *(
-                            f"Codex maintenance for {session_id}"
-                            for session_id in SERVER_MAINTENANCE_SESSIONS
-                        ),
-                    }
-                    provider_work_labels = [
-                        label
-                        for label in provider_background_work_labels_from_snapshot(
-                            provider_work_snapshot
-                        )
-                        if label not in duplicate_provider_labels
-                    ]
-                    blocker_counts = server_update_blocker_counts(
-                        active_session_ids,
-                        queued_turn_count,
-                        provider_work_labels,
-                        mutation_count,
-                    )
-                    maintenance = globals().get("EXECUTION_MAINTENANCE")
-                    if maintenance is not None:
-                        blocker_counts.update(
-                            session_deletions=len(DELETING_SESSIONS),
-                            goals_reconfiguration=int(CODEX_GOALS_RECONFIGURING),
-                            execution_maintenance=int(maintenance.is_held()),
-                        )
-                    if server_update_has_blockers(blocker_counts):
-                        if body.when_idle:
-                            schedule_id = (
-                                expected_schedule_id
-                                or pending_schedule_id
-                                or uuid.uuid4().hex
-                            )
-                            if (
-                                schedule_id == pending_schedule_id
-                                and status.get("blocker_counts")
-                                == blocker_counts
-                            ):
-                                return status
-                            pending_at = (
-                                status.get("pending_at")
-                                if schedule_id == pending_schedule_id
-                                else update_utc_now()
-                            )
-                            force_restart_armed = (
-                                schedule_id == pending_schedule_id
-                                and managed_server_force_update_is_pending(status)
-                            )
-                            pending_status = write_fresh_server_update_status(
-                                **{name: status.get(name) for name in (
-                                    "preparation_id", "preparation_phase", "preparation_heartbeat_at",
-                                    "preparation_runner_pid", "_prepared_update")},
-                                _npm_release=npm_release,
-                                schedule_id=schedule_id,
-                                phase=SERVER_UPDATE_PENDING_PHASE,
-                                track=track,
-                                current_track=server_release_track(SERVER_VERSION),
-                                channel_switch=channel_switch,
-                                target_version=requested,
-                                latest_version=requested,
-                                update_available=True,
-                                when_idle=True,
-                                cancelable=(not force_restart_armed),
-                                pending_at=pending_at,
-                                blocker_counts=blocker_counts,
-                                _force_restart_request_id=(
-                                    status.get("_force_restart_request_id")
-                                    if force_restart_armed
-                                    else None
-                                ),
-                                _force_restart_requested_at=(
-                                    status.get("_force_restart_requested_at")
-                                    if force_restart_armed
-                                    else None
-                                ),
-                                message=(
-                                    (
-                                        f"Force update to HyadexServer {requested} "
-                                        "is armed and waiting for restart cleanup."
-                                    )
-                                    if force_restart_armed
-                                    else server_update_pending_message(
-                                        requested,
-                                        blocker_counts,
-                                    )
-                                ),
-                                checked_at=status.get("checked_at"),
-                            )
-                            return pending_status
-                        raise HTTPException(
-                            status_code=409,
-                            detail=server_update_work_message(
-                                active_session_ids,
-                                queued_turn_count,
-                                provider_work_labels,
-                                mutation_count,
-                            ),
-                        )
-                    update_id = uuid.uuid4().hex
-                    tmux_name = server_update_tmux_name(update_id)
-                    command = [
-                        sys.executable,
-                        str(SERVER_UPDATE_RUNNER),
-                        "--status-file", str(SERVER_UPDATE_STATUS_FILE),
-                        "--public-key", str(SERVER_UPDATE_PUBLIC_KEY),
-                        "--port", str(SERVER_PORT),
-                        "--bind", SERVER_BIND_ADDRESS,
-                        "--expected-version", requested,
-                        "--current-version", SERVER_VERSION,
-                        "--track", track,
-                        "--update-id", update_id,
-                    ]
-                    if npm_release is not None:
-                        command.append("--npm-descriptor")
-                    if prepared_update is not None and prepared_update.get("receipt"):
-                        command.extend(["--prepared-receipt", prepared_update["receipt"],
-                                        "--prepared-receipt-sha256", status["_prepared_update"]["receipt_sha256"]])
-                    if service_cgroup is not None:
-                        command.extend(
-                            ["--expected-service-cgroup", service_cgroup]
-                        )
-                    if AGENT_TOKEN:
-                        auth_token_file = SERVER_UPDATE_STATUS_FILE.with_name(
-                            f".server-update-{update_id}.auth.json"
-                        )
-                        command.extend(
-                            ["--auth-token-file", str(auth_token_file)]
-                        )
-                    expected_server_identity = server_identity()
-                    command.extend(
-                        ["--expected-server-identity", expected_server_identity]
-                    )
-                    try:
-                        if maintenance is not None:
-                            operation_id = str(uuid.UUID(hex=update_id))
-                            acquired = maintenance.apply("acquire", operation_id, None, 120, blocker_counts)
-                            execution_handoff = {
-                                "schema": 1, "operation_id": operation_id,
-                                "worker_instance_id": maintenance.worker_instance_id,
-                                "lease_id": acquired["lease"]["lease_id"],
-                                "expected_server_identity": expected_server_identity,
-                            }
-                            maintenance.apply("seal", operation_id, execution_handoff["lease_id"], 120, blocker_counts)
-                            from update_preparation import preparation_directory
-                            handoff_dir = preparation_directory(
-                                Path(os.environ["HYADEX_SERVER_INSTALL_DIR"]).expanduser().resolve(),
-                                str(status.get("preparation_id") or update_id), create=True,
-                            )
-                            handoff_file = handoff_dir / f"handoff-{update_id}.json"
-                            atomic_update_json(handoff_file, execution_handoff)
-                            command.extend(["--execution-handoff-file", str(handoff_file)])
-                        status = write_fresh_server_update_status(
-                            **{name: status.get(name) for name in (
-                                "preparation_id", "preparation_phase", "preparation_heartbeat_at",
-                                "preparation_runner_pid", "_prepared_update")},
-                            _execution_handoff=execution_handoff,
-                            _npm_release=npm_release,
-                            schedule_id=(pending_schedule_id or None),
-                            update_id=update_id,
-                            phase="starting",
-                            track=track,
-                            current_track=server_release_track(SERVER_VERSION),
-                            channel_switch=channel_switch,
-                            target_version=requested,
-                            latest_version=requested,
-                            update_available=True,
-                            when_idle=bool(pending_schedule_id),
-                            cancelable=False,
-                            pending_at=(
-                                status.get("pending_at")
-                                if pending_schedule_id
-                                else None
-                            ),
-                            blocker_counts=server_update_blocker_counts(
-                                [],
-                                0,
-                                [],
-                                0,
-                            ),
-                            message=(
-                                f"Starting switch to {track} HyadexServer {requested}."
-                                if channel_switch
-                                else (
-                                    f"Starting detached update to HyadexServer "
-                                    f"{requested}."
-                                )
-                            ),
-                            started_at=update_utc_now(),
-                            finished_at=None,
-                        )
-                    except BaseException:
-                        try:
-                            pass
-                        finally:
-                            if execution_handoff is not None:
-                                maintenance.apply("release", execution_handoff["operation_id"],
-                                    execution_handoff["lease_id"], 120, {})
-                        raise
-
-        async def fail_runner_launch(exc: BaseException) -> None:
-            if auth_token_file is not None:
-                with suppress(FileNotFoundError):
-                    auth_token_file.unlink()
-            public_error = public_server_update_launch_error(exc)
-            logger.warning(
-                "detached server updater prelaunch failed error_type=%s error_code=%s",
-                type(exc).__name__,
-                public_error.get("error_code") or "unclassified",
-            )
-            fence_clear_failed = False
-            try:
-                pass
-            except Exception:
-                fence_clear_failed = True
-                logger.error("update admission restore failed after runner launch failure")
-            try:
-                if not fence_clear_failed:
-                    restored_pending = None
-                    if (
-                        public_error.get("retryable") is True
-                        and pending_reservation is not None
-                    ):
-                        restored_pending = (
-                            restore_pending_server_update_after_provider_quiesce_timeout(
-                                expected_update_id=update_id,
-                                reservation=pending_reservation,
-                                public_error=public_error,
-                            )
-                        )
-                    if restored_pending is not None:
-                        pass
-                    elif public_error.get("retryable") is True:
-                        write_fresh_server_update_status(
-                            phase="available",
-                            track=track,
-                            current_track=server_release_track(SERVER_VERSION),
-                            channel_switch=channel_switch,
-                            latest_version=requested,
-                            update_available=True,
-                            checked_at=status.get("checked_at"),
-                            **public_error,
-                        )
-                    else:
-                        write_server_update_status(
-                            phase="failed",
-                            message=public_error["message"],
-                            error_code=public_error["error_code"],
-                            error_action=public_error["error_action"],
-                            retryable=False,
-                            finished_at=update_utc_now(),
-                        )
-            finally:
-                pass
-            if not fence_clear_failed:
-                if execution_handoff is not None:
-                    # Provider stragglers retain their separate authoritative
-                    # fence until cleanup finishes; releasing this exact lease
-                    # cannot permit a replacement provider through that fence.
-                    maintenance.apply("release", execution_handoff["operation_id"],
-                        execution_handoff["lease_id"], 120, {})
-                await TERMINAL_ATTACHMENTS.reopen_admission()
-                # A failed detached launch reopened normal work admission.
-                # Resume durable queues now instead of leaving them parked
-                # until an unrelated retry timer or server restart.
-                schedule_rebuilt_queued_turns()
-
-        async def settle_failed_runner_launch(
-            exc: BaseException,
-        ) -> asyncio.CancelledError | None:
-            """Finish every failure side effect despite caller cancellation."""
-
-            cleanup_task = asyncio.create_task(fail_runner_launch(exc))
-            try:
-                await asyncio.shield(cleanup_task)
-                return None
-            except asyncio.CancelledError as cancellation:
-                await join_task_despite_caller_cancellation(cleanup_task)
-                return cancellation
-
-        # The durable drain is now authoritative. Retire only the known idle
-        # provider supervisors, then fail closed if any other process remains
-        # in the exact service cgroup. Shield teardown so cancellation cannot
-        # reopen admission while a stale supervisor is still being retired.
-        quiesce_task = asyncio.create_task(
-            quiesce_managed_update_service_cgroup(
-                service_cgroup=service_cgroup,
-            )
-        )
-        try:
-            await asyncio.shield(quiesce_task)
-        except asyncio.CancelledError as cancellation:
-            quiesce_error: BaseException | None = None
-            try:
-                await join_task_despite_caller_cancellation(quiesce_task)
-            except BaseException as exc:
-                quiesce_error = exc
-            await settle_failed_runner_launch(
-                quiesce_error
-                or RuntimeError("update request ended before detached launch")
-            )
-            raise cancellation
-        except HTTPException as exc:
-            cleanup_cancellation = await settle_failed_runner_launch(exc)
-            if cleanup_cancellation is not None:
-                raise cleanup_cancellation
-            raise
-        except Exception as exc:
-            cleanup_cancellation = await settle_failed_runner_launch(exc)
-            if cleanup_cancellation is not None:
-                raise cleanup_cancellation
-            raise HTTPException(
-                status_code=500,
-                detail="could not safely quiesce HyadexServer for update",
-            ) from exc
-
-        try:
-            runner_environment = server_update_runner_environment()
-            for name in ("HYADEX_SERVER_INSTALL_DIR", "HYADEX_SERVER_CONFIG_DIR", "HYADEX_STATE_DIR"):
-                if os.environ.get(name):
-                    runner_environment[name] = os.environ[name]
-            if runner_environment:
-                command = [
-                    "env",
-                    *(f"{key}={value}" for key, value in runner_environment.items()),
-                    *command,
-                ]
-            if auth_token_file is not None:
-                atomic_update_json(auth_token_file, {"token": AGENT_TOKEN})
-            runner_shell_command = (
-                f"{shlex.join([tmux_bin(), *TMUX_INSTANCE_ARGS])} set-option -w remain-on-exit off "
-                f">/dev/null 2>&1 && exec {shlex.join(command)}"
-            )
-            launch_task = asyncio.create_task(
-                asyncio.to_thread(
-                    run_tmux,
-                    ["new-session", "-d", "-s", tmux_name, runner_shell_command],
-                )
-            )
-            try:
-                await asyncio.shield(launch_task)
-            except asyncio.CancelledError as cancellation:
-                launch_error: BaseException | None = None
-                try:
-                    await join_task_despite_caller_cancellation(launch_task)
-                except BaseException as exc:
-                    launch_error = exc
-                if launch_error is not None:
-                    await settle_failed_runner_launch(launch_error)
-                raise cancellation
-        except Exception as exc:
-            cleanup_cancellation = await settle_failed_runner_launch(exc)
-            if cleanup_cancellation is not None:
-                raise cleanup_cancellation
-            raise HTTPException(status_code=500, detail="could not start detached updater") from exc
-        return status
-
-
-async def start_server_update(body: ServerUpdateRequest) -> dict[str, Any]:
-    return public_server_update_status(await _start_server_update(body))
-
-
-async def ensure_server_update(body: ServerUpdateEnsureRequest) -> dict[str, Any]:
-    status = await _start_server_update(
-        ServerUpdateRequest(
-            expected_server_identity=body.expected_server_identity,
-            expected_server_instance_id=body.expected_server_instance_id,
-            when_idle=True,
-        ),
-        npm_release={"manifest_base64": body.manifest_base64, "signature_base64": body.signature_base64},
-        ensure=True,
-    )
-    result = public_server_update_status(status)
-    result.setdefault("reconciliation", "pending" if managed_server_update_is_pending(status) else "started")
-    return result
-
-
-async def cancel_server_update(
-    body: ServerUpdateCancelRequest,
-) -> dict[str, Any]:
-    """Cancel exactly one durable idle reservation before launch begins."""
-
-    async with SERVER_UPDATE_OPERATION_LOCK:
-        require_server_update_target(
-            body.expected_server_identity,
-            body.expected_server_instance_id,
-        )
-        status = read_server_update_status()
-        if managed_update_provider_quiesce_failed():
-            ensure_managed_update_provider_quiesce_failure_status(status)
-            raise HTTPException(
-                status_code=503,
-                detail=managed_update_provider_quiesce_failure_detail(),
-            )
-        actual_schedule_id = str(status.get("schedule_id") or "").strip()
-        if actual_schedule_id != body.schedule_id:
-            raise HTTPException(
-                status_code=409,
-                detail=server_update_error_detail(
-                    "server_update_changed",
-                    "The scheduled server update changed before cancellation.",
-                    action="Refresh update status before trying again.",
-                    retryable=True,
-                    phase=status.get("phase"),
-                    schedule_id=(actual_schedule_id or None),
-                ),
-            )
-        if not managed_server_update_is_pending(status):
-            raise HTTPException(
-                status_code=409,
-                detail=server_update_error_detail(
-                    "server_update_not_cancelable",
-                    "The server update has already started and cannot be canceled.",
-                    action="Wait for the managed update to finish.",
-                    retryable=False,
-                    phase=status.get("phase"),
-                    schedule_id=actual_schedule_id,
-                    update_id=status.get("update_id"),
-                ),
-            )
-        if status.get("cancelable") is not True:
-            raise HTTPException(
-                status_code=409,
-                detail=server_update_error_detail(
-                    "server_update_not_cancelable",
-                    (
-                        "The force update was already accepted and can no "
-                        "longer be canceled."
-                    ),
-                    action="Wait for HyadexServer to reconnect and finish updating.",
-                    retryable=False,
-                    phase=status.get("phase"),
-                    schedule_id=actual_schedule_id,
-                ),
-            )
-        target = str(status.get("target_version") or "").strip()
-        track: Literal["stable", "beta"] = (
-            "beta" if status.get("track") == "beta" else "stable"
-        )
-        cancelled = write_fresh_server_update_status(
-            phase="available",
-            track=track,
-            current_track=server_release_track(SERVER_VERSION),
-            latest_version=(target or None),
-            update_available=bool(target),
-            channel_switch=(track != server_release_track(SERVER_VERSION)),
-            message=(
-                f"Scheduled update to HyadexServer {target} was canceled."
-                if target
-                else "The scheduled server update was canceled."
-            ),
-            checked_at=status.get("checked_at"),
-        )
-        public_status = public_server_update_status(cancelled)
-        await TERMINAL_ATTACHMENTS.reopen_if_update_inactive(public_status)
-        # The status transition and exact job rearm share the operation lock,
-        # so a concurrent scheduler park cannot land after cancellation.
-        await JOBS.resume_update_parked(actual_schedule_id)
-        # Messages accepted while the drain was pending are already durable.
-        # Wake their queues immediately when the user cancels instead of
-        # waiting for the periodic deferred-turn retry.
-        schedule_rebuilt_queued_turns()
-        return public_status
-
-
-@router.get("/api/admin/update")
-async def server_update_status_endpoint(
-    request: Request,
-    expected_server_identity: str | None = None,
-    expected_server_instance_id: str | None = None,
-) -> dict[str, Any]:
-    require_native_admin_control(request)
-    return await server_update_status(
-        expected_server_identity,
-        expected_server_instance_id,
-    )
-
-
-@router.post("/api/admin/update/check")
-async def check_server_update_endpoint(
-    request: Request,
-    body: ServerUpdateCheckRequest | None = None,
-) -> dict[str, Any]:
-    require_native_admin_control(request)
-    require_exact_server_update_target(
-        body.expected_server_identity if body is not None else None,
-        body.expected_server_instance_id if body is not None else None,
-    )
-    return await check_server_update(body)
-
-
-@router.post("/api/admin/update/start")
-async def start_server_update_endpoint(
-    body: ServerUpdateRequest,
-    request: Request,
-) -> dict[str, Any]:
-    require_native_admin_control(request)
-    require_exact_server_update_target(
-        body.expected_server_identity,
-        body.expected_server_instance_id,
-    )
-    return await start_server_update(body)
-
-
-@router.post("/api/admin/update/cancel")
-async def cancel_server_update_endpoint(
-    body: ServerUpdateCancelRequest,
-    request: Request,
-) -> dict[str, Any]:
-    require_native_admin_control(request)
-    return await cancel_server_update(body)
-
-
-@router.post("/api/admin/update/ensure")
-async def ensure_server_update_endpoint(body: ServerUpdateEnsureRequest, request: Request) -> dict[str, Any]:
-    require_native_admin_control(request)
-    require_exact_server_update_target(body.expected_server_identity, body.expected_server_instance_id)
-    return await ensure_server_update(body)
-
-
-async def advance_pending_server_update_once() -> dict[str, Any]:
-    """Advance the exact durable reservation if the server has become idle."""
-
-    async with SERVER_UPDATE_OPERATION_LOCK:
-        status = read_server_update_status()
-        if not managed_server_update_is_pending(status):
-            return status
-        schedule_id = str(status.get("schedule_id") or "").strip()
-        target = str(status.get("target_version") or "").strip()
-        track: Literal["stable", "beta"] = (
-            "beta" if status.get("track") == "beta" else "stable"
-        )
-        if not schedule_id or not target:
-            reconcile_task = asyncio.create_task(asyncio.to_thread(
-                reconcile_pending_server_update_after_startup,
-                status,
-            ))
-            try:
-                return await asyncio.shield(reconcile_task)
-            except asyncio.CancelledError as cancellation:
-                await join_task_despite_caller_cancellation(reconcile_task)
-                raise cancellation
-    return await _start_server_update(
-        ServerUpdateRequest(
-            version=target,
-            track=track,
-            when_idle=True,
-        ),
-        expected_schedule_id=schedule_id,
-    )
-
-
-def pending_server_update_exception_is_transient(exc: BaseException) -> bool:
-    """Return true only for a process transition that will resolve itself."""
-
-    if not isinstance(exc, HTTPException):
-        return False
-    detail = exc.detail
-    if isinstance(detail, dict):
-        code = str(detail.get("code") or "").strip()
-        if (
-            code == "provider_quiesce_timeout"
-            and detail.get("retryable") is True
-        ):
-            # The exact idle reservation was restored before admission
-            # reopened.  Keep its jobs parked and let the durable waiter retry
-            # after the bounded provider cleanup window.
-            return True
-        if exc.status_code != 409:
-            return False
-        return code in {
-            "server_restart_in_progress",
-            "server_update_in_progress",
-        }
-    if exc.status_code != 409:
-        return False
-    return str(detail or "").strip() in {
-        "HyadexServer is restarting",
-        "a server update is already running",
-    }
-
-
-def fail_pending_server_update(
-    schedule_id: str,
-    exc: BaseException,
-) -> dict[str, Any]:
-    """CAS one non-transient idle reservation into an actionable terminal row."""
-
-    public_error = public_server_update_launch_error(exc)
-    message = str(public_error.get("message") or "").strip()
-    error_code = str(public_error.get("error_code") or "").strip()
-    if not error_code:
-        error_code = (
-            f"server_update_pending_http_{exc.status_code}"
-            if isinstance(exc, HTTPException)
-            else "server_update_pending_advance_failed"
-        )
-    error_action = str(public_error.get("error_action") or "").strip() or (
-        "Resolve the reported host condition, then schedule the update again."
-    )
-    with server_update_status_lock(SERVER_UPDATE_STATUS_FILE):
-        current = read_server_update_status()
-        if (
-            not managed_server_update_is_pending(current)
-            or str(current.get("schedule_id") or "") != schedule_id
-        ):
-            return current
-        target = str(current.get("target_version") or "").strip()
-        track: Literal["stable", "beta"] = (
-            "beta" if current.get("track") == "beta" else "stable"
-        )
-        latest_target = target
-        latest_checked_at = current.get("checked_at")
-        detail = exc.detail if isinstance(exc, HTTPException) else None
-        if (
-            isinstance(detail, dict)
-            and detail.get("code") == "server_update_target_superseded"
-        ):
-            reported_latest = str(detail.get("latest_version") or "").strip()
-            try:
-                version_key(reported_latest)
-            except ValueError:
-                reported_latest_valid = False
-            else:
-                reported_latest_valid = (
-                    server_release_track(reported_latest) == track
-                )
-            if reported_latest_valid:
-                latest_target = reported_latest
-                latest_checked_at = update_utc_now()
-        terminal_phase = "available" if isinstance(exc, HTTPException) else "failed"
-        return _write_server_update_status_unlocked(
-            **{
-                **{
-                    name: None
-                    for name in (
-                        *SERVER_UPDATE_PER_RUN_STATUS_FIELDS,
-                        *SERVER_UPDATE_PRIVATE_PER_RUN_STATUS_FIELDS,
-                    )
-                },
-                "phase": terminal_phase,
-                "track": track,
-                "current_track": server_release_track(SERVER_VERSION),
-                "latest_version": latest_target or None,
-                "update_available": bool(latest_target),
-                "channel_switch": (
-                    track != server_release_track(SERVER_VERSION)
-                ),
-                "message": message or (
-                    "HyadexServer could not advance the scheduled update."
-                ),
-                "error_code": error_code[:128],
-                "error_action": error_action[:1000],
-                "retryable": True,
-                "checked_at": latest_checked_at,
-                "finished_at": (
-                    update_utc_now() if terminal_phase == "failed" else None
-                ),
-            }
-        )
-
-
-async def server_update_pending_waiter_loop() -> None:
-    """Continuously re-arm durable idle reservations across server restarts."""
-
-    while True:
-        schedule_id = ""
-        try:
-            pending_status = read_server_update_status()
-            if managed_server_update_is_pending(pending_status):
-                schedule_id = str(
-                    pending_status.get("schedule_id") or ""
-                ).strip()
-                await advance_pending_server_update_once()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            public_error = public_server_update_launch_error(exc)
-            diagnostic = " ".join(
-                str(public_error.get("message") or "").split()
-            )[:500]
-            if pending_server_update_exception_is_transient(exc):
-                logger.warning(
-                    "pending server update advance deferred error_type=%s "
-                    "status_code=%s detail=%s",
-                    type(exc).__name__,
-                    getattr(exc, "status_code", "-"),
-                    diagnostic or "transient server transition",
-                )
-            else:
-                async with SERVER_UPDATE_OPERATION_LOCK:
-                    terminal = await asyncio.to_thread(
-                        fail_pending_server_update,
-                        schedule_id,
-                        exc,
-                    )
-                    if not (
-                        managed_server_update_is_pending(terminal)
-                        and str(terminal.get("schedule_id") or "").strip()
-                        == schedule_id
-                    ):
-                        await JOBS.resume_update_parked(schedule_id)
-                        # A failed force-update preflight clears its execution
-                        # fence. Wake every durable row parked during startup
-                        # immediately instead of waiting for a retry timer.
-                        schedule_rebuilt_queued_turns()
-                logger.warning(
-                    "pending server update advance stopped phase=%s "
-                    "error_type=%s error_code=%s detail=%s",
-                    terminal.get("phase"),
-                    type(exc).__name__,
-                    terminal.get("error_code") or "unclassified",
-                    diagnostic or "updater preflight failed",
-                )
-        await asyncio.sleep(SERVER_UPDATE_PENDING_POLL_SECONDS)
 
 
 @router.get("/api/diagnostics/host")
@@ -73475,9 +70134,9 @@ async def reload_session_provider(session_id: str) -> dict[str, Any]:
         maintenance_reserved = False
         try:
             async with ACTIVE_LOCK:
-                update_blocker = managed_server_update_admission_blocker()
-                if update_blocker:
-                    raise HTTPException(status_code=503, detail=update_blocker)
+                lifecycle_blocker = server_lifecycle_admission_blocker()
+                if lifecycle_blocker:
+                    raise HTTPException(status_code=503, detail=lifecycle_blocker)
                 provider_starting = session_registry_has_live_tasks(
                     SESSION_TURN_TASKS,
                     session_id,
@@ -73719,9 +70378,9 @@ async def load_codex_runtime(session_id: str) -> dict[str, Any]:
                     status_code=409,
                     detail="wait for the active Codex turn to finish",
                 )
-            update_blocker = managed_server_update_admission_blocker()
-            if update_blocker:
-                raise HTTPException(status_code=503, detail=update_blocker)
+            lifecycle_blocker = server_lifecycle_admission_blocker()
+            if lifecycle_blocker:
+                raise HTTPException(status_code=503, detail=lifecycle_blocker)
 
         # A new chat has no persisted provider thread to resume.  Returning the
         # normal snapshot keeps the endpoint idempotent and, importantly, does
@@ -73748,9 +70407,9 @@ async def load_codex_runtime(session_id: str) -> dict[str, Any]:
                         status_code=409,
                         detail="wait for the active Codex turn to finish",
                     )
-                update_blocker = managed_server_update_admission_blocker()
-                if update_blocker:
-                    raise HTTPException(status_code=503, detail=update_blocker)
+                lifecycle_blocker = server_lifecycle_admission_blocker()
+                if lifecycle_blocker:
+                    raise HTTPException(status_code=503, detail=lifecycle_blocker)
                 SERVER_MAINTENANCE_SESSIONS.add(session_id)
                 maintenance_reserved = True
 
@@ -74371,9 +71030,9 @@ async def manage_claude_mcp(
                             retryable=True,
                         ),
                     )
-                update_blocker = managed_server_update_admission_blocker()
-                if update_blocker:
-                    raise HTTPException(status_code=503, detail=update_blocker)
+                lifecycle_blocker = server_lifecycle_admission_blocker()
+                if lifecycle_blocker:
+                    raise HTTPException(status_code=503, detail=lifecycle_blocker)
                 SERVER_MAINTENANCE_SESSIONS.add(session_id)
                 maintenance_reserved = True
 
@@ -74708,9 +71367,9 @@ async def _get_codex_permission_profiles_locked(
     maintenance_reserved = False
     try:
         async with ACTIVE_LOCK:
-            update_blocker = managed_server_update_admission_blocker()
-            if update_blocker:
-                raise HTTPException(status_code=503, detail=update_blocker)
+            lifecycle_blocker = server_lifecycle_admission_blocker()
+            if lifecycle_blocker:
+                raise HTTPException(status_code=503, detail=lifecycle_blocker)
             if (
                 session_id in BUSY_SESSIONS
                 or session_id in SERVER_MAINTENANCE_SESSIONS
@@ -76973,34 +73632,7 @@ async def post_turn(session_id: str, req: TurnRequest) -> Any:
 
 
 async def post_turn_without_receipt(session_id: str, req: TurnRequest) -> dict[str, Any]:
-    while True:
-        try:
-            return await start_turn(session_id, req)
-        except ManagedServerUpdatePendingError as exc:
-            # The pending fence may be cancelled between admission and this
-            # fallback. Revalidate chat lifecycle and the exact fence under the
-            # same lock used by archive/delete/start; a generic 503 must never
-            # be reinterpreted as permission to bypass normal admission.
-            async with session_lifecycle_lock(session_id):
-                ensure_session_not_deleting(session_id)
-                sess = STORE.sessions.get(session_id)
-                if not sess:
-                    raise HTTPException(
-                        status_code=404,
-                        detail="session not found",
-                    ) from exc
-                if sess.get("archived"):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="archived chats cannot start turns",
-                    ) from exc
-                if not managed_server_update_is_pending():
-                    # Cancellation reopened admission. Retry through the full
-                    # start path after releasing this lifecycle lock.
-                    continue
-                # Accept the user's message durably without materializing a
-                # new run. enqueue_turn owns scheduling once persistence wins.
-                return await enqueue_turn(session_id, req, sess)
+    return await start_turn(session_id, req)
 
 
 @router.get("/api/chats/search")
@@ -77516,7 +74148,7 @@ async def maybe_start_chat_mailbox_locked(session_id: str) -> bool:
             or session_id in SERVER_MAINTENANCE_SESSIONS or session_id in STEERING_SESSIONS
             or session_id in STOP_REQUESTS or stop_cleanup_in_progress(session_id)
             or QUEUED_TURNS.get(session_id) or RUN_NOW_TURNS.get(session_id)
-            or managed_server_update_admission_blocker() is not None):
+            or server_lifecycle_admission_blocker() is not None):
         return False
     async with STORE._lock:
         routes = [live for route in provider_cross_chat_routes(session)
@@ -79074,9 +75706,9 @@ async def stop_turn_endpoint(session_id: str) -> dict[str, Any]:
     # narrower EXPLICIT_STOP_OPERATIONS fence so unrelated route reads and
     # queue writes do not wait behind slow cleanup.
     async with session_lifecycle_lock(session_id):
-        update_blocker = managed_server_update_blocker()
-        if update_blocker:
-            raise HTTPException(status_code=503, detail=update_blocker)
+        lifecycle_blocker = server_lifecycle_admission_blocker()
+        if lifecycle_blocker:
+            raise HTTPException(status_code=503, detail=lifecycle_blocker)
         operation = EXPLICIT_STOP_OPERATIONS.get(session_id)
         if operation is None or operation.done():
             if detached_stop_in_progress(session_id):

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import agent_server as server
 
-REAL_AUTONOMOUS_ADMISSION = server.managed_server_update_scheduled_job_blocker
+REAL_AUTONOMOUS_ADMISSION = server.server_lifecycle_admission_blocker
 
 
 class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
@@ -40,7 +40,7 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(server.title_generation, 'generate_title', self.generator))
         self.enterContext(patch.object(server, 'runner_env', return_value={'PATH': '/synthetic'}))
         self.admission = self.enterContext(patch.object(
-            server, 'managed_server_update_scheduled_job_blocker', return_value=None))
+            server, 'server_lifecycle_admission_blocker', return_value=None))
         self.runtime_settings = self.enterContext(patch.object(
             server, 'codex_runtime_settings', return_value=('selected-model', 'medium', '')))
         self.append = self.enterContext(patch.object(server, 'append_event', new_callable=AsyncMock))
@@ -410,25 +410,19 @@ print(json.dumps({{'type': 'result', 'subtype': 'success', 'result': 'Song About
         return result.returncode == 0 and bool(result.stdout.strip()) and not result.stdout.strip().startswith('Z')
 
     @unittest.skipUnless(os.name == 'posix', 'owned process groups require POSIX')
-    async def test_actual_title_process_defers_update_and_restart_until_completion(self):
+    async def test_actual_title_process_blocks_restart_until_completion(self):
         root = self.real_title_process()
         for target, value in (
-            ('SERVER_VERSION', '1.0.0'), ('SERVER_UPDATE_STATUS_FILE', root / 'status.json'),
+            ('SERVER_VERSION', '1.0.0'),
             ('SERVER_RESTART_STATUS_FILE', root / 'restart.json'),
-            ('SERVER_UPDATE_RUNNER', Path(server.__file__).with_name('update_runner.py')),
-            ('SERVER_UPDATE_PUBLIC_KEY', Path(server.__file__).with_name('release-public-key.pem')),
             ('AGENT_TOKEN', ''),
             ('BUSY_SESSIONS', set()), ('SERVER_MAINTENANCE_SESSIONS', set()),
             ('QUEUED_TURNS', {}), ('RUN_NOW_TURNS', {}), ('CLAUDE_SDK_MANAGER', None),
             ('CODEX_APP_SERVER_MANAGER', None), ('CODEX_CUSTOM_APP_SERVER_MANAGERS', {}),
         ):
             self.enterContext(patch.object(server, target, value))
-        self.enterContext(patch.object(server, 'managed_server_update_scheduled_job_blocker', REAL_AUTONOMOUS_ADMISSION))
-        self.enterContext(patch.object(server, 'server_update_is_active', return_value=False))
+        self.enterContext(patch.object(server, 'server_lifecycle_admission_blocker', REAL_AUTONOMOUS_ADMISSION))
         self.enterContext(patch.object(server, 'working_tmux_bin', return_value='/synthetic/tmux'))
-        self.enterContext(patch.object(server, 'ensure_managed_update_tmux_isolated', return_value=None))
-        launcher = self.enterContext(patch.object(server, 'run_tmux'))
-        quiesce = self.enterContext(patch.object(server, 'quiesce_managed_update_service_cgroup', new_callable=AsyncMock))
         self.schedule()
         process = await self.await_process(root)
         title_task = self.tasks['title-chat']
@@ -439,12 +433,6 @@ print(json.dumps({{'type': 'result', 'subtype': 'success', 'result': 'Song About
         restart = server.server_restart_blocker_snapshot_locked(tmux_cgroup_state={})
         self.assertEqual(restart['provider_background_count'], 1)
         self.assertTrue(restart['has_forceable_blockers'])
-        pending = await server.start_server_update(server.ServerUpdateRequest(version='1.1.0', when_idle=True))
-        self.assertEqual(pending['phase'], 'pending')
-        self.assertEqual(pending['blocker_counts']['provider_background_tasks'], 1)
-        self.assertEqual(pending['blocker_counts']['active_runs'], 0)
-        launcher.assert_not_called()
-        quiesce.assert_not_awaited()
         self.assertFalse(title_task.done())
         (root / 'release').touch()
         await asyncio.wait_for(title_task, 5)
@@ -455,10 +443,6 @@ print(json.dumps({{'type': 'result', 'subtype': 'success', 'result': 'Song About
         self.assertFalse(self.process_running(process['pid']))
         self.assertFalse(self.process_running(process['child']))
         self.assertFalse(Path(process['home']).exists())
-        started = await server.advance_pending_server_update_once()
-        self.assertEqual(started['phase'], 'starting')
-        self.assertEqual(started['schedule_id'], pending['schedule_id'])
-        launcher.assert_called_once()
 
     @unittest.skipUnless(os.name == 'posix', 'owned process groups require POSIX')
     async def test_actual_title_shutdown_reaps_term_ignoring_process_group(self):

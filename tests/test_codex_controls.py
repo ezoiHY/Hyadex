@@ -1722,7 +1722,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                 unpin_thread,
             ), patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ):
                 runtime = await agent_server.load_codex_runtime("chat")
@@ -1763,7 +1763,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                 manager_factory,
             ), patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ):
                 runtime = await agent_server.load_codex_runtime("chat")
@@ -1782,7 +1782,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         try:
             with patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ):
                 with self.assertRaises(HTTPException) as raised:
@@ -1801,7 +1801,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch.object(
             agent_server,
-            "managed_server_update_blocker",
+            "server_lifecycle_admission_blocker",
             return_value="HyadexServer is preparing a managed update",
         ), patch.object(
             agent_server,
@@ -1859,7 +1859,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 agent_server,
-                "managed_server_update_blocker",
+                "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(

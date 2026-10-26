@@ -85,9 +85,7 @@ class SystemdRestartProof(unittest.TestCase):
 
     def fixture_source(self):
         names = {"process_cgroup_paths", "hyadex_server_systemd_cgroup_from_paths",
-                 "hyadex_server_systemd_cgroup", "cgroup_is_within", "linux_process_ids",
-                 "linux_process_still_exists", "systemd_worker_preserves_descendants",
-                 "managed_update_service_cgroup_state", "public_managed_update_service_cgroup_state"}
+                 "hyadex_server_systemd_cgroup", "cgroup_is_within"}
         source = (SOURCE / "agent_server.py").read_text()
         tree = ast.parse(source)
         definitions = [ast.get_source_segment(source, node) for node in tree.body
@@ -111,7 +109,7 @@ if not child_file.exists():
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     child_file.write_text(json.dumps(identity(child.pid)))
 record = {**identity(os.getpid()), 'child': json.loads(child_file.read_text()),
-          'proof': public_managed_update_service_cgroup_state()}
+          'service_cgroup': hyadex_server_systemd_cgroup(os.getpid())}
 with (state / 'boots.jsonl').open('a') as output:
     output.write(json.dumps(record) + '\\n')
 signal.signal(signal.SIGTERM, lambda *_args: sys.exit(0))
@@ -154,8 +152,7 @@ while True:
         services.start("worker")
         before = self.wait_for(lambda: self.boots(), "first worker")[0]
         self.child_alive(before["child"])
-        self.assertEqual(before["proof"], {
-            "safe": True, "unknown_descendant_count": 1, "inspection": "verified-preserved"})
+        self.assertTrue(before["service_cgroup"].endswith("/" + self.unit))
         policy = self.command("show", self.unit, "--no-pager",
                               "--property=LoadState,ActiveState,MainPID,KillMode,SendSIGKILL")
         self.assertIn("KillMode=process\n", policy)
@@ -180,7 +177,7 @@ while True:
         self.assertEqual(after_start["child"], before["child"])
         self.child_alive(before["child"])
         for record in (after_restart, after_start):
-            self.assertEqual(record["proof"], before["proof"])
+            self.assertEqual(record["service_cgroup"], before["service_cgroup"])
         print(json.dumps({"boundary": "real systemd, production unit/native adapter/cgroup proof, fixture worker",
                           "unit": self.unit, "before": before, "after_restart": after_restart,
                           "after_stop_start": after_start}, sort_keys=True))

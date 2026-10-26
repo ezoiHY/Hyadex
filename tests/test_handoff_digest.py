@@ -681,44 +681,6 @@ class DigestDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.status_code, 400)
         self.assertIn("immutable", str(raised.exception.detail))
 
-    async def test_update_fallback_revalidates_before_queuing_digest(self) -> None:
-        request = agent_server.TurnRequest(
-            prompt="digest",
-            purpose="handoff_digest_delivery",
-            digest_job_id="digest-1",
-            source_session_id="source-1",
-            target_session_id="target-1",
-            client_capabilities=(
-                agent_server.handoff_digest_target_client_capabilities(
-                    agent_server.STORE.sessions["target-1"]
-                )
-            ),
-        )
-
-        async def update_wins_before_fallback(*_args: object, **_kwargs: object) -> None:
-            agent_server.STORE.sessions["target-1"]["backend"] = (
-                "opencode"
-            )
-            raise agent_server.ManagedServerUpdatePendingError()
-
-        with patch.object(
-            agent_server,
-            "start_turn",
-            side_effect=update_wins_before_fallback,
-        ), patch.object(
-            agent_server,
-            "managed_server_update_is_pending",
-            return_value=True,
-        ), patch.object(
-            agent_server,
-            "enqueue_turn",
-            new_callable=AsyncMock,
-        ) as enqueue:
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                await agent_server.start_turn_durably("target-1", request)
-
-        self.assertEqual(raised.exception.status_code, 410)
-        enqueue.assert_not_awaited()
 
     async def test_logical_cursor_failure_never_delivers_digest(self) -> None:
         agent_server.HANDOFF_DIGEST_JOBS["digest-1"] = self.job()

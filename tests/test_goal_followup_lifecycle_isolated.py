@@ -170,7 +170,7 @@ class GoalFollowupLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "watch_manifest_artifacts": watch, "append_event": append_event,
             "append_durable_event": append_event, "append_durable_event_batch": append_batch,
             "await_native_steer_result": observe_wait,
-            "managed_server_update_admission_blocker": Mock(return_value=None),
+            "server_lifecycle_admission_blocker": Mock(return_value=None),
             "stop_cleanup_in_progress": Mock(return_value=False),
             "force_send_conflict_detail": Mock(side_effect=lambda *_args, **kwargs: kwargs),
             "queued_claude_runtime_matches_active": Mock(return_value=False),

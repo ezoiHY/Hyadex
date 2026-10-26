@@ -2,9 +2,5 @@
 
 import os
 
-# Hyadex ships with in-app updates disabled. The inherited update suites still
-# exercise that machinery, so they opt in here; tests of the default override it.
-os.environ.setdefault("HYADEX_MANAGED_UPDATES", "1")
-
-# Inherited provider suites cover every backend; Hyadex enables two by default.
+# Runtime fixtures use the two supported providers.
 os.environ.setdefault("HYADEX_ENABLED_BACKENDS", "claude,codex")

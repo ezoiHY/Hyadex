@@ -32,9 +32,9 @@ test('help works before dependency resolution; unknown and internal commands can
   assert.equal(f.calls.length, 0)
 })
 
-test('setup, install, signed update and recovery retain the core CLI without new service paths', async t => {
+test('setup, install and recovery retain the core CLI without new service paths', async t => {
   const f = fixture(t)
-  for (const command of ['setup', 'install', 'update', 'recover']) {
+  for (const command of ['setup', 'install', 'recover']) {
     assert.equal(await run([command, '--dry-run'], f.context), 7)
     assert.deepEqual(f.calls.at(-1), { core: [command === 'setup' ? 'install' : command, '--dry-run'] })
     assert.equal(f.output.at(-1), 'hyadex install')
@@ -71,7 +71,7 @@ test('existing setup/install refusal explains how to add an instance without ret
     })
     assert.equal(attempts, 1)
   }
-  for (const [command, code] of [['setup', undefined], ['update', 'HYADEX_EXISTING_INSTALLATION']]) {
+  for (const [command, code] of [['setup', undefined], ['recover', 'HYADEX_EXISTING_INSTALLATION']]) {
     const error = Object.assign(new Error('Original failure'), { code })
     f.context.load = () => ({ run: async () => { throw error } })
     await assert.rejects(run([command], f.context), actual => actual === error && actual.message === 'Original failure')
@@ -120,8 +120,8 @@ test('flat destructive controls preserve explicit selectors and never infer a bu
     assert.deepEqual(parse([action, '--all', '--exclude', 'default']).args, [native, '--all', '--exclude', 'default'])
   }
   assert.deepEqual(parse(['remove', 'work', '--purge-state']).args, ['remove', 'work', '--purge-state'])
-  assert.throws(() => parse(['servers', 'update', 'work']), /signed updates/)
-  assert.throws(() => parse(['servers', 'install', '--manifest', 'batch.json']), /signed updates/)
+  assert.throws(() => parse(['servers', 'update', 'work']), /Use list/)
+  assert.throws(() => parse(['servers', 'install', '--manifest', 'batch.json']), /Use list/)
 })
 
 test('logs preserves read-only native arguments and does not use the installer', async t => {
@@ -184,4 +184,10 @@ test('installed CLI refuses mismatched dependency or runtime payload before load
   fs.writeFileSync(path.join(f.root, 'core/package.json'), JSON.stringify(core))
   fs.writeFileSync(path.join(f.root, 'core/server/VERSION'), '1.2.4')
   assert.throws(() => loadRuntime(f.root, resolve), /payload versions differ/)
+})
+
+test('retired update is rejected before runtime loading or service delegation', async t => {
+  const f = fixture(t)
+  await assert.rejects(run(['update', '--server-url', 'http://127.0.0.1:1'], f.context), /Unknown command/)
+  assert.equal(f.calls.length, 0)
 })

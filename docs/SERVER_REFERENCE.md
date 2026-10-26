@@ -80,8 +80,8 @@ and personal machine paths outside tracked source.
   package-management environment. The installer never downloads and executes
   a mutable bootstrap script.
 - Claude CLI and/or Codex CLI installed and authenticated on the agent host.
-- Optional: `tmux`, for the persistent chat terminal, tmux-pane inspection,
-  and in-app managed updates. Everything else (chats, turns, jobs, files)
+- Optional: `tmux`, for the persistent chat terminal and tmux-pane inspection.
+  Everything else (chats, turns, jobs, files)
   works without it. `install.sh` offers to install it with Homebrew on macOS;
   elsewhere, install it yourself and rerun `install.sh` any time to enable
   these features.
@@ -101,10 +101,8 @@ and history files are retained; no replacement provider is selected.
 ### Optional: tmux
 
 tmux is not required to run HyadexServer, chat with agents, or use jobs,
-files, or search. It only backs three features: the persistent interactive
-chat terminal, live tmux-pane inspection, and in-app managed updates
-(Settings > Install or update HyadexServer in Hyadex), which needs tmux to
-survive the server restarting itself mid-update. `GET /api/health` reports
+files, or search. It backs the persistent interactive chat terminal and live
+tmux-pane inspection. `GET /api/health` reports
 `capabilities.tmux.available` so clients can grey those features out without
 tmux rather than failing.
 
@@ -128,18 +126,12 @@ builds are also distributed through TestFlight.
 
 ## Guided Setup
 
-The recommended first install is **Hyadex > Set up HyadexServer**. The
-direct desktop app downloads a pinned release archive, verifies its SHA-256,
-and runs the same idempotent installer locally or over an existing SSH key.
-The app shows live progress, a finite deadline, cancellation, and a persistent
-diagnostic log instead of leaving a setup spinner running indefinitely.
-
-For a manual fallback, clone the repository and run the installer as the user
-who will run Claude Code or Codex:
+The native clients are being rewritten. Install from the source checkout as
+the user who will run Claude Code or Codex:
 
 ```bash
 git clone https://github.com/ezoiHY/Hyadex.git
-cd HyadexServer
+cd Hyadex
 ./install.sh
 ```
 
@@ -177,23 +169,9 @@ chosen this way is called out at the end of the run and reflected in
 combine it with `--allow-port-fallback` to opt an explicit port into nearby
 selection, or use `--no-port-fallback` to disable selection explicitly.
 
-Hyadex desktop can run this same installer locally or over an existing SSH
-key connection from its first-run setup window. Remote clients should use the
-Tailscale URL printed by the installer.
-
-The same guided flow is available later from **Settings > Install or update
-HyadexServer**. Rerunning it is the supported app-managed update path: it
-replaces the server runtime and restarts the user service while preserving the
-access token, configuration roots, chat history, jobs, files, and terminals.
-Direct desktop builds can perform local/SSH setup; App Store-sandboxed builds
-can configure the server URL and token but cannot launch service installers.
-
-Once a versioned installation is present, Hyadex can also check and apply
-signed releases directly from Settings. The server downloads a release only
-from this repository's GitHub Releases page, verifies an Ed25519-signed
-manifest and the archive SHA-256, installs into a versioned directory, restarts
-the user service, and accepts the release only after authenticated health
-passes. The previous healthy release remains available for automatic rollback.
+Remote clients should use the Tailscale URL printed by the installer.
+For updates, pull the checkout and rerun `./install.sh`. The server no longer
+checks, downloads or schedules releases through its API.
 
 ### Supported communication
 
@@ -351,7 +329,7 @@ JSON body containing a UUID `request_id`, the exact
 Replaying the same request ID is idempotent; another pending or recently
 completed request is rejected.
 
-A cooperative restart is fail-closed while an active update, active turn,
+A cooperative restart is fail-closed while worker maintenance, an active turn,
 provisional queue write, provider background task, lifecycle operation, or
 HTTP mutation is in flight. Durable queued turns remain queued for recovery
 after relaunch. Unmanaged processes cannot use this control.
@@ -364,7 +342,7 @@ never refuses or waits on server state beyond authentication, the managed
 service proof, and the exact `expected_server_identity` /
 `expected_server_instance_id` pair:
 
-- Cooldowns, a pending or stale restart record, an active managed update,
+- Cooldowns, a pending or stale restart record, worker maintenance,
   safety-critical work (Codex maintenance, session deletions, in-flight HTTP
   mutations, goal reconfiguration) are
   overridden and recorded in `forced_audit` instead of rejected.
@@ -386,32 +364,8 @@ Forced restarts interrupt active agent turns and can leave provider children
 to be reaped by the relaunched server; use the cooperative restart when the
 server is healthy.
 
-### Schedule-bound force update
-
-`capabilities.server_updates` v11 lets a native client bind that audited force
-restart to one exact pending update. The existing restart POST body adds:
-
-```json
-{
-  "force": true,
-  "force_confirmed": true,
-  "expected_update_schedule_id": "0123456789abcdef0123456789abcdef"
-}
-```
-
-The remaining restart fields are still required. Unlike a generic emergency
-restart, this path must acquire the update-operation lock, confirm that the
-exact schedule is still pending, and durably make it noncancelable before the
-restart is accepted. A canceled, replaced, or already-started schedule returns
-`409 server_force_update_changed`; lock contention returns retryable
-`503 server_force_update_busy`. Neither refusal signals a restart. The `202`
-restart status includes the exact `update_schedule_id`.
-
-After relaunch, that reservation gets update admission before durable queue
-recovery can execute work. New user messages remain durably queueable, while
-other mutations and provider execution stay fenced until the updater starts or
-reports an actionable failure. Active turns are interrupted; already durable
-queued turns are preserved for the updated server.
+Requests containing the retired `expected_update_schedule_id` field are
+rejected. They cannot be reinterpreted as a generic emergency restart.
 
 ## Remote Access With Tailscale
 
@@ -446,13 +400,19 @@ If the browser can open `/api/health` but the app cannot connect, check:
 
 ## Updating HyadexServer
 
-Pull the newest version and rerun the installer. It updates the runtime and
-service while preserving the access token and all chat state:
+For an existing installation, finish or explicitly stop its active turns,
+then stop the selected service before rerunning the source installer. This
+intermediate installer requires a stopped worker now that in-app handoff is
+retired. Its token and chat state are preserved:
 
 ```bash
 git pull --ff-only
+./instances.sh stop default
 ./install.sh
 ```
+
+For a named instance, use its name in the stop command and
+`./install.sh --instance NAME`. Do not stop another instance as part of an update.
 
 On Linux, inspect the installed service with:
 
@@ -472,38 +432,29 @@ command is not in the published 1.0.10 / 1.0.11-beta.1 packages yet; use the
 platform commands above until a CLI release includes it. See
 [the log command guide](../npm/hyadex/README.md#read-service-logs).
 
-### Managed updates from Hyadex
+### Retired in-app updates
 
-Managed update endpoints use the same access token as the rest of the API.
-Release manifests and archives are also verified with the public Ed25519 key
-bundled by the installer, so the endpoint can install only an official signed
-HyadexServer release:
+The `/api/admin/update` routes, update capabilities and update status health
+fields have been removed. `HYADEX_MANAGED_UPDATES` no longer enables them.
+Old update receipts, logs and preparations remain on disk without being read or
+resumed by the server. An old pending or active update cannot block new work.
+At startup, jobs parked by older update reservations are made due again only
+when their saved revision and occurrence still match; later user edits keep
+their schedule. Normal restart and execution-worker maintenance remain guarded
+by active runs, provisional queue writes, provider work and HTTP mutations.
 
-```text
-GET  /api/admin/update
-POST /api/admin/update/check
-POST /api/admin/update/start
-```
+The existing installer and its activation helpers remain until the source
+installer replacement is complete. An interrupted activation is recovered by
+the installer recovery mode or its existing recovery owner; the server no longer
+launches update recovery on startup. A pending activation journal still holds
+worker admission closed until recovered. A stranded maintenance lease without
+such a journal can be cleared with an explicitly confirmed forced restart;
+cooperative restart continues to refuse it. No journal or lease should be
+manually deleted to bypass these checks.
 
-The update runs in a detached tmux session so restarting HyadexServer cannot
-terminate its own installer. Progress is written to
-`~/.hyadex/admin/server-update.json`, and installer output is kept in
-`server-update.log` beside it. Chat history, files, jobs, tokens, and tmux
-sessions remain under the persistent state/configuration roots and are never
-placed inside a release directory.
-
-`capabilities.server_updates` v11 retains v10's install-when-idle behavior: an
-ordinary pending reservation is passive and durable for human work. Chats,
-ordinary turns, durable message intake, Force Send, provider controls,
-terminal connections, settings changes, and manual restart remain available
-while the reservation is pending.
-Autonomous scheduled and loop job admissions are deferred losslessly so they
-cannot replenish the active set forever; they resume after the update or an
-explicit cancellation. The server begins maintenance only when one shared-lock
-snapshot proves existing work is actually idle; that same atomic transition
-closes new-work admission. A pending reservation survives a manual restart and
-is re-armed after startup. (Releases before 0.1.26-beta.31 parked every new
-turn behind the reservation; that global operator lockout remains gone.)
+The public API contract is now 29. Old update health fields and schedule-bound
+restart fields are absent; the remaining restart audit reports execution-worker
+maintenance. This retirement does not publish or install a new release.
 
 ## Uninstalling HyadexServer
 
@@ -716,7 +667,7 @@ generation string plus at most 100 exact-name-deduplicated, sorted, allowlisted
 server rows; `truncated` marks an incomplete list. POST requires that exact
 generation and supports `reconnect`, `reconnect_all`, `enable`, and `disable`.
 Both operations reject active/provider-starting turns, are lifecycle-serialized
-with managed-update admission, and have a bounded native-control timeout.
+with worker-maintenance and restart admission, and have a bounded native-control timeout.
 Responses never expose MCP commands, environment, headers, configuration URLs,
 raw provider errors, or tool metadata. Print transport and SDK-unavailable
 hosts return an explicit unavailable snapshot; older servers continue to
@@ -1333,11 +1284,8 @@ The server exposes JSON endpoints under `/api`.
 - `GET /api/sessions/{session_id}/tmux`
 - `GET /api/runtime/catalog`
 - `GET /api/runtime/usage?backend=codex&session_id=<chat>`
-- `GET /api/admin/update`
 - `GET /api/admin/codex/subagents`
 - `PUT /api/admin/codex/subagents`
-- `POST /api/admin/update/check`
-- `POST /api/admin/update/start`
 - `GET /ws/sessions/{session_id}`
 
 The event stream is append-only JSONL on disk and paged through the events API.

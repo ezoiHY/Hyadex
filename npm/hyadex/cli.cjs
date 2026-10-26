@@ -16,8 +16,6 @@ const HELP = `Usage: hyadex setup [--port PORT] [--bind IP] [--non-interactive] 
        hyadex pair [NAME] [--network auto|tailscale|lan|local] [--url URL] [--output FILE.png] [--link]
        hyadex status [NAME]
        hyadex logs [NAME] [--lines N] [--follow]
-       hyadex update --server-url URL --server-identity ID --server-instance-id ID
-         --token-file PATH --manifest PATH --signature PATH
        hyadex recover
        hyadex --version
 
@@ -27,7 +25,7 @@ token lists existing servers; use Up/Down and Enter to see its URLs, token and c
 pair displays a connection QR for mobile (default instance if NAME is omitted); qrcode is an alias.
 status shows each instance's status, addresses, installed version and port; add NAME for one instance. In a terminal, it offers a token picker afterward.
 logs shows recent local service logs (default instance when NAME is omitted); -n sets the line count and -f follows. Review logs before sharing.
-update uses the signed managed updater; npm installation alone never upgrades a running server.
+Use the source installer for existing servers; npm installation never upgrades a running server.
 start/stop/restart/remove also accept --all [--exclude NAME]; an omitted target never selects all.
 new --name NAME, token/status --instance NAME, and servers/instances ACTION remain supported.
 Install this command globally with npm install -g hyadex, or use npx hyadex.
@@ -50,7 +48,7 @@ function selector(args, fallback) {
 const INSTANCE_ACTIONS = ['list', 'info', 'new', 'start', 'stop', 'restart', 'remove', 'logs']
 function instanceRequest(action, args) {
   if (!INSTANCE_ACTIONS.includes(action)) {
-    throw new Error('Use list, info, new, start, stop, restart, remove, or logs. Use hyadex update for signed updates.')
+    throw new Error('Use list, info, new, start, stop, restart, remove, or logs.')
   }
   if (action === 'new' && args[0] && !args[0].startsWith('-')) {
     const name = selector([args[0]])
@@ -69,7 +67,7 @@ function parse(argv) {
     if (args.length) throw new Error('Unexpected arguments.')
     return { kind: ['--version', 'version'].includes(command) ? 'version' : 'help' }
   }
-  if (['setup', 'install', 'update', 'recover'].includes(command)) {
+  if (['setup', 'install', 'recover'].includes(command)) {
     return { kind: 'core', args: [command === 'setup' ? 'install' : command, ...args] }
   }
   if (command === 'token') {

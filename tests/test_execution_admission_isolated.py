@@ -17,8 +17,8 @@ from execution_maintenance import ExecutionMaintenance
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
 FUNCTIONS = {
-    "execution_maintenance_control", "managed_server_update_blocks_work",
-    "server_update_blocker_counts", "server_update_active_session_ids_locked",
+    "execution_maintenance_control", "execution_maintenance_blocks_work",
+    "server_lifecycle_blocker_counts", "server_lifecycle_active_session_ids_locked",
     "unsafe_http_mutation_count_locked", "live_unsafe_http_mutation_ids_locked",
     "official_server_release_tree",
 }
@@ -52,13 +52,10 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
             "DELETING_SESSIONS": set(), "CODEX_GOALS_RECONFIGURING": False,
             "UNSAFE_HTTP_MUTATION_TASKS": {},
             "explicit_stop_session_ids": lambda: set(),
-            "update_blocking_queued_turn_count_locked": lambda: 0,
+            "restart_blocking_queued_turn_count_locked": lambda: 0,
             "prepare_provider_background_work_snapshot": AsyncMock(return_value={}),
             "provider_background_work_labels_from_snapshot": lambda _: [],
             "managed_server_restart_blocks_work": lambda: False,
-            "managed_update_provider_quiesce_in_progress": lambda: False,
-            "read_server_update_status": lambda: {},
-            "SERVER_UPDATE_ACTIVE_PHASES": {"installing", "restarting"},
         }
         exec(CODE, self.ns)
 
@@ -82,7 +79,7 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
             await self.acquire()
         self.ns["UNSAFE_HTTP_MUTATION_TASKS"].clear()
         result = await self.acquire()
-        self.assertTrue(self.ns["managed_server_update_blocks_work"]())
+        self.assertTrue(self.ns["execution_maintenance_blocks_work"]())
         self.ns["provider_background_work_labels_from_snapshot"] = lambda _: ["active subagent"]
         with self.assertRaises(ExecutionControlError):
             await self.ns["execution_maintenance_control"](
@@ -93,16 +90,16 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
         result = await self.acquire()
         await self.ns["execution_maintenance_control"](
             "seal", self.operation, result["lease"]["lease_id"])
-        self.assertTrue(self.ns["managed_server_update_blocks_work"]())
+        self.assertTrue(self.ns["execution_maintenance_blocks_work"]())
         status = await self.ns["execution_maintenance_control"]()
         self.assertTrue(status["idle"])
         self.assertTrue(status["lease"]["sealed"])
         await self.ns["execution_maintenance_control"](
             "release", self.operation, result["lease"]["lease_id"])
-        self.assertFalse(self.ns["managed_server_update_blocks_work"]())
+        self.assertFalse(self.ns["execution_maintenance_blocks_work"]())
 
-    async def test_existing_managed_update_cannot_race_worker_retirement(self):
-        self.ns["read_server_update_status"] = lambda: {"phase": "installing"}
+    async def test_existing_restart_cannot_race_worker_retirement(self):
+        self.ns["managed_server_restart_blocks_work"] = lambda: True
         with self.assertRaises(ExecutionControlError):
             await self.acquire()
         self.assertFalse(self.manager.is_held())

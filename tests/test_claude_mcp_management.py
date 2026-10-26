@@ -135,7 +135,7 @@ class ClaudeMCPManagementTests(unittest.IsolatedAsyncioTestCase):
                 "claude_sdk_manager",
                 AsyncMock(return_value=manager),
             ),
-            patch.object(agent_server, "managed_server_update_blocker", return_value=None),
+            patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
         )
 
     async def call_with_patches(
@@ -569,7 +569,7 @@ class ClaudeMCPManagementTests(unittest.IsolatedAsyncioTestCase):
         capability = health["capabilities"]["claude_controls"]
         self.assertEqual(capability["version"], 3)
         self.assertTrue(capability["features"]["mcp_management"])
-        self.assertEqual(health["api_contract_version"], 28)
+        self.assertEqual(health["api_contract_version"], 29)
         local_import = health["capabilities"]["local_session_import_v1"]
         self.assertTrue(local_import["available"])
         self.assertEqual(local_import["version"], 1)
