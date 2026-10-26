@@ -1,151 +1,51 @@
-"""Manifest-only release regression: no server, installer, or packager execution."""
-from __future__ import annotations
-
-import ast
-import hashlib
+"""Exercise the shared runtime inventory through its actual read-only validators."""
 from pathlib import Path
-import re
-import shlex
 import tempfile
 import unittest
 
+from hyadex.inventory import FILES
+from hyadex.installation import validate_source
+from scripts.package_release import validate_release_files
 
 ROOT = Path(__file__).resolve().parents[1]
-EXECUTION_MODULES = {
-    "execution_control.py", "execution_install.py", "execution_maintenance.py",
-    "execution_manage.py", "execution_ownership.py", "execution_service.py", "execution_transport.py",
-}
-NEW_MODULES = {
-    "hyadex/providers/claude.py", "hyadex/providers/codex.py",
-    "hyadex/providers/__init__.py",
-    "hyadex/providers/runtime.py",
-    "hyadex/jobs/__init__.py",
-    "hyadex/jobs/schedules.py",
-    "hyadex/jobs/context.py",
-    "hyadex/store/cross_chat.py",
-    "hyadex/app.py", "hyadex/store/__init__.py",
-    "hyadex/__init__.py", "hyadex/groups.py", "hyadex/autopilot.py",
-    "hyadex/routes/__init__.py", "hyadex/routes/groups.py", "hyadex/routes/autopilot.py",
-    "local_session_ownership.py",
-    "workspace_git.py",
-    "codex_auth.py",
-    "codex_provider.py",
-    "provider_connections.py",
-    "side_questions.py", "codex_side_question.py", "claude_side_question.py",
-    "title_generation.py",
-    "server_instances.py",
-    "hyadex/store/mailbox.py",
-    "claude_background_reconciliation.py",
-    "claude_model_catalog.py",
-    "claude_goals.py",
-    "hyadex/store/transcripts.py", "claude_history_repair.py", "claude_history_provenance.py", "codex_history_repair.py",
-}
-
-
-def shell_array(source, name):
-    match = re.search(rf"(?ms)^{name}=\((.*?)\)", source)
-    if match is None:
-        raise AssertionError(f"Missing release array {name}")
-    return tuple(shlex.split(match[1]))
-
-
-def manifest_helpers():
-    source = ROOT / "scripts" / "package_release.py"
-    tree = ast.parse(source.read_text(), filename=str(source))
-    constants = {}
-    helpers = []
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id in {"FILES", "DIRECTORY_FILES"}:
-                    constants[target.id] = ast.literal_eval(node.value)
-        elif isinstance(node, ast.FunctionDef) and node.name in {"validate_release_files", "validate_release_directory"}:
-            helpers.append(node)
-    if set(constants) != {"FILES", "DIRECTORY_FILES"} or len(helpers) != 2:
-        raise AssertionError("Incomplete allowlisted release manifest helpers")
-    # Compile only read-only validators. Do not import the packaging module,
-    # execute main(), create an archive, or invoke any installer subprocess.
-    namespace = {"Path": Path, **constants}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=helpers, type_ignores=[])), str(source), "exec"), namespace)
-    return namespace
 
 
 class ReleaseFileManifestTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.manifest = manifest_helpers()
-        cls.installer = (ROOT / "install.sh").read_text()
-        cls.deployer = (ROOT / "deploy.sh").read_text()
+    def test_inventory_is_complete_and_unique(self):
+        self.assertEqual(len(FILES), len(set(FILES)))
+        self.assertTrue({'LICENSE', 'NOTICE', 'hyadex/inventory.py', 'hyadex/installation.py'} <= set(FILES))
+        runtime = {str(p.relative_to(ROOT)) for p in (ROOT / 'hyadex').rglob('*.py')}
+        self.assertTrue(runtime <= set(FILES), runtime - set(FILES))
+        validate_release_files(ROOT)
+        self.assertEqual(validate_source(ROOT), (ROOT / 'VERSION').read_text().strip())
 
-    def test_package_and_installer_require_the_same_complete_runtime(self):
-        package = self.manifest["FILES"]
-        self.assertEqual(shell_array(self.installer, "RELEASE_FILES"), package)
-        self.assertEqual(len(package), len(set(package)))
-        self.assertTrue(NEW_MODULES <= set(package))
-        self.assertTrue(EXECUTION_MODULES <= set(package))
-        self.manifest["validate_release_files"](ROOT)
-
-    def test_license_and_notice_are_required_for_packaging_installation_and_deployment(self):
-        legal_files = {"LICENSE", "NOTICE"}
-        self.assertTrue(legal_files <= set(self.manifest["FILES"]))
-        self.assertTrue(legal_files <= set(shell_array(self.installer, "RELEASE_FILES")))
-        deployed = {name.removeprefix("$SCRIPT_DIR/") for name in shell_array(self.deployer, "RUNTIME_FILES")}
-        self.assertTrue(legal_files <= deployed)
-        with tempfile.TemporaryDirectory(prefix="release-legal-manifest-") as temporary:
-            root = Path(temporary)
-            for name in self.manifest["FILES"]:
-                (root / name).parent.mkdir(parents=True, exist_ok=True)
-                (root / name).write_text("synthetic release member\n")
-            for name in sorted(legal_files):
-                selected = root / name
-                selected.unlink()
-                with self.subTest(name=name), self.assertRaisesRegex(SystemExit, name):
-                    self.manifest["validate_release_files"](root)
-                selected.write_text("synthetic release member\n")
-
-    def test_each_new_module_is_required_before_packaging(self):
-        with tempfile.TemporaryDirectory(prefix="release-manifest-") as temporary:
-            root = Path(temporary)
-            for name in self.manifest["FILES"]:
-                (root / name).parent.mkdir(parents=True, exist_ok=True)
-                (root / name).write_text("synthetic release member\n")
-            for name in sorted(NEW_MODULES | EXECUTION_MODULES):
-                selected = root / name
-                selected.unlink()
-                with self.subTest(name=name), self.assertRaisesRegex(SystemExit, re.escape(name)):
-                    self.manifest["validate_release_files"](root)
-                selected.write_text("synthetic release member\n")
-
-    def test_staged_and_direct_deploy_compile_lists_cover_new_modules(self):
-        runtime = {name.removeprefix("$SCRIPT_DIR/") for name in shell_array(self.deployer, "RUNTIME_FILES")}
-        self.assertTrue(NEW_MODULES | EXECUTION_MODULES <= runtime)
-        directory_guard = re.search(r"(?m)^for directory in ([^;\n]+); do$", self.installer)
-        self.assertIsNotNone(directory_guard)
-        guarded = set(shlex.split(directory_guard[1]))
-        required = {str(parent) for name in self.manifest["FILES"]
-                    for parent in Path(name).parents if str(parent) != "."}
-        self.assertTrue(required <= guarded, required - guarded)
-        for name in NEW_MODULES | EXECUTION_MODULES:
-            with self.subTest(name=name):
-                self.assertIn(f'"$STAGE_DIR/{name}"', self.installer)
-                self.assertIn(f"'$REMOTE_SERVER_DIR/{name}'", self.deployer)
-                module = name.removesuffix("/__init__.py").removesuffix(".py").replace("/", ".")
-                self.assertRegex(self.installer.split("PYTHONPATH=\"$STAGE_DIR\"")[-1],
-                                 rf"(?<![\w.]){re.escape(module)}(?=,|;|\s|$)")
-
-    def test_claude_native_catalog_is_import_smoked_before_activation(self):
-        module = "claude_model_catalog"
-        installer_smoke = self.installer.split('PYTHONPATH="$STAGE_DIR"')[-1]
-        deploy_smoke = self.deployer.split("PYTHONPATH='$REMOTE_SERVER_DIR'")[-1]
-        self.assertRegex(installer_smoke, rf"\bimport [^'\n;]*\b{module}\b")
-        self.assertRegex(deploy_smoke, rf"\bimport [^'\n;]*\b{module}\b")
-
-
-    def test_staging_does_not_execute_library_modules_after_chmod(self):
-        staging = self.installer.split('chmod 755 "$STAGE_DIR/agent_server.py"', 1)[1]
-        before_dependencies = staging.split('echo "[2/7]', 1)[0].split('\n', 1)[1]
-        self.assertNotRegex(before_dependencies, r'(?m)^\s*"\$STAGE_DIR/[^"\n]+\.py"(?:\s|$)')
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_missing_and_linked_members_reject_before_staging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in FILES:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('1.0.0\n' if name == 'VERSION' else 'fixture\n')
+            outside = root / 'outside'
+            outside.write_text('preserve\n')
+            for name in FILES:
+                path = root / name
+                original = path.read_bytes()
+                path.unlink()
+                with self.subTest(name=name):
+                    with self.assertRaises(SystemExit):
+                        validate_release_files(root)
+                    with self.assertRaises(ValueError):
+                        validate_source(root)
+                    path.symlink_to(outside)
+                    with self.assertRaises(SystemExit):
+                        validate_release_files(root)
+                    with self.assertRaises(ValueError):
+                        validate_source(root)
+                path.unlink()
+                path.write_bytes(original)
+            directory = root / 'hyadex'
+            directory.rename(root / 'saved-package')
+            directory.symlink_to(root / 'saved-package', target_is_directory=True)
+            with self.assertRaises(ValueError):
+                validate_source(root)

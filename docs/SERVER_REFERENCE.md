@@ -82,9 +82,7 @@ and personal machine paths outside tracked source.
 - Claude CLI and/or Codex CLI installed and authenticated on the agent host.
 - Optional: `tmux`, for the persistent chat terminal and tmux-pane inspection.
   Everything else (chats, turns, jobs, files)
-  works without it. `install.sh` offers to install it with Homebrew on macOS;
-  elsewhere, install it yourself and rerun `install.sh` any time to enable
-  these features.
+  works without it. Install it separately with your normal package manager.
 - Tailscale on the agent host and each client device if you want to use the
   server from another Mac, iPhone, or iPad.
 - Optional: a user-level `systemd` service on Linux.
@@ -135,43 +133,28 @@ cd Hyadex
 ./install.sh
 ```
 
-Before changing state, releases, configuration, or services, the installer
-checks for a working, preinstalled `uv` and the platform service command
-(`launchctl` on macOS or `systemctl` on Linux), and verifies that the current
-user's service domain responds. Missing tools or an unavailable user service
-session produce platform-specific guidance and stop the install. The preflight
-never invokes a package manager or `sudo` itself, with one opt-in exception:
-on macOS with Homebrew present and an interactive terminal, it offers to run
-`brew install tmux` if tmux is missing. Declining, running unattended
-(`--non-interactive` or no TTY, as with the SSH-driven app flow), or being on
-a host without Homebrew all just print the manual `tmux` install command and
-continue — tmux is optional, so its absence never blocks setup. See
-[Optional: tmux](#optional-tmux) below for what it enables.
+The source installer requires `uv`, Python 3.13 (selected by the shell entrypoint)
+and a usable launchd GUI domain or systemd user manager. It never installs system
+tools or uses `sudo`. Install `tmux` separately for persistent terminals.
 
-After that preflight, the installer uses the trusted `uv`, installs a user-level service,
-creates a private access token, verifies authenticated health, and preserves
-existing `~/.hyadex` chat state on every update. Network downloads retry
-with bounded timeouts, and the longer runtime/dependency stages print output
-and periodic heartbeats with hard deadlines. A failure leaves the active
-release unchanged and prints recovery guidance. An install lock prevents a
-cancelled or disconnected SSH attempt from racing a retry, and timeout cleanup
-terminates the complete dependency-worker process group. Existing
-`~/.zenithbot-agent` state is migrated automatically and left behind as a
-compatibility link. The installer does not use `sudo`.
+Both default and named instances use separate worker and gateway services.
+Existing services must be stopped before installation. A unique retained runtime
+is staged and import-checked before service/configuration publication. The native
+controller journals the environment, both service files, layout and current link,
+then verifies process-owned authenticated health. A failed candidate restores the
+previous files and service state. Dependencies have a bounded timeout and their
+owned process group is terminated on interruption. Chat data and the existing
+token are preserved; old runtime directories are retained.
 
-If the default port is already held by something other than the HyadexServer
-release being replaced, the installer detects that listener before restarting
-the user service, reports what it found (with `lsof`, when available), and
-selects one of up to 5 higher free ports. It never treats a newly started but
-unhealthy HyadexServer as a port conflict; that path still rolls back. A port
-chosen this way is called out at the end of the run and reflected in
-`HYADEX_SETUP_RESULT`. Passing `--port` pins an exact port by default;
-combine it with `--allow-port-fallback` to opt an explicit port into nearby
-selection, or use `--no-port-fallback` to disable selection explicitly.
+Ports are exact: `--port` never selects another port. `--bind` accepts a literal
+IP address. Retired Team Hub, signed preparation and automatic port-fallback flags
+are rejected. Old Zenith state directories are not migrated or followed.
+`--fresh-install-only` refuses an existing installation or saved chat data, but
+allows empty scaffolding from an earlier failed dependency stage.
 
-Remote clients should use the Tailscale URL printed by the installer.
-For updates, pull the checkout and rerun `./install.sh`. The server no longer
-checks, downloads or schedules releases through its API.
+Read the token with `./install.sh --show-token`, then connect to
+`http://<server-address>:7870` (or the selected port). For source updates, finish
+or stop active work, stop the selected instance and rerun its installer.
 
 ### Supported communication
 
@@ -401,9 +384,8 @@ If the browser can open `/api/health` but the app cannot connect, check:
 ## Updating HyadexServer
 
 For an existing installation, finish or explicitly stop its active turns,
-then stop the selected service before rerunning the source installer. This
-intermediate installer requires a stopped worker now that in-app handoff is
-retired. Its token and chat state are preserved:
+then stop the selected instance before rerunning the source installer. The
+instance command stops both worker and gateway. Its token and chat state are preserved:
 
 ```bash
 git pull --ff-only
@@ -421,13 +403,14 @@ systemctl --user status hyadex-server.service --no-pager -l
 journalctl --user -u hyadex-server.service -f
 ```
 
-On macOS, the installer creates the LaunchAgent
-`com.hyadex.server` and writes logs under
-`~/Library/Logs/HyadexServer/`.
+On macOS, default services are `com.hyadex.server` and `com.hyadex.gateway`;
+named services append `.NAME` to each label. On Linux, named units are
+`hyadex-server-NAME.service` and `hyadex-server-NAME-gateway.service`. Native
+stdout/stderr logs live under the selected state directory in `execution/logs/`.
 
 The source CLI also provides `hyadex logs [NAME]` (`default` when omitted),
 with `--lines N` and `--follow`. It selects the installed service layout,
-including both gateway and worker logs for split default installations. This
+including both gateway and worker logs for default and named installations. This
 command is not in the published 1.0.10 / 1.0.11-beta.1 packages yet; use the
 platform commands above until a CLI release includes it. See
 [the log command guide](../npm/hyadex/README.md#read-service-logs).
@@ -443,14 +426,16 @@ when their saved revision and occurrence still match; later user edits keep
 their schedule. Normal restart and execution-worker maintenance remain guarded
 by active runs, provisional queue writes, provider work and HTTP mutations.
 
-The existing installer and its activation helpers remain until the source
-installer replacement is complete. An interrupted activation is recovered by
-the installer recovery mode or its existing recovery owner; the server no longer
-launches update recovery on startup. A pending activation journal still holds
-worker admission closed until recovered. A stranded maintenance lease without
-such a journal can be cleared with an explicitly confirmed forced restart;
-cooperative restart continues to refuse it. No journal or lease should be
-manually deleted to bypass these checks.
+An interrupted source installation with an `.execution-transaction` journal can
+be recovered with `./install.sh --instance NAME --recover-only`. Recovery uses
+the recorded owned layout and restores the previous stopped services, or finishes
+an already committed installation. Do not delete journals or maintenance leases.
+
+Older live-migration journals, `.activation-transaction` and pending uninstall evidence must be recovered
+with the previous retained installer/uninstaller before using this source
+installer. They are never silently adopted, resumed or discarded. The old helper
+modules remain temporarily for their remaining recovery/uninstall dependencies;
+the server does not launch update recovery on startup.
 
 The public API contract is now 29. Old update health fields and schedule-bound
 restart fields are absent; the remaining restart audit reports execution-worker
@@ -477,37 +462,11 @@ path traversal, and overlapping install/configuration/state roots. Like
 terminal tmux sessions (named `hx_*`) are left running; list them with `tmux
 ls` and remove them yourself if you no longer need them.
 
-## Development Deployment Helper
+## Remote source installation
 
-New installations should use `install.sh`. For a managed installation,
-`deploy.sh` copies the complete server runtime into the active release,
-compiles it, restarts the configured user service, and checks local health on
-the remote host. It is intended for development, not end-user upgrades. It
-requires authenticated health with the same stable server identity before
-and after the restart.
-
-```bash
-./deploy.sh <ssh-host>
-```
-
-Optional variables:
-
-```bash
-HYADEX_REMOTE_APP_DIR='.local/share/hyadex-server/current' \
-HYADEX_SERVER_SERVICE='hyadex-server.service' \
-HYADEX_AGENT_TOKEN='replace-with-a-long-random-token' \
-./deploy.sh <ssh-host>
-```
-
-The deploy helper writes to:
-
-```text
-<remote-app-dir>/agent_server.py
-```
-
-Run `install.sh` before the first deploy so the versioned runtime, environment,
-token, and service are present. A reference Linux unit lives at
-`systemd/hyadex-server.service.example`.
+The direct `deploy.sh` helper has been removed. Check out the desired source on
+the target machine and use its local installer with the selected instance stopped.
+Changing this checkout does not publish or deploy anything automatically.
 
 ## Systemd Template
 

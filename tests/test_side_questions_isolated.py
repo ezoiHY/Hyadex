@@ -51,12 +51,10 @@ class ShutdownBudgetTests(unittest.TestCase):
                    for node in tree.body if isinstance(node, ast.Assign)
                    and isinstance(node.targets[0], ast.Name)
                    and node.targets[0].id in budget_names}
-        installer = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
-        attempts = int(re.search(r"^LAUNCHCTL_STOP_ATTEMPTS=(\d+)$", installer, re.M).group(1))
-        delay = float(re.search(r"^LAUNCHCTL_STOP_DELAY=([0-9.]+)$", installer, re.M).group(1))
         maximum = (budgets["MAX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS"]
                    + declared * budgets["SERVER_SHUTDOWN_PHASE_TIMEOUT_SECONDS"] + 5.0)
-        self.assertGreaterEqual(attempts * delay, maximum + 30.0)
+        from execution_manage import NativeServices
+        self.assertGreaterEqual(NativeServices.__init__.__kwdefaults__["timeout"], maximum + 30.0)
 
 
 class HistoryTests(unittest.TestCase):

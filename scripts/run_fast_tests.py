@@ -25,6 +25,7 @@ MODULES = (
     "tests.test_package_boundaries",
     "tests.test_transcript_reader",
     "tests.test_release_file_manifest_isolated",
+    "tests.test_source_install",
 )
 
 

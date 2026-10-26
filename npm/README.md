@@ -26,21 +26,12 @@ changing directories does not create a second service. Existing servers use the
 source installer after the selected service has been stopped. Multiple named
 services are not enabled by this package.
 
-## Recover a failed 1.0.4 migration
+## Recovery
 
-If the withdrawn 1.0.4 update left an existing server stuck, run this once as
-the server's user, on the computer hosting it:
-
-```sh
-npx @hyadex/server@1.0.5 recover
-```
-
-Check the recovered server before attempting a source reinstall. This
-command does not install or upgrade a server. It validates the exact unfinished
-default installation transaction and only repairs migrations that failed before
-service takeover, preserving the running server. It refuses later-phase,
-custom-root or unsafe recovery; it does not restart services. If no unfinished
-transaction exists, it makes no changes. Do not use `sudo`.
+The npm recovery command is retired. For a current source installation, use
+`./install.sh --recover-only` on the selected instance. Older activation journals
+require their retained previous installer; the new installer preserves and
+refuses them. See the source installation reference.
 
 ## Updating an existing server
 
@@ -48,7 +39,7 @@ The managed update command and its server API are removed. Neither
 `hyadex-server update` nor updating this npm package upgrades a running service.
 Use the source checkout's manual installation workflow, stopping the selected
 service first. See [the server reference](../docs/SERVER_REFERENCE.md#updating-hyadexserver).
-The source installer and recovery helpers remain until their replacement is complete.
+The source installer now owns manual installation and recovery.
 
 ## Packaging
 

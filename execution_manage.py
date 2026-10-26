@@ -25,6 +25,7 @@ import sys
 import time
 from typing import Any, Callable
 import urllib.parse
+import uuid
 
 import execution_install as files
 from execution_transport import _read_secret
@@ -130,7 +131,7 @@ class InstallationLock:
 
 class NativeServices:
     def __init__(self, layout: files.ExecutionLayout, *, run: Callable[..., Any] | None = None,
-                 timeout: float = 180.0) -> None:
+                 timeout: float = 185.0) -> None:
         self.layout = layout
         self.run = run or subprocess.run
         self.timeout = timeout
@@ -147,10 +148,10 @@ class NativeServices:
         return result
 
     def _unit(self, role: str) -> str:
-        return files.WORKER_UNIT if role == "worker" else files.GATEWAY_UNIT
+        return self.layout.service_unit(role)
 
     def _target(self, role: str) -> str:
-        label = files.WORKER_LABEL if role == "worker" else files.GATEWAY_LABEL
+        label = self.layout.service_label(role)
         return f"gui/{os.getuid()}/{label}"
 
     def _observe(self, role: str) -> dict[str, Any]:
@@ -252,6 +253,8 @@ class NativeServices:
 
     def restore(self, role: str, prior: dict[str, Any]) -> None:
         if prior["state"] == "absent":
+            if self.layout.platform == 'Linux':
+                self._command(['systemctl', '--user', 'disable', self._unit(role)], allow_failure=True)
             return
         if prior["state"] == "running":
             self.start(role)
@@ -426,6 +429,44 @@ class WorkerControl:
                 "maintenance_held": worker.get("maintenance_held")}
 
 
+def control_services(layout: files.ExecutionLayout, action: str) -> None:
+    """Explicit instance controls share installation ownership and idle sealing."""
+    if action not in {'start', 'stop', 'restart'}:
+        raise ValueError('unknown service action')
+    with InstallationLock(layout.install_root):
+        for name in (files.TRANSACTION_NAME, '.activation-transaction', '.execution-uninstall.json'):
+            path = layout.install_root / name
+            if path.exists() or path.is_symlink():
+                raise RuntimeError('installation recovery is pending; service controls cannot race it')
+        services = NativeServices(layout)
+        control = WorkerControl(services=services)
+        before = services.snapshot()
+        operation = str(uuid.uuid4())
+        held = False
+        try:
+            if action in {'stop', 'restart'}:
+                if before['worker']['state'] == 'running':
+                    held = True
+                    control.seal_for_stop(layout, operation, before['worker']['pid'])
+                    if services.snapshot()['worker'].get('pid') != before['worker']['pid']:
+                        raise RuntimeError('worker changed after sealing; no service was stopped')
+                services.stop('gateway')
+                services.stop('worker')
+            if action in {'start', 'restart'}:
+                states = services.snapshot()
+                for role in ('worker', 'gateway'):
+                    if states[role]['state'] != 'running':
+                        services.start(role)
+        finally:
+            if held:
+                worker = services.snapshot()['worker']
+                if worker.get('pid') == before['worker'].get('pid'):
+                    _record, status = control.status(layout)
+                    lease = status.get('lease')
+                    if isinstance(lease, dict) and lease.get('operation_id') == operation:
+                        control.release(layout, operation)
+
+
 class ActivationController:
     def __init__(self, layout: files.ExecutionLayout, *, services: NativeServices | None = None,
                  control: WorkerControl | None = None, health_timeout: float = 30.0) -> None:
@@ -466,15 +507,18 @@ class ActivationController:
         if expected is not None and receipt.get("server_identity") != expected:
             raise RuntimeError("authenticated server identity changed during activation recovery")
 
-    def apply(self, scope: str) -> dict[str, Any]:
+    def apply(self, scope: str, *, expected_server_identity: str | None = None) -> dict[str, Any]:
         """Caller must own InstallationLock (including recovery on exceptions)."""
         self.layout.validate()
         prior = self.services.snapshot()
-        expected_identity = None
+        expected_identity = expected_server_identity
         if prior["gateway"]["state"] == "running":
-            expected_identity = self.control.health(self.layout).get("server_identity")
-            if not isinstance(expected_identity, str) or not expected_identity:
+            actual_identity = self.control.health(self.layout).get("server_identity")
+            if not isinstance(actual_identity, str) or not actual_identity:
                 raise RuntimeError("current authenticated server identity is unavailable")
+            if expected_identity is not None and expected_identity != actual_identity:
+                raise RuntimeError("preserved and running server identities differ")
+            expected_identity = actual_identity
         if prior["worker"]["state"] == "running":
             # Refuse a direct legacy migration before staging anything. Its
             # existing normal-update handoff needs a separate verified bridge.
@@ -490,20 +534,20 @@ class ActivationController:
         changed_services = False
         try:
             files.prepare_runtime(self.layout)
-            if scope in {"migration", "worker"} and prior["worker"]["state"] == "running":
+            if scope in {"migration", "install", "worker"} and prior["worker"]["state"] == "running":
                 # Acquire + seal before ANY stop, including the public gateway.
                 self.control.seal_for_stop(self.layout, operation, prior["worker"]["pid"])
-            if scope in {"migration", "gateway"}:
+            if scope in {"migration", "install", "gateway"}:
                 changed_services = True
                 self.services.stop("gateway")
-            if scope in {"migration", "worker"}:
+            if scope in {"migration", "install", "worker"}:
                 changed_services = True
                 self._stop_worker(transaction)
             files.publish(self.layout.install_root)
             self.services.reload()
-            if scope in {"migration", "worker"}:
+            if scope in {"migration", "install", "worker"}:
                 self.services.start("worker")
-            if scope in {"migration", "gateway"}:
+            if scope in {"migration", "install", "gateway"}:
                 self.services.start("gateway")
             receipt = self._wait_receipt(self.layout)
             if scope != "gateway":
@@ -555,13 +599,13 @@ class ActivationController:
             files.finish(layout.install_root)
             return {"ok": True, "phase": "committed", "receipt": receipt}
         if transaction["phase"] != "rolled-back":
-            if scope in {"migration", "worker"}:
+            if scope in {"migration", "install", "worker"}:
                 self._stop_worker(transaction)
-            if scope in {"migration", "gateway"}:
+            if scope in {"migration", "install", "gateway"}:
                 self.services.stop("gateway")
             files.rollback(layout.install_root)
         self.services.reload()
-        affected = ("worker", "gateway") if scope == "migration" else (scope,)
+        affected = ("worker", "gateway") if scope in {"migration", "install"} else (scope,)
         for role in affected:
             # Recovery may be retried after the old service was already started.
             current = self.services.snapshot()[role]

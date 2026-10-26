@@ -14,9 +14,9 @@
   server through `scripts/dev_server.py` (an isolated named instance). Never
   restart, reconfigure or reuse the state of an installed server, including
   an AgentsDock server on the same machine, while testing.
-- New runtime modules must be listed in every release manifest:
-  `install.sh` (`RELEASE_FILES` and the staging list), `deploy.sh` and
-  `scripts/package_release.py`. The startup integration tests catch omissions.
+- New runtime modules must be listed in `hyadex/inventory.py`, shared by
+  source installation and packaging. Runtime inventory and startup integration
+  tests catch omissions.
 - Agent-visible prompts stay compact: group dispatches send only unseen
   messages, never re-send history, and never rewrite earlier context.
 - Do not publish releases, push tags, create repositories, make the

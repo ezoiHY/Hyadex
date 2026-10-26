@@ -62,8 +62,7 @@ class NpmReleasePackageTests(unittest.TestCase):
             self.assertEqual((ROOT / name).read_bytes(), (checkout / name).read_bytes())
 
     def test_published_payload_matches_actual_installer_required_inventory(self):
-        installer = (ROOT / "install.sh").read_text()
-        required = shlex.split(re.search(r"^RELEASE_FILES=\((.*?)\)", installer, re.M | re.S)[1])
+        from hyadex.inventory import FILES as required
         self.assertEqual(set(package.runtime_files()), set(required))
 
     def test_exact_payload_no_tests_secrets_or_lifecycle_scripts(self):
@@ -142,7 +141,7 @@ class NpmReleasePackageTests(unittest.TestCase):
         # Copy real execution sources so this checks actual runtime bytes in
         # both layouts, including modules whose entry points run with python -m.
         self.assertTrue(EXECUTION_MODULES <= set(package.runtime_files()))
-        runtime_modules = EXECUTION_MODULES | {"claude_model_catalog.py"}
+        runtime_modules = EXECUTION_MODULES | {"claude_model_catalog.py", "hyadex/__init__.py", "hyadex/inventory.py"}
         self.assertTrue(runtime_modules <= set(package.runtime_files()))
         for name in runtime_modules:
             shutil.copyfile(ROOT / name, self.root / name)

@@ -417,6 +417,13 @@ class InstanceTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[0].args[0], ["launchctl", "bootout", f"gui/{os.getuid()}/com.hyadex.server.work"])
         self.assertEqual(run.call_args_list[1].args[0][-1], str(self.work.service_file("darwin")))
 
+    def test_mac_stop_waits_for_old_process_before_source_installation(self):
+        self.configured(self.work, platform="darwin")
+        with patch.object(instances, 'service_status', side_effect=['running', 'running', 'loaded', 'stopped']) as status, patch.object(instances, 'run') as run, patch.object(instances.time, 'sleep'):
+            instances.control(self.work, 'stop', 'darwin')
+        self.assertEqual(status.call_count, 4)
+        run.assert_called_once_with(['launchctl', 'bootout', f'gui/{os.getuid()}/com.hyadex.server.work'])
+
     def test_auto_port_skips_registered_and_occupied_ports(self):
         self.configured(self.default, 7870)
         self.configured(self.work, 7851)
@@ -931,7 +938,8 @@ class InstanceTests(unittest.TestCase):
         with patch.dict(os.environ, {"HYADEX_SERVER_INSTANCE": "work"}):
             with self.assertRaisesRegex(RuntimeError, "does not support named instances"):
                 update_runner.instance_installer_arguments(release)
-            self.assertEqual(update_runner.instance_installer_arguments(ROOT), ["--instance", "work"])
+            with self.assertRaisesRegex(RuntimeError, "does not support named instances"):
+                update_runner.instance_installer_arguments(ROOT)
         with patch.dict(os.environ, {"HYADEX_SERVER_INSTANCE": "default"}):
             self.assertEqual(update_runner.instance_installer_arguments(release), [])
 
@@ -1037,12 +1045,12 @@ class InstanceTests(unittest.TestCase):
         env.update(extra_env or {})
         command = ["/bin/bash", str(ROOT / "uninstall.sh"), "--instance", "work", "--yes"]
         if terminal:
-            from tests.test_installer_token_output import TokenOutputTests
+            from tests.terminal_fixture import TerminalFixture
             prompt_answers = None
             if release_answer is not None:
                 command = command[:-1]  # Interactive removal, no --yes.
                 prompt_answers = [(b"Type 'uninstall work' to confirm:", "uninstall work\n"), (b"Do you want to release this name as well? [y/N]", release_answer + "\n")]
-            output = TokenOutputTests().run_terminal("exec " + shlex.join(command), environment=env, prompt_answers=prompt_answers)
+            output = TerminalFixture().run_terminal("exec " + shlex.join(command), environment=env, prompt_answers=prompt_answers)
         elif release_answer is not None:
             child_output = []
             answers = []
@@ -1123,140 +1131,11 @@ class InstanceTests(unittest.TestCase):
         self.assertIn("Not confirmed", result.stderr)
         self.assertEqual(self.snapshot(self.default), before)
 
-    def test_installer_renders_named_service_without_touching_default(self):
-        source = (ROOT / "install.sh").read_text()
-        body = source[source.index("write_service_files() {"):source.index("HEALTH_CHECK_HEARTBEAT_ATTEMPTS=")]
-        self.configured(self.default, 7870, "darwin")
-        before = self.snapshot(self.default)
-        for platform in ("Darwin", "Linux"):
-            with self.subTest(platform=platform):
-                service = self.work.service_file("darwin" if platform == "Darwin" else "linux")
-                script = "set -eu\n" + self.work.shell_bindings() + "\n" + "\n".join(f"{key}={shlex.quote(value)}" for key, value in {
-                    "HOME": str(self.home), "OS_NAME": platform, "INSTANCE_NAME": "work", "CURRENT_LINK": str(self.work.runtime / "current"), "ENV_FILE": str(self.work.config / "env"), "PORT": "7851", "BIND_ADDRESS": "127.0.0.1", "TOKEN": "synthetic-token", "SERVER_NAME": "", "SERVER_PATH": "/usr/bin:/bin", "TEAM_HUB_MODE": "disabled", "TEAM_HUB_TRANSPORT": "loopback", "TEAM_HUB_URL": "", "TEAM_HUB_DIRECT_IP_URL": "", "ACTIVATION_TRANSACTION_ID": "test", "SERVICE_OUTPUT": str(service)}.items())
-                script += '\nreplace_activation_config() { cp "$2" "$SERVICE_OUTPUT"; }\n' + body + "\nwrite_service_files\n"
-                result = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, timeout=15)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                contents = service.read_text()
-                self.assertIn(str(self.work.config), contents)
-                if platform == "Darwin":
-                    doc = plistlib.loads(service.read_bytes())
-                    self.assertEqual(doc["Label"], "com.hyadex.server.work")
-                    self.assertEqual(doc["EnvironmentVariables"]["HYADEX_SERVER_INSTANCE"], "work")
-                    self.assertEqual(doc["StandardOutPath"], str(self.work.logs / "server.log"))
-        self.assertEqual(self.snapshot(self.default), before)
 
-    def test_named_linux_activation_and_rollback_never_manage_legacy_service(self):
-        source = (ROOT / "install.sh").read_text()
-        restart = source[source.index("restart_service() {"):source.index("restore_previous_release_transaction() {")]
-        restore = source[source.index("restore_prior_service_state() {"):source.index("restore_team_hub_snapshot() {")]
-        script = '''set -eu
-OS_NAME=Linux
-INSTANCE_NAME=work
-SERVICE_NAME=hyadex-server-work
-LEGACY_SERVICE_NAME=zenithbot-agent
-LEGACY_SERVICE_FILE=/synthetic/legacy.service
-SYSTEMD_SERVICE_FILE=/synthetic/hyadex-server-work.service
-PRIOR_SERVICE_ENABLED=true
-PRIOR_SERVICE_STATE=running
-PRIOR_LEGACY_SERVICE_ENABLED=true
-PRIOR_LEGACY_SERVICE_STATE=running
-MANAGED_UPDATE_ID=
-systemctl() { printf '%s\\n' "$*"; }
-''' + restart + restore + "\nrestart_service\nrestore_prior_service_state\n"
-        result = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, timeout=15)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("hyadex-server-work.service", result.stdout)
-        self.assertNotIn("zenithbot-agent", result.stdout)
-        self.assertNotIn(" hyadex-server.service", result.stdout)
 
-    def test_explicit_named_split_install_is_rejected_before_mutation(self):
-        self.configured(self.default, 7870)
-        before = self.snapshot(self.default)
-        env = {**instances.clean_environment(self.work), "HOME": str(self.home),
-               "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin"}
-        result = subprocess.run([
-            "/bin/bash", str(ROOT / "install.sh"), "--instance", "work",
-            "--port", "17851", "--execution-mode", "split", "--non-interactive",
-        ], env=env, capture_output=True, text=True, timeout=10)
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("require --execution-mode legacy", result.stderr)
-        self.assertEqual(self.snapshot(self.default), before)
-        self.assertFalse(self.work.runtime.exists())
-        self.assertFalse(self.work.config.exists())
-        self.assertFalse(self.work.state.exists())
 
-    def test_complete_named_installer_with_fake_services_preserves_default(self):
-        self.check_complete_named_install()
 
-    def test_complete_release_and_fresh_install_with_fake_services_preserves_default(self):
-        self.check_complete_named_install(release=True)
 
-    def check_complete_named_install(self, *, release=False):
-        # Reuse the established installer's fake dependency/health layer. All
-        # service commands are stubbed; no uv downloads or OS jobs are started.
-        from tests.test_installer import InstallerContractTests
-        fixture = InstallerContractTests()
-        fake_bin = self.home / "bin"
-        fake_bin.mkdir()
-        (fake_bin / "python3").symlink_to(sys.executable)
-        fixture.write_executable(fake_bin / "uname", '#!/bin/sh\nif [ "${1:-}" = -m ]; then echo arm64; else echo Darwin; fi\n')
-        fixture.write_executable(fake_bin / "tmux", "#!/bin/sh\nexit 0\n")
-        fixture.write_exact_health_uv(fake_bin)
-        fixture.write_json_health_curl(fake_bin)
-        loaded = self.home / "loaded"
-        calls = self.home / "calls"
-        fixture.write_executable(fake_bin / "launchctl", '''#!/bin/sh
-printf '%s\\n' "$*" >> "$FAKE_EVENT_LOG"
-case "$1" in
-  print-disabled) echo '{}'; exit 0 ;;
-  print)
-    if [ "$2" = "gui/$(id -u)" ]; then exit 0; fi
-    if [ -f "$FAKE_LOADED" ]; then echo 'pid = 4242;'; exit 0; fi
-    echo 'Could not find service' >&2; exit 3 ;;
-  bootstrap) touch "$FAKE_LOADED"; exit 0 ;;
-  bootout) rm -f "$FAKE_LOADED"; exit 0 ;;
-  enable|disable) exit 0 ;;
-esac
-exit 2
-''')
-        self.configured(self.default, 7870, "darwin")
-        before = self.snapshot(self.default)
-        default_service = self.default.service_file("darwin").read_bytes()
-        env = {**instances.clean_environment(self.work), "HOME": str(self.home),
-               "PATH": f"{fake_bin}:/usr/bin:/bin", "REAL_PYTHON": sys.executable,
-               "FAKE_EVENT_LOG": str(calls), "FAKE_LOADED": str(loaded),
-               "FAKE_HEALTH_VERSION": fixture.release_version(),
-               "FAKE_SERVER_IDENTITY": "named_instance_test_12345678", "FAKE_TEAM_HUB_ID": "",
-               "FAKE_TEAM_HUB_MODE": "disabled", "HYADEX_SERVER_HEALTH_CHECK_ATTEMPTS": "1"}
-        if release:
-            self.removed_history(port=17851)
-            with patch.dict(os.environ, env, clear=True), patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="y"):
-                code, output, errors, _ = self.cli(
-                    "new", "--name", "work",
-                    run={"side_effect": lambda command, **kwargs: subprocess.run(command, check=True, capture_output=True, text=True, **kwargs)},
-                )
-            result = subprocess.CompletedProcess([], code, output, errors)
-            backup, = (self.registry.root / "history-backups").glob("work-*/state")
-            self.assertEqual((backup / "sessions.json").read_text(), "old imported chat index")
-            self.assertEqual((backup / "upload.png").read_bytes(), b"Hyadex-only upload")
-            self.assertFalse((self.work.state / "upload.png").exists())
-            self.assertEqual(self.registry.records()["work"], {"status": "installed", "port": 17851})
-        else:
-            result = subprocess.run(["/bin/bash", str(ROOT / "install.sh"), "--instance", "work", "--port", "17851", "--non-interactive"], env=env, capture_output=True, text=True, timeout=180)
-        self.assertEqual(result.returncode, 0, result.stderr[-6000:])
-        if not release:
-            self.assertEqual(result.stdout.count("Your new service is up!"), 1)
-            self.assertLess(result.stdout.index("Your new service is up!"), result.stdout.index("Server URL"))
-            self.assertLess(result.stdout.index("Your new service is up!"), result.stdout.index("HYADEX_SETUP_RESULT="))
-        self.assertEqual(self.snapshot(self.default), before)
-        self.assertEqual(self.default.service_file("darwin").read_bytes(), default_service)
-        self.assertNotIn("/com.hyadex.server\n", calls.read_text())
-        self.assertTrue((self.work.runtime / "current/server_instances.py").is_file())
-        config = instances.read_config(self.work)
-        self.assertEqual(config["HYADEX_SERVER_INSTANCE"], "work")
-        self.assertEqual(config["HYADEX_AGENT_PORT"], "17851")
-        self.assertNotEqual(config["HYADEX_AGENT_TOKEN"], "test-token-not-real")
-        instances.validate_binding(self.work, "darwin")
 
 
 class RuntimeBindingTests(unittest.TestCase):

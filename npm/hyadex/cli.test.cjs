@@ -32,9 +32,9 @@ test('help works before dependency resolution; unknown and internal commands can
   assert.equal(f.calls.length, 0)
 })
 
-test('setup, install and recovery retain the core CLI without new service paths', async t => {
+test('setup and install retain the core CLI without new service paths', async t => {
   const f = fixture(t)
-  for (const command of ['setup', 'install', 'recover']) {
+  for (const command of ['setup', 'install']) {
     assert.equal(await run([command, '--dry-run'], f.context), 7)
     assert.deepEqual(f.calls.at(-1), { core: [command === 'setup' ? 'install' : command, '--dry-run'] })
     assert.equal(f.output.at(-1), 'hyadex install')
@@ -71,7 +71,7 @@ test('existing setup/install refusal explains how to add an instance without ret
     })
     assert.equal(attempts, 1)
   }
-  for (const [command, code] of [['setup', undefined], ['recover', 'HYADEX_EXISTING_INSTALLATION']]) {
+  for (const [command, code] of [['setup', undefined]]) {
     const error = Object.assign(new Error('Original failure'), { code })
     f.context.load = () => ({ run: async () => { throw error } })
     await assert.rejects(run([command], f.context), actual => actual === error && actual.message === 'Original failure')

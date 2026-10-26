@@ -31,8 +31,11 @@ fragments of the server source.
 Root-level `group_chat.py`, `autopilot.py`, `chat_mailbox.py`,
 `transcript_reader.py`, `claude_sdk_client.py` and `codex_app_server.py` are removed. All callers use the
 package paths; there are no duplicate implementations or compatibility wrappers.
-The installer, deployment inventory and release manifest enumerate every nested
-Python file explicitly and preserve its relative path.
+`hyadex/inventory.py` enumerates every runtime file explicitly. Source
+installation and packaging share this inventory and preserve relative paths.
+`hyadex/installation.py` owns manual source staging and stopped-service preflight;
+`execution_install.py` and `execution_manage.py` own durable publication, native
+service operations, startup admission and authenticated health/rollback.
 
 `create_app(ApplicationBindings(...))` does not discover or import the legacy
 server. HTTP authorization is mandatory, routes are snapshotted after
@@ -74,7 +77,7 @@ In-app update orchestration, update routes and update health advertisements are
 removed. Runtime admission now names the surviving worker-maintenance and
 restart fences directly. `hyadex/store/files.py` owns the same fsynced atomic JSON
 primitive used by ordinary state writers; importing the server no longer imports
-`update_runner`. The retained installer tools also use that primitive while the
-installer replacement remains pending. Saved update evidence is not opened or
+`update_runner`. The retained legacy recovery tools also use that primitive while their
+remaining uninstall/old-transaction dependencies are removed. Saved update evidence is not opened or
 resumed. The narrow legacy job-park migration restores exact unchanged due
 occurrences and discards obsolete park ownership without overwriting edits.

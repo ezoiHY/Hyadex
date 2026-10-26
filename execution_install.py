@@ -206,10 +206,21 @@ class ExecutionLayout:
         if role not in {"worker", "gateway"}:
             raise ValueError("unknown execution service role")
         if self.platform == "Darwin":
-            label = WORKER_LABEL if role == "worker" else GATEWAY_LABEL
-            return self.home / "Library/LaunchAgents" / f"{label}.plist"
-        unit = WORKER_UNIT if role == "worker" else GATEWAY_UNIT
-        return self.home / ".config/systemd/user" / unit
+            return self.home / "Library/LaunchAgents" / f"{self.service_label(role)}.plist"
+        return self.home / ".config/systemd/user" / self.service_unit(role)
+
+    def service_label(self, role: str) -> str:
+        name = self.environment.get("HYADEX_SERVER_INSTANCE", "default")
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", name):
+            raise ValueError("invalid execution instance name")
+        label = WORKER_LABEL if role == "worker" else GATEWAY_LABEL
+        return label + ("" if name == "default" else "." + name)
+
+    def service_unit(self, role: str) -> str:
+        name = self.environment.get("HYADEX_SERVER_INSTANCE", "default")
+        self.service_label(role)  # Validate the same name on both platforms.
+        stem = "hyadex-server" + ("" if name == "default" else "-" + name)
+        return stem + ("-gateway" if role == "gateway" else "") + ".service"
 
     def validate(self) -> None:
         for path in (self.install_root, self.config_root, self.state_root, self.home):
@@ -286,7 +297,7 @@ def render_service(layout: ExecutionLayout, role: str) -> bytes:
     environment.update(authoritative)
     if layout.platform == "Darwin":
         return plistlib.dumps({
-            "Label": WORKER_LABEL if role == "worker" else GATEWAY_LABEL,
+            "Label": layout.service_label(role),
             "ProgramArguments": service_arguments(layout, role),
             "WorkingDirectory": str(runtime), "EnvironmentVariables": environment,
             "RunAtLoad": True, "KeepAlive": True,
@@ -300,7 +311,7 @@ def render_service(layout: ExecutionLayout, role: str) -> bytes:
     lines = ["[Unit]", f"Description=Hyadex {role}", "After=network-online.target"]
     if role == "gateway":
         # Wants starts a missing worker without propagating gateway stop/restart.
-        lines += [f"Wants={WORKER_UNIT}", f"After={WORKER_UNIT}"]
+        lines += [f"Wants={layout.service_unit('worker')}", f"After={layout.service_unit('worker')}"]
     lines += ["", "[Service]", "Type=simple", f"WorkingDirectory={_unit_directory(runtime)}",
               f"EnvironmentFile={_unit_word(str(layout.config_root / 'env'))}"]
     for key, value in sorted(environment.items()):
@@ -320,6 +331,22 @@ def render_service(layout: ExecutionLayout, role: str) -> bytes:
               *(["KillMode=process", "SendSIGKILL=no"] if role == "worker" else []), "UMask=0077",
               "", "[Install]", "WantedBy=default.target", ""]
     return "\n".join(lines).encode()
+
+
+def render_environment(layout: ExecutionLayout, original: bytes = b'') -> bytes:
+    """One literal environment format for launchd, systemd and local tools."""
+    lines: list[str] = []
+    written: set[str] = set()
+    for line in original.decode().splitlines(keepends=True):
+        key, separator, _value = line.partition('=')
+        if separator and key in layout.environment:
+            lines.append(f'{key}={json.dumps(layout.environment[key], ensure_ascii=False)}\n')
+            written.add(key)
+        else:
+            lines.append(line if line.endswith('\n') else line + '\n')
+    lines.extend(f'{key}={json.dumps(value, ensure_ascii=False)}\n'
+                 for key, value in sorted(layout.environment.items()) if key not in written)
+    return ''.join(lines).encode()
 
 
 def layout_manifest(layout: ExecutionLayout) -> dict[str, Any]:
@@ -423,7 +450,7 @@ def stage(layout: ExecutionLayout, *, scope: str, prior_services: dict[str, Any]
     layout.validate()
     if expected_server_identity is not None:
         _text(expected_server_identity)
-    if scope not in {"migration", "gateway", "worker"}:
+    if scope not in {"migration", "gateway", "worker", "install"}:
         raise ValueError("unknown execution activation scope")
     _service_states(prior_services)
     if scope == "gateway" and prior_services["worker"]["state"] == "running":
@@ -438,7 +465,7 @@ def stage(layout: ExecutionLayout, *, scope: str, prior_services: dict[str, Any]
     if scope == "migration":
         if prior_layout["exists"]:
             raise ValueError("execution layout already exists; migration is not an update")
-    else:
+    elif scope != "install":
         if not prior_layout["exists"]:
             raise ValueError("execution activation requires a previous layout")
         previous = json.loads(base64.b64decode(prior_layout["data"]))
@@ -452,6 +479,15 @@ def stage(layout: ExecutionLayout, *, scope: str, prior_services: dict[str, Any]
             raise RuntimeError("retained service configuration no longer matches its layout")
     paths = {role: layout.service_path(role) for role in ("worker", "gateway")}
     paths["layout"] = layout.manifest_path
+    if scope == "install":
+        if prior_layout["exists"]:
+            old = ExecutionLayout.from_dict(json.loads(base64.b64decode(prior_layout["data"]))["layout"])
+            for key in ("install_root", "config_root", "state_root", "home", "platform"):
+                if getattr(layout, key) != getattr(old, key):
+                    raise ValueError("installation cannot change owned root bindings")
+            if any(old.service_path(role) != layout.service_path(role) for role in ("worker", "gateway")):
+                raise ValueError("installation cannot change native service identity")
+        paths["environment"] = layout.config_root / "env"
     snapshots = {key: _snapshot(path) for key, path in paths.items()}
     for role in ("worker", "gateway"):
         if not snapshots[role]["exists"] and prior_services[role]["state"] != "absent":
@@ -466,6 +502,9 @@ def stage(layout: ExecutionLayout, *, scope: str, prior_services: dict[str, Any]
              "current_before": current, "current_after": str(layout.gateway_release),
              "expected_server_identity": expected_server_identity,
              "receipt": None}
+    if scope == "install":
+        original = base64.b64decode(snapshots['environment']['data']) if snapshots['environment']['exists'] else b''
+        value["after"]["environment"] = _desired(render_environment(layout, original))
     # Publish a complete journal before any configuration change. An interruption
     # during preparation leaves only an unreferenced private draft, never an
     # empty pending journal that blocks a safe retry. The caller owns install-lock.
@@ -496,17 +535,23 @@ def _load(root: Path) -> tuple[dict[str, Any], ExecutionLayout]:
     layout = ExecutionLayout.from_dict(value["layout"])
     if layout.install_root != root:
         raise ValueError("execution transaction belongs to another install root")
-    if value["scope"] not in {"migration", "gateway", "worker"} or value["phase"] not in {
+    if value["scope"] not in {"migration", "gateway", "worker", "install"} or value["phase"] not in {
             "prepared", "publishing", "published", "committed", "rolling-back", "rolled-back"}:
         raise ValueError("invalid execution transaction state")
     _service_states(value["prior_services"])
     expected_paths = {role: str(layout.service_path(role)) for role in ("worker", "gateway")}
     expected_paths["layout"] = str(layout.manifest_path)
+    if value["scope"] == "install":
+        expected_paths["environment"] = str(layout.config_root / "env")
     if value["paths"] != expected_paths or value["current_after"] != str(layout.gateway_release):
         raise ValueError("execution transaction paths changed")
     expected_after = {"worker": _desired(render_service(layout, "worker")),
                       "gateway": _desired(render_service(layout, "gateway")),
                       "layout": _desired(_json_bytes(layout_manifest(layout)))}
+    if value["scope"] == "install":
+        previous = value['before']['environment']
+        original = base64.b64decode(previous['data'], validate=True) if previous['exists'] else b''
+        expected_after["environment"] = _desired(render_environment(layout, original))
     if value["after"] != expected_after or set(value["before"]) != set(expected_paths):
         raise ValueError("execution transaction content changed")
     for item in value["before"].values():
@@ -535,6 +580,8 @@ def _save(value: dict[str, Any], layout: ExecutionLayout) -> None:
 
 
 def _affected(value: dict[str, Any]) -> tuple[str, ...]:
+    if value["scope"] == "install":
+        return "worker", "gateway", "layout", "environment"
     if value["scope"] == "gateway":
         return "gateway", "layout"
     if value["scope"] == "worker":
@@ -543,7 +590,7 @@ def _affected(value: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _check_publication(value: dict[str, Any], layout: ExecutionLayout) -> None:
-    for key in ("worker", "gateway", "layout"):
+    for key in value["paths"]:
         actual = _snapshot(Path(value["paths"][key]))
         accepted = [value["before"][key]]
         if key in _affected(value):
@@ -650,7 +697,7 @@ def finish(root: Path) -> None:
         raise ValueError("execution activation is not finished")
     _check_publication(value, layout)
     side = "after" if value["phase"] == "committed" else "before"
-    for key in ("worker", "gateway", "layout"):
+    for key in value["paths"]:
         expected = value[side][key] if key in _affected(value) else value["before"][key]
         if _snapshot(Path(value["paths"][key])) != expected:
             raise RuntimeError("execution terminal configuration no longer matches its receipt")
@@ -661,7 +708,12 @@ def finish(root: Path) -> None:
     retired = root / (".execution-completed-" + value["id"])
     os.rename(layout.transaction_dir, retired)
     _fsync_directory(root)
-    # Keep the compact receipt as audit/recovery evidence; no active lease is lost.
+    # Completed recovery no longer needs snapshots containing old credentials.
+    _atomic_write(retired / 'manifest.json', _json_bytes({
+        'format': 2, 'id': value['id'], 'scope': value['scope'], 'phase': value['phase'],
+        'current_before': value['current_before'], 'current_after': value['current_after'],
+        'receipt': value['receipt'],
+    }))
 
 
 def retained_releases(root: Path) -> list[str]:

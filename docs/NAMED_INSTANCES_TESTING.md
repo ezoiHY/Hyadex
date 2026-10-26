@@ -87,17 +87,19 @@ Normal Python bytecode caches in this checkout no longer block installation.
 - Port allocation, conflicts, manifests and partial failures.
 - Default discovery without migration; no credentials in listing output.
 - Instance-bound launchd/systemd operations, runtime config and update context.
-- Named install and uninstall preserving a synthetic default-on-7870 fixture.
+- Named uninstall preserving a synthetic default-on-7870 fixture.
 - Separate terminal names/sockets and exclusive state-directory ownership.
 - Exact-name confirmation, color warning, cancellation and guarded history purge.
 - Optional name release preserves saved state in a private backup before freeing
   the name; failed archival does not claim success or free the name.
 - Refusal to update a named server with an old default-only release.
 
-The existing activation, service-state, health-security, stage-cleanup, update,
-release-manifest and terminal suites provide backward-compatibility checks.
-Run the complete installer suite as well as focused instance tests; focused
-results do not imply that the entire repository suite ran.
+`tests/test_source_install.py` covers full-service publication, exact environment
+rollback, named identities, dependency cleanup, fresh retry and live-service
+refusal. Native execution controller, credential transport, runtime inventory and
+terminal suites remain separate. Run the full suite as well as focused tests.
+Both default and named source installs now have worker and gateway services;
+`instances.sh start/stop/restart/logs` addresses the selected pair.
 
 `tests/test_cross_instance_import.py` covers ownership filtering, stale/manual
 imports, parked IDs, stopped/removed instances, unsafe indexes and cancellation

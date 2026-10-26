@@ -70,7 +70,7 @@ class LegacyExecutionLayoutGuardTests(unittest.TestCase):
                               env=self.environment, capture_output=True, text=True, timeout=10)
 
     def test_install_and_uninstall_refuse_each_marker_before_side_effects(self):
-        for script in ("install.sh", "uninstall.sh"):
+        for script in ("uninstall.sh",):
             for name in ("execution-layout.json", ".execution-transaction"):
                 for kind in ("file", "directory", "symlink"):
                     with self.subTest(script=script, marker=name, kind=kind):
@@ -105,31 +105,9 @@ class LegacyExecutionLayoutGuardTests(unittest.TestCase):
                         finally:
                             marker.rmdir() if kind == "directory" else marker.unlink()
 
-    def test_deploy_refuses_managed_current_and_direct_release_paths(self):
-        release = self.install / "releases" / "1.2.3-beta.4"
-        release.mkdir(parents=True)
-        current = self.install / "current"
-        current.symlink_to(release)
-        external = self.home / "runtime-alias"
-        external.symlink_to(release)
-        for name in ("execution-layout.json", ".execution-transaction"):
-            for kind in ("file", "directory", "symlink"):
-                marker = self.marker(name, kind)
-                for target in (current, release, external):
-                    with self.subTest(marker=name, kind=kind, target=target.name):
-                        self.environment["HYADEX_REMOTE_APP_DIR"] = str(target)
-                        result = self.run_script("deploy.sh")
-                        self.assertNotEqual(result.returncode, 0, result.stdout)
-                        self.assertIn("does not support the separate gateway/execution layout", result.stderr)
-                        self.assertFalse(self.operations.exists())
-                        self.assertTrue(current.is_symlink())
-                        self.assertEqual(list(release.iterdir()), [])
-                marker.rmdir() if kind == "directory" else marker.unlink()
 
     def test_ordinary_layout_passes_the_local_and_remote_guards(self):
-        for script, function in (("install.sh", "refuse_execution_layout"),
-                                 ("uninstall.sh", "refuse_execution_layout"),
-                                 ("deploy.sh", "refuse_remote_execution_layout")):
+        for script, function in (("uninstall.sh", "refuse_execution_layout"),):
             with self.subTest(script=script):
                 source = shell_function((ROOT / script).read_text(), function)
                 result = subprocess.run(["/bin/bash", "-c", source + "\n" + function],
@@ -140,21 +118,6 @@ class LegacyExecutionLayoutGuardTests(unittest.TestCase):
                 self.assertFalse(self.operations.exists())
                 self.assertEqual(list(self.install.iterdir()), [])
 
-    def test_install_lock_recheck_refuses_new_execution_marker_before_other_checks(self):
-        source = (ROOT / "install.sh").read_text()
-        for marker in ("execution-layout.json", ".execution-transaction"):
-            path = self.marker(marker, "file")
-            script = (shell_function(source, "refuse_execution_layout") + "\n"
-                      + shell_function(source, "validate_exclusive_install_state")
-                      + '\nvalidate_fresh_install_state() { echo unexpected >> "$OPERATIONS_LOG"; }\n'
-                      + 'validate_exclusive_install_state\n')
-            result = subprocess.run(["/bin/bash", "-c", script],
-                env={**self.environment, "INSTALL_ROOT": str(self.install)},
-                capture_output=True, text=True, timeout=10)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertRegex(result.stderr, "execution (configuration|activation|layout)|separate gateway/execution layout")
-            self.assertFalse(self.operations.exists())
-            path.unlink()
 
     def test_uninstall_lock_recheck_preserves_marker_created_during_lock_acquisition(self):
         self.stub("mkdir", '#!/bin/bash\n/bin/mkdir "$@" || exit $?\n'

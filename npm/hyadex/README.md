@@ -3,7 +3,7 @@
 Install and manage your Hyadex server with one command name. This is the
 public CLI entry point; the desktop app remains a separate signed download.
 The same-version `@hyadex/server` dependency supplies the runtime and fresh
-installation/recovery commands. In-app updates are retired.
+fresh-install commands. In-app updates and npm recovery are retired.
 
 ## Install the command
 
@@ -252,7 +252,6 @@ mailbox/jobs/team tools supplied to agents inside an authorized chat.
 | Start/stop/restart all | `./instances.sh restart --all` (or start/stop) | `hyadex restart --all` (or start/stop) |
 | Exclude an instance from a bulk action | `./instances.sh restart --all --exclude default` | `hyadex restart --all --exclude default` |
 | Uninstall all with confirmation | `./instances.sh remove --all` / bare `./uninstall.sh` | `hyadex remove --all` |
-| Guarded pre-activation recovery | `hyadex-server recover` | `hyadex recover` |
 | Installed CLI/package version | `hyadex-server --version` | `hyadex version` or `hyadex --version` |
 | CLI help | `hyadex-server --help` | `hyadex help` / `hyadex --help` / `hyadex -h` |
 
@@ -284,8 +283,7 @@ Differences from the old source scripts:
   `hyadex configure`, `hyadex login`, or `hyadex serve`
   commands in this package.
 - Direct checkout reinstalls (`./instances.sh update`) remain source operations;
-  they are not exposed by this CLI. Existing installer recovery options remain
-  available until the installer replacement is complete.
+  they are not exposed by this CLI. Use the source installer for recovery.
 - Provider login remains in each provider's native CLI. Existing source scripts
   and the `hyadex-server` command remain available for their original uses.
 
@@ -294,7 +292,8 @@ Differences from the old source scripts:
 The `hyadex update` command and its server endpoints have been removed. Stop
 the selected service and use the source installer for an existing installation;
 see [the server reference](../../docs/SERVER_REFERENCE.md#updating-hyadexserver).
-`hyadex recover` retains its narrowly scoped pre-activation recovery checks.
+`hyadex recover` is retired; current source installations use
+`./install.sh --instance NAME --recover-only`.
 Updating the npm command alone does not update a running server.
 
 ## Preparing this package

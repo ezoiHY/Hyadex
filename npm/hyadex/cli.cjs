@@ -16,7 +16,6 @@ const HELP = `Usage: hyadex setup [--port PORT] [--bind IP] [--non-interactive] 
        hyadex pair [NAME] [--network auto|tailscale|lan|local] [--url URL] [--output FILE.png] [--link]
        hyadex status [NAME]
        hyadex logs [NAME] [--lines N] [--follow]
-       hyadex recover
        hyadex --version
 
 setup/install creates a fresh default server. Use new for another instance.
@@ -67,7 +66,7 @@ function parse(argv) {
     if (args.length) throw new Error('Unexpected arguments.')
     return { kind: ['--version', 'version'].includes(command) ? 'version' : 'help' }
   }
-  if (['setup', 'install', 'recover'].includes(command)) {
+  if (['setup', 'install'].includes(command)) {
     return { kind: 'core', args: [command === 'setup' ? 'install' : command, ...args] }
   }
   if (command === 'token') {

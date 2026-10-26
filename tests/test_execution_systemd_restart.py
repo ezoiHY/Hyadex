@@ -127,10 +127,8 @@ while True:
         root, config, self.state = (base / name for name in ("install", "config", "state"))
         for directory in (root, config, self.state):
             directory.mkdir(mode=0o700)
-        self.unit = f"hyadex-restart-proof-{uuid.uuid4().hex}.service"
-        unit_patch = patch.object(install, "WORKER_UNIT", self.unit)
-        unit_patch.start()
-        self.addCleanup(unit_patch.stop)
+        name = f"rp-{uuid.uuid4().hex[:20]}"
+        self.unit = f"hyadex-server-{name}.service"
         release = root / "releases" / "1.0.0"
         for directory in (root / "releases", release, release / ".venv", release / ".venv/bin"):
             directory.mkdir(mode=0o700)
@@ -139,7 +137,10 @@ while True:
         (release / "execution_service.py").write_text(self.fixture_source())
         (config / "env").write_text("")
         layout = install.ExecutionLayout(root, config, self.state, Path.home().resolve(),
-                                         "Linux", release, release, "127.0.0.1", 17850, {})
+                                         "Linux", release, release, "127.0.0.1", 17850,
+                                         {"HYADEX_SERVER_INSTANCE": name})
+        self.assertEqual(self.unit, layout.service_unit("worker"))
+        self.assertNotEqual(self.unit, "hyadex-server.service")
         self.unit_path = layout.service_path("worker")
         self.unit_path.parent.mkdir(parents=True, exist_ok=True)
         unit_body = install.render_service(layout, "worker")

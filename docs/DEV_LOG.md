@@ -3,6 +3,52 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Manual source installation and shared runtime inventory
+
+- Replaced the large shell installer with a thin entrypoint and
+  `hyadex/installation.py`. Removed the direct deployment helper, obsolete
+  Hub/update/preparation installer branches and their shell-fragment tests.
+  `hyadex/inventory.py` is the single runtime inventory used by installation
+  and packaging; package imports stay inert.
+- Both default and named instances use separate worker/gateway services.
+  Installation refuses a running incumbent, stages and checks a unique runtime,
+  and uses the existing native controller for journaled service/configuration
+  publication, process-owned health, startup admission and rollback. Saved
+  tokens, identity, history and configuration comments are preserved. Completed
+  journals retain compact receipts without old environment snapshots.
+- Instance controls share installation ownership and seal an idle worker before
+  stopping either service. Legacy macOS stop now waits for unloading before
+  returning. Ports are exact; retired Hub, preparation and port-fallback options
+  reject. npm legacy recovery is retired and fresh install uses the new entrypoint.
+- Old state selectors cannot silently select a new empty state directory. Old
+  activation/recovery owners must finish through their retained tools. Current
+  native installation journals support explicit source recovery; saved evidence
+  is not deleted to bypass ownership. Remaining legacy helper dependencies will
+  be removed in a separate stage.
+- Actual acceptance used temporary homes and uniquely named launchd services:
+  fresh installation, refusal while running, same-version replacement, an actual
+  single-service-to-split migration, token/identity/session retention, independent
+  instance controls and logs. An intentionally unhealthy candidate restored both
+  service files, environment, layout and current link; the previous runtime then
+  restarted successfully. Quoted display names and retained operator comments
+  were also checked through authenticated HTTP. Removing one actual named pair
+  preserved its state and left the other fixture unchanged. All fixture services
+  were stopped.
+- Claude's static review identified environment quoting, old-state selection and
+  a stale opt-in Linux test service selector. Those findings and its native
+  ownership/credential-retention findings were addressed. The core server and
+  Claude/Codex execution implementations were unchanged.
+- Validation: the full suite ran 4,226 tests (nine skips), retaining six
+  inherited failures and no new failures or errors. Two previous failure cases
+  belonged to the retired installer shell branches. All 129 post-review focused cases,
+  270 fast package cases and 46 Node CLI cases passed. The broader 244-case
+  lifecycle run retained one known platform/umask failure and two skips.
+  Python compilation, shell syntax, offline lock and whitespace checks passed.
+- Availability: source only. No release, deployment or existing user service was
+  changed. Native installation acceptance ran on macOS; Linux manager execution
+  and desktop/mobile UI were not exercised. Linux rendering and controller
+  contracts remain covered by their separate suites.
+
 ## 2026-10-26 — Retire in-app update orchestration
 
 - Removed update endpoints, background scheduling, startup resumption, health

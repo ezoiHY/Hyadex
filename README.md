@@ -71,10 +71,9 @@ prints the path of its access token file.
 ./install.sh
 ```
 
-The installer creates the default server as a user service
-(`com.hyadex.server` on macOS, `hyadex-server.service` on Linux) on port
-**7870** and prints the URL and token. `./install.sh --show-token` prints the
-token again. Named instances keep separate state and ports; see
+The installer creates separate worker and gateway user services on port
+**7870**. `./install.sh --show-token` displays the saved access token.
+Both default and named instances keep their own service names, state and ports; see
 [named instances](docs/NAMED_INSTANCES_TESTING.md).
 
 In-app updates have been removed.

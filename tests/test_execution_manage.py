@@ -147,18 +147,6 @@ class ExecutionManageTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "ambiguous enablement"):
                     native._observe("worker")
 
-    def test_installer_preserves_both_launchd_disabled_spellings(self):
-        source = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
-        start = source.index('    if printf \'%s\\n\' "$disabled_services"')
-        end = source.index('\n    fi', start) + len('\n    fi')
-        script = 'set -eu\nLABEL=com.hyadex.server\n' + source[start:end] + '\nprintf "%s" "$PRIOR_SERVICE_ENABLED"\n'
-        for spelling, expected in (("true", "false"), ("disabled", "false"), ("false", "true"), ("enabled", "true"), (None, "true")):
-            with self.subTest(spelling=spelling):
-                output = ' "comXhyadexXserver" => disabled\n "com.hyadex.server-other" => true\n'
-                if spelling is not None:
-                    output += f' "com.hyadex.server" => {spelling}\n'
-                result = subprocess.run(["/bin/bash", "-c", script], env={**os.environ, "disabled_services": output}, capture_output=True, text=True, check=True)
-                self.assertEqual(result.stdout, expected)
 
     def test_busy_gateway_update_never_mutates_or_stops_worker(self):
         self.control.busy = True

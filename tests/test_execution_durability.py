@@ -155,31 +155,6 @@ class DurabilityTests(unittest.TestCase):
                 self.assertEqual(identities, {path: durability._identity(path.lstat())
                                               for path in identities})
 
-    def test_installer_flush_failure_precedes_native_mutation(self):
-        source = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
-        begin = source.index('if [[ "${EXECUTION_MODE:-legacy}" == "split" ]]; then\n  if ! execution_activation_command durability')
-        end = source.index('\nfi\n', begin) + len('\nfi\n')
-        events = self.base / "events"
-        original = (self.runtime / "VERSION").read_bytes()
-        child = subprocess.Popen(["/bin/sleep", "30"])
-        try:
-            script = '''set -eu
-EXECUTION_MODE=split
-STAGE_DIR=owned-fixture
-COLD_TEAM_HUB_HANDOFF=false
-execution_activation_command() { echo "$1" >> "$EVENTS"; [[ "$1" != durability ]]; }
-execution_recovery_arm() { echo arm >> "$EVENTS"; }
-record_activation_phase() { echo "$1" >> "$EVENTS"; }
-execution_stop_services() { kill "$PROVIDER_PID"; }
-''' + source[begin:end]
-            result = subprocess.run(["/bin/bash", "-c", script], env={**os.environ, "EVENTS": str(events), "PROVIDER_PID": str(child.pid)}, capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(events.read_text().splitlines(), ["durability"])
-            self.assertIsNone(child.poll())
-            self.assertEqual((self.runtime / "VERSION").read_bytes(), original)
-        finally:
-            child.terminate()
-            child.wait(timeout=5)
 
     def linked_venv_activation(self):
         releases = self.base / "releases"

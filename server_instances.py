@@ -146,6 +146,17 @@ def validate_binding(instance: Instance, platform: str = sys.platform) -> None:
         if key in env and env[key] != value:
             raise ValueError(f"{instance.name}: {key} does not match this instance; refusing service changes.")
     service = instance.service_file(platform)
+    layout_file = instance.runtime / "execution-layout.json"
+    if layout_file.exists() or layout_file.is_symlink():
+        import execution_install as files
+        layout = files.installed_layout(instance.runtime)
+        if ((layout.home, layout.state_root, layout.config_root) != (instance.home, instance.state, instance.config)
+                or layout.environment.get('HYADEX_SERVER_INSTANCE', 'default') != instance.name):
+            raise ValueError("Execution layout does not match instance bindings.")
+        for role in ("worker", "gateway"):
+            if read_regular(layout.service_path(role)) != files.render_service(layout, role):
+                raise ValueError("Execution service does not match its owned layout.")
+        return
     if service.exists():
         data = read_regular(service)
         if platform == "darwin":
@@ -370,6 +381,16 @@ def run(command: list[str], **kwargs):
 
 
 def service_status(instance: Instance, platform: str = sys.platform) -> str:
+    if (instance.runtime / "execution-layout.json").exists():
+        from execution_install import installed_layout
+        from execution_manage import NativeServices
+        try:
+            states = NativeServices(installed_layout(instance.runtime)).snapshot()
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            return "unknown"
+        if all(item['state'] == 'running' for item in states.values()):
+            return "running"
+        return "stopped" if all(item['state'] in {'absent', 'stopped'} for item in states.values()) else "loaded"
     command = ["launchctl", "print", f"gui/{os.getuid()}/{launchd_label(instance.name)}"] if platform == "darwin" else ["systemctl", "--user", "show", service_name(instance.name) + ".service", "--property=ActiveState", "--value"]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=3, check=False)
@@ -672,14 +693,15 @@ def log_sources(instance: Instance, platform: str) -> tuple[list[Path], list[str
         from execution_install import installed_layout
 
         layout = installed_layout(instance.runtime)
-        if (instance.name != "default" or layout.install_root != instance.runtime
+        if (layout.install_root != instance.runtime
                 or layout.config_root != instance.config or layout.state_root != instance.state
                 or layout.home != instance.home
+                or layout.environment.get('HYADEX_SERVER_INSTANCE', 'default') != instance.name
                 or layout.platform != ("Darwin" if platform == "darwin" else "Linux")):
             raise ValueError("Execution log layout does not match the selected instance.")
         return ([instance.state / "execution/logs" / f"{role}.{stream}.log"
                  for role in ("gateway", "worker") for stream in ("stdout", "stderr")],
-                ["hyadex-server-gateway.service", "hyadex-server.service"])
+                [layout.service_unit('gateway'), layout.service_unit('worker')])
     validate_binding(instance, platform)
     return ([instance.logs / "server.log", instance.logs / "server-error.log"],
             [service_name(instance.name) + ".service"])
@@ -1042,6 +1064,11 @@ def release_uninstalled_name(instance: Instance, registry: Registry) -> None:
 
 def control(instance: Instance, action: str, platform: str = sys.platform):
     validate_binding(instance, platform)
+    if (instance.runtime / "execution-layout.json").exists():
+        from execution_install import installed_layout
+        from execution_manage import control_services
+        control_services(installed_layout(instance.runtime), action)
+        return
     if not instance.service_file(platform).exists():
         raise ValueError(f"{instance.name}: no installed service.")
     if platform == "darwin":
@@ -1052,6 +1079,11 @@ def control(instance: Instance, action: str, platform: str = sys.platform):
         if action == "stop":
             if status != "stopped":
                 run(["launchctl", "bootout", target])
+                deadline = time.monotonic() + 185
+                while service_status(instance, platform) != "stopped":
+                    if time.monotonic() >= deadline:
+                        raise ValueError("Service did not stop; no replacement was started.")
+                    time.sleep(0.1)
         elif status == "stopped":
             run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(instance.service_file(platform))])
         elif action == "restart":

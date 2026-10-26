@@ -509,20 +509,14 @@ class UvicornShutdownSettingTests(unittest.TestCase):
                     agent_server.MAX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS,
                 )
 
-        installer = Path(agent_server.__file__).with_name("install.sh").read_text()
-        attempts = int(
-            re.search(r"^LAUNCHCTL_STOP_ATTEMPTS=(\d+)$", installer, re.MULTILINE).group(1)
-        )
-        delay = float(
-            re.search(r"^LAUNCHCTL_STOP_DELAY=([0-9.]+)$", installer, re.MULTILINE).group(1)
-        )
         watchdog_budget = (
             agent_server.MAX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS
             + agent_server.SERVER_SHUTDOWN_PHASE_COUNT
             * agent_server.SERVER_SHUTDOWN_PHASE_TIMEOUT_SECONDS
             + 5.0
         )
-        self.assertGreaterEqual(attempts * delay, watchdog_budget + 30.0)
+        from execution_manage import NativeServices
+        self.assertGreaterEqual(NativeServices.__init__.__kwdefaults__["timeout"], watchdog_budget + 30.0)
 
 
 if __name__ == "__main__":
