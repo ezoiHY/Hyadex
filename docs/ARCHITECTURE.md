@@ -7,6 +7,7 @@ route collection, authorization middleware and lifespan to the application facto
 | Module | Owns | Depends on |
 | --- | --- | --- |
 | `hyadex/app.py` | FastAPI construction, middleware and lifespan composition | Explicit `ApplicationBindings` |
+| `hyadex/store/cross_chat.py` | Durable cross-chat ledger, transactions and migrations | Explicit `CrossChatBindings`; mailbox SQL |
 | `hyadex/store/mailbox.py` | Same-server mailbox SQL | Caller-owned SQLite transaction |
 | `hyadex/store/transcripts.py` | Bounded JSONL parsing | Caller-owned binary streams |
 | `hyadex/groups.py` | Group models, timeline, dispatch, recovery | `GroupRuntime` supplied by the application |
@@ -34,6 +35,12 @@ request state. Direct route metadata remains visible to the native mutation
 admission guard. Group and Autopilot tests use this same factory. Production
 route handlers still reference legacy process state; constructing a second
 factory instance with those same handlers does not isolate that legacy state.
+
+The cross-chat ledger receives clocks, validators, instance identity and runtime
+cancellation joining through `CrossChatBindings`. It does not import the server
+or keep a parallel copy of its state. Its SQL, transaction boundaries and
+cancellation semantics are retained. The six ledger fixtures import the actual
+class; some surrounding handler fixtures still compile source fragments.
 
 Further migration should separate remaining persistence, turns,
 provider adapters and the remaining route families. Process state must move

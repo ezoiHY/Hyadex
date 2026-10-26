@@ -127,7 +127,8 @@ retain their existing format and bounded exchange behavior.
 ## Isolated validation
 
 `test_async_route_transport_isolated.py` extracts selected server functions
-through AST and runs ledger effects against SQLite `:memory:`. Helper
+through AST and imports the production `hyadex.store.cross_chat.CrossChatStore`
+for ledger effects against SQLite `:memory:`. Helper
 authority and transport are mocked. Tests cover repeated messages beyond
 legacy one-use counters and former hourly quotas, durable idempotency, unavailable
 mode/run/pair, cancellation, lifecycle replay, exact reverse responses,

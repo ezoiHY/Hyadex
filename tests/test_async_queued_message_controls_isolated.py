@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+from test_support.cross_chat_fixture import ledger_type
 import asyncio
 from collections import deque
 from contextlib import contextmanager, suppress
@@ -24,7 +25,7 @@ from tests.test_async_route_transport_isolated import HTTPException, envelope, P
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
 NAMES = {
-    "CrossChatStore", "is_async_route_message", "async_route_conversation_fields",
+    "is_async_route_message", "async_route_conversation_fields",
     "async_route_queue_fields", "async_message_target_fields", "async_queued_message_record",
     "async_queued_message_body_fields", "update_async_queued_message", "public_queued_turn",
     "queued_turns_snapshot", "cross_chat_lifecycle_fields", "public_cross_chat_envelope",
@@ -77,6 +78,7 @@ def namespace():
         "NonNativeForceSendRequiresLifecycleLock": type("NeedsLock", (Exception,), {}),
     }
     exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), "<async-queue-source>", "exec"), ns)
+    ns["CrossChatStore"] = ledger_type(ns)
     return ns
 
 

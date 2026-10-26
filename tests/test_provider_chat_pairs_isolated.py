@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import ast
+from fastapi import HTTPException
+from test_support.cross_chat_fixture import ledger_type
 import asyncio
 from collections import deque
 from contextlib import asynccontextmanager, suppress
@@ -68,10 +70,6 @@ for node in TREE.body:
 CODE = compile(ast.fix_missing_locations(ast.Module(body=NODES, type_ignores=[])), "<isolated-chat-pairs>", "exec")
 
 
-class HTTPException(Exception):
-    def __init__(self, status_code, detail):
-        self.status_code = status_code
-        self.detail = detail
 
 
 class MemoryStore:
@@ -654,21 +652,9 @@ class ChatPairTests(unittest.IsolatedAsyncioTestCase):
 
 class PairLedgerMetadataTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        ledger = next(node for node in TREE.body if isinstance(node, ast.ClassDef) and node.name == "CrossChatStore")
-        schema = next(node.args[0].value for node in ast.walk(ledger)
-                      if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                      and node.func.attr == "executescript" and node.args
-                      and isinstance(node.args[0], ast.Constant)
-                      and "CREATE TABLE IF NOT EXISTS cross_chat_envelopes" in str(node.args[0].value))
         self.connection = sqlite3.connect(":memory:")
         self.connection.row_factory = sqlite3.Row
         self.addCleanup(self.connection.close)
-        self.connection.executescript(schema)
-        selected = ast.ClassDef(name="Ledger", bases=[], keywords=[], decorator_list=[], body=[
-            deepcopy(node) for node in ledger.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name in {"create_instruction", "create_route_exchange_request"}
-        ])
         namespace = {
             "HTTPException": HTTPException, "hashlib": hashlib, "time": time,
             "now_iso": lambda: "2026-09-10T00:00:00Z",
@@ -676,9 +662,7 @@ class PairLedgerMetadataTests(unittest.IsolatedAsyncioTestCase):
             "SERVER_INSTANCE_ID": "isolated", "PROVIDER_CROSS_CHAT_ROUTE_ID_RE": re.compile(r"^route_[0-9a-f]{32}$"),
             "PROVIDER_CROSS_CHAT_ROUTE_PAIR_ID_RE": re.compile(r"^pair_[0-9a-f]{32}$"),
         }
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[
-            ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), selected,
-        ], type_ignores=[])), "<isolated-pair-ledger>", "exec"), namespace)
+        namespace["Ledger"] = ledger_type(namespace)
         self.ledger = namespace["Ledger"]()
         self.ledger._transaction = lambda: self.connection
 
@@ -686,6 +670,7 @@ class PairLedgerMetadataTests(unittest.IsolatedAsyncioTestCase):
             return operation()
 
         self.ledger._call = call
+        await self.ledger.initialize()
         self.route_id = "route_" + "a" * 32
         self.pair_id = "pair_" + "b" * 32
 
@@ -720,24 +705,30 @@ class PairLedgerMetadataTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record["authorization_pair_id"], "")
 
     async def test_additive_migration_preserves_existing_ledger_rows(self):
-        connection = sqlite3.connect(":memory:")
-        self.addCleanup(connection.close)
-        connection.executescript("CREATE TABLE cross_chat_envelopes (id TEXT); INSERT INTO cross_chat_envelopes VALUES ('old-envelope');"
-                                 "CREATE TABLE cross_chat_exchanges (id TEXT, max_legs INTEGER, expires_at TEXT);"
-                                 "INSERT INTO cross_chat_exchanges VALUES ('old-exchange', 2, 'legacy-expiry');")
-        migrations = [deepcopy(node) for node in ast.walk(TREE)
-                      if isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
-                      and isinstance(node.test.left, ast.Constant)
-                      and node.test.left.value == "authorization_pair_id"]
-        self.assertEqual(len(migrations), 2)
-        code = compile(ast.fix_missing_locations(ast.Module(body=migrations, type_ignores=[])), "<isolated-pair-migration>", "exec")
+        await self.ledger.create_instruction(
+            envelope_id="old-envelope", source_session_id="a", source_run_id="run",
+            target_session_id="b", body="preserved", idempotency_key="legacy-envelope")
+        await self.ledger.create_route_exchange_request(
+            exchange_id="old-exchange", leg_id="old-leg", requester_session_id="a",
+            authorization_source_run_id="run", responder_session_id="b", body="hello",
+            idempotency_key="legacy-exchange", max_legs=2, expires_at="legacy-expiry",
+            authorization_route_id=self.route_id, initial_action="instruction")
+        # Exercise the real initializer against the preceding schema shape,
+        # including all indexes and unrelated columns, rather than compiling
+        # two ALTER TABLE statements out of the production source.
+        with self.connection:
+            self.connection.execute("ALTER TABLE cross_chat_envelopes DROP COLUMN authorization_pair_id")
+            self.connection.execute("ALTER TABLE cross_chat_exchanges DROP COLUMN authorization_pair_id")
         for _ in range(2):
-            namespace = {"connection": connection,
-                         "columns": {row[1] for row in connection.execute("PRAGMA table_info(cross_chat_envelopes)")},
-                         "exchange_columns": {row[1] for row in connection.execute("PRAGMA table_info(cross_chat_exchanges)")}}
-            exec(code, namespace)
-        self.assertEqual(connection.execute("SELECT * FROM cross_chat_envelopes").fetchone(), ("old-envelope", ""))
-        self.assertEqual(connection.execute("SELECT * FROM cross_chat_exchanges").fetchone(), ("old-exchange", 2, "legacy-expiry", ""))
+            self.ledger._initialized = False
+            await self.ledger.initialize()
+        envelope = self.connection.execute(
+            "SELECT id,body,authorization_pair_id FROM cross_chat_envelopes WHERE id='old-envelope'").fetchone()
+        exchange = self.connection.execute(
+            "SELECT id,max_legs,expires_at,authorization_pair_id FROM cross_chat_exchanges WHERE id='old-exchange'").fetchone()
+        self.assertEqual(tuple(envelope), ("old-envelope", "preserved", ""))
+        self.assertEqual(tuple(exchange), ("old-exchange", 2, "legacy-expiry", ""))
+
 
 
 if __name__ == "__main__":

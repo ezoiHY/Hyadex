@@ -17,7 +17,7 @@ from pathlib import Path
 import sys
 from hyadex import groups, autopilot
 from hyadex.app import ApplicationBindings, create_app
-from hyadex.store import mailbox, transcripts
+from hyadex.store import cross_chat, mailbox, transcripts
 from hyadex.routes.groups import create_group_router
 from hyadex.routes.autopilot import create_autopilot_router
 assert 'agent_server' not in sys.modules

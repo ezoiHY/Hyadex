@@ -23,18 +23,12 @@ def migration_source():
              "queue_checkpoint_anchor", "queue_checkpoint_seed", "save_queue_checkpoint",
              "migrate_unstarted_chat_mailbox_backlog", "recover_queued_turns_after_start",
              "_recover_queued_turns_for_sessions", "is_async_route_message"}
-    ledger = next(node for node in TREE.body if isinstance(node, ast.ClassDef) and node.name == "CrossChatStore")
-    methods = {"pending_mailbox_migration_candidates", "migrate_pending_mailbox_message"}
     nodes = [ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)]
     nodes += [deepcopy(node) for node in TREE.body
               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
-    nodes += [deepcopy(node) for node in ledger.body
-              if isinstance(node, ast.AsyncFunctionDef) and node.name in methods]
     ns.update(json=json, deque=deque, os=os, uuid=uuid, QUEUE_RECOVERY_READY=set())
     exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])),
                  "<isolated-mailbox-migration>", "exec"), ns)
-    for name in methods:
-        setattr(ns["Ledger"], name, ns[name])
     return ns
 
 

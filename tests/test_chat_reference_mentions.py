@@ -397,7 +397,7 @@ class ChatReferenceMentionTests(unittest.IsolatedAsyncioTestCase):
         original_cross_chat = agent_server.CROSS_CHAT
         original_cache = agent_server.CROSS_CHAT_EVENT_TYPE_CACHE
         with tempfile.TemporaryDirectory() as temporary:
-            agent_server.CROSS_CHAT = agent_server.CrossChatStore(
+            agent_server.CROSS_CHAT = agent_server.create_cross_chat_store(
                 Path(temporary) / "cross-chat.sqlite3"
             )
             agent_server.CROSS_CHAT_EVENT_TYPE_CACHE = agent_server.OrderedDict()
@@ -483,7 +483,7 @@ class ChatReferenceMentionTests(unittest.IsolatedAsyncioTestCase):
     async def test_store_initialize_quarantines_only_legacy_raw_direct_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "cross-chat.sqlite3"
-            store = agent_server.CrossChatStore(path)
+            store = agent_server.create_cross_chat_store(path)
             await store.initialize()
             legacy, _ = await store.create_instruction(
                 envelope_id="handoff_legacy",
@@ -505,7 +505,7 @@ class ChatReferenceMentionTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(legacy["status"], "ready")
             self.assertEqual(configured["status"], "ready")
-            restarted = agent_server.CrossChatStore(path)
+            restarted = agent_server.create_cross_chat_store(path)
             await restarted.initialize()
             self.assertEqual(
                 (await restarted.get("handoff_legacy"))["status"], "failed"
@@ -891,7 +891,7 @@ class ChatReferenceMentionTests(unittest.IsolatedAsyncioTestCase):
         original_cross_chat = agent_server.CROSS_CHAT
         original_cache = agent_server.CROSS_CHAT_EVENT_TYPE_CACHE
         with tempfile.TemporaryDirectory() as temporary:
-            agent_server.CROSS_CHAT = agent_server.CrossChatStore(
+            agent_server.CROSS_CHAT = agent_server.create_cross_chat_store(
                 Path(temporary) / "cross-chat.sqlite3"
             )
             agent_server.CROSS_CHAT_EVENT_TYPE_CACHE = agent_server.OrderedDict()

@@ -3,6 +3,32 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Independent cross-chat persistence
+
+- Moved the durable cross-chat ledger into `hyadex/store/cross_chat.py` with
+  explicit clocks, authorization validators, instance configuration and
+  cancellation joining. Removed its old monolith implementation. SQL,
+  transaction boundaries, queue behavior and persisted formats are unchanged.
+- Six isolated fixtures now import the production ledger instead of compiling
+  class/method fragments. Migration checks run the complete initializer against
+  the previous schema; surrounding handler fixtures still use AST extraction.
+- Updated all runtime manifests and documented the storage boundary.
+
+**Validation.** 375 focused cases passed. The isolated full suite ran 5,327
+cases (62 skipped), with nine inherited failures and one parallel-load timing
+failure; all six tests in that timing module passed serially. Package import and
+inventory checks pass, all 365 Python sources compile, and lock/shell checks
+pass. Normalizing only dependency injection gives an exact AST match with the
+previous ledger. Independent Claude static review found no production blocker.
+
+Real HTTP/native-provider acceptance passed Claude send → Codex idle wake,
+read and explicit reply; the actual duplicate tool receipt reused the same
+message ID and created one inbox item. A busy recipient retained unread mail
+until cancellation. Restarting the isolated named server preserved message
+identity, bodies, read receipts, reply relationships and the cancellation.
+These checks used the real server and native providers; no desktop/mobile
+client was exercised. **Availability:** source only.
+
 ## 2026-10-26 — Explicit application factory and storage package
 
 - Added `hyadex/app.py:create_app` with required HTTP authorization, a complete

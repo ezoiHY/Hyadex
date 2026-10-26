@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import ast
+from fastapi import HTTPException
+from test_support.cross_chat_fixture import ledger_type
 import asyncio
 from contextlib import asynccontextmanager, contextmanager, suppress
 from copy import deepcopy
@@ -92,9 +94,6 @@ class DelegationAdmissionTests(unittest.TestCase):
             self.assertIn(phrase, policy)
 
 
-class HTTPException(Exception):
-    def __init__(self, status_code, detail):
-        self.status_code, self.detail = status_code, detail
 
 
 def isolated_source():
@@ -127,12 +126,6 @@ def isolated_source():
                 and target.id in {"CHAT_MAILBOX_WAKE_PURPOSE", "CHAT_MAILBOX_WAKE_PROMPT"}
                 for target in node.targets):
             nodes.append(deepcopy(node))
-    ledger = next(node for node in TREE.body if isinstance(node, ast.ClassDef) and node.name == "CrossChatStore")
-    selected = [deepcopy(node) for node in ledger.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in METHODS]
-    selected += [deepcopy(node) for node in ledger.body if isinstance(node, ast.Assign)
-                 and any(isinstance(target, ast.Name) and target.id == "TERMINAL_STATUSES" for target in node.targets)]
-    nodes.append(ast.ClassDef(name="Ledger", bases=[], keywords=[], decorator_list=[], body=selected))
     namespace = dict(asyncio=asyncio, contextmanager=contextmanager, suppress=suppress,
                      hashlib=hashlib, hmac=hmac, sqlite3=sqlite3, threading=threading, time=time,
                      chat_mailbox=chat_mailbox, HTTPException=HTTPException,
@@ -145,6 +138,7 @@ def isolated_source():
                      CODEX_TRANSPORT_APP_SERVER="app-server")
     exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])),
                  "<isolated-mailbox-runtime>", "exec"), namespace)
+    namespace["Ledger"] = ledger_type(namespace)
     return namespace
 
 

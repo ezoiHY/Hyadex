@@ -66,7 +66,7 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         self.original_live_response_waiters = agent_server.CROSS_CHAT_LIVE_RESPONSE_WAITERS
         agent_server.AGENT_TOKEN = "test-admin-token"
-        agent_server.CROSS_CHAT = agent_server.CrossChatStore(self.root / "cross-chat.sqlite3")
+        agent_server.CROSS_CHAT = agent_server.create_cross_chat_store(self.root / "cross-chat.sqlite3")
         await agent_server.CROSS_CHAT.initialize()
         agent_server.CROSS_CHAT_AUTHORITY_ROOT = self.root / "authority"
         agent_server.STORE.sessions = {
@@ -4908,7 +4908,7 @@ class CrossChatStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_stop_exchange_cleanup_is_noop_before_ledger_initialization(
         self,
     ) -> None:
-        uninitialized = agent_server.CrossChatStore(
+        uninitialized = agent_server.create_cross_chat_store(
             self.root / "uninitialized-cross-chat.sqlite3"
         )
         with patch.object(agent_server, "CROSS_CHAT", uninitialized):

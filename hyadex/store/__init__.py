@@ -1,1 +1,1 @@
-"""Persistence primitives; callers own connections, transactions and file handles."""
+"""Persistence modules with explicit database and stream ownership."""

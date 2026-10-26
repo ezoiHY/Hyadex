@@ -59,6 +59,7 @@ FILES = (
     'hyadex/__init__.py',
     'hyadex/app.py',
     'hyadex/store/__init__.py',
+    'hyadex/store/cross_chat.py',
     'hyadex/groups.py',
     'hyadex/autopilot.py',
     'hyadex/routes/__init__.py',

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+from test_support.cross_chat_fixture import ledger_type
 import asyncio
 from collections import deque
 from contextlib import suppress
@@ -13,22 +14,6 @@ from unittest.mock import AsyncMock
 
 ROOT = Path(__file__).resolve().parents[1]
 TREE = ast.parse((ROOT / "agent_server.py").read_text())
-LEDGER_METHODS = {
-    "_row", "get", "update", "nonterminal_for_session", "get_exchange",
-    "get_exchange_leg", "cancel_exchange", "nonterminal_exchanges_for_session",
-}
-LEDGER_CLASS = next(
-    node for node in TREE.body
-    if isinstance(node, ast.ClassDef) and node.name == "CrossChatStore"
-)
-EXTRACTED_LEDGER = ast.ClassDef(
-    name="IsolatedLedger", bases=[], keywords=[], decorator_list=[],
-    body=[
-        node for node in LEDGER_CLASS.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name in LEDGER_METHODS
-    ],
-)
 HELPER = next(
     node for node in TREE.body
     if isinstance(node, ast.AsyncFunctionDef)
@@ -36,7 +21,6 @@ HELPER = next(
 )
 CODE = compile(ast.fix_missing_locations(ast.Module(body=[
     ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
-    EXTRACTED_LEDGER,
     HELPER,
 ], type_ignores=[])), "<isolated-route-retirement>", "exec")
 
@@ -91,6 +75,7 @@ class ProviderRouteRetirementTests(unittest.IsolatedAsyncioTestCase):
             "settle_cross_chat_live_waiter_failure": self.waiter_failure,
             "join_task_despite_caller_cancellation": self.join_completion,
         }
+        self.namespace["IsolatedLedger"] = ledger_type(self.namespace)
         exec(CODE, self.namespace)
         self.ledger = self.namespace["IsolatedLedger"]()
         self.ledger.TERMINAL_STATUSES = {"delivered", "failed", "cancelled"}

@@ -16,6 +16,7 @@ EXECUTION_MODULES = {
     "execution_manage.py", "execution_ownership.py", "execution_service.py", "execution_transport.py",
 }
 NEW_MODULES = {
+    "hyadex/store/cross_chat.py",
     "hyadex/app.py", "hyadex/store/__init__.py",
     "hyadex/__init__.py", "hyadex/groups.py", "hyadex/autopilot.py",
     "hyadex/routes/__init__.py", "hyadex/routes/groups.py", "hyadex/routes/autopilot.py",

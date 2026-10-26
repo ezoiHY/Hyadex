@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import ast
+from fastapi import HTTPException
+from test_support.cross_chat_fixture import ledger_type
 import asyncio
 from contextlib import asynccontextmanager, suppress
 from copy import deepcopy
@@ -34,10 +36,6 @@ PAIR = "pair_" + "b" * 32
 MESSAGE = "handoff_" + "c" * 32
 
 
-class HTTPException(Exception):
-    def __init__(self, status_code, detail, **kwargs):
-        self.status_code = status_code
-        self.detail = detail
 
 
 def server_namespace():
@@ -244,21 +242,14 @@ class AsyncRouteAcceptanceTests(unittest.IsolatedAsyncioTestCase):
             "join_task_despite_caller_cancellation": lambda task: task,
             "reserve_provider_route_handoff": AsyncMock(side_effect=AssertionError("legacy reservation called")),
         })
-        ledger = next(node for node in TREE.body if isinstance(node, ast.ClassDef) and node.name == "CrossChatStore")
         self.connection = sqlite3.connect(":memory:")
         self.connection.row_factory = sqlite3.Row
         self.addCleanup(self.connection.close)
         temporary = tempfile.TemporaryDirectory(prefix="async-route-schema-")
         self.addCleanup(temporary.cleanup)
-        methods = ast.ClassDef(name="Ledger", bases=[], keywords=[], decorator_list=[], body=[
-            deepcopy(node) for node in ledger.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name in {"initialize", "create_instruction", "get", "_row"}
-        ])
         self.ns.update({"time": time, "now_iso": lambda: "2026-09-10T00:00:00Z",
                         "chat_mailbox": chat_mailbox, "PROVIDER_CROSS_CHAT_LEGACY_RATE_RETENTION_SECONDS": 86400})
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[
-            ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), methods,
-        ], type_ignores=[])), "<isolated-async-ledger>", "exec"), self.ns)
+        self.ns["Ledger"] = ledger_type(self.ns)
         self.ledger = self.ns["Ledger"]()
         self.ledger.path = Path(temporary.name) / "memory-ledger.sqlite3"
         self.ledger._transaction = lambda: self.connection

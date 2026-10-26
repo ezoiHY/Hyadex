@@ -73,7 +73,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
             "deleted": set(agent_server.DELETED_SESSION_TOMBSTONES),
         }
         agent_server.AGENT_TOKEN = "test-admin-token"
-        agent_server.CROSS_CHAT = agent_server.CrossChatStore(
+        agent_server.CROSS_CHAT = agent_server.create_cross_chat_store(
             self.root / "cross-chat.sqlite3"
         )
         await agent_server.CROSS_CHAT.initialize()
@@ -2013,7 +2013,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(public["initial_action"], "instruction")
         self.assertEqual(public["remaining_legs"], 1)
 
-        reopened = agent_server.CrossChatStore(agent_server.CROSS_CHAT.path)
+        reopened = agent_server.create_cross_chat_store(agent_server.CROSS_CHAT.path)
         await reopened.initialize()
         persisted = await reopened.get_exchange(exchange["id"])
         self.assertEqual(persisted["authorization_route_id"], route["route_id"])
@@ -2138,7 +2138,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(source_instruction, authority_text)
         public = await agent_server.public_cross_chat_exchange(exchange)
         self.assertNotIn("source_user_instruction", public)
-        reopened = agent_server.CrossChatStore(agent_server.CROSS_CHAT.path)
+        reopened = agent_server.create_cross_chat_store(agent_server.CROSS_CHAT.path)
         await reopened.initialize()
         persisted = await reopened.get_exchange(exchange["id"])
         self.assertEqual(persisted["source_user_instruction"], source_instruction)
@@ -2284,7 +2284,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(created)
 
-        reopened = agent_server.CrossChatStore(agent_server.CROSS_CHAT.path)
+        reopened = agent_server.create_cross_chat_store(agent_server.CROSS_CHAT.path)
         await reopened.initialize()
         persisted = await reopened.get(record["id"])
         self.assertIsNotNone(persisted)
@@ -3254,7 +3254,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_configured_route_messages_have_no_hourly_quota_after_restart(self) -> None:
         path = self.root / "rate.sqlite3"
-        store = agent_server.CrossChatStore(path)
+        store = agent_server.create_cross_chat_store(path)
         await store.initialize()
         route_id = "route_" + "a" * 32
 
@@ -3275,7 +3275,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await create(99, source="one-source", target="target-overflow"))[1])
 
         # Reopening storage does not restore the removed traffic quota.
-        reopened = agent_server.CrossChatStore(path)
+        reopened = agent_server.create_cross_chat_store(path)
         await reopened.initialize()
         self.assertTrue((await reopened.create_instruction(
             envelope_id="handoff_after_restart",
@@ -4734,7 +4734,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_old_cross_chat_database_migrates_origin_columns(self) -> None:
         path = self.root / "old-cross-chat.sqlite3"
-        store = agent_server.CrossChatStore(path)
+        store = agent_server.create_cross_chat_store(path)
         await store.initialize()
         connection = sqlite3.connect(path)
         with connection:
@@ -4761,7 +4761,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
             )
             connection.execute("DROP TABLE cross_chat_route_rate_events")
         connection.close()
-        migrated = agent_server.CrossChatStore(path)
+        migrated = agent_server.create_cross_chat_store(path)
         await migrated.initialize()
         connection = sqlite3.connect(path)
         envelope_columns = {
@@ -4839,7 +4839,7 @@ class AgentCrossChatRouteTests(unittest.IsolatedAsyncioTestCase):
                 ),
             )
         connection.close()
-        pruned = agent_server.CrossChatStore(path)
+        pruned = agent_server.create_cross_chat_store(path)
         await pruned.initialize()
         connection = sqlite3.connect(path)
         remaining_stale = connection.execute(
