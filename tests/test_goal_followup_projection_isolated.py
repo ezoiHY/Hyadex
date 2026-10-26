@@ -8,7 +8,6 @@ import unittest
 
 from tests.test_async_chat_timeline_index_isolated import load_index
 from tests.test_codex_history_metadata_isolated import projection
-from public_chat_transcript import read_public_transcript
 
 
 def event(seq, kind, **fields):
@@ -105,17 +104,8 @@ class GoalFollowupProjectionTests(unittest.TestCase):
         self.assertEqual(ns["_build_timeline_index_locked"]("chat"), warm)
         self.assertEqual(len(warm["landmarks"]), 3)
 
-    def test_public_transcript_keeps_user_followup_not_raw_control_payload(self):
-        result = read_public_transcript(self.path, lambda item: item)
-        self.assertEqual([(item["role"], item["text"]) for item in result["messages"]], [
-            ("user", "Original goal request"), ("assistant", "Earlier answer"),
-            ("user", "Keep working, including the new failure."),
-            ("assistant", "Continuing after your follow-up"), ("assistant", "Updated answer"),
-            ("user", "One more clarification"), ("assistant", "Latest answer"),
-        ])
-        self.assertNotIn("queued_id", json.dumps(result["messages"]))
 
-    def test_unproven_steer_is_not_human_history_or_shareable_input(self):
+    def test_unproven_steer_is_not_human_history(self):
         for field, value in (("native_goal_steer", False), ("native_steer", False),
                              ("provider_user_authored", False), ("purpose", "scheduled_job"),
                              ("backend", "claude"), ("run_id", "")):
@@ -123,6 +113,3 @@ class GoalFollowupProjectionTests(unittest.TestCase):
             invalid[field] = value
             ns = projection()
             self.assertFalse(ns["is_native_goal_steer_event"](invalid))
-            self.write([self.events[0], invalid])
-            result = read_public_transcript(self.path, lambda item: item)
-            self.assertEqual([item["text"] for item in result["messages"]], ["Original goal request"])

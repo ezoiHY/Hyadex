@@ -1,6 +1,6 @@
 """Actual Force Send admission AST; no server import, provider, or live state.
 
-Run through public_chat_share_safe_tests.py. These tests intentionally stop at
+These tests intentionally stop at
 admission; the native consumer's delivery/authority lifecycle has separate tests.
 """
 from __future__ import annotations

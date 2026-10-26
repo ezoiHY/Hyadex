@@ -170,7 +170,7 @@ Describe differences and extra provider usage for server-provided equivalents.
 - [ ] Images/files, code diffs, artifacts and terminal output, including path safety.
 - [ ] Side questions (`/btw`): native context, independent cancellation and no main
   history/queue mutation. An ordinary message is not an equivalent implementation.
-- [ ] Shared/interactive chats and optional tools: retain normal authorization
+- [ ] Optional tools: retain normal authorization
   boundaries; never enable a feature just because another provider supports it.
 
 ## 9. Verification and release gate

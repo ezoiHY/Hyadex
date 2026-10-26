@@ -3,6 +3,35 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Remove browser chat sharing
+
+- Removed public snapshot and interactive sharing routes, browser bundles,
+  media adapters, projection state and authentication exceptions. Old URLs no
+  longer resolve. Retired bearer URLs remain redacted in access logs.
+- Existing sharing ledgers, registered files and transcript bytes remain on
+  disk. Already accepted turns retain collaborator attribution during queue
+  recovery. New native turn requests cannot claim retired sharing attribution.
+- Preserved native side questions by retaining and renaming their session
+  lifecycle guard. Native file access, same-server chat routes, groups and
+  provider event delivery retain their behavior.
+- Verification: actual HTTP checks across two isolated server starts confirmed
+  route removal, native authentication, rejection of new sharing attribution,
+  retained historical attribution and unchanged synthetic ledger/file/history
+  bytes. The route-removal and new-attribution regressions failed before the
+  corresponding changes. Separate real Claude/Codex checks covered file edits,
+  receipts, handoff, incremental context, parallel replies, Stop, busy queues,
+  a manually triggered group job and ordered WebSocket delivery.
+- Claude's read-only review found no blocking regression; its attribution and
+  stale-documentation findings were addressed. Native runtime, group, queue
+  and recovery definitions were compared structurally with the previous source.
+- Validation: 311 focused tests and 257 fast tests passed. The full suite ran
+  4,581 tests with 13 skips and the same eight inherited failures, with no new
+  failures or errors. Python compilation, release inventories, shell syntax,
+  offline dependency-lock and whitespace checks passed.
+- Availability: source only. No deployment, release or installed service was
+  changed. Hyadex's rewritten desktop/mobile clients were not exercised; the
+  acceptance surface was the actual isolated server and native providers.
+
 ## 2026-10-26 — Retire Cursor and admit only Claude/Codex
 
 - Removed Cursor execution, process guard, MCP bridge, CLI probes, API-key

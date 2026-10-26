@@ -135,24 +135,21 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(agent_server.HUB._subscribers)
             self.assertFalse(agent_server.HUB._reservations)
 
-    async def test_live_summary_is_opt_in_and_does_not_wake_share_projection(self) -> None:
+    async def test_live_summary_is_opt_in_and_preserves_plaintext_subscription(self) -> None:
         hub = agent_server.SubscriberHub()
         legacy, opted, plaintext = FakeWebSocket(), FakeWebSocket(), FakeWebSocket()
         await hub.register_accepted("chat", legacy)
         await hub.register_accepted("chat", opted, reasoning_stream=True)
         await hub.register_accepted("chat", plaintext, reasoning_stream=True, reasoning_text=True)
-        with patch.object(agent_server.INTERACTIVE_CHAT_LIVE, "notify") as notify:
-            await hub.broadcast("chat", {"type": "reasoning_summary_stream", "items": [
-                {"phase": "summary", "text": "Summary"}, {"phase": "reasoning", "text": "Plaintext"}]})
-            notify.assert_not_called()
-            self.assertFalse(legacy.events)
-            self.assertEqual(len(opted.events), 1)
-            self.assertEqual([item["phase"] for item in opted.events[0]["items"]], ["summary"])
-            self.assertEqual([item["phase"] for item in plaintext.events[0]["items"]], ["summary", "reasoning"])
-            await hub.broadcast("chat", {"type": "reasoning_summary", "seq": 1})
-            notify.assert_called_once()
-            self.assertEqual(len(legacy.events), 1)
-            self.assertEqual(len(opted.events), 2)
+        await hub.broadcast("chat", {"type": "reasoning_summary_stream", "items": [
+            {"phase": "summary", "text": "Summary"}, {"phase": "reasoning", "text": "Plaintext"}]})
+        self.assertFalse(legacy.events)
+        self.assertEqual(len(opted.events), 1)
+        self.assertEqual([item["phase"] for item in opted.events[0]["items"]], ["summary"])
+        self.assertEqual([item["phase"] for item in plaintext.events[0]["items"]], ["summary", "reasoning"])
+        await hub.broadcast("chat", {"type": "reasoning_summary", "seq": 1})
+        self.assertEqual(len(legacy.events), 1)
+        self.assertEqual(len(opted.events), 2)
         await hub.unsubscribe("chat", opted)
         await hub.unsubscribe("chat", plaintext)
         self.assertFalse(hub._reasoning_subscribers)

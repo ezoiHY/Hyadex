@@ -38,12 +38,7 @@ NEW_MODULES = {
     "claude_background_reconciliation.py",
     "claude_model_catalog.py",
     "claude_goals.py",
-    "hyadex/store/transcripts.py", "claude_history_repair.py", "claude_history_provenance.py", "codex_history_repair.py", "public_chat_shares.py",
-    "public_chat_transcript.py", "public_chat_share_routes.py",
-    "interactive_chat_shares.py", "interactive_chat_share_routes.py",
-    "interactive_chat_share_web.py", "interactive_chat_projection.py", "interactive_chat_runtime.py",
-    "interactive_chat_native.py", "interactive_chat_controls.py", "shared_chat_videos.py", "shared_chat_video_stream.py",
-    "shared_chat_analytics_web.py",
+    "hyadex/store/transcripts.py", "claude_history_repair.py", "claude_history_provenance.py", "codex_history_repair.py",
 }
 
 

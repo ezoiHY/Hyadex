@@ -33,6 +33,9 @@ goals, terminals and file previews. Clients connect over your LAN or Tailscale.
   persistent terminals (tmux).
 - **Several servers per machine**: named instances with separate state.
 
+Public snapshot links and interactive browser sharing are no longer supported.
+Existing chat history and sharing data are retained.
+
 Same-server chat routes remain available. Team Hub, Team Network mail and
 secure-peer pairing have been removed; existing network state is preserved.
 

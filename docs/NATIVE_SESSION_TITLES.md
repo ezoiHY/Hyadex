@@ -117,7 +117,7 @@ request is made. Older/unsupported runtimes keep the fallback.
 Generation starts after the main reply finishes, without delaying that reply.
 Desktop's existing session-list polling picks up the saved name. Mobile may
 take up to its existing 60-second foreground refresh interval, or a manual
-list refresh/reopen. Web shares get a metadata invalidation signal. Immediate
+list refresh/reopen. Immediate
 mobile push of title-only updates would be a separate client improvement.
 
 ## Native metadata synchronization

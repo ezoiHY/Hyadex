@@ -204,6 +204,13 @@ Team references are rejected or paused for repair rather than executed as plain
 prompts; local `@Chat` references retain their existing authorization contract.
 Existing Team Hub and secure-peer state is not deleted by running this version.
 
+Public snapshot and interactive browser sharing are also removed. Old viewer,
+media and sharing-management URLs no longer resolve; sharing cookies and tokens
+do not authorize native APIs. Existing sharing databases, registered files and
+chat history remain on disk. Previously accepted turns retain their attribution;
+new turn requests carrying sharing attribution are rejected with 422.
+Native side questions, file access and same-server chat routes remain available.
+
 ## Manual Onboarding
 
 1. Clone this repo on the machine that will run the agents.

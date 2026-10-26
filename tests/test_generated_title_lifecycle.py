@@ -34,7 +34,6 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
             ('GENERATED_TITLE_SLOTS', asyncio.Semaphore(2)), ('SERVER_SHUTTING_DOWN', False),
             ('DELETING_SESSIONS', set()), ('DELETED_SESSION_TOMBSTONES', set()),
             ('HISTORY_SEARCH_DIRTY', set()), ('CODEX_PROVIDER_STORE', self.provider_store),
-            ('INTERACTIVE_CHAT_LIVE', SimpleNamespace(notify=Mock())),
         ):
             self.enterContext(patch.object(server, target, value))
         self.enterContext(patch.dict(os.environ, {'HYADEX_AUTO_TITLES': '1'}))

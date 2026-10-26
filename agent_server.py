@@ -170,26 +170,12 @@ from claude_background_reconciliation import (
     pending_task_reconciliations,
     reconciliation_envelope,
 )
-from public_chat_share_routes import create_public_chat_share_router, redact_public_share_path
-from interactive_chat_share_routes import create_interactive_chat_share_router
 from hyadex import autopilot
 from hyadex.routes.autopilot import create_autopilot_router
 from hyadex import groups as group_chat
 from hyadex.routes.groups import create_group_router
 import side_questions
 import title_generation
-from shared_chat_videos import (SharedVideoUnavailable, shared_chat_video_descriptor,
-                               open_shared_chat_video, shared_chat_file_descriptor,
-                               open_shared_chat_file, VIDEO_TYPES)
-from interactive_chat_projection import IncrementalChatTranscript
-from interactive_chat_runtime import InteractiveChatLiveState
-from interactive_chat_native import shared_events, shared_native_value, shared_session
-from interactive_chat_controls import InteractiveChatControls, ChatControlError
-from public_chat_transcript import (
-    PublicTranscriptError,
-    make_public_event_projector,
-    read_public_transcript,
-)
 
 try:
     import tomllib
@@ -5754,8 +5740,8 @@ class ProviderCommandSelectionUnavailable(HTTPException):
 class TurnRequest(BaseModel):
     prompt: str
     client_request_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{8,128}$")
-    # Server-derived attribution only; the guest router accepts neither field
-    # from its JSON body and never accepts arbitrary TurnRequest controls.
+    # Retain attribution when replaying turns accepted before browser sharing
+    # was retired. These fields grant no access or browser capability.
     shared_chat_id: str | None = Field(default=None, pattern=r"^interactive_[a-f0-9]{32}$")
     shared_chat_request_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{8,128}$")
     file_ids: list[str] = Field(default_factory=list)
@@ -12140,12 +12126,7 @@ class SubscriberHub:
             return True
 
     async def broadcast(self, sid: str, event: dict[str, Any]) -> None:
-        # Open shared-chat pages get only a non-blocking, chat-scoped wakeup.
-        # Their private text projection runs separately, never in this path.
         transient = event.get("type") == "reasoning_summary_stream"
-        live_shares = globals().get("INTERACTIVE_CHAT_LIVE")
-        if not transient and live_shares is not None:
-            live_shares.notify(sid, event)
         async with self._lock:
             subs = [ws for ws in self._subscribers.get(sid, set())
                     if not transient or ws in self._reasoning_subscribers]
@@ -41783,17 +41764,11 @@ async def generate_session_title(session_id: str, snapshot: dict, reply: str) ->
             snapshot["backend"], snapshot["_title_seed"], reply, **options,
         )
         if result:
-            changed = await STORE.adopt_auto_title(
+            await STORE.adopt_auto_title(
                 session_id, result, source="generated", backend=snapshot["backend"],
                 provider_id=session_provider_id(snapshot), expected_title=snapshot.get("title"),
                 expected_runtime=title_runtime_key(snapshot),
             )
-            if changed:
-                # Existing desktop/mobile list polling reads the saved title.
-                # Web shares have their own metadata-only invalidation signal.
-                live_shares = globals().get("INTERACTIVE_CHAT_LIVE")
-                if live_shares is not None:
-                    live_shares.notify(session_id, {"type": "session_updated"})
 
 
 def schedule_generated_session_title(session_id: str, event: dict) -> None:
@@ -67737,13 +67712,6 @@ async def require_agent_token(request: Request, call_next):
         "/api/admin/codex/provider/models",
         "/api/admin/provider-connections/claude", "/api/admin/provider-connections/claude/check",
     }
-    public_chat_shares_admin_route = (
-        request.url.path == "/api/admin/chat-shares"
-        or request.url.path.startswith("/api/admin/chat-shares/")
-        or request.url.path == "/api/admin/interactive-chat-shares"
-        or request.url.path.startswith("/api/admin/interactive-chat-shares/")
-    )
-    interactive_chat_guest_route = request.url.path.startswith("/interactive-chat/")
     codex_provider_mcp_route = (
         request.url.path == CODEX_PROVIDER_MCP_PATH
     )
@@ -67753,13 +67721,11 @@ async def require_agent_token(request: Request, call_next):
         server_update_admin_route
         or False
         or codex_goals_admin_route
-        or public_chat_shares_admin_route
-        or interactive_chat_guest_route
         or codex_provider_mcp_route
     ):
         return JSONResponse({"detail": "forbidden"}, status_code=403)
     if request.method == "OPTIONS" or (
-        not request.url.path.startswith("/api/") and not interactive_chat_guest_route
+        not request.url.path.startswith("/api/")
     ):
         return await call_next(request)
     # Agent helper routes use a per-run provider capability and perform their
@@ -67838,7 +67804,6 @@ async def require_agent_token(request: Request, call_next):
         server_update_admin_route
         or False
         or codex_goals_admin_route
-        or public_chat_shares_admin_route
     ):
         if privileged_native_browser_request_forbidden(request):
             return JSONResponse({"detail": "forbidden"}, status_code=403)
@@ -67932,7 +67897,6 @@ async def require_agent_token(request: Request, call_next):
         and True
         and True
         and True
-        and not interactive_chat_guest_route
         # Restart has a stricter header-only check below, including its
         # structured error contract. URL credentials must reach that rejection.
         and request.url.path != "/api/admin/restart"
@@ -68003,7 +67967,7 @@ async def require_agent_token(request: Request, call_next):
     original_receive = getattr(request, "_receive", None)
     defer_admission_until_body_received = (
         original_receive is not None
-        and (request_route_parses_body(request) or interactive_chat_guest_route)
+        and request_route_parses_body(request)
         and not getattr(request.state, "bounded_body_prebuffered", False)
         # Mounted transports have their own strict request-body contracts and
         # can begin durable work while consuming a stream. Keep their lease at
@@ -69699,7 +69663,7 @@ router.include_router(codex_provider.create_router(
 ))
 
 
-def public_chat_share_session_exists(session_id: str) -> bool:
+def native_session_available(session_id: str) -> bool:
     if not isinstance(session_id, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id) is None:
         return False
     session = STORE.sessions.get(session_id)
@@ -69720,7 +69684,7 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
     """
     if SERVER_SHUTTING_DOWN:
         raise side_questions.SideQuestionError(503, "Server is shutting down")
-    if not public_chat_share_session_exists(session_id):
+    if not native_session_available(session_id):
         raise side_questions.SideQuestionError(404, "Chat not found")
     session = dict(STORE.sessions[session_id])
     backend = str(session.get("backend") or DEFAULT_BACKEND).lower()
@@ -69748,7 +69712,7 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
                 raise side_questions.SideQuestionError(503, "Server is shutting down")
             if backend == BACKEND_CODEX and CODEX_GOALS_RECONFIGURING:
                 raise side_questions.SideQuestionError(409, "Wait for Codex configuration to finish before using Side chat")
-            if not public_chat_share_session_exists(session_id):
+            if not native_session_available(session_id):
                 raise side_questions.SideQuestionError(404, "Chat not found")
             current = STORE.sessions[session_id]
             if str(current.get("backend") or DEFAULT_BACKEND).lower() != backend or provider_id(current) != parent_id:
@@ -69873,7 +69837,7 @@ SIDE_QUESTIONS = side_questions.SideQuestions(native_factory=create_native_side_
     admission_check=require_side_question_admission)
 router.include_router(side_questions.create_side_question_router(
     authorize=require_native_admin_control,
-    session_exists=public_chat_share_session_exists,
+    session_exists=native_session_available,
     runtime=SIDE_QUESTIONS,
 ))
 
@@ -70084,478 +70048,6 @@ router.include_router(create_group_router(
     unsubscribe=HUB.unsubscribe,
     subprotocol=lambda ws: websocket_endpoint_subprotocol(ws, EVENTS_WEBSOCKET_PROTOCOL),
     send_timeout=WEBSOCKET_SEND_TIMEOUT_SECONDS,
-))
-
-
-def shared_chat_event_attachments(session_id: str, event: dict[str, Any], *, videos: bool) -> list[dict[str, Any]]:
-    """Issue media references only for published artifacts or sent attachments."""
-    if (not is_client_visible_event(event) or not event_files_belong_to_session(event, session_id)
-            or event.get("session_id") not in (None, "", session_id) or event.get("metadata_only") is True):
-        return []
-    kind = event.get("type")
-    legacy = False
-    if kind == "artifact_created":
-        artifact = event.get("artifact")
-        if not isinstance(artifact, dict):
-            return []
-        file_ids = [artifact.get("id")]
-        legacy = event_establishes_session_file_origin(event, session_id)
-    elif kind in {"turn_started", "turn_steered"} and (event.get("purpose") is None or (
-            event.get("native_goal_steer") is True and event.get("provider_user_authored") is True)):
-        file_ids = event.get("display_file_ids") if isinstance(event.get("display_file_ids"), list) else event.get("file_ids")
-        if not isinstance(file_ids, list):
-            return []
-    else:
-        return []
-    output, seen = [], set()
-    for file_id in file_ids:
-        if not isinstance(file_id, str) or file_id in seen:
-            continue
-        seen.add(file_id)
-        try:
-            descriptor = shared_chat_video_descriptor if videos else shared_chat_file_descriptor
-            item = descriptor(FILES_ROOT, AGENT_TOKEN, session_id, file_id, legacy_owner=legacy)
-            if not videos and item["content_type"] in VIDEO_TYPES:
-                # Omit a duplicate only when this exact file can be published
-                # as a video. An extensionless video or empty media file must
-                # remain downloadable even when it cannot be embedded.
-                try:
-                    shared_chat_video_descriptor(FILES_ROOT, AGENT_TOKEN, session_id, file_id,
-                                                 legacy_owner=legacy)
-                except SharedVideoUnavailable:
-                    pass
-                else:
-                    continue
-            output.append(item)
-        except SharedVideoUnavailable:
-            # Unavailable registry entries confer no capability; the video
-            # projection also omits other attachment types.
-            continue
-    return output
-
-
-def shared_chat_event_videos(session_id: str, event: dict[str, Any]) -> list[dict[str, Any]]:
-    return shared_chat_event_attachments(session_id, event, videos=True)
-
-
-def shared_chat_event_files(session_id: str, event: dict[str, Any]) -> list[dict[str, Any]]:
-    return shared_chat_event_attachments(session_id, event, videos=False)
-
-
-def project_shared_chat_event_videos(session_id: str, event: dict[str, Any]) -> dict[str, Any]:
-    clean = dict(event)
-    clean.pop("shared_videos", None)
-    clean.pop("shared_files", None)
-    videos = shared_chat_event_videos(session_id, event)
-    if videos:
-        clean["shared_videos"] = videos
-    return clean
-
-
-def shared_chat_video_events(events: list[dict[str, Any]], session_id: str) -> list[dict[str, Any]]:
-    # Native and public readers supply already-projected visible events.
-    return shared_events([project_shared_chat_event_videos(session_id, event) for event in events], session_id)
-
-
-def shared_chat_attachment_events(events: list[dict[str, Any]], session_id: str) -> list[dict[str, Any]]:
-    projected = []
-    for event in events:
-        clean = project_shared_chat_event_videos(session_id, event)
-        files = shared_chat_event_files(session_id, event)
-        if files:
-            clean["shared_files"] = files
-        projected.append(clean)
-    return shared_events(projected, session_id)
-
-
-async def open_shared_chat_video_for_share(session_id: str, handle: str) -> dict[str, Any]:
-    return await open_shared_chat_attachment_for_share(session_id, handle, videos=True)
-
-
-async def open_shared_chat_file_for_share(session_id: str, handle: str) -> dict[str, Any]:
-    return await open_shared_chat_attachment_for_share(session_id, handle, videos=False)
-
-
-async def open_shared_chat_attachment_for_share(session_id: str, handle: str, *, videos: bool) -> dict[str, Any]:
-    if not public_chat_share_session_exists(session_id):
-        raise HTTPException(404, "Shared attachment is unavailable")
-    opener = open_shared_chat_video if videos else open_shared_chat_file
-    task = asyncio.create_task(asyncio.to_thread(opener, FILES_ROOT, AGENT_TOKEN, session_id, handle))
-    try:
-        return await asyncio.shield(task)
-    except BaseException:
-        def close_late(done):
-            if not done.cancelled():
-                try:
-                    os.close(done.result()["file_fd"])
-                except (Exception, asyncio.CancelledError):
-                    pass
-        task.add_done_callback(close_late)
-        raise
-
-
-def load_public_chat_share_transcript(
-    session_id: str, through_bytes: int | None, *, message_sink: Callable[[dict], None] | None = None,
-) -> dict[str, Any]:
-    """Read a validated, bounded durable snapshot; never discover provider logs."""
-    if not public_chat_share_session_exists(session_id):
-        raise PublicTranscriptError("Chat is unavailable")
-    try:
-        sessions_root = STATE_DIR / "sessions"
-        selected = session_dir(session_id)
-        if (
-            sessions_root.is_symlink() or selected.is_symlink()
-            or selected.resolve(strict=True).parent != sessions_root.resolve(strict=True)
-        ):
-            raise PublicTranscriptError("Chat history is unavailable")
-    except OSError as exc:
-        raise PublicTranscriptError("Chat history is unavailable") from exc
-    projector = make_public_event_projector(
-        session_id,
-        event_is_visible=is_client_visible_event,
-        event_files_belong=event_files_belong_to_session,
-        project_provider_event=project_provider_history_event_for_egress,
-        strip_user_context=strip_hyadex_generated_user_text,
-        fork_internal_purposes=FORK_INTERNAL_PURPOSES,
-    )
-    def project_with_videos(event):
-        projected = projector(event)
-        return project_shared_chat_event_videos(session_id, projected) if projected is not None else None
-    snapshot = read_public_transcript(events_path(session_id), project_with_videos, through_bytes=through_bytes,
-                                      message_sink=message_sink)
-    if not public_chat_share_session_exists(session_id):
-        raise PublicTranscriptError("Chat is unavailable")
-    return snapshot
-
-
-def interactive_chat_session_available(session_id: str) -> bool:
-    # A link must never outlive a switch to unauthenticated server mode.
-    return bool(AGENT_TOKEN) and public_chat_share_session_exists(session_id)
-
-
-def interactive_chat_reader(session_id: str) -> IncrementalChatTranscript:
-    if not interactive_chat_session_available(session_id):
-        raise PublicTranscriptError("Chat is unavailable")
-    sessions_root = STATE_DIR / "sessions"
-    selected = session_dir(session_id)
-    try:
-        if (sessions_root.is_symlink() or selected.is_symlink()
-                or selected.resolve(strict=True).parent != sessions_root.resolve(strict=True)):
-            raise PublicTranscriptError("Chat history is unavailable")
-    except OSError as exc:
-        raise PublicTranscriptError("Chat history is unavailable") from exc
-    return IncrementalChatTranscript(events_path(session_id), make_public_event_projector(
-        session_id, event_is_visible=is_client_visible_event,
-        event_files_belong=event_files_belong_to_session,
-        project_provider_event=project_provider_history_event_for_egress,
-        strip_user_context=strip_hyadex_generated_user_text,
-        fork_internal_purposes=FORK_INTERNAL_PURPOSES,
-    ))
-
-
-def interactive_chat_public_state(session_id: str) -> dict[str, Any]:
-    # Runs synchronously on the event loop. Copy only committed, ordinary chat
-    # text; provider envelopes, file metadata and queue controls stay private.
-    queued = []
-    for item in QUEUED_TURNS.get(session_id, ()):
-        if item.get("purpose") is not None or item.get("_durable") is not True:
-            continue
-        text = item.get("display_prompt") if item.get("display_prompt") is not None else item.get("prompt")
-        if isinstance(text, str):
-            text = strip_hyadex_generated_user_text(text, expected_session_id=session_id)
-            if text.strip():
-                queued.append({"role": "user", "text": text, "pending": True})
-    return {"queued": queued, "busy": session_id in BUSY_SESSIONS or session_id in ACTIVE}
-
-
-async def submit_interactive_chat_prompt(
-    session_id: str, share_id: str, prompt: str, upload_refs: list[str], request_id: str,
-) -> dict[str, Any]:
-    if not interactive_chat_session_available(session_id):
-        raise HTTPException(404, "Chat is unavailable")
-    # The share store has already checked that every opaque upload belongs to
-    # this redeemed link. Keep the existing session ownership check as well.
-    file_ids = validate_session_file_ids(session_id, upload_refs)
-    result = await post_turn(session_id, TurnRequest(
-        prompt=prompt, file_ids=file_ids, shared_chat_id=share_id,
-        shared_chat_request_id=request_id,
-    ))
-    if not isinstance(result, dict) or type(result.get("queued")) is not bool:
-        raise HTTPException(503, "Message acceptance could not be confirmed")
-    receipt = {"accepted": True, "queued": result["queued"], "request_id": request_id}
-    if result["queued"]:
-        queued_id = result.get("queued_id")
-        if not isinstance(queued_id, str) or not 1 <= len(queued_id) <= 128:
-            raise HTTPException(503, "Queued message identity could not be confirmed")
-        receipt["queued_id"] = queued_id
-    return receipt
-
-
-async def save_interactive_chat_upload(
-    session_id: str, share_id: str, filename: str, content_type: str, content: Any,
-) -> str:
-    if not interactive_chat_session_available(session_id):
-        raise HTTPException(404, "Chat is unavailable")
-    # Reuse the ordinary atomic, fsynced session-owned upload pipeline. Its
-    # path-containing metadata never crosses the guest callback boundary.
-    file = UploadFile(file=io.BytesIO(content) if isinstance(content, bytes) else content, filename=filename,
-                      headers=Headers({"content-type": content_type}))
-    try:
-        result = await upload_file(session_id, file)
-    finally:
-        await file.close()
-    return str(result["file"]["id"])
-
-
-async def interactive_chat_native_page(session_id: str, **options: Any) -> dict[str, Any]:
-    if not interactive_chat_session_available(session_id):
-        raise HTTPException(404, "Chat is unavailable")
-    # Reuse the native semantic index. Unlike get_session(), opening a shared
-    # page does not reconcile queues or start provider-history imports.
-    page = await asyncio.to_thread(read_semantic_timeline_page, session_id, **options)
-    page["events"] = await asyncio.to_thread(shared_chat_attachment_events, page["events"], session_id)
-    return {**page, "has_more": bool(page.get("semantic_omitted_before")),
-            "next_before": page.get("next_semantic_before"), "semantic_paging": True}
-
-
-async def interactive_chat_native_snapshot(session_id: str) -> dict[str, Any]:
-    page = await interactive_chat_native_page(session_id, limit=60)
-    session = STORE.sessions.get(session_id)
-    if not session or not interactive_chat_session_available(session_id):
-        raise HTTPException(404, "Chat is unavailable")
-    active = session_id in BUSY_SESSIONS or session_id in ACTIVE
-    backend = str(session.get("backend") or DEFAULT_BACKEND)
-    public = shared_session(public_session(session))
-    # Read committed in-memory state only: a guest heartbeat must never probe
-    # a provider CLI, load a native thread, or scan its external transcript.
-    async with CODEX_PENDING_INTERACTIONS_LOCK:
-        codex_pending = [shared_native_value(public_codex_interaction(item))
-                         for item in CODEX_PENDING_INTERACTIONS.values()
-                         if item.get("session_id") == session_id and not item.get("responded")]
-    async with CLAUDE_PENDING_INTERACTIONS_LOCK:
-        claude_pending = [shared_native_value(public_claude_interaction(item))
-                          for item in CLAUDE_PENDING_INTERACTIONS.values()
-                          if item.get("session_id") == session_id and not item.get("responded")]
-    goal = await get_codex_goal(session_id)
-    codex_available = backend == BACKEND_CODEX and CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC
-    claude_available = backend == BACKEND_CLAUDE and CLAUDE_TRANSPORT != CLAUDE_TRANSPORT_PRINT
-    runtime_available = True
-    status = {"type": "active" if active else "idle", "activeFlags": []}
-    codex_runtime = {
-        "available": codex_available, "transport": CODEX_TRANSPORT,
-        "interactive_capability": CODEX_INTERACTIVE_CLIENT_CAPABILITY,
-        "goals_enabled": CODEX_GOALS_ENABLED, "thread_loaded": False,
-        "persisted_thread": bool(session_provider_id(session)) if backend == BACKEND_CODEX else False,
-        "status": status, **goal, "pending_interactions": codex_pending,
-        "permission_profiles": [], "background_terminals_supported": False,
-        "policy": {
-            "approval_policy": session.get("codex_approval_policy") or CODEX_DEFAULT_APPROVAL_POLICY,
-            "sandbox_mode": session.get("codex_sandbox_mode") or CODEX_DEFAULT_SANDBOX_MODE,
-            "permission_profile": session.get("codex_permission_profile") or CODEX_DEFAULT_PERMISSION_PROFILE,
-            "approvals_reviewer": session.get("codex_approvals_reviewer") or CODEX_DEFAULT_APPROVALS_REVIEWER,
-        },
-    }
-    claude_runtime = {
-        "available": claude_available, "transport": CLAUDE_TRANSPORT,
-        "interactive_capability": CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY,
-        "persisted_session": bool(claude_provider_id_for_session(session)) if backend == BACKEND_CLAUDE else False,
-        "session_loaded": False, "status": status,
-        "stop_fence_pending": session_id in CLAUDE_STOP_FENCE_SESSIONS,
-        "pending_interactions": claude_pending,
-        "policy": {"permission_mode": effective_claude_permission_mode(session)},
-        "permission_modes": list(CLAUDE_PERMISSION_MODE_OPTIONS),
-        "features": {"force_send": True, "interrupt": True, "approvals": True,
-                     "questions": True, "permission_mode_control": True},
-    }
-    queue = []
-    for row in await queued_turns_snapshot(session_id):
-        projected = shared_native_value(row)
-        for key in ("prompt", "display_prompt"):
-            if isinstance(projected.get(key), str):
-                projected[key] = strip_hyadex_generated_user_text(projected[key], expected_session_id=session_id)
-        queue.append(projected)
-    model, effort = str(session.get("model") or ""), str(session.get("effort") or "")
-    snapshot = shared_native_value({
-        "session": public, "events": page["events"], "queue": queue, "active": active,
-        "hasMoreEvents": page["has_more"], "nextTimelineBefore": page.get("next_before"),
-        "eventsTotal": page.get("semantic_total"), "goal": goal,
-        "jobs": (await list_session_jobs(session_id))["jobs"],
-        "codex_runtime": codex_runtime, "claude_runtime": claude_runtime,
-        "health": {"capabilities": {
-            "codex_controls": {"available": codex_available},
-            "claude_controls": {"available": claude_available,
-                                "interactive_client_capability": CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY},
-            "provider_jobs_access_control_v1": {
-                "available": bool(AGENT_TOKEN), "version": 1,
-                "modes": list(PROVIDER_JOBS_ACCESS_MODES),
-                "default": PROVIDER_JOBS_ACCESS_DEFAULT,
-            },
-            "workspace_files": {"available": False},
-        }},
-        "runtime_catalog": {"backends": {backend: {
-            "available": runtime_available, "models": [{"value": model, "label": model or "Server default"}],
-            "efforts": [{"value": effort, "label": effort or "Server default"}],
-        }}},
-    })
-    # QueuedTurn's native UI contract requires the collection even when this
-    # guest has no file-reading capability. Never expose the owner's file IDs.
-    for row in snapshot["queue"]:
-        row["file_ids"] = []
-    return snapshot
-
-
-async def steer_interactive_chat_prompt(session_id: str, prompt: str, *, share_id: str, request_id: str) -> dict[str, Any]:
-    receipt = await post_turn(session_id, TurnRequest(
-        prompt=prompt, shared_chat_id=share_id, shared_chat_request_id=request_id,
-    ))
-    if not isinstance(receipt, dict) or type(receipt.get("queued")) is not bool:
-        raise HTTPException(503, "Message acceptance could not be confirmed")
-    if receipt.get("queued") is True:
-        queued_id = receipt.get("queued_id")
-        if not isinstance(queued_id, str) or not queued_id:
-            raise HTTPException(503, "Message acceptance could not be confirmed")
-        return await post_run_queued_turn_now(session_id, queued_id,
-            RunQueuedTurnNowRequest(accept_deferred_queue_response=True))
-    return receipt
-
-
-async def run_interactive_chat_job(session_id: str, job_id: str) -> dict[str, Any]:
-    async with session_lifecycle_lock(session_id):
-        ensure_session_not_deleting(session_id)
-    # Native job dispatch reacquires the lifecycle lock when it starts a turn.
-    # Ownership is checked again under the job-store lock before admission.
-    return await JOBS.request_manual_run(job_id, expected_session_id=session_id)
-
-
-INTERACTIVE_CHAT_CATALOG: tuple[float, dict[str, Any]] | None = None
-INTERACTIVE_CHAT_CATALOG_LOCK = asyncio.Lock()
-
-
-async def control_interactive_chat(session_id: str, action: str, payload: dict[str, Any], *,
-                                   share_id: str | None = None, request_id: str | None = None) -> dict[str, Any]:
-    global INTERACTIVE_CHAT_CATALOG
-    if not interactive_chat_session_available(session_id):
-        raise HTTPException(404, "Chat is unavailable")
-    if action == "state":
-        return await interactive_chat_native_snapshot(session_id)
-    reads = {
-        "timeline.older": {"before", "limit"}, "timeline.around": {"anchor_seq", "limit"},
-        "timeline.trace": {"run_id", "anchor_seq", "after", "limit"}, "timeline.index": set(),
-        "jobs.runs": {"id", "before_seq", "limit", "timeline_group_id"}, "runtime.catalog": set(),
-        "handoffs.get": {"id"},
-    }
-    if action in reads:
-        if not isinstance(payload, dict) or set(payload) - reads[action]:
-            raise ChatControlError()
-        for key in ("before", "anchor_seq", "after", "before_seq", "limit"):
-            if key in payload and payload[key] is not None and (type(payload[key]) is not int or payload[key] < 0):
-                raise ChatControlError()
-        for key in ("run_id", "id", "timeline_group_id"):
-            if key in payload and payload[key] is not None and (
-                    not isinstance(payload[key], str) or not 1 <= len(payload[key]) <= 320):
-                raise ChatControlError()
-        limit = min(max(payload.get("limit") or 60, 1), 160)
-        if action == "handoffs.get":
-            envelope_id = payload.get("id")
-            if not envelope_id:
-                raise ChatControlError()
-            record = await CROSS_CHAT.get(envelope_id)
-            participants = ((record.get("source_session_id"), record.get("target_session_id"))
-                            if record is not None else ())
-            if not record or record.get("id") != envelope_id or session_id not in participants:
-                raise ChatControlError("forbidden")
-            # Reuse the native body/revision/mailbox projection only after
-            # establishing membership; recheck its result before guest egress.
-            detail = await get_cross_chat_handoff(envelope_id)
-            handoff = detail.get("handoff") if isinstance(detail, dict) else None
-            if (not isinstance(handoff, dict) or handoff.get("id") != envelope_id
-                    or (handoff.get("source_session_id"), handoff.get("target_session_id")) != participants):
-                raise ChatControlError("forbidden")
-            handoff = dict(handoff)
-            for key in ("authorization_kind", "authorization_route_id"):
-                handoff.pop(key, None)
-            if session_id != participants[1]:
-                # Recipient-only edits are not part of the sender's message.
-                for key in ("target_body", "message_edited_by_user", "message_revision"):
-                    handoff.pop(key, None)
-            value = {"handoff": handoff}
-        elif action in {"timeline.older", "timeline.around"}:
-            if action == "timeline.older":
-                value = await interactive_chat_native_page(session_id, semantic_before=payload.get("before"), limit=limit)
-            else:
-                value = await interactive_chat_native_page(session_id, after=max(0, (payload.get("anchor_seq") or 1) - 1),
-                                                          limit=limit, tail=False)
-        elif action == "timeline.index":
-            value = await asyncio.to_thread(build_timeline_index, session_id)
-            value = {**value, "landmarks": [row for row in value.get("landmarks", []) if row.get("kind") != "media"]}
-        elif action == "timeline.trace":
-            value = await asyncio.to_thread(read_indexed_run_trace, session_id, payload.get("run_id") or "",
-                anchor_seq=payload.get("anchor_seq"), after_seq=payload.get("after") or 0, limit=limit)
-            value["events"] = await asyncio.to_thread(shared_chat_attachment_events, value.get("events", []), session_id)
-        elif action == "jobs.runs":
-            value = await asyncio.to_thread(read_scheduled_job_runs, session_id, payload.get("id") or "",
-                before_seq=payload.get("before_seq"), timeline_group_id=payload.get("timeline_group_id"), limit=limit)
-            value["runs"] = await asyncio.to_thread(shared_chat_attachment_events, value.get("runs", []), session_id)
-            value["supported"] = True
-        else:
-            async with INTERACTIVE_CHAT_CATALOG_LOCK:
-                if INTERACTIVE_CHAT_CATALOG is None or time.monotonic() - INTERACTIVE_CHAT_CATALOG[0] > 900:
-                    INTERACTIVE_CHAT_CATALOG = (time.monotonic(), shared_native_value(await runtime_catalog()))
-                value = INTERACTIVE_CHAT_CATALOG[1]
-        return shared_native_value(value)
-    callbacks = {
-        "turn.stop": stop_turn_endpoint, "turn.steer": steer_interactive_chat_prompt,
-        "queue.run_now": post_run_queued_turn_now, "queue.edit": patch_queued_turn,
-        "queue.delete": delete_queued_turn, "queue.move": post_move_queued_turn,
-        "settings.update": update_session, "goal.set": put_codex_goal,
-        "goal.resume": put_codex_goal, "goal.pause": put_codex_goal, "goal.delete": delete_codex_goal,
-        "job.create": create_session_job, "job.update": update_session_job,
-        "job.toggle": update_session_job, "job.delete": delete_session_job, "job.run": run_interactive_chat_job,
-        "approval.codex": post_codex_interaction_response, "approval.claude": post_claude_interaction_response,
-    }
-    models = {model.__name__: model for model in (
-        UpdateSessionRequest, CodexGoalRequest, CreateScopedJobRequest, UpdateJobRequest,
-        UpdateQueuedTurnRequest, MoveQueuedTurnRequest, RunQueuedTurnNowRequest,
-        CodexInteractionResponseRequest, ClaudeInteractionResponseRequest,
-    )}
-    value = await InteractiveChatControls(callbacks, models).dispatch(
-        session_id, action, payload, share_id=share_id, request_id=request_id)
-    if isinstance(value, Response):
-        value = json.loads(value.body)
-    if isinstance(value, dict) and isinstance(value.get("session"), dict):
-        value = {**value, "session": shared_session(value["session"])}
-    INTERACTIVE_CHAT_LIVE.notify(session_id, {"type": "session_updated"})
-    return {"accepted": True, "result": shared_native_value(value)}
-
-
-INTERACTIVE_CHAT_LIVE = InteractiveChatLiveState(
-    interactive_chat_reader, interactive_chat_session_available, interactive_chat_public_state,
-    native_snapshot=interactive_chat_native_snapshot,
-)
-
-router.include_router(create_interactive_chat_share_router(
-    storage_root=STATE_DIR / "interactive-chat-shares",
-    authorize=require_native_admin_control,
-    session_exists=interactive_chat_session_available,
-    public_base_url=lambda: hyadex_setting("PUBLIC_CHAT_BASE_URL", ""),
-    load_transcript=INTERACTIVE_CHAT_LIVE.load,
-    submit_prompt=submit_interactive_chat_prompt,
-    save_upload=save_interactive_chat_upload,
-    wait_for_change=INTERACTIVE_CHAT_LIVE.wait,
-    chat_control=control_interactive_chat,
-    open_video=open_shared_chat_video_for_share,
-    open_file=open_shared_chat_file_for_share,
-    max_upload_bytes=MAX_UPLOAD_BYTES,
-))
-
-
-router.include_router(create_public_chat_share_router(
-    storage_root=STATE_DIR / "public-chat-shares",
-    authorize=require_native_admin_control,
-    session_exists=public_chat_share_session_exists,
-    load_transcript=load_public_chat_share_transcript,
-    public_base_url=lambda: hyadex_setting("PUBLIC_CHAT_BASE_URL", ""),
-    open_video=open_shared_chat_video_for_share,
 ))
 
 
@@ -73723,11 +73215,6 @@ async def _update_session(
             # Archiving is already durable at this point. Terminal cleanup is
             # best-effort and must not turn a successful archive into a 500.
             logger.warning("could not clean up terminal for archived session %s: %s", session_id, exc)
-    # Settings edits can complete without a timeline event. Notify only an
-    # already-open shared view; this performs no I/O or background refresh.
-    live_shares = globals().get("INTERACTIVE_CHAT_LIVE")
-    if live_shares is not None:
-        live_shares.notify(session_id, {"type": "session_updated"})
     return {"session": public_session(sess)}
 
 
@@ -77478,6 +76965,8 @@ async def post_turn_with_receipt(session_id: str, req: TurnRequest) -> Any:
 
 @router.post("/api/sessions/{session_id}/turns")
 async def post_turn(session_id: str, req: TurnRequest) -> Any:
+    if req.shared_chat_id is not None or req.shared_chat_request_id is not None:
+        raise HTTPException(status_code=422, detail="Browser sharing attribution is no longer accepted")
     if req.client_request_id is not None:
         return await post_turn_with_receipt(session_id, req)
     return await post_turn_without_receipt(session_id, req)
@@ -82681,10 +82170,14 @@ def is_polling_access_log_request(method: Any, path: Any, status: Any) -> bool:
     return POLLING_ACCESS_LOG_PATH_RE.match(route) is not None
 
 
+# Old snapshot URLs can still arrive after retirement. Never log their tokens.
+RETIRED_SHARE_PATH_RE = re.compile(r'''(/share/)[^/?\s"']+''')
+
+
 def redact_access_log_token(value: Any) -> str:
     """Remove query and public-share bearer values before access-log handlers."""
 
-    return redact_public_share_path(ACCESS_LOG_TOKEN_QUERY_RE.sub(
+    return RETIRED_SHARE_PATH_RE.sub(r"\1<redacted>", ACCESS_LOG_TOKEN_QUERY_RE.sub(
         lambda match: f"{match.group('prefix')}<redacted>",
         str(value or ""),
     ))

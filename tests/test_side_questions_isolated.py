@@ -870,7 +870,7 @@ class ServerCallbackTests(unittest.IsolatedAsyncioTestCase):
             build_claude_sdk_options=Mock(return_value=(self.options, "configuration", "synthetic-claude")),
             claude_sdk_manager=AsyncMock(return_value=self.manager),
             runner_env=lambda: {"HYADEX_CHAT_ID": "parent", "HOME": "/synthetic"})
-        self.namespace["public_chat_share_session_exists"] = lambda sid: sid in self.namespace["STORE"].sessions
+        self.namespace["native_session_available"] = lambda sid: sid in self.namespace["STORE"].sessions
         exec(self.code, self.namespace)
 
     async def test_codex_side_fork_carries_parent_permissions_and_scopes_approval_owner(self):

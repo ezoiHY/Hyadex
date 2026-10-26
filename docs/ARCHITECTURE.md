@@ -62,3 +62,9 @@ still recognize persisted retired-provider records. Retired jobs stay paused
 across restarts. Only Claude and Codex are admitted, even when an old environment
 configuration names a retired runtime. Pagination and transcript byte cursors
 are shared storage concepts and remain unchanged.
+
+Browser snapshot and interactive sharing are removed, including their routers,
+renderers, media adapters and live projection state. Old sharing ledgers and
+transcripts remain on disk without being opened or migrated. Saved attribution
+on already accepted turns is retained. Side questions use the native session
+lifecycle guard and owner authentication; they do not depend on sharing.
