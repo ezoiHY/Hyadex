@@ -1,0 +1,342 @@
+[
+{
+"seq": 1,
+"id": "evt_ccfba8af26034e2c",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "session_created",
+"ts": "2026-10-26T06:38:18Z",
+"session": {
+"id": "sess_e5b4c3ddf4424730",
+"title": "mac e2e claude",
+"folder": "General",
+"cwd": "/tmp/hyadex-mac-e2e",
+"backend": "claude",
+"model": null,
+"effort": null,
+"codex_provider": "default",
+"auto_title_enabled": true,
+"system_prompt": null,
+"session_id": null,
+"claude_session_id": null,
+"codex_thread_id": null,
+"claude_permission_mode": "default",
+"codex_approval_policy": "never",
+"codex_sandbox_mode": "danger-full-access",
+"codex_permission_profile": null,
+"codex_approvals_reviewer": "user",
+"provider_jobs_access": "full",
+"codex_goal": null,
+"codex_goal_time_budget_seconds": null,
+"codex_thread_status": null,
+"codex_pending_interaction_count": null,
+"codex_needs_user_action": null,
+"claude_pending_interaction_count": 0,
+"claude_needs_user_action": false,
+"parent_id": null,
+"fork_from": null,
+"memory_forked": null,
+"memory_seed_used": null,
+"pinned": false,
+"pinned_at": null,
+"archived": false,
+"archived_at": null,
+"sort_order": 1000.0,
+"created_at": "2026-10-26T06:38:18Z",
+"updated_at": "2026-10-26T06:38:18Z",
+"latest_event_seq": null,
+"latest_event_at": null,
+"latest_event_type": null,
+"latest_agent_event_seq": null,
+"latest_agent_event_at": null,
+"latest_agent_event_type": null,
+"last_read_agent_event_seq": null,
+"last_read_agent_event_at": null,
+"manual_unread": null,
+"unread_notification_level": null,
+"unread_notification_seq": null,
+"latest_notification_level": null,
+"latest_notification_message": null,
+"history_maintenance": {
+"status": null,
+"reason": null,
+"retry_at": null
+},
+"subagent_limit": null,
+"subagent_limit_control": {
+"supported": true,
+"scope": "chat",
+"mode": "native_concurrent",
+"applies_to": "next_idle_provider_start",
+"reason": null,
+"message": "Applies when this chat next starts an idle Claude provider process. Current work keeps its setting. Claude native exceptions may exceed this value."
+},
+"backend_locked": false,
+"provider_connection": "default",
+"emergency_alert": null,
+"unacknowledged_emergency_count": 0,
+"claude_stop_fence_pending": false,
+"codex_goal_time_budget_exhausted": false
+}
+},
+{
+"seq": 2,
+"id": "evt_9ce8f122054d4c9a",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "turn_started",
+"ts": "2026-10-26T06:39:10Z",
+"run_id": "run_4d715e4ec0e64284",
+"backend": "claude",
+"prompt": "Create a file hello.txt containing the single word hi, then run `ls` and tell me what you see. Keep the answer to one sentence.",
+"file_ids": [],
+"chat_references": [],
+"provider_cross_chat_grant_admission_id": null,
+"model": null,
+"effort": null,
+"client_request_id": "mac-e2e-1",
+"provider_context_mode": "chat",
+"cross_chat_exchange_status": false,
+"cross_chat_obligation_ids": [],
+"cross_chat_exchange_ids": [],
+"cross_chat_direct_message_ids": []
+},
+{
+"seq": 3,
+"id": "evt_c44fcbcef1fd4536",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "process_started",
+"ts": "2026-10-26T06:39:11Z",
+"run_id": "run_4d715e4ec0e64284",
+"backend": "claude",
+"transport": "agent-sdk",
+"argv": [
+"/Users/example/.local/bin/claude",
+"<ClaudeSDKClient>",
+"--permission-mode",
+"default"
+],
+"cwd": "/tmp/hyadex-mac-e2e"
+},
+{
+"seq": 4,
+"id": "evt_319daa266f624ac6",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "provider_session",
+"ts": "2026-10-26T06:39:14Z",
+"run_id": "run_4d715e4ec0e64284",
+"backend": "claude",
+"provider_session_id": "2981da58-2722-4c7c-81f3-aa8b85f21beb"
+},
+{
+"seq": 5,
+"id": "evt_2332a0bf26954831",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "claude_goal_changed",
+"ts": "2026-10-26T06:39:14Z"
+},
+{
+"seq": 6,
+"id": "evt_bc8fc5f71aa64f72",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "tool_started",
+"ts": "2026-10-26T06:39:14Z",
+"run_id": "run_4d715e4ec0e64284",
+"tool": {
+"id": "toolu_01NzGzPSctrecbdvarGpuouy",
+"name": "Write",
+"input": {
+"file_path": "/private/tmp/hyadex-mac-e2e/hello.txt",
+"content": "hi\n"
+}
+}
+},
+{
+"seq": 7,
+"id": "evt_30a245309b6146a8",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "claude_interaction_requested",
+"ts": "2026-10-26T06:39:14Z",
+"interaction": {
+"id": "claudereq_b0869edb53fa4050",
+"session_id": "sess_e5b4c3ddf4424730",
+"thread_id": "2981da58-2722-4c7c-81f3-aa8b85f21beb",
+"turn_id": "run_4d715e4ec0e64284",
+"item_id": "toolu_01NzGzPSctrecbdvarGpuouy",
+"method": "item/fileChange/requestApproval",
+"params": {
+"toolName": "Write",
+"toolInput": {
+"file_path": "/private/tmp/hyadex-mac-e2e/hello.txt",
+"content": "hi\n"
+},
+"approvalItem": {
+"id": "toolu_01NzGzPSctrecbdvarGpuouy",
+"type": "toolCall",
+"name": "Write",
+"input": {
+"file_path": "/private/tmp/hyadex-mac-e2e/hello.txt",
+"content": "hi\n"
+}
+},
+"availableDecisions": [
+"accept",
+"acceptForSession",
+"decline",
+"cancel"
+],
+"changes": [
+{
+"file_path": "/private/tmp/hyadex-mac-e2e/hello.txt",
+"content": "hi\n"
+}
+],
+"displayName": "Write",
+"description": "hello.txt",
+"permissionSuggestions": [
+{
+"type": "setMode",
+"destination": "session",
+"mode": "acceptEdits"
+}
+]
+},
+"created_at": "2026-10-26T06:39:14Z",
+"auto_resolution_ms": null
+}
+},
+{
+"seq": 8,
+"id": "evt_87d5b1348b7b437b",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "claude_interaction_resolved",
+"ts": "2026-10-26T06:40:01Z",
+"interaction_id": "claudereq_b0869edb53fa4050",
+"request_method": "item/fileChange/requestApproval",
+"resolution": "answered"
+},
+{
+"seq": 9,
+"id": "evt_449e1c0199df4a80",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "tool_finished",
+"ts": "2026-10-26T06:40:01Z",
+"run_id": "run_4d715e4ec0e64284",
+"tool_id": "toolu_01NzGzPSctrecbdvarGpuouy",
+"tool": {
+"id": "toolu_01NzGzPSctrecbdvarGpuouy",
+"name": "Write",
+"input": {
+"file_path": "/private/tmp/hyadex-mac-e2e/hello.txt",
+"content": "hi\n"
+}
+},
+"output": "File created successfully at: /private/tmp/hyadex-mac-e2e/hello.txt (file state is current in your context — no need to Read it back)",
+"is_error": false
+},
+{
+"seq": 10,
+"id": "evt_0ccd1adddb684167",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "tool_started",
+"ts": "2026-10-26T06:40:03Z",
+"run_id": "run_4d715e4ec0e64284",
+"tool": {
+"id": "toolu_012rEdohsexYELXAgY21XU8Y",
+"name": "Bash",
+"input": {
+"command": "ls /private/tmp/hyadex-mac-e2e",
+"description": "List files in the working directory"
+}
+}
+},
+{
+"seq": 11,
+"id": "evt_50afec122f3c450b",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "tool_finished",
+"ts": "2026-10-26T06:40:03Z",
+"run_id": "run_4d715e4ec0e64284",
+"tool_id": "toolu_012rEdohsexYELXAgY21XU8Y",
+"tool": {
+"id": "toolu_012rEdohsexYELXAgY21XU8Y",
+"name": "Bash",
+"input": {
+"command": "ls /private/tmp/hyadex-mac-e2e",
+"description": "List files in the working directory"
+}
+},
+"output": "README.md\nhello.txt",
+"is_error": false
+},
+{
+"seq": 12,
+"id": "evt_decd5a225d424ace",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "assistant_text",
+"ts": "2026-10-26T06:40:05Z",
+"run_id": "run_4d715e4ec0e64284",
+"text": "I created hello.txt containing \"hi\", and `ls` now lists two files in the directory: `README.md` and `hello.txt`.",
+"backend": "claude",
+"provider_message_id": "e76e329c-310a-44ee-81ee-3e283d6e0963",
+"provider_context_mode": "chat",
+"cross_chat_exchange_status": false,
+"cross_chat_obligation_ids": [],
+"cross_chat_exchange_ids": [],
+"cross_chat_direct_message_ids": []
+},
+{
+"seq": 13,
+"id": "evt_8500bc5c3cc346db",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "provider_session",
+"ts": "2026-10-26T06:40:07Z",
+"run_id": "run_4d715e4ec0e64284",
+"backend": "claude",
+"provider_session_id": "2981da58-2722-4c7c-81f3-aa8b85f21beb"
+},
+{
+"seq": 14,
+"id": "evt_419619bb889745c2",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "code_diff",
+"ts": "2026-10-26T06:40:08Z",
+"run_id": "run_4d715e4ec0e64284",
+"backend": "claude",
+"repository_root": "/private/tmp/hyadex-mac-e2e",
+"diff_files": [
+{
+"path": "hello.txt",
+"additions": 1,
+"deletions": 0,
+"binary": false
+}
+],
+"files_changed": 1,
+"additions": 1,
+"deletions": 0,
+"byte_count": 127,
+"created_at": "2026-10-26T06:40:08Z",
+"attribution": "agent_tool_paths",
+"attributed_paths": [
+"hello.txt"
+]
+},
+{
+"seq": 15,
+"id": "evt_83ad34575a3f46c7",
+"session_id": "sess_e5b4c3ddf4424730",
+"type": "turn_finished",
+"ts": "2026-10-26T06:40:08Z",
+"run_id": "run_4d715e4ec0e64284",
+"backend": "claude",
+"transport": "agent-sdk",
+"provider_session_id": "2981da58-2722-4c7c-81f3-aa8b85f21beb",
+"exit_code": 0,
+"result_text": "I created hello.txt containing \"hi\", and `ls` now lists two files in the directory: `README.md` and `hello.txt`.",
+"stopped": false,
+"provider_context_mode": "chat",
+"cross_chat_exchange_status": false,
+"cross_chat_obligation_ids": [],
+"cross_chat_exchange_ids": [],
+"cross_chat_direct_message_ids": []
+}
+]

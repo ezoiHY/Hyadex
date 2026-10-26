@@ -1,0 +1,211 @@
+import HyadexCore
+import SwiftUI
+
+/// Main window: sidebar · conversation · inspector.
+public struct RootView: View {
+    @Bindable var model: AppModel
+
+    public init(model: AppModel) {
+        self.model = model
+    }
+
+    public var body: some View {
+        NavigationSplitView {
+            SidebarView(model: model)
+        } detail: {
+            // Split-view columns must not take their minimum size from their
+            // content: when sidebar + detail + inspector minimums exceed the
+            // window width (wide Autopilot content in a narrow window), Auto
+            // Layout loops and AppKit aborts. Zero-minimum frames keep each
+            // column's minimum fixed; the window's minimum size is set below.
+            detail
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .overlay(alignment: .top) { ErrorBanner(model: model) }
+                .inspector(isPresented: $model.showInspector) {
+                    InspectorView(model: model)
+                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    model.showInspector.toggle()
+                } label: {
+                    Label("检查器", systemImage: "sidebar.trailing")
+                }
+                .help("显示或隐藏检查器（⌥⌘I）")
+            }
+        }
+        .sheet(item: $model.sheet) { sheet in
+            switch sheet {
+            case .newChat: NewChatSheet(model: model)
+            case .newGroup: NewGroupSheet(model: model)
+            case .newAutopilot: NewAutopilotSheet(model: model)
+            case .commandPalette: CommandPalette(model: model)
+            case .feedback: EmptyView()
+            }
+        }
+        .frame(minWidth: 900, minHeight: 560)
+    }
+
+    @ViewBuilder private var detail: some View {
+        switch model.selection {
+        case .chat(let id): ChatDetailView(model: model, chatID: id).id(id)
+        case .group(let id): GroupDetailView(model: model, groupID: id).id(id)
+        case .autopilot(let id): AutopilotView(model: model, runID: id).id(id)
+        case .jobs: JobsView(model: model)
+        case nil: EmptyDetail(model: model)
+        }
+    }
+}
+
+/// Action errors (a send that failed, an unreachable server…), dismissible.
+private struct ErrorBanner: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        if let message = model.errorMessage {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text(message).lineLimit(3)
+                Spacer(minLength: 8)
+                Button {
+                    model.errorMessage = nil
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .help("关闭")
+            }
+            .font(.callout)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.orange.opacity(0.4)))
+            .frame(maxWidth: 560)
+            .padding(.top, 8)
+            .padding(.horizontal, 20)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .task(id: message) {
+                try? await Task.sleep(for: .seconds(8))
+                if model.errorMessage == message { model.errorMessage = nil }
+            }
+        }
+    }
+}
+
+private struct EmptyDetail: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Hyadex", systemImage: "sparkles.rectangle.stack")
+        } description: {
+            Text("在左侧选择一项，或者新建一个。")
+        } actions: {
+            Button(model.sidebarMode.newItemTitle) { model.newItemForCurrentMode() }
+                .buttonStyle(.borderedProminent)
+        }
+    }
+}
+
+// MARK: - Command palette
+
+/// ⌘K: jump to any conversation or run a command by typing.
+struct CommandPalette: View {
+    @Bindable var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @State private var highlighted = 0
+    @FocusState private var focused: Bool
+
+    struct Entry: Identifiable {
+        let id: String
+        let title: String
+        let subtitle: String
+        let symbol: String
+        let action: @MainActor () -> Void
+    }
+
+    private var entries: [Entry] {
+        var all: [Entry] = [
+            Entry(id: "new-chat", title: "新建聊天", subtitle: "命令 · ⌘N", symbol: "bubble.left") { model.sheet = .newChat },
+            Entry(id: "new-group", title: "新建讨论组", subtitle: "命令 · ⇧⌘N", symbol: "person.2") { model.sheet = .newGroup },
+            Entry(id: "new-run", title: "新建自动接力", subtitle: "命令 · ⌥⌘N", symbol: "arrow.triangle.2.circlepath") { model.sheet = .newAutopilot },
+            Entry(id: "jobs", title: "定时任务", subtitle: "前往", symbol: "calendar.badge.clock") { model.select(.jobs) },
+        ]
+        all += model.chats.map { chat in
+            Entry(id: chat.id, title: chat.title, subtitle: "聊天 · \(chat.backend.displayName)", symbol: "bubble.left") {
+                model.select(.chat(chat.id))
+            }
+        }
+        all += model.groups.map { group in
+            Entry(id: group.id, title: group.title, subtitle: "讨论组", symbol: "person.2") { model.select(.group(group.id)) }
+        }
+        all += model.runs.map { run in
+            Entry(id: run.id, title: run.title, subtitle: "自动接力 · \(run.status.label)", symbol: "arrow.triangle.2.circlepath") {
+                model.select(.autopilot(run.id))
+            }
+        }
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return Array(all.prefix(9)) }
+        return all.filter { $0.title.localizedCaseInsensitiveContains(trimmed) || $0.subtitle.localizedCaseInsensitiveContains(trimmed) }
+    }
+
+    var body: some View {
+        let results = entries
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("跳转到会话或执行命令", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.title3)
+                    .focused($focused)
+                    .onSubmit { run(results) }
+                    .onKeyPress(.downArrow) { highlighted = min(highlighted + 1, max(results.count - 1, 0)); return .handled }
+                    .onKeyPress(.upArrow) { highlighted = max(highlighted - 1, 0); return .handled }
+                    .onChange(of: query) { highlighted = 0 }
+            }
+            .padding(14)
+            Divider()
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(Array(results.enumerated()), id: \.element.id) { index, entry in
+                        Button {
+                            highlighted = index
+                            run(results)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: entry.symbol).frame(width: 18).foregroundStyle(.secondary)
+                                Text(entry.title)
+                                Spacer()
+                                Text(entry.subtitle).font(.caption).foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(RoundedRectangle(cornerRadius: 6)
+                                .fill(index == highlighted ? Color.accentColor.opacity(0.18) : .clear))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if results.isEmpty {
+                        Text("没有匹配项").foregroundStyle(.secondary).padding(20)
+                    }
+                }
+                .padding(6)
+            }
+            .frame(height: 300)
+        }
+        .frame(width: 560)
+        .onAppear { focused = true }
+        .onExitCommand { dismiss() }
+    }
+
+    private func run(_ results: [Entry]) {
+        guard results.indices.contains(highlighted) else { return }
+        let entry = results[highlighted]
+        dismiss()
+        DispatchQueue.main.async { entry.action() }
+    }
+}

@@ -5,8 +5,9 @@ Claude Code and Codex on a machine you control and lets them work together
 with you in **group discussions**, alongside ordinary chats, scheduled jobs,
 goals, terminals and file previews. Clients connect over your LAN or Tailscale.
 
-> **Status:** first backend version. The Mac and Android clients are being
-> rewritten; until then, use the HTTP/WebSocket API (see [API](#api)).
+> **Status:** first backend version and a first native macOS client
+> ([`apps/macos`](apps/macos/README.md)). The Android client is still to be
+> rewritten; other clients can use the HTTP/WebSocket API (see [API](#api)).
 > Current scope, verification and deferred work: [backend checkpoint](docs/BACKEND_STATUS.md).
 > Hyadex is derived from the AgentsDock server; see
 > [History and license](#history-and-license).
@@ -92,6 +93,23 @@ installer; see [manual updates](docs/SERVER_REFERENCE.md#updating-hyadexserver).
 A server bound to `127.0.0.1` cannot accept other devices. Keep the token
 private and never expose the port directly to the public internet.
 
+## Mac app
+
+[`apps/macos`](apps/macos/README.md) is a native SwiftUI client for macOS 15 or
+later. Its sidebar switches between **Work** (chats and scheduled jobs),
+**Group** (group discussions) and **Autopilot**; conversations update live,
+and approvals, diffs, queued messages and run controls are handled in place.
+
+```bash
+cd apps/macos
+scripts/build-app.sh       # builds dist/Hyadex.app with SwiftPM
+open dist/Hyadex.app
+```
+
+In the app, open Settings → 服务器, enter the server URL from the table above and
+the access token, and choose 连接. It is a first version, built from source and
+signed ad hoc; see its README for what has been verified and the known gaps.
+
 ## Configuration
 
 Settings are environment variables. The installed service also reads
@@ -138,6 +156,8 @@ curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 ## Development and tests
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the rules in [AGENTS.md](AGENTS.md).
+The Mac app has its own tests and development checks; see
+[apps/macos](apps/macos/README.md#development-checks).
 
 ## History and license
 

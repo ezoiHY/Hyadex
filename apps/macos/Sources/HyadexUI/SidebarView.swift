@@ -1,0 +1,394 @@
+import HyadexCore
+import SwiftUI
+
+/// The sidebar alone, outside the split view, so development snapshots can
+/// render it (window-server materials do not render in-process).
+public struct SidebarSnapshotView: View {
+    let model: AppModel
+
+    public init(model: AppModel) { self.model = model }
+
+    public var body: some View {
+        SidebarView(model: model)
+            .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+struct SidebarView: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        List(selection: Binding(get: { model.selection }, set: { model.select($0) })) {
+            switch model.sidebarMode {
+            case .work: workSections
+            case .group: groupSections
+            case .autopilot: autopilotSections
+            }
+        }
+        .listStyle(.sidebar)
+        .navigationSplitViewColumnWidth(min: 240, ideal: 270, max: 380)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            SidebarHeader(model: model)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ServerFooter(model: model)
+        }
+    }
+
+    @ViewBuilder private var workSections: some View {
+        if !model.visiblePinned.isEmpty {
+            Section("置顶") {
+                ForEach(model.visiblePinned) { chat in
+                    ChatRow(chat: chat).tag(SidebarItem.chat(chat.id))
+                        .contextMenu { chatMenu(chat) }
+                }
+            }
+        }
+        Section(model.visiblePinned.isEmpty ? "" : "最近") {
+            ForEach(model.visibleChats) { chat in
+                ChatRow(chat: chat).tag(SidebarItem.chat(chat.id))
+                    .contextMenu { chatMenu(chat) }
+            }
+            if model.visibleChats.isEmpty && model.visiblePinned.isEmpty {
+                EmptyRow(text: model.searchText.isEmpty ? "还没有聊天，点右上角的 + 开始" : "没有匹配的聊天")
+            }
+        }
+        Section {
+            Label {
+                HStack {
+                    Text("定时任务")
+                    Spacer()
+                    Text("\(model.jobs.filter(\.enabled).count)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: "calendar.badge.clock")
+            }
+            .tag(SidebarItem.jobs)
+        }
+    }
+
+    @ViewBuilder private var groupSections: some View {
+        Section {
+            ForEach(model.visibleGroups) { group in
+                GroupRow(group: group).tag(SidebarItem.group(group.id))
+            }
+            if model.visibleGroups.isEmpty {
+                EmptyRow(text: model.searchText.isEmpty ? "还没有讨论组，点右上角的 + 开始" : "没有匹配的讨论组")
+            }
+        }
+    }
+
+    @ViewBuilder private var autopilotSections: some View {
+        let active = model.visibleRuns.filter { $0.status != .done && $0.status != .aborted }
+        let finished = model.visibleRuns.filter { $0.status == .done || $0.status == .aborted }
+        if !active.isEmpty {
+            Section("进行中") {
+                ForEach(active) { run in RunRow(run: run).tag(SidebarItem.autopilot(run.id)) }
+            }
+        }
+        if !finished.isEmpty {
+            Section("已结束") {
+                ForEach(finished) { run in RunRow(run: run).tag(SidebarItem.autopilot(run.id)) }
+            }
+        }
+        if model.visibleRuns.isEmpty {
+            Section {
+                EmptyRow(text: model.searchText.isEmpty ? "还没有自动接力，点右上角的 + 开始" : "没有匹配的自动接力")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func chatMenu(_ chat: ChatSummary) -> some View {
+        Button(chat.pinned ? "取消置顶" : "置顶") { model.togglePinned(chat.id) }
+        Button("在新窗口中打开") {}
+            .disabled(true)
+        Divider()
+        Button("归档", role: .destructive) {}
+            .disabled(true)
+    }
+}
+
+private struct EmptyRow: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 6)
+            .selectionDisabled()
+    }
+}
+
+/// Tabs for the three kinds of work, then search with the "new" button beside it.
+private struct SidebarHeader: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ModeSwitcher(model: model)
+            HStack(spacing: 8) {
+                SearchField(text: $model.searchText, prompt: model.sidebarMode.searchPrompt)
+                Button {
+                    model.newItemForCurrentMode()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Color.primary.opacity(0.08)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(model.sidebarMode.newItemTitle)
+                .accessibilityLabel(model.sidebarMode.newItemTitle)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 2)
+        .padding(.bottom, 8)
+        .frame(minWidth: 0, maxWidth: .infinity)
+    }
+}
+
+private struct ModeSwitcher: View {
+    @Bindable var model: AppModel
+    @Namespace private var selection
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(SidebarMode.allCases, id: \.self) { mode in
+                let selected = model.sidebarMode == mode
+                let waiting = model.needsActionCount(in: mode)
+                Button {
+                    withAnimation(.snappy(duration: 0.22)) { model.switchSidebar(to: mode) }
+                } label: {
+                    tabLabel(mode, waiting: waiting > 0)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(selected ? Color.primary : Color.secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 28)
+                    .help(waiting > 0 ? "\(mode.title)：\(waiting) 项需要你处理" : mode.title)
+                    .background {
+                        if selected {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.primary.opacity(0.1))
+                                .matchedGeometryEffect(id: "tab", in: selection)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(mode.title)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityValue(waiting > 0 ? "\(waiting) 项需要处理" : "")
+            }
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.05)))
+    }
+
+    private func tabLabel(_ mode: SidebarMode, waiting: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: mode.symbol).imageScale(.small)
+            Text(mode.title).lineLimit(1).minimumScaleFactor(0.8)
+            if waiting { Circle().fill(.orange).frame(width: 6, height: 6) }
+        }
+        .padding(.horizontal, 4)
+    }
+}
+
+private struct SearchField: View {
+    @Binding var text: String
+    let prompt: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField(prompt, text: $text)
+                .textFieldStyle(.plain)
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("清除")
+            }
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 30)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.06)))
+    }
+}
+
+private struct ChatRow: View {
+    let chat: ChatSummary
+
+    var body: some View {
+        HStack(spacing: 9) {
+            AgentAvatar(backend: chat.backend, size: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(chat.title)
+                        .fontWeight(chat.unread ? .semibold : .regular)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    trailing
+                }
+                Text(chat.preview)
+                    .font(.caption)
+                    .foregroundStyle(chat.state == .needsAction ? Color.orange : Color.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(chat.state == .idle ? "" : chat.state.label)
+    }
+
+    @ViewBuilder private var trailing: some View {
+        if chat.state != .idle {
+            StateIndicator(state: chat.state, size: 11)
+        } else if chat.unread {
+            Circle().fill(Color.accentColor).frame(width: 7, height: 7).accessibilityLabel("未读")
+        } else {
+            Text(chat.lastActivity.relativeShort)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
+
+private struct GroupRow: View {
+    let group: GroupSummary
+
+    var body: some View {
+        HStack(spacing: 9) {
+            AvatarStack(backends: group.participants.map(\.backend), size: 20)
+                .frame(width: 24, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(group.title).lineLimit(1)
+                    Spacer(minLength: 4)
+                    if group.state != .idle {
+                        StateIndicator(state: group.state, size: 11)
+                    } else {
+                        Text(group.lastActivity.relativeShort).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+                Text(group.participants.map { "@\($0.handle)" }.joined(separator: " ") + " · " + group.preview)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct RunRow: View {
+    let run: AutopilotRun
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(run.status.activity.tint == .secondary ? Color.secondary : run.status.activity.tint)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.secondary.opacity(0.12)))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(run.title).lineLimit(1)
+                    Spacer(minLength: 4)
+                    if run.status.activity != .done {
+                        StateIndicator(state: run.status.activity, size: 11)
+                    }
+                }
+                HStack(spacing: 6) {
+                    Text(run.status.label)
+                        .foregroundStyle(run.status.activity == .needsAction ? Color.orange : Color.secondary)
+                    if !run.tasks.isEmpty {
+                        ProgressView(value: Double(run.completedTasks), total: Double(run.tasks.count))
+                            .progressViewStyle(.linear)
+                            .frame(width: 44)
+                            .controlSize(.mini)
+                        Text("\(run.completedTasks)/\(run.tasks.count)")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.caption)
+            }
+        }
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Connection status is always visible at the bottom of the sidebar.
+private struct ServerFooter: View {
+    @Bindable var model: AppModel
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+            Menu {
+                ForEach(model.servers) { server in
+                    Button {
+                        model.currentServerID = server.id
+                    } label: {
+                        if server.id == model.currentServerID {
+                            Label(server.name, systemImage: "checkmark")
+                        } else {
+                            Text(server.name)
+                        }
+                    }
+                }
+                Divider()
+                if model.isLive {
+                    Button("断开连接，查看演示数据") { model.disconnect() }
+                }
+                Button("连接与管理服务器…") { openSettings() }
+            } label: {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(dotColor)
+                        .frame(width: 8, height: 8)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(model.currentServer?.name ?? "未连接")
+                            .font(.callout.weight(.medium))
+                        Text(model.connection.label)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .accessibilityLabel("服务器：\(model.currentServer?.name ?? "未连接")，\(model.connection.label)")
+        }
+    }
+
+    private var dotColor: Color {
+        switch model.connection {
+        case .connected: .green
+        case .connecting, .demo: .yellow
+        case .offline: .red
+        }
+    }
+}

@@ -1,0 +1,365 @@
+[
+{
+"seq": 1,
+"id": "evt_e34ff3a7a0004232",
+"session_id": "sess_4ecd0873ad864148",
+"type": "session_created",
+"ts": "2026-10-26T06:41:45Z",
+"session": {
+"id": "sess_4ecd0873ad864148",
+"title": "mac e2e codex",
+"folder": "General",
+"cwd": "/tmp/hyadex-mac-e2e",
+"backend": "codex",
+"model": null,
+"effort": null,
+"codex_provider": "default",
+"auto_title_enabled": true,
+"system_prompt": null,
+"session_id": null,
+"claude_session_id": null,
+"codex_thread_id": null,
+"claude_permission_mode": "default",
+"codex_approval_policy": "untrusted",
+"codex_sandbox_mode": "workspace-write",
+"codex_permission_profile": null,
+"codex_approvals_reviewer": "user",
+"provider_jobs_access": "full",
+"codex_goal": null,
+"codex_goal_time_budget_seconds": null,
+"codex_thread_status": null,
+"codex_pending_interaction_count": null,
+"codex_needs_user_action": null,
+"claude_pending_interaction_count": 0,
+"claude_needs_user_action": false,
+"parent_id": null,
+"fork_from": null,
+"memory_forked": null,
+"memory_seed_used": null,
+"pinned": false,
+"pinned_at": null,
+"archived": false,
+"archived_at": null,
+"sort_order": -1000.0,
+"created_at": "2026-10-26T06:41:45Z",
+"updated_at": "2026-10-26T06:41:45Z",
+"latest_event_seq": null,
+"latest_event_at": null,
+"latest_event_type": null,
+"latest_agent_event_seq": null,
+"latest_agent_event_at": null,
+"latest_agent_event_type": null,
+"last_read_agent_event_seq": null,
+"last_read_agent_event_at": null,
+"manual_unread": null,
+"unread_notification_level": null,
+"unread_notification_seq": null,
+"latest_notification_level": null,
+"latest_notification_message": null,
+"history_maintenance": {
+"status": null,
+"reason": null,
+"retry_at": null
+},
+"subagent_limit": null,
+"subagent_limit_control": {
+"supported": true,
+"scope": "chat",
+"mode": "native_concurrent",
+"applies_to": "new_or_reloaded_threads",
+"reason": null,
+"message": "Applies to new or reloaded Codex threads. Reload provider when this chat is idle; saving does not interrupt current work."
+},
+"backend_locked": false,
+"provider_connection": "default",
+"emergency_alert": null,
+"unacknowledged_emergency_count": 0,
+"claude_stop_fence_pending": false,
+"codex_goal_time_budget_exhausted": false
+}
+},
+{
+"seq": 2,
+"id": "evt_0b14a4db23654cd0",
+"session_id": "sess_4ecd0873ad864148",
+"type": "turn_started",
+"ts": "2026-10-26T06:41:53Z",
+"run_id": "run_d48b3d5665964446",
+"backend": "codex",
+"prompt": "Append a line saying bye to hello.txt, then show the file with cat. One sentence answer.",
+"file_ids": [],
+"chat_references": [],
+"provider_cross_chat_grant_admission_id": null,
+"model": "gpt-6.1-sol",
+"effort": "xhigh",
+"client_request_id": "mac-e2e-c1",
+"provider_context_mode": "chat",
+"cross_chat_exchange_status": false,
+"cross_chat_obligation_ids": [],
+"cross_chat_exchange_ids": [],
+"cross_chat_direct_message_ids": []
+},
+{
+"seq": 3,
+"id": "evt_4f03fb2394e14338",
+"session_id": "sess_4ecd0873ad864148",
+"type": "process_started",
+"ts": "2026-10-26T06:41:53Z",
+"run_id": "run_d48b3d5665964446",
+"backend": "codex",
+"transport": "app-server",
+"argv": [
+"codex",
+"app-server",
+"--listen",
+"stdio://"
+],
+"cwd": "/tmp/hyadex-mac-e2e"
+},
+{
+"seq": 4,
+"id": "evt_2731c25471a74e0b",
+"session_id": "sess_4ecd0873ad864148",
+"type": "provider_session",
+"ts": "2026-10-26T06:41:54Z",
+"run_id": "run_d48b3d5665964446",
+"backend": "codex",
+"provider_session_id": "01a176f1-b337-7940-a10b-dfd559aae688"
+},
+{
+"seq": 5,
+"id": "evt_1b75fa957b8a4456",
+"session_id": "sess_4ecd0873ad864148",
+"type": "codex_thread_status",
+"ts": "2026-10-26T06:41:54Z",
+"status": {
+"type": "active",
+"activeFlags": []
+},
+"message": "Codex is working."
+},
+{
+"seq": 6,
+"id": "evt_f21a8bc1933f455f",
+"session_id": "sess_4ecd0873ad864148",
+"type": "reasoning_summary",
+"ts": "2026-10-26T06:42:00Z",
+"run_id": "run_d48b3d5665964446",
+"text": "I’ll append `bye` to `hello.txt`, then show it with `cat`.",
+"provider_context_mode": "chat",
+"cross_chat_exchange_status": false,
+"cross_chat_obligation_ids": [],
+"cross_chat_exchange_ids": [],
+"cross_chat_direct_message_ids": [],
+"provider_initial_turn_id": "01a176f1-b38f-73b3-9423-5c34cd428dde",
+"provider_thread_id": "01a176f1-b337-7940-a10b-dfd559aae688",
+"phase": "commentary",
+"item_id": "msg_0d4fb73ca7959c91016adef6385f7c81918502a2f616ff4989"
+},
+{
+"seq": 7,
+"id": "evt_94ea91991dc041be",
+"session_id": "sess_4ecd0873ad864148",
+"type": "codex_thread_status",
+"ts": "2026-10-26T06:42:01Z",
+"status": {
+"type": "active",
+"activeFlags": [
+"waitingOnApproval"
+]
+},
+"message": "Codex is waiting for approval."
+},
+{
+"seq": 8,
+"id": "evt_70815b0735a144e0",
+"session_id": "sess_4ecd0873ad864148",
+"type": "tool_started",
+"ts": "2026-10-26T06:42:01Z",
+"run_id": "run_d48b3d5665964446",
+"tool": {
+"id": "exec-90668244-44f3-4af8-8134-71d9d3e43b56",
+"name": "Bash",
+"input": {
+"command": "/bin/zsh -lc \"printf '%s\\\\n' bye >> hello.txt\ncat hello.txt\"",
+"workdir": "/tmp/hyadex-mac-e2e"
+}
+},
+"provider_context_mode": "chat",
+"cross_chat_exchange_status": false,
+"cross_chat_obligation_ids": [],
+"cross_chat_exchange_ids": [],
+"cross_chat_direct_message_ids": [],
+"provider_initial_turn_id": "01a176f1-b38f-73b3-9423-5c34cd428dde",
+"provider_thread_id": "01a176f1-b337-7940-a10b-dfd559aae688"
+},
+{
+"seq": 9,
+"id": "evt_0383a33947734c86",
+"session_id": "sess_4ecd0873ad864148",
+"type": "codex_interaction_requested",
+"ts": "2026-10-26T06:42:01Z",
+"interaction": {
+"id": "codexreq_1_668675db22044370",
+"session_id": "sess_4ecd0873ad864148",
+"thread_id": "01a176f1-b337-7940-a10b-dfd559aae688",
+"turn_id": "01a176f1-b38f-73b3-9423-5c34cd428dde",
+"item_id": "exec-90668244-44f3-4af8-8134-71d9d3e43b56",
+"method": "item/commandExecution/requestApproval",
+"params": {
+"kind": "command",
+"threadId": "01a176f1-b337-7940-a10b-dfd559aae688",
+"turnId": "01a176f1-b38f-73b3-9423-5c34cd428dde",
+"itemId": "exec-90668244-44f3-4af8-8134-71d9d3e43b56",
+"startedAtMs": 1792996921561,
+"environmentId": "local",
+"command": "/bin/zsh -lc \"printf '%s\\\\n' bye >> hello.txt\ncat hello.txt\"",
+"cwd": "/tmp/hyadex-mac-e2e",
+"commandActions": [
+{
+"type": "unknown",
+"command": "printf '%s\\n' bye >> hello.txt\ncat hello.txt"
+}
+],
+"proposedExecpolicyAmendment": [
+"/bin/zsh",
+"-lc",
+"printf '%s\\n' bye >> hello.txt\ncat hello.txt"
+],
+"availableDecisions": [
+"accept",
+{
+"acceptWithExecpolicyAmendment": {
+"execpolicy_amendment": [
+"/bin/zsh",
+"-lc",
+"printf '%s\\n' bye >> hello.txt\ncat hello.txt"
+]
+}
+},
+"cancel"
+],
+"approvalItem": {
+"type": "commandExecution",
+"id": "exec-90668244-44f3-4af8-8134-71d9d3e43b56",
+"pluginId": null,
+"scriptPath": null,
+"command": "/bin/zsh -lc \"printf '%s\\\\n' bye >> hello.txt\ncat hello.txt\"",
+"cwd": "/tmp/hyadex-mac-e2e",
+"processId": null,
+"source": "agent",
+"status": "inProgress",
+"commandActions": [
+{
+"type": "unknown",
+"command": "printf '%s\\n' bye >> hello.txt\ncat hello.txt"
+}
+],
+"aggregatedOutput": null,
+"exitCode": null,
+"durationMs": null
+}
+},
+"created_at": "2026-10-26T06:42:01Z",
+"auto_resolution_ms": null
+}
+},
+{
+"seq": 10,
+"id": "evt_4f6eb1da723a48f8",
+"session_id": "sess_4ecd0873ad864148",
+"type": "codex_interaction_resolved",
+"ts": "2026-10-26T06:42:51Z",
+"interaction_id": "codexreq_1_668675db22044370",
+"request_method": "item/commandExecution/requestApproval",
+"resolution": "answered"
+},
+{
+"seq": 11,
+"id": "evt_080d5fc2b82f4cf2",
+"session_id": "sess_4ecd0873ad864148",
+"type": "codex_thread_status",
+"ts": "2026-10-26T06:42:51Z",
+"status": {
+"type": "active",
+"activeFlags": []
+},
+"message": "Codex is working."
+},
+{
+"seq": 12,
+"id": "evt_6ea096df824d4cad",
+"session_id": "sess_4ecd0873ad864148",
+"type": "tool_finished",
+"ts": "2026-10-26T06:42:51Z",
+"run_id": "run_d48b3d5665964446",
+"tool_id": "exec-90668244-44f3-4af8-8134-71d9d3e43b56",
+"tool": {
+"id": "exec-90668244-44f3-4af8-8134-71d9d3e43b56",
+"name": "Bash",
+"input": {
+"command": "/bin/zsh -lc \"printf '%s\\\\n' bye >> hello.txt\ncat hello.txt\"",
+"workdir": "/tmp/hyadex-mac-e2e"
+}
+},
+"output": "hi\nbye\n",
+"exit_code": 0,
+"is_error": false,
+"provider_context_mode": "chat",
+"cross_chat_exchange_status": false,
+"cross_chat_obligation_ids": [],
+"cross_chat_exchange_ids": [],
+"cross_chat_direct_message_ids": [],
+"provider_initial_turn_id": "01a176f1-b38f-73b3-9423-5c34cd428dde",
+"provider_thread_id": "01a176f1-b337-7940-a10b-dfd559aae688"
+},
+{
+"seq": 13,
+"id": "evt_1c8702c111074cf3",
+"session_id": "sess_4ecd0873ad864148",
+"type": "assistant_text",
+"ts": "2026-10-26T06:42:59Z",
+"run_id": "run_d48b3d5665964446",
+"text": "Appended `bye` to `hello.txt`; `cat` showed `hi` followed by `bye` on separate lines.",
+"item_id": "msg_0d4fb73ca7959c91016adef673059081918d6c3b9eea3a50dc",
+"provider_context_mode": "chat",
+"cross_chat_exchange_status": false,
+"cross_chat_obligation_ids": [],
+"cross_chat_exchange_ids": [],
+"cross_chat_direct_message_ids": [],
+"provider_initial_turn_id": "01a176f1-b38f-73b3-9423-5c34cd428dde",
+"provider_thread_id": "01a176f1-b337-7940-a10b-dfd559aae688"
+},
+{
+"seq": 14,
+"id": "evt_a28c7749a5aa4212",
+"session_id": "sess_4ecd0873ad864148",
+"type": "codex_thread_status",
+"ts": "2026-10-26T06:42:59Z",
+"status": {
+"type": "idle"
+},
+"message": "Codex is idle."
+},
+{
+"seq": 15,
+"id": "evt_4c596ecdaf1e4b40",
+"session_id": "sess_4ecd0873ad864148",
+"type": "turn_finished",
+"ts": "2026-10-26T06:43:00Z",
+"run_id": "run_d48b3d5665964446",
+"backend": "codex",
+"transport": "app-server",
+"provider_thread_id": "01a176f1-b337-7940-a10b-dfd559aae688",
+"provider_turn_id": "01a176f1-b38f-73b3-9423-5c34cd428dde",
+"exit_code": 0,
+"result_text": "Appended `bye` to `hello.txt`; `cat` showed `hi` followed by `bye` on separate lines.",
+"stopped": false,
+"provider_context_mode": "chat",
+"cross_chat_exchange_status": false,
+"cross_chat_obligation_ids": [],
+"cross_chat_exchange_ids": [],
+"cross_chat_direct_message_ids": [],
+"provider_initial_turn_id": "01a176f1-b38f-73b3-9423-5c34cd428dde"
+}
+]

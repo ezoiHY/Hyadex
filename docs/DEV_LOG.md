@@ -3,6 +3,24 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — First macOS client
+
+- Added `apps/macos`, a native SwiftUI client built with SwiftPM: a sidebar with
+  Work, Group and Autopilot tabs, live chat and group timelines over the event
+  streams, inline Claude and Codex approvals, changed files and diffs, queued
+  messages, per-chat model/effort/permission controls, Autopilot run controls,
+  scheduled jobs, a ⌘K palette, a menu bar extra, and settings that store the
+  server token in the keychain. Without a server it shows demo data.
+- Verified against an isolated development server with real Claude Code and
+  Codex: turns with approvals for both providers, an `@codex` group round, a job
+  toggle and a one-task Autopilot run through to its commit. Fifteen unit tests
+  cover the event projections with recorded event logs, and a layout stress
+  check covers narrow windows.
+- Not yet verified: connecting through the Settings form, creating chats or
+  groups from their sheets, Stop and queue edits on a live server, reconnection
+  after a server restart, and older-history paging (not implemented). Signing
+  is ad hoc and there is no release. No server code changed.
+
 ## 2026-10-26 — Consolidate the current backend checkpoint
 
 - Stopped further decomposition and deletion at runtime commit `807214b`.
