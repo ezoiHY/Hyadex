@@ -16,6 +16,8 @@ EXECUTION_MODULES = {
     "execution_manage.py", "execution_ownership.py", "execution_service.py", "execution_transport.py",
 }
 NEW_MODULES = {
+    "hyadex/__init__.py", "hyadex/groups.py", "hyadex/autopilot.py",
+    "hyadex/routes/__init__.py", "hyadex/routes/groups.py", "hyadex/routes/autopilot.py",
     "local_session_ownership.py",
     "cursor_history.py",
     "workspace_git.py",
@@ -39,10 +41,6 @@ NEW_MODULES = {
     "interactive_chat_native.py", "interactive_chat_controls.py", "shared_chat_videos.py", "shared_chat_video_stream.py",
     "shared_chat_analytics_web.py",
 }
-NEW_MIGRATION = "migrations/0020_team_mail_arrivals.sql"
-THREAD_MIGRATION = "migrations/0021_team_mail_threads.sql"
-BULLETIN_MIGRATION = "migrations/0022_team_bulletin_changes.sql"
-SEARCH_MIGRATION = "migrations/0023_team_message_search.sql"
 
 
 def shell_array(source, name):
@@ -126,7 +124,9 @@ class ReleaseFileManifestTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(f'"$STAGE_DIR/{name}"', self.installer)
                 self.assertIn(f"'$REMOTE_SERVER_DIR/{name}'", self.deployer)
-                self.assertIn(name.removesuffix(".py"), self.installer.split("PYTHONPATH=\"$STAGE_DIR\"")[-1])
+                module = name.removesuffix("/__init__.py").removesuffix(".py").replace("/", ".")
+                self.assertRegex(self.installer.split("PYTHONPATH=\"$STAGE_DIR\"")[-1],
+                                 rf"(?<![\w.]){re.escape(module)}(?=,|;|\s|$)")
 
     def test_claude_native_catalog_is_import_smoked_before_activation(self):
         module = "claude_model_catalog"

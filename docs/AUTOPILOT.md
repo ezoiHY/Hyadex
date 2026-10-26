@@ -6,7 +6,8 @@ is the automated version of a [group discussion](GROUP_DISCUSSIONS.md): the
 server decides who acts next, so agents spend tokens only on planning,
 implementing and reviewing.
 
-Implementation: [`autopilot.py`](../autopilot.py), wired in `agent_server.py`
+Implementation: [`hyadex/autopilot.py`](../hyadex/autopilot.py) and
+[`hyadex/routes/autopilot.py`](../hyadex/routes/autopilot.py), wired in `agent_server.py`
 (`AUTOPILOT`). Tests: `tests/test_autopilot.py`.
 
 ## Flow

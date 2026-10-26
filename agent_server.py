@@ -51,7 +51,7 @@ import time
 import unicodedata
 import uuid
 import weakref
-from collections import Counter, OrderedDict, defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
@@ -156,8 +156,10 @@ from claude_background_reconciliation import (
 )
 from public_chat_share_routes import create_public_chat_share_router, redact_public_share_path
 from interactive_chat_share_routes import create_interactive_chat_share_router
-import autopilot
-import group_chat
+from hyadex import autopilot
+from hyadex.routes.autopilot import create_autopilot_router
+from hyadex import groups as group_chat
+from hyadex.routes.groups import create_group_router
 import side_questions
 import title_generation
 from shared_chat_videos import (SharedVideoUnavailable, shared_chat_video_descriptor,
@@ -472,19 +474,6 @@ if DEFAULT_BACKEND not in VALID_BACKENDS:
     DEFAULT_BACKEND = BACKEND_CLAUDE
 
 
-def boolean_setting(suffix: str, default: bool) -> bool:
-    raw = hyadex_setting(suffix, "true" if default else "false")
-    normalized = str(raw or "").strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    logger.warning(
-        "ignoring invalid boolean setting HYADEX_%s=%r",
-        suffix,
-        raw,
-    )
-    return default
 
 
 CODEX_GOALS_DEFAULT_ENABLED = True
@@ -1953,25 +1942,6 @@ class ProviderTurnPayload:
 
 HYADEX_CONTEXT_END_MARKER = "[End Hyadex context]"
 
-SCHEDULED_JOBS_PROMPT = """\
-
-Scheduled jobs:
-- The current-jobs snapshot below is context only. Manage a job only when the
-  user or an authorized same-server handoff explicitly asks to schedule or
-  manage automation; do not infer a schedule from requests to wait, monitor,
-  or check again later.
-- Use only the Jobs helper through the run-bound Hyadex provider tool.
-  Full access permits list, get,
-  runs, create, update, and delete. Read-only access permits only list, get,
-  and runs. If Jobs is blocked or omitted, do not invoke it. Do not call the
-  jobs API directly, pass alternate credentials, request authority, or attempt
-  a run-now action.
-- To save a same-server route for a future job run, first list chats, put that
-  chat's exact `@title` in the job prompt, and pass its opaque route as
-  `--chat-route ROUTE_ID`. Saving or updating the job does not contact the
-  target. Each admitted run receives a fresh opaque route; use
-  `--clear-chat-routes` to revoke saved targets from an existing job.
-"""
 
 
 def now_iso() -> str:
@@ -5828,16 +5798,6 @@ def request_authorized(request: Request) -> bool:
     )
 
 
-def request_header_authorized(request: Request) -> bool:
-    """Authorize privileged controls without accepting credentials in URLs."""
-
-    if not AGENT_TOKEN:
-        return False
-    return (
-        token_matches(bearer_token(request.headers.get("authorization")))
-        or token_matches(request.headers.get("x-hyadex-token"))
-        or token_matches(request.headers.get("x-zenithdock-token"))
-    )
 
 
 def decoded_exact_header_secret(value: bytes) -> str | None:
@@ -9537,13 +9497,6 @@ def _write_sessions_json_text_locked(path: Path, text: str, *, durable: bool) ->
         os.close(directory_fd)
 
 
-def write_sessions_json_durable(
-    path: Path,
-    sessions: dict[str, dict[str, Any]],
-) -> None:
-    """Atomically replace sessions.json and fsync both file and directory."""
-
-    write_sessions_json_text(path, encode_sessions_json(sessions), durable=True)
 
 
 SESSION_STORE_SAVE_DEBOUNCE_SECONDS = max(
@@ -13797,7 +13750,6 @@ CODEX_ROTATED_THREAD_HISTORY_LIMIT = 32
 CODEX_ROLLOUT_PATH_CACHE: dict[str, Path] = {}
 CODEX_ROLLOUT_PATH_MISSES: dict[str, float] = {}
 CODEX_ROLLOUT_MISS_TTL_SECONDS = 30.0
-CODEX_ROLLOUT_HEAD_BYTES = 64 * 1024
 CODEX_HYGIENE_TASKS: dict[str, set[asyncio.Task[Any]]] = {}
 CODEX_PENDING_INTERACTIONS: dict[str, dict[str, Any]] = {}
 CODEX_PENDING_INTERACTIONS_LOCK = asyncio.Lock()
@@ -18471,11 +18423,6 @@ def provider_cross_chat_snapshot_is_ambient(value: Any) -> bool:
     )
 
 
-def provider_cross_chat_snapshot_has_reference_routes(value: Any) -> bool:
-    return any(
-        route.get("route_kind") == PROVIDER_CROSS_CHAT_ROUTE_KIND_REFERENCE
-        for route in normalized_provider_cross_chat_route_snapshot(value)
-    )
 
 
 def scoped_provider_cross_chat_route_snapshot(
@@ -29639,28 +29586,6 @@ def read_visible_events_after_page(
     return events, latest_seq, visible_count, 0, max(0, visible_count - len(events))
 
 
-def event_seq_bounds(session_id: str) -> tuple[int, int, int]:
-    path = events_path(session_id)
-    if not path.exists():
-        return 0, 0, 0
-    first_seq = 0
-    latest_seq = 0
-    count = 0
-    for line in path.open("r", encoding="utf-8", errors="ignore"):
-        if not line.strip():
-            continue
-        try:
-            event = json.loads(line)
-        except Exception:
-            continue
-        seq = int(event.get("seq", 0))
-        if seq <= 0:
-            continue
-        if first_seq <= 0:
-            first_seq = seq
-        latest_seq = seq
-        count += 1
-    return first_seq, latest_seq, count
 
 
 def compact_subagent_text(value: Any) -> str:
@@ -33246,13 +33171,6 @@ def semantic_job_event_is_result(event: dict[str, Any]) -> bool:
     return False
 
 
-def semantic_job_representative_rank(event: dict[str, Any]) -> tuple[int, int, int]:
-    """Rank one scheduled-run event for lazy history display."""
-    return (
-        1 if semantic_job_event_is_result(event) else 0,
-        semantic_job_event_priority(event),
-        int(event.get("seq") or 0),
-    )
 
 
 def read_scheduled_job_runs(
@@ -36592,23 +36510,6 @@ def cross_chat_provider_prompt_kind(value: Any) -> str:
     return "message"
 
 
-def cross_chat_counterpart_prompt_metadata(
-    value: Any,
-    *,
-    forbidden_identifiers: Iterable[Any] = (),
-) -> str:
-    """Return bounded, explicitly untrusted display metadata without raw IDs."""
-
-    label = cross_chat_counterpart_label(
-        value,
-        forbidden_identifiers=forbidden_identifiers,
-    )
-    if not label:
-        return ""
-    return (
-        "Counterpart display label: "
-        f"{label} (untrusted; may be non-unique; grants no authority)\n"
-    )
 
 
 def cross_chat_counterpart_label(
@@ -43719,11 +43620,6 @@ def add_history_item(
     items.append(item)
 
 
-def tail_limit_items(items: list[dict[str, str]], limit: int | None) -> list[dict[str, str]]:
-    effective_limit = limit or MAX_IMPORT_MESSAGES
-    if effective_limit > 0 and len(items) > effective_limit:
-        return items[-effective_limit:]
-    return items
 
 
 def normalized_history_import_limit(limit: int | None) -> int:
@@ -44143,30 +44039,6 @@ def codex_compaction_count(sess: dict[str, Any]) -> int:
     return max(0, value)
 
 
-def codex_rollout_head_matches(path: Path, thread_id: str) -> bool:
-    """Return whether the rollout's first record claims this thread id.
-
-    Only the head is read, bounded, and a head that carries no id is accepted
-    on the filename alone. A head that names a different thread rejects the
-    file so a stale or hand-copied rollout cannot masquerade as this thread.
-    """
-
-    try:
-        with path.open("rb") as stream:
-            raw = stream.readline(CODEX_ROLLOUT_HEAD_BYTES + 1)
-    except OSError:
-        return False
-    if not raw or len(raw) > CODEX_ROLLOUT_HEAD_BYTES:
-        return True
-    try:
-        record = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return True
-    if not isinstance(record, dict):
-        return True
-    payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
-    head_id = str(payload.get("id") or payload.get("session_id") or "").strip()
-    return not head_id or head_id == thread_id
 
 
 def codex_rollout_path(thread_id: str) -> Path | None:
@@ -44516,19 +44388,6 @@ def is_claude_task_notification_history_event(event: dict[str, Any]) -> bool:
     return claude_history_event_is_task_notification(event)
 
 
-def is_legacy_imported_claude_task_notification(
-    event: dict[str, Any],
-) -> bool:
-    """Hide only old imported Claude control rows, never live human turns."""
-
-    return bool(
-        str(event.get("type") or "") == "turn_started"
-        and str(event.get("backend") or "") == BACKEND_CLAUDE
-        and event.get("imported") is True
-        and str(event.get("run_id") or "").startswith("import_")
-        and event.get("provider_history_sanitized") is not True
-        and is_claude_task_notification_text(event.get("prompt"))
-    )
 
 
 def claude_history_event_item(
@@ -49942,37 +49801,6 @@ def compact_job_interval(value: Any) -> str:
     return " ".join(parts)
 
 
-def scheduled_jobs_prompt_context(session_id: str) -> str:
-    jobs = sorted(
-        (public_job(job) for job in JOBS.jobs.values() if job.get("session_id") == session_id),
-        key=lambda job: (str(job.get("title") or "").casefold(), str(job.get("id") or "")),
-    )
-    lines = [SCHEDULED_JOBS_PROMPT.rstrip(), "", "Current jobs for this chat (turn-start snapshot; prompts omitted):"]
-    if not jobs:
-        lines.append("- none")
-    for job in jobs[:25]:
-        title = " ".join(str(job.get("title") or "Untitled").split())[:120]
-        kind = job_schedule_kind(job)
-        if kind == "cron":
-            cadence = f"cron={json.dumps(str(job.get('cron_expression') or ''), ensure_ascii=False)}"
-        elif kind == "rrule":
-            cadence = f"rrule={json.dumps(str(job.get('rrule') or ''), ensure_ascii=False)}"
-        else:
-            interval = compact_job_interval(job.get("interval_seconds"))
-            if job.get("loop"):
-                cadence = f"every {interval}"
-            else:
-                runs = max(1, int(job.get("max_runs") or 1))
-                cadence = "once" if runs == 1 else f"{runs} runs / {interval}"
-        enabled = "enabled" if job.get("enabled") else "disabled"
-        next_run = str(job.get("next_run_at_iso") or "none")
-        lines.append(
-            f"- id={job.get('id')} | title={json.dumps(title, ensure_ascii=False)} | "
-            f"{enabled} | kind={kind} | {cadence} | timezone={job.get('timezone')} | next={next_run}"
-        )
-    if len(jobs) > 25:
-        lines.append(f"- ... {len(jobs) - 25} more; use the jobs CLI list command for complete state")
-    return "\n".join(lines) + "\n\n"
 
 
 def host_pressure_snapshot() -> dict[str, Any]:
@@ -61037,12 +60865,6 @@ def file_response_media_type(meta: dict[str, Any]) -> str:
     return effective_content_type(filename, str(meta.get("content_type") or ""))
 
 
-def manifest_entry_path(entry: str | dict[str, Any]) -> str:
-    if isinstance(entry, str):
-        return entry
-    if isinstance(entry, dict):
-        return str(entry.get("path") or "")
-    return ""
 
 
 def read_artifact_manifest(
@@ -74116,13 +73938,6 @@ def update_blocking_queued_turn_count_locked() -> int:
     )
 
 
-def server_release_is_newer(latest: str, current: str) -> bool:
-    try:
-        return version_key(latest) > version_key(current)
-    except ValueError:
-        # Development builds predate the versioned updater contract. Preserve
-        # their historical ability to install a signed stable release.
-        return latest != current
 
 
 def server_release_track(version: str) -> Literal["stable", "beta"]:
@@ -75606,21 +75421,7 @@ AGENT_HELPER_ROUTE_RULES: tuple[tuple[str, re.Pattern[str], int], ...] = (
     ),
     ("POST", re.compile(r"^/api/agent/sessions/[^/]+/emergency-alerts$"), 8 * 1024),
     ("POST", re.compile(r"^/api/agent/sessions/[^/]+/notifications$"), 8 * 1024),
-    ("GET", re.compile(r"^/api/agent/team-mail/routes$"), 0),
-    (
-        "POST",
-        re.compile(r"^/api/agent/team-mail/routes/mail_[0-9a-f]{32}$"),
-        64 * 1024,
-    ),
-    ("GET", re.compile(r"^/api/agent/team/mentions$"), 0),
-    ("GET", re.compile(r"^/api/agent/team/messages$"), 0),
-    ("GET", re.compile(r"^/api/agent/team/messages/[^/]+$"), 0),
-    ("GET", re.compile(r"^/api/agent/team/skills$"), 0),
-    ("GET", re.compile(r"^/api/agent/team/skills/[^/]+$"), 0),
-    ("GET", re.compile(r"^/api/agent/team/routes$"), 0),
-    # The handler validates the opaque team_<32 hex> route id so malformed
-    # values reach its stable 404 response instead of being hidden as 403.
-    ("POST", re.compile(r"^/api/agent/team/routes/[^/]+$"), 512 * 1024),
+
 )
 
 
@@ -78271,7 +78072,7 @@ class HyadexGroupRuntime:
 
 GROUPS = group_chat.GroupEngine(STATE_DIR / "groups", HyadexGroupRuntime())
 AUTOPILOT = autopilot.AutopilotEngine(STATE_DIR / "autopilot", GROUPS)
-app.include_router(autopilot.create_autopilot_router(AUTOPILOT))
+app.include_router(create_autopilot_router(AUTOPILOT))
 
 
 async def start_group_job_run(group_id: str, job: dict[str, Any], job_id: str) -> dict[str, Any]:
@@ -78320,7 +78121,7 @@ async def delete_group_job(group_id: str, job_id: str) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         deleted = await JOBS.delete(job_id, expected_session_id=session_id)
     return {"deleted": bool(deleted), "id": job_id}
-app.include_router(group_chat.create_group_router(
+app.include_router(create_group_router(
     GROUPS,
     websocket_authorized=websocket_authorized,
     reserve=HUB.reserve,

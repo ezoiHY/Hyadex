@@ -1,7 +1,8 @@
 # Contributing to Hyadex
 
-This repository is the Hyadex server. Runtime modules live at the repository
-root; Python tests live in `tests/`. Read [AGENTS.md](AGENTS.md) first.
+This repository is the Hyadex server. Runtime modules are being moved from the repository
+root into `hyadex/`; Python tests live in `tests/`. Package ownership and dependency
+rules are documented in [architecture](docs/ARCHITECTURE.md). Read [AGENTS.md](AGENTS.md) first.
 
 ## Development and tests
 

@@ -17,8 +17,9 @@ from unittest.mock import patch
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-import autopilot
-from autopilot import (
+from hyadex import autopilot
+from hyadex.routes.autopilot import create_autopilot_router
+from hyadex.autopilot import (
     ApproveRequest,
     AutopilotEngine,
     CreateRunRequest,
@@ -28,7 +29,8 @@ from autopilot import (
     parse_plan,
     parse_verdict,
 )
-from group_chat import GroupEngine, create_group_router
+from hyadex.groups import GroupEngine
+from hyadex.routes.groups import create_group_router
 from tests.test_group_chat import FakeRuntime
 
 
@@ -541,7 +543,7 @@ class AutopilotRouteTests(unittest.TestCase):
 
             app.include_router(create_group_router(groups, websocket_authorized=lambda ws: True, reserve=allow,
                                                    register=allow, unsubscribe=nothing))
-            app.include_router(autopilot.create_autopilot_router(engine))
+            app.include_router(create_autopilot_router(engine))
             with TestClient(app) as client:
                 client.portal.call(groups.load)
                 client.portal.call(engine.load)

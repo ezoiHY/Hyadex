@@ -13,8 +13,9 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-import group_chat
-from group_chat import (
+from hyadex import groups as group_chat
+from hyadex.routes.groups import create_group_router
+from hyadex.groups import (
     CreateGroupRequest,
     GroupEngine,
     GroupGoalRequest,
@@ -560,7 +561,7 @@ class GroupRouteTests(unittest.TestCase):
 
         self.runtime.broadcast = broadcast
         app = FastAPI()
-        app.include_router(group_chat.create_group_router(
+        app.include_router(create_group_router(
             self.engine, websocket_authorized=lambda ws: ws.query_params.get("token") == "ok",
             reserve=reserve, register=register, unsubscribe=unsubscribe))
         self.client = TestClient(app)

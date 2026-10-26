@@ -43,11 +43,11 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-import group_chat
-from group_chat import GroupEngine, ParticipantSpec, PostGroupMessageRequest
+from hyadex import groups as group_chat
+from hyadex.groups import GroupEngine, ParticipantSpec, PostGroupMessageRequest
 
 
 logger = logging.getLogger("hyadex.autopilot")
@@ -1322,51 +1322,3 @@ class AutopilotEngine:
     def list(self) -> list[dict[str, Any]]:
         runs = sorted(self.runs.values(), key=lambda item: item.get("updated_at") or 0, reverse=True)
         return [self.public(run, summary=True) for run in runs]
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
-def create_autopilot_router(engine: AutopilotEngine) -> APIRouter:
-    router = APIRouter()
-
-    @router.get("/api/autopilot/runs")
-    async def list_runs() -> dict[str, Any]:
-        return {"runs": engine.list()}
-
-    @router.post("/api/autopilot/runs")
-    async def create_run(req: CreateRunRequest) -> dict[str, Any]:
-        return {"run": await engine.create(req)}
-
-    @router.get("/api/autopilot/runs/{run_id}")
-    async def get_run(run_id: str) -> dict[str, Any]:
-        return {"run": engine.public(engine.require(run_id))}
-
-    @router.post("/api/autopilot/runs/{run_id}/approve")
-    async def approve(run_id: str, req: ApproveRequest | None = None) -> dict[str, Any]:
-        return {"run": await engine.approve(run_id, req or ApproveRequest())}
-
-    @router.post("/api/autopilot/runs/{run_id}/feedback")
-    async def feedback(run_id: str, req: FeedbackRequest) -> dict[str, Any]:
-        return {"run": await engine.feedback(run_id, req)}
-
-    @router.post("/api/autopilot/runs/{run_id}/pause")
-    async def pause(run_id: str) -> dict[str, Any]:
-        return {"run": await engine.pause(run_id)}
-
-    @router.post("/api/autopilot/runs/{run_id}/resume")
-    async def resume(run_id: str) -> dict[str, Any]:
-        return {"run": await engine.resume(run_id)}
-
-    @router.post("/api/autopilot/runs/{run_id}/abort")
-    async def abort(run_id: str) -> dict[str, Any]:
-        return {"run": await engine.abort(run_id)}
-
-    @router.delete("/api/autopilot/runs/{run_id}")
-    async def delete(run_id: str, remove_worktree: bool = Query(default=False)) -> dict[str, Any]:
-        engine.require(run_id)
-        await engine.delete(run_id, remove_worktree_files=remove_worktree)
-        return {"deleted": True, "id": run_id}
-
-    return router

@@ -3,6 +3,36 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-26 — Package group discussions and Autopilot
+
+- Moved the group and Autopilot engines into `hyadex/` and their HTTP/WebSocket
+  adapters into `hyadex/routes/`. Engines receive their existing runtime
+  dependencies; imports do not load the server or create state.
+- Removed the two old root modules, 13 unreferenced server helpers, two unused constants and obsolete
+  Team helper-route exceptions. No duplicate compatibility implementations remain.
+- Updated every runtime manifest and installer import check. Nested package
+  paths are preserved when staging or copying the runtime.
+
+**Validation.** The isolated full suite ran 5,325 cases (62 skipped), with the
+same nine inherited failures and no new failures. The affected functional
+checks pass, all 360 Python sources compile, and dependency-lock, shell syntax
+and inventory checks pass. AST comparison confirms unchanged engine and route
+function bodies after relocation. An independent Claude read-only review found
+no blocking issue; its deployment-copy and duplicate-import findings were fixed
+and checked with local transport fixtures and focused regressions.
+
+A real isolated named server passed Claude/Codex file editing and handoff,
+contextual follow-up, parallel replies, Stop, two queued rounds, a group-job
+execution and 47 ordered WebSocket events. A real Autopilot run planned with
+Claude, waited for approval, executed with Codex, verified in its sandbox,
+reviewed with Claude and committed exactly the reviewed files in a disposable
+worktree; the original test repository stayed clean. These checks also complete
+the earlier mixed-provider acceptance gap. Timer-triggered jobs and desktop or
+mobile clients are not covered by these runs.
+
+**Availability:** source only. Session/provider state and the remaining server
+routes have not yet been extracted; see [architecture](ARCHITECTURE.md).
+
 ## 2026-10-26 — Remove Team and cross-server networking
 
 - Removed Team Hub, Team mail, shared team skills and secure-peer transport,

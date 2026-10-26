@@ -57,8 +57,12 @@ RUNTIME_FILES=(
   "$SCRIPT_DIR/codex_provider.py"
   "$SCRIPT_DIR/provider_connections.py" "$SCRIPT_DIR/cursor_api_key.py"
   "$SCRIPT_DIR/side_questions.py"
-  "$SCRIPT_DIR/group_chat.py"
-  "$SCRIPT_DIR/autopilot.py"
+  "$SCRIPT_DIR/hyadex/__init__.py"
+  "$SCRIPT_DIR/hyadex/groups.py"
+  "$SCRIPT_DIR/hyadex/autopilot.py"
+  "$SCRIPT_DIR/hyadex/routes/__init__.py"
+  "$SCRIPT_DIR/hyadex/routes/groups.py"
+  "$SCRIPT_DIR/hyadex/routes/autopilot.py"
   "$SCRIPT_DIR/title_generation.py"
   "$SCRIPT_DIR/codex_side_question.py"
   "$SCRIPT_DIR/claude_side_question.py"
@@ -176,7 +180,31 @@ print(identity)
 echo "Deploying HyadexServer runtime to $REMOTE_HOST:$REMOTE_SERVER_DIR"
 refuse_remote_execution_layout || exit 1
 ssh "$REMOTE_HOST" "mkdir -p '$REMOTE_SERVER_DIR'"
-scp "${RUNTIME_FILES[@]}" "$REMOTE_HOST:$REMOTE_SERVER_DIR/"
+# Preserve package paths without opening one SSH connection per file.
+runtime_parents=()
+for runtime_file in "${RUNTIME_FILES[@]}"; do
+  relative_file="${runtime_file#"$SCRIPT_DIR/"}"
+  relative_parent="$(dirname -- "$relative_file")"
+  parent_seen=false
+  for existing_parent in "${runtime_parents[@]+"${runtime_parents[@]}"}"; do
+    [[ "$existing_parent" != "$relative_parent" ]] || parent_seen=true
+  done
+  if [[ "$parent_seen" == false ]]; then
+    runtime_parents+=("$relative_parent")
+  fi
+done
+for relative_parent in "${runtime_parents[@]}"; do
+  parent_files=()
+  for runtime_file in "${RUNTIME_FILES[@]}"; do
+    relative_file="${runtime_file#"$SCRIPT_DIR/"}"
+    if [[ "$(dirname -- "$relative_file")" == "$relative_parent" ]]; then
+      parent_files+=("$runtime_file")
+    fi
+  done
+  printf -v remote_parent '%q' "$REMOTE_SERVER_DIR/$relative_parent"
+  ssh "$REMOTE_HOST" "mkdir -p -- $remote_parent"
+  scp "${parent_files[@]}" "$REMOTE_HOST:$REMOTE_SERVER_DIR/$relative_parent/"
+done
 echo "Checking server runtime dependencies"
 ssh "$REMOTE_HOST" "
   if ! '$REMOTE_PYTHON' -c 'from importlib.metadata import version; import claude_agent_sdk, croniter, cryptography, dateutil, tzdata; sdk_version = version(\"claude-agent-sdk\"); raise SystemExit(0 if sdk_version == \"0.2.130\" else f\"expected claude-agent-sdk 0.2.130, got {sdk_version}\")' >/dev/null 2>&1; then
@@ -190,12 +218,12 @@ ssh "$REMOTE_HOST" "
         'claude-agent-sdk==0.2.130' 'croniter>=6,<7' 'cryptography>=44,<47' 'python-dateutil>=2.9,<3' 'tzdata>=2025.2'
     fi
   fi
-  PYTHONPATH='$REMOTE_SERVER_DIR' '$REMOTE_PYTHON' -c 'from importlib.metadata import version; import codex_auth, codex_provider, provider_connections, side_questions, codex_side_question, claude_side_question, claude_agent_sdk, cursor_agent_client, cursor_provider_mcp, cursor_process_guard, provider_commands, opencode_agent_client, gemini_acp_client, gemini_history, gemini_content, gemini_import, gemini_runtime, gemini_runner, gemini_permissions, gemini_api; sdk_version = version(\"claude-agent-sdk\"); raise SystemExit(0 if sdk_version == \"0.2.130\" else f\"expected claude-agent-sdk 0.2.130, got {sdk_version}\")'
+  PYTHONPATH='$REMOTE_SERVER_DIR' '$REMOTE_PYTHON' -c 'from importlib.metadata import version; import hyadex, hyadex.groups, hyadex.autopilot, hyadex.routes, hyadex.routes.groups, hyadex.routes.autopilot; import codex_auth, codex_provider, provider_connections, side_questions, codex_side_question, claude_side_question, claude_agent_sdk, cursor_agent_client, cursor_provider_mcp, cursor_process_guard, provider_commands, opencode_agent_client, gemini_acp_client, gemini_history, gemini_content, gemini_import, gemini_runtime, gemini_runner, gemini_permissions, gemini_api; sdk_version = version(\"claude-agent-sdk\"); raise SystemExit(0 if sdk_version == \"0.2.130\" else f\"expected claude-agent-sdk 0.2.130, got {sdk_version}\")'
 "
 
 echo "Compiling server on $REMOTE_HOST"
 ssh "$REMOTE_HOST" "PYTHONPATH='$REMOTE_SERVER_DIR' '$REMOTE_PYTHON' -c 'import workspace_git, claude_model_catalog'"
-ssh "$REMOTE_HOST" "chmod 755 '$REMOTE_SERVER_DIR/hyadex_jobs.py' '$REMOTE_SERVER_DIR/hyadex_chats.py' '$REMOTE_SERVER_DIR/hyadex_emergency.py' '$REMOTE_SERVER_DIR/hyadex_notify.py' '$REMOTE_SERVER_DIR/hyadex_publish.py' && '$REMOTE_PYTHON' -m py_compile '$REMOTE_SERVER_PATH' '$REMOTE_SERVER_DIR/execution_durability.py' '$REMOTE_SERVER_DIR/execution_http.py' '$REMOTE_SERVER_DIR/execution_recovery_status.py' '$REMOTE_SERVER_DIR/execution_recovery.py' '$REMOTE_SERVER_DIR/execution_uninstall.py' '$REMOTE_SERVER_DIR/update_recovery.py' '$REMOTE_SERVER_DIR/execution_activation.py' '$REMOTE_SERVER_DIR/execution_legacy_runner.py' '$REMOTE_SERVER_DIR/execution_preparation.py' '$REMOTE_SERVER_DIR/execution_update_status.py' '$REMOTE_SERVER_DIR/update_handoff.py' '$REMOTE_SERVER_DIR/update_preparation.py' '$REMOTE_SERVER_DIR/execution_control.py' '$REMOTE_SERVER_DIR/execution_install.py' '$REMOTE_SERVER_DIR/execution_maintenance.py' '$REMOTE_SERVER_DIR/execution_manage.py' '$REMOTE_SERVER_DIR/execution_ownership.py' '$REMOTE_SERVER_DIR/execution_service.py' '$REMOTE_SERVER_DIR/execution_transport.py' '$REMOTE_SERVER_DIR/workspace_git.py' '$REMOTE_SERVER_DIR/hyadex_jobs.py' '$REMOTE_SERVER_DIR/hyadex_chats.py' '$REMOTE_SERVER_DIR/chat_mailbox.py' '$REMOTE_SERVER_DIR/provider_commands.py' '$REMOTE_SERVER_DIR/provider_usage.py' '$REMOTE_SERVER_DIR/hyadex_emergency.py' '$REMOTE_SERVER_DIR/hyadex_notify.py' '$REMOTE_SERVER_DIR/hyadex_publish.py' '$REMOTE_SERVER_DIR/claude_sdk_client.py' '$REMOTE_SERVER_DIR/claude_model_catalog.py' '$REMOTE_SERVER_DIR/claude_goals.py' '$REMOTE_SERVER_DIR/claude_background_reconciliation.py' '$REMOTE_SERVER_DIR/codex_app_server.py' '$REMOTE_SERVER_DIR/codex_auth.py' '$REMOTE_SERVER_DIR/codex_provider.py' '$REMOTE_SERVER_DIR/provider_connections.py' '$REMOTE_SERVER_DIR/cursor_api_key.py' '$REMOTE_SERVER_DIR/side_questions.py' '$REMOTE_SERVER_DIR/title_generation.py' '$REMOTE_SERVER_DIR/codex_side_question.py' '$REMOTE_SERVER_DIR/claude_side_question.py' '$REMOTE_SERVER_DIR/cursor_agent_client.py' '$REMOTE_SERVER_DIR/cursor_provider_mcp.py' '$REMOTE_SERVER_DIR/opencode_agent_client.py' '$REMOTE_SERVER_DIR/gemini_acp_client.py' '$REMOTE_SERVER_DIR/gemini_history.py' '$REMOTE_SERVER_DIR/gemini_content.py' '$REMOTE_SERVER_DIR/gemini_import.py' '$REMOTE_SERVER_DIR/gemini_runtime.py' '$REMOTE_SERVER_DIR/gemini_runner.py' '$REMOTE_SERVER_DIR/gemini_permissions.py' '$REMOTE_SERVER_DIR/gemini_api.py' '$REMOTE_SERVER_DIR/cursor_process_guard.py' '$REMOTE_SERVER_DIR/transcript_reader.py' '$REMOTE_SERVER_DIR/claude_history_repair.py' '$REMOTE_SERVER_DIR/claude_history_provenance.py' '$REMOTE_SERVER_DIR/codex_history_repair.py' '$REMOTE_SERVER_DIR/public_chat_shares.py' '$REMOTE_SERVER_DIR/public_chat_transcript.py' '$REMOTE_SERVER_DIR/public_chat_share_routes.py' '$REMOTE_SERVER_DIR/interactive_chat_shares.py' '$REMOTE_SERVER_DIR/interactive_chat_share_routes.py' '$REMOTE_SERVER_DIR/interactive_chat_share_web.py' '$REMOTE_SERVER_DIR/interactive_chat_projection.py' '$REMOTE_SERVER_DIR/interactive_chat_runtime.py' '$REMOTE_SERVER_DIR/interactive_chat_native.py' '$REMOTE_SERVER_DIR/shared_chat_videos.py' '$REMOTE_SERVER_DIR/shared_chat_analytics_web.py' '$REMOTE_SERVER_DIR/shared_chat_video_stream.py' '$REMOTE_SERVER_DIR/interactive_chat_controls.py' '$REMOTE_SERVER_DIR/update_runner.py' '$REMOTE_SERVER_DIR/server_instances.py' '$REMOTE_SERVER_DIR/local_session_ownership.py' '$REMOTE_SERVER_DIR/cursor_history.py'"
+ssh "$REMOTE_HOST" "chmod 755 '$REMOTE_SERVER_DIR/hyadex_jobs.py' '$REMOTE_SERVER_DIR/hyadex_chats.py' '$REMOTE_SERVER_DIR/hyadex_emergency.py' '$REMOTE_SERVER_DIR/hyadex_notify.py' '$REMOTE_SERVER_DIR/hyadex_publish.py' && '$REMOTE_PYTHON' -m py_compile '$REMOTE_SERVER_PATH' '$REMOTE_SERVER_DIR/hyadex/__init__.py' '$REMOTE_SERVER_DIR/hyadex/groups.py' '$REMOTE_SERVER_DIR/hyadex/autopilot.py' '$REMOTE_SERVER_DIR/hyadex/routes/__init__.py' '$REMOTE_SERVER_DIR/hyadex/routes/groups.py' '$REMOTE_SERVER_DIR/hyadex/routes/autopilot.py' '$REMOTE_SERVER_DIR/execution_durability.py' '$REMOTE_SERVER_DIR/execution_http.py' '$REMOTE_SERVER_DIR/execution_recovery_status.py' '$REMOTE_SERVER_DIR/execution_recovery.py' '$REMOTE_SERVER_DIR/execution_uninstall.py' '$REMOTE_SERVER_DIR/update_recovery.py' '$REMOTE_SERVER_DIR/execution_activation.py' '$REMOTE_SERVER_DIR/execution_legacy_runner.py' '$REMOTE_SERVER_DIR/execution_preparation.py' '$REMOTE_SERVER_DIR/execution_update_status.py' '$REMOTE_SERVER_DIR/update_handoff.py' '$REMOTE_SERVER_DIR/update_preparation.py' '$REMOTE_SERVER_DIR/execution_control.py' '$REMOTE_SERVER_DIR/execution_install.py' '$REMOTE_SERVER_DIR/execution_maintenance.py' '$REMOTE_SERVER_DIR/execution_manage.py' '$REMOTE_SERVER_DIR/execution_ownership.py' '$REMOTE_SERVER_DIR/execution_service.py' '$REMOTE_SERVER_DIR/execution_transport.py' '$REMOTE_SERVER_DIR/workspace_git.py' '$REMOTE_SERVER_DIR/hyadex_jobs.py' '$REMOTE_SERVER_DIR/hyadex_chats.py' '$REMOTE_SERVER_DIR/chat_mailbox.py' '$REMOTE_SERVER_DIR/provider_commands.py' '$REMOTE_SERVER_DIR/provider_usage.py' '$REMOTE_SERVER_DIR/hyadex_emergency.py' '$REMOTE_SERVER_DIR/hyadex_notify.py' '$REMOTE_SERVER_DIR/hyadex_publish.py' '$REMOTE_SERVER_DIR/claude_sdk_client.py' '$REMOTE_SERVER_DIR/claude_model_catalog.py' '$REMOTE_SERVER_DIR/claude_goals.py' '$REMOTE_SERVER_DIR/claude_background_reconciliation.py' '$REMOTE_SERVER_DIR/codex_app_server.py' '$REMOTE_SERVER_DIR/codex_auth.py' '$REMOTE_SERVER_DIR/codex_provider.py' '$REMOTE_SERVER_DIR/provider_connections.py' '$REMOTE_SERVER_DIR/cursor_api_key.py' '$REMOTE_SERVER_DIR/side_questions.py' '$REMOTE_SERVER_DIR/title_generation.py' '$REMOTE_SERVER_DIR/codex_side_question.py' '$REMOTE_SERVER_DIR/claude_side_question.py' '$REMOTE_SERVER_DIR/cursor_agent_client.py' '$REMOTE_SERVER_DIR/cursor_provider_mcp.py' '$REMOTE_SERVER_DIR/opencode_agent_client.py' '$REMOTE_SERVER_DIR/gemini_acp_client.py' '$REMOTE_SERVER_DIR/gemini_history.py' '$REMOTE_SERVER_DIR/gemini_content.py' '$REMOTE_SERVER_DIR/gemini_import.py' '$REMOTE_SERVER_DIR/gemini_runtime.py' '$REMOTE_SERVER_DIR/gemini_runner.py' '$REMOTE_SERVER_DIR/gemini_permissions.py' '$REMOTE_SERVER_DIR/gemini_api.py' '$REMOTE_SERVER_DIR/cursor_process_guard.py' '$REMOTE_SERVER_DIR/transcript_reader.py' '$REMOTE_SERVER_DIR/claude_history_repair.py' '$REMOTE_SERVER_DIR/claude_history_provenance.py' '$REMOTE_SERVER_DIR/codex_history_repair.py' '$REMOTE_SERVER_DIR/public_chat_shares.py' '$REMOTE_SERVER_DIR/public_chat_transcript.py' '$REMOTE_SERVER_DIR/public_chat_share_routes.py' '$REMOTE_SERVER_DIR/interactive_chat_shares.py' '$REMOTE_SERVER_DIR/interactive_chat_share_routes.py' '$REMOTE_SERVER_DIR/interactive_chat_share_web.py' '$REMOTE_SERVER_DIR/interactive_chat_projection.py' '$REMOTE_SERVER_DIR/interactive_chat_runtime.py' '$REMOTE_SERVER_DIR/interactive_chat_native.py' '$REMOTE_SERVER_DIR/shared_chat_videos.py' '$REMOTE_SERVER_DIR/shared_chat_analytics_web.py' '$REMOTE_SERVER_DIR/shared_chat_video_stream.py' '$REMOTE_SERVER_DIR/interactive_chat_controls.py' '$REMOTE_SERVER_DIR/update_runner.py' '$REMOTE_SERVER_DIR/server_instances.py' '$REMOTE_SERVER_DIR/local_session_ownership.py' '$REMOTE_SERVER_DIR/cursor_history.py'"
 
 echo "Restarting $SERVICE_NAME"
 ssh "$REMOTE_HOST" "systemctl --user restart '$SERVICE_NAME'"

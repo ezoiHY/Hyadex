@@ -408,8 +408,8 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
             agent_server.CROSS_CHAT_DELIVERY_INSTRUCTIONS,
         )
         self.assertIn(
-            "user or an authorized same-server handoff explicitly asks",
-            agent_server.SCHEDULED_JOBS_PROMPT,
+            "Manage durable scheduled jobs only when explicitly asked",
+            agent_server.CODEX_PROMPT_PRELUDE,
         )
 
         final_result = agent_server.cross_chat_delivery_prompt(
