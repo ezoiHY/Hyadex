@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException
 
 from hyadex.core.http import router
 from hyadex.core.queue import (
-    deferred_force_send_outcome,
     move_queued_turn,
     MoveQueuedTurnRequest,
     RunQueuedTurnNowRequest,
@@ -15,6 +14,7 @@ from hyadex.core.queue import (
     update_queued_turn,
     UpdateQueuedTurnRequest,
 )
+from hyadex.core.steering import deferred_force_send_outcome
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.stop import request_explicit_stop, run_queued_turn_now
 from hyadex.core.turns import post_turn_with_receipt, post_turn_without_receipt

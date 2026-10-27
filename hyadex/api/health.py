@@ -46,7 +46,7 @@ from hyadex.core.config import (
 from hyadex.core.event_log import host_pressure_snapshot
 from hyadex.core.http import router
 from hyadex.core.paths import complete_working_directory_sync, existing_cwd
-from hyadex.core.queue import queue_recovery_readiness
+from hyadex.core.queue_admission import queue_recovery_readiness
 from hyadex.core.runs import RUNS
 from hyadex.core.server import SERVER
 from hyadex.core.sessions import CLAUDE_STOP_FENCE_SESSIONS, STORE

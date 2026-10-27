@@ -35,11 +35,8 @@ from hyadex.core.event_log import (
 from hyadex.core.http import router, websocket_authorized, websocket_endpoint_subprotocol
 from hyadex.core.paths import code_diffs_dir, events_path
 from hyadex.core.processes import terminate_process_tree
-from hyadex.core.queue import (
-    create_session_with_history,
-    queued_turns_snapshot,
-    schedule_provider_history_sync,
-)
+from hyadex.core.queue import queued_turns_snapshot
+from hyadex.core.history_sync import create_session_with_history, schedule_provider_history_sync
 from hyadex.core.runs import RUNS
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (

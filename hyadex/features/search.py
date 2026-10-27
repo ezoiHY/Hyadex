@@ -35,7 +35,7 @@ from hyadex.core.event_log import (
     timeline_index_retire_native_steer_turn,
 )
 from hyadex.core.paths import events_path
-from hyadex.core.queue import (
+from hyadex.core.history_sync import (
     prepare_claude_history_metadata_repair,
     prepare_codex_goal_history_repair,
 )

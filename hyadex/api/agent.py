@@ -32,11 +32,8 @@ from hyadex.core.http import (
     websocket_requested_protocols,
 )
 from hyadex.core.paths import now_iso
-from hyadex.core.queue import (
-    append_durable_event,
-    append_durable_event_batch,
-    publish_artifact_entries,
-)
+from hyadex.core.artifacts import publish_artifact_entries
+from hyadex.core.history_sync import append_durable_event, append_durable_event_batch
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
     ensure_session_not_deleting,

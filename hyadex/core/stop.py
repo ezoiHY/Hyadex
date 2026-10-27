@@ -28,21 +28,25 @@ from hyadex.core.config import (
 from hyadex.core.paths import events_path
 from hyadex.core.processes import terminate_process_tree
 from hyadex.core.queue import (
-    append_durable_event,
-    await_native_steer_result,
     codex_goal_followup_requires_native,
-    codex_goal_steer_selection_is_plain,
-    deferred_force_send_outcome,
-    fence_native_steer_delivery,
-    force_send_conflict_detail,
     NonNativeForceSendRequiresLifecycleLock,
     pause_queued_turns_after_explicit_stop,
-    prepare_steered_turn,
+)
+from hyadex.providers.claude.background import stop_idle_claude_background_subagents_bounded
+from hyadex.core.history_sync import (
+    append_durable_event,
+    fence_native_steer_delivery,
     requeue_native_steer_after_safe_rejection,
-    stop_idle_claude_background_subagents_bounded,
-    wait_for_queue_recovery_admission,
+)
+from hyadex.core.steering import (
+    await_native_steer_result,
+    codex_goal_steer_selection_is_plain,
+    deferred_force_send_outcome,
+    force_send_conflict_detail,
+    prepare_steered_turn,
     withdraw_unaccepted_native_steer,
 )
+from hyadex.core.queue_admission import wait_for_queue_recovery_admission
 from hyadex.core.runs import RUNS
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (

@@ -25,12 +25,9 @@ from hyadex.core.config import (
     MAX_CODEX_GOAL_CHARS,
 )
 from hyadex.core.paths import now_iso
-from hyadex.core.queue import (
-    append_durable_event_batch,
-    codex_goal_steer_selection_is_plain,
-    fence_native_steer_delivery,
-    request_fields_set,
-)
+from hyadex.core.queue import request_fields_set
+from hyadex.core.history_sync import append_durable_event_batch, fence_native_steer_delivery
+from hyadex.core.steering import codex_goal_steer_selection_is_plain
 from hyadex.core.runs import RUNS
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import append_event, session_lifecycle_lock, STORE

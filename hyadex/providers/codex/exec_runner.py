@@ -24,7 +24,7 @@ from hyadex.core.config import (
 )
 from hyadex.core.paths import existing_cwd, now_iso
 from hyadex.core.processes import process_group_for_pid, terminate_process_tree
-from hyadex.core.queue import (
+from hyadex.core.artifacts import (
     collect_manifest,
     collect_recent_leftover_manifests,
     watch_manifest_artifacts,

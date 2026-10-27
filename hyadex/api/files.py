@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from hyadex.core.config import FILES_ROOT
 from hyadex.core.http import router
 from hyadex.core.paths import now_iso, safe_name
-from hyadex.core.queue import commit_staged_upload
+from hyadex.core.artifacts import commit_staged_upload
 from hyadex.core.sessions import ensure_session_not_deleting, STORE
 from hyadex.core.session_files import effective_content_type, list_session_file_records
 from hyadex.core.util import ensure_dirs

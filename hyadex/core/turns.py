@@ -78,27 +78,37 @@ from hyadex.core.event_log import (
 from hyadex.core.paths import codex_manifest_path, events_path, existing_cwd, now_iso
 from hyadex.core.processes import process_group_for_pid, terminate_process_tree
 from hyadex.core.queue import (
-    append_durable_event,
-    append_durable_event_batch,
-    collect_manifest,
-    collect_recent_leftover_manifests,
-    fence_native_steer_delivery,
-    force_send_task_owner,
-    log_queue_promotion_fence,
-    mark_native_steer_accepted,
-    queue_promotion_fence,
     queued_turn_run_metadata,
     queued_turn_unqueued_payload,
     request_fields_set,
     requeue_turn_front,
+    should_schedule_queue_after_finish,
+    terminally_discard_queued_turn,
+)
+from hyadex.core.queue_recovery import (
     restore_missing_durable_force_send_row,
     scan_queued_turns_from_events,
-    should_schedule_queue_after_finish,
-    stop_idle_claude_background_subagents_bounded,
-    terminally_discard_queued_turn,
-    turn_steering_lineage,
-    wait_for_queue_recovery_admission,
+)
+from hyadex.core.artifacts import (
+    collect_manifest,
+    collect_recent_leftover_manifests,
     watch_manifest_artifacts,
+)
+from hyadex.providers.claude.background import stop_idle_claude_background_subagents_bounded
+from hyadex.core.history_sync import (
+    append_durable_event,
+    append_durable_event_batch,
+    fence_native_steer_delivery,
+)
+from hyadex.core.steering import (
+    force_send_task_owner,
+    mark_native_steer_accepted,
+    turn_steering_lineage,
+)
+from hyadex.core.queue_admission import (
+    log_queue_promotion_fence,
+    queue_promotion_fence,
+    wait_for_queue_recovery_admission,
 )
 from hyadex.core.runs import RUNS
 from hyadex.core.server import SERVER

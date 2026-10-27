@@ -16,7 +16,7 @@ from hyadex.core.config import (
     FORK_INTERNAL_PURPOSES,
 )
 from hyadex.core.paths import validated_fork_cwd
-from hyadex.core.queue import claude_completed_fork_boundary
+from hyadex.core.history_sync import claude_completed_fork_boundary
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
     append_event,

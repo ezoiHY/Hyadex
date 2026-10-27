@@ -14,7 +14,8 @@ from hyadex.core.config import (
     CODEX_GOALS_ENABLED,
 )
 from hyadex.core.paths import now_iso
-from hyadex.core.queue import request_fields_set, wait_for_queue_recovery_admission
+from hyadex.core.queue import request_fields_set
+from hyadex.core.queue_admission import wait_for_queue_recovery_admission
 from hyadex.core.runs import RUNS
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import append_event, STORE

@@ -54,7 +54,7 @@ from hyadex.core.processes import (
     server_restart_tmux_cgroup_state,
     top_process_rows,
 )
-from hyadex.core.queue import queue_checkpoint_loop
+from hyadex.core.queue_recovery import queue_checkpoint_loop
 from hyadex.core.runs import RUNS
 from hyadex.core.server import SERVER
 from hyadex.core.server_logging import concise_error_message

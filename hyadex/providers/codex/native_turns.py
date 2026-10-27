@@ -12,7 +12,7 @@ from hyadex.core.config import (
     CODEX_APP_SERVER_LIFECYCLE_TIMEOUT_SECONDS,
     IDLE_KILL_SECONDS,
 )
-from hyadex.core.queue import mark_native_steer_accepted
+from hyadex.core.steering import mark_native_steer_accepted
 from hyadex.core.runs import RUNS
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
