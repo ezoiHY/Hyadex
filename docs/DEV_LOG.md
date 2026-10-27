@@ -81,6 +81,41 @@ publish, emergency, notify) and planned client features use. API contract 30.
 - Removed the single-service systemd template; `install.sh` writes the worker
   and gateway units itself.
 - No API, stored-state or chat behaviour changed.
+## 2026-10-27 — Terminal in the Mac app
+
+- Each chat has a terminal panel (⌃` or the toolbar button) docked under the
+  conversation. It attaches to the chat's persistent tmux session on the server,
+  the same one the agent can inspect, through the existing authenticated PTY
+  socket.
+- The terminal is a native view with its own emulator (no third-party packages):
+  colours including 256-colour and true colour, the alternate screen used by
+  full-screen programs, wide CJK characters, input methods, copy and paste
+  (bracketed when the program asks for it), and scrolling back through tmux
+  history with the trackpad or mouse wheel.
+- Tabs show the session's tmux windows; new windows, splits, closing a pane and
+  ending the session are in the panel's header. Hiding the panel only detaches:
+  commands keep running, and reopening it repaints the current screen.
+
+## 2026-10-26 — Group discussions match chats in the Mac app
+
+- A group reply now shows its author, then the member's work folded into one
+  row (thinking, commands, edits, answered approvals, with the time it took),
+  then the answer and the files it changed with their diffs. The work and
+  diffs come from each member's own chat, matched to the group by the
+  dispatch id the server already uses as the member turn's request id; no
+  server change was needed.
+- A sent message shows at once, and each member still answering has a live
+  status line. A member's approval appears inside its turn instead of above
+  the composer, and the member shows that it is waiting.
+- Members moved from a bar above the conversation into the composer, like a
+  chat's model menu: model, effort, native permission mode and context fill
+  per member, adding Claude or Codex members and removing them. The answer
+  mode and analysis-only sit next to them; dispatch statistics are in ⓘ.
+- Verified on an isolated development server with real Claude Code and Codex:
+  a Codex member's shell command shown live and folded under its reply, a
+  Claude member's file-edit approval shown inline, approved, and its receipt
+  opening the real diff, and adding and removing a Codex member. 32 app
+  tests pass.
 
 ## 2026-10-26 — Usage, context and native permissions in the Mac app
 

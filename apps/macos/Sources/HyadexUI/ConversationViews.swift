@@ -35,6 +35,10 @@ struct ChatDetailView: View {
                              onWithdrawQueued: { model.withdrawQueued($0, in: chatID) }) {
                     ChatControls(model: model, chat: chat)
                 }
+                if model.terminalOpen.contains(chatID) {
+                    Divider()
+                    TerminalDock(model: model, chatID: chatID)
+                }
             }
             .environment(\.messageActions, model.messageActions(chat: chatID))
             .navigationTitle(chat.title)
@@ -165,69 +169,110 @@ struct ContextMeter: View {
 
 // MARK: - Group
 
-/// A member card. Clicking it changes that agent's model, effort and
-/// permissions; a turn already running keeps its settings.
+/// A member in the group composer, like a chat's model menu: its model,
+/// effort and permission mode, with the provider's own names, and how full
+/// its context is. Changes apply from the member's next answer.
 private struct MemberMenu: View {
     let model: AppModel
     let groupID: String
     let member: Participant
 
     var body: some View {
+        let catalog = model.catalog(for: member.backend)
         Menu {
-            Section("@\(member.handle) · \(member.backend.displayName)") {
+            Section("@\(member.handle) · \(member.backend.displayName)\(member.role.isEmpty ? "" : " · " + member.role)") {
                 Picker("模型", selection: Binding(get: { member.model }, set: { model.updateMember(member.handle, inGroup: groupID, model: $0) })) {
                     ForEach(catalog.modelOptions(current: member.model)) { Text($0.label).tag($0.value) }
                 }
                 Picker("推理强度", selection: Binding(get: { member.effort }, set: { model.updateMember(member.handle, inGroup: groupID, effort: $0) })) {
                     ForEach(catalog.effortOptions(model: member.model, current: member.effort)) { Text($0.label).tag($0.value) }
                 }
-                Picker("权限", selection: Binding(get: { member.permission }, set: {
-                    model.updateMember(member.handle, inGroup: groupID, permission: $0)
-                })) {
-                    ForEach(model.permissionChoices(for: member), id: \.self) { label in
-                        Text(label).tag(label)
+                Menu("权限：\(member.permission)") {
+                    ForEach(PermissionPreset.presets(for: member.backend), id: \.label) { preset in
+                        Button {
+                            model.updateMember(member.handle, inGroup: groupID, permission: preset.label)
+                        } label: {
+                            Image(systemName: preset.label == member.permission ? "checkmark" : preset.symbol)
+                            Text(preset.label)
+                            Text(preset.detail)
+                        }
                     }
                 }
             }
-            Text(member.state == .running ? "正在回答：改动从下一次回答开始生效" : "改动从下一次回答开始生效")
-        } label: {
-            HStack(spacing: 6) {
-                AgentAvatar(backend: member.backend, size: 20)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("@\(member.handle)")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(Theme.color(for: member.backend))
-                    Text(summary)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+            Section {
+                if let context = member.sessionID.flatMap({ model.contextUsage[$0] }) {
+                    Text("上下文 \(Int(context.percent.rounded()))% · \(ContextMeter.tokens(context.tokens)) / \(ContextMeter.tokens(context.window))")
                 }
-                if member.state != .idle {
-                    StatePill(state: member.state)
-                }
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+                Text(member.state == .running ? "正在回答：改动从下一次回答开始生效" : "改动从下一次回答开始生效")
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.07)))
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            Section {
+                Button("从讨论组移除 @\(member.handle)", role: .destructive) {
+                    model.removeMember(member.handle, fromGroup: groupID)
+                }
+                .disabled(member.state == .running)
+            }
+        } label: {
+            Label {
+                Text(label)
+            } icon: {
+                Image(nsImage: ProviderMark.image(member.backend, size: 14))
+            }
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("更改 @\(member.handle) 的模型、推理强度和权限")
-        .accessibilityLabel("@\(member.handle)，\(summary)")
+        .help("@\(member.handle)：\(catalog.modelName(member.model)) · \(catalog.effortName(member.effort, model: member.model)) · \(member.permission)")
+        .accessibilityLabel("@\(member.handle)，\(member.state.label)")
     }
 
-    private var catalog: RuntimeCatalog { model.catalog(for: member.backend) }
+    private var label: String {
+        member.state == .needsAction ? "@\(member.handle) · 待批准" : "@\(member.handle)"
+    }
+}
 
-    private var summary: String {
-        [member.role, catalog.modelName(member.model), catalog.effortName(member.effort, model: member.model)]
-            .filter { !$0.isEmpty }
-            .joined(separator: " · ")
+/// The group's composer controls: members, how they answer, and whether
+/// they may change code.
+private struct GroupControls: View {
+    let model: AppModel
+    let group: GroupSummary
+    @Binding var mode: GroupMode
+    @Binding var analysisOnly: Bool
+
+    var body: some View {
+        ForEach(group.participants) { member in
+            MemberMenu(model: model, groupID: group.id, member: member)
+        }
+        Menu {
+            Section("添加成员") {
+                ForEach(AgentBackend.allCases, id: \.self) { backend in
+                    Button {
+                        model.addMember(backend, toGroup: group.id)
+                    } label: {
+                        Image(nsImage: ProviderMark.image(backend, size: 14))
+                        Text(backend.displayName)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "plus")
+        }
+        .disabled(group.participants.count >= 6 || !model.isLive)
+        .help("添加成员（最多 6 位）")
+        Divider().frame(height: 14)
+        Menu {
+            Picker("回答方式", selection: $mode) {
+                ForEach(GroupMode.allCases, id: \.self) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.inline)
+            Text("依次：后回答的成员能看到前面的回答。同时：各自独立回答。")
+        } label: {
+            Label(mode.label, systemImage: mode == .sequential ? "list.number" : "rectangle.split.2x1")
+        }
+        .help("回答方式")
+        Toggle(isOn: $analysisOnly) {
+            Label("只分析", systemImage: analysisOnly ? "eye.fill" : "eye")
+        }
+        .toggleStyle(.button)
+        .help("只分析，不改代码")
     }
 }
 
@@ -240,79 +285,30 @@ struct GroupDetailView: View {
     var body: some View {
         if let group = model.group(groupID) {
             VStack(spacing: 0) {
-                MemberBar(model: model, group: group)
-                Divider()
                 TimelineView(items: model.timeline(groupID),
                              mentionHandles: Set(group.participants.map(\.handle)),
-                             onOpenFile: model.openFile)
-                ForEach(model.groupApprovals[groupID] ?? []) { approval in
-                    ApprovalCard(author: .agent(approval.handle, approval.backend), title: approval.title,
-                                 command: approval.detail,
-                                 reason: approval.reason.isEmpty ? "@\(approval.handle) 在等你批准后才能继续。" : approval.reason,
-                                 decision: .pending, allowsSession: approval.allowsSession) { decision in
-                        model.decide(approval, decision, inGroup: groupID)
-                    }
-                    .frame(maxWidth: Theme.readableWidth)
-                    .padding(.horizontal, 28)
-                    .padding(.top, 6)
-                }
+                             pending: model.pendingSends[groupID] ?? [],
+                             activity: model.activity(forGroup: groupID),
+                             onOpenFile: model.openFile,
+                             liveTurns: model.groupLive[groupID] ?? [],
+                             processSeconds: model.processSeconds[groupID] ?? [:],
+                             onDecideMember: { model.decide($0, $1, inGroup: groupID) })
                 ComposerView(draft: model.draftBinding(groupID),
                              placeholder: "发消息，用 @ 指定成员（不指定时由 @\(group.defaultResponder) 回答）",
-                             isRunning: group.state == .running,
+                             isRunning: group.state == .running || group.state == .needsAction,
                              queued: model.queues[groupID] ?? [],
                              mentionCandidates: group.participants,
                              onSend: { model.send($0, toGroup: groupID, mode: mode, analysisOnly: analysisOnly) },
                              onStop: { model.stop(groupID) },
                              onEditQueued: { model.editQueued($0, in: groupID) },
                              onWithdrawQueued: { model.withdrawQueued($0, in: groupID) }) {
-                    Picker("回答方式", selection: $mode) {
-                        ForEach(GroupMode.allCases, id: \.self) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                    .help("依次：后回答的成员能看到前面的回答。同时：各自独立回答。")
-                    Toggle("只分析，不改代码", isOn: $analysisOnly)
-                        .toggleStyle(.checkbox)
+                    GroupControls(model: model, group: group, mode: $mode, analysisOnly: $analysisOnly)
                 }
             }
             .environment(\.messageActions, model.messageActions(chat: nil))
             .navigationTitle(group.title)
-            .navigationSubtitle("讨论组 · \(group.participants.count) 位成员 · \(group.cwd)")
+            .navigationSubtitle("讨论组 · \(group.participants.map { "@" + $0.handle }.joined(separator: " ")) · \(group.cwd)")
         }
-    }
-}
-
-private struct MemberBar: View {
-    let model: AppModel
-    let group: GroupSummary
-
-    var body: some View {
-        HStack(spacing: 8) {
-            // Members scroll sideways rather than being clipped in a narrow window.
-            ScrollView(.horizontal) {
-                HStack(spacing: 8) {
-                    ForEach(group.participants) { member in
-                        MemberMenu(model: model, groupID: group.id, member: member)
-                    }
-                }
-            }
-            .scrollIndicators(.never)
-            .fixedSize(horizontal: false, vertical: true)
-            Button {
-            } label: {
-                Image(systemName: "person.badge.plus")
-            }
-            .buttonStyle(.borderless)
-            .help("添加成员（最多 6 位）")
-            Spacer()
-            Label("\(group.dispatches) 次派发 · \(group.promptChars.compact) 字符", systemImage: "chart.bar.xaxis")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .help("本组累计发给代理的提示词。成员只收到自己没看过的新消息。")
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
     }
 }
 

@@ -52,6 +52,58 @@ enum LiveCheck {
                 ? usage!.windows.map { "\($0.label) \(Int($0.usedPercent))%" }.joined(separator: ", ")
                 : usage?.unavailableText ?? "-"))
         }
+        // HYADEX_E2E_TERMINAL=1|only: drive the chat's tmux terminal through the real PTY socket.
+        if let mode = ProcessInfo.processInfo.environment["HYADEX_E2E_TERMINAL"],
+           let chat = model.chats.first(where: { $0.backend == .codex && $0.title.contains("mac e2e") }) {
+            model.select(.chat(chat.id))
+            model.terminalHeight = 260
+            if !model.terminalOpen.contains(chat.id) { model.toggleTerminal(chat.id) }
+            let session = model.terminalSession(for: chat.id)
+            func screen() -> String {
+                guard let emulator = session?.emulator else { return "" }
+                return emulator.text(from: (0, 0), to: (emulator.columns - 1, emulator.rows - 1))
+            }
+            check(await wait(20) { session?.phase == .connected }, "terminal: attached to the chat's tmux session")
+            _ = await wait(3) { !screen().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            let marker = "hxterm\(Int(Date.now.timeIntervalSince1970) % 100000)"
+            session?.send("echo \(marker)-$((6*7))\r")
+            check(await wait(10) { screen().contains("\(marker)-42") }, "terminal: typed command ran and its output rendered")
+            session?.send("printf '\\033[31m%s\\033[0m\\n' red-\(marker); echo 中文-\(marker)\r")
+            let colored = await wait(10) {
+                guard let emulator = session?.emulator else { return false }
+                return emulator.lines.contains { row in row.contains { $0.text == "r" && $0.style.foreground == .indexed(1) } }
+            }
+            check(colored, "terminal: SGR colour reaches the grid")
+            check(await wait(10) { screen().contains("中文-\(marker)") }, "terminal: wide (CJK) characters render")
+            let rowsBefore = session?.emulator.rows ?? 0
+            model.terminalHeight = 420
+            check(await wait(5) { (session?.emulator.rows ?? 0) > rowsBefore }, "terminal: panel resize changes the grid (\(rowsBefore) → \(session?.emulator.rows ?? 0) rows)")
+            // A full-screen program: vim draws through tmux, then the shell returns.
+            session?.send("vim -u NONE -N -c 'call setline(1, \"vim-\(marker)\")'\r")
+            check(await wait(10) { screen().contains("vim-\(marker)") && screen().contains("~") }, "terminal: vim draws a full screen")
+            session?.send("\u{1B}:q!\r")
+            check(await wait(10) { !screen().contains("vim-\(marker)") || screen().contains("\(marker)-42") }, "terminal: quitting vim restores the shell")
+            await model.refreshTerminalWindows(chat.id)
+            let windowsBefore = model.terminalWindows[chat.id]?.count ?? 0
+            check(windowsBefore >= 1, "terminal: tmux windows listed (\(windowsBefore))")
+            model.terminalAction(chat.id, "new-window")
+            check(await wait(8) { (model.terminalWindows[chat.id]?.count ?? 0) == windowsBefore + 1 }, "terminal: new tmux window")
+            if let added = model.terminalWindows[chat.id]?.last {
+                model.terminalAction(chat.id, "kill-window", target: String(added.index))
+                check(await wait(8) { (model.terminalWindows[chat.id]?.count ?? 0) == windowsBefore }, "terminal: closed the new window")
+            }
+            await shot("terminal")
+            model.toggleTerminal(chat.id)
+            check(await wait(5) { session?.phase != .connected }, "terminal: hiding the panel detaches")
+            model.toggleTerminal(chat.id)
+            check(await wait(20) { session?.phase == .connected && screen().contains("\(marker)-42") },
+                  "terminal: reattaching repaints the still-running session")
+            if mode == "only" {
+                log("RESULT " + (failures == 0 ? "OK" : "\(failures) FAILED"))
+                NSApp.terminate(nil)
+                return
+            }
+        }
         // HYADEX_E2E_RICH=claude|codex: ask for a Markdown and math answer and capture it.
         if let rich = ProcessInfo.processInfo.environment["HYADEX_E2E_RICH"],
            let chat = model.chats.first(where: { $0.backend.rawValue == rich && $0.title.contains("mac e2e") }) {
@@ -81,7 +133,8 @@ enum LiveCheck {
             && ProcessInfo.processInfo.environment["HYADEX_E2E_MEMBER"] != "only"
             && ProcessInfo.processInfo.environment["HYADEX_E2E_CATALOG"] != "only"
 
-        for backend in [AgentBackend.claude, .codex] where conversations {
+        let groupOnly = ProcessInfo.processInfo.environment["HYADEX_E2E_GROUP"] == "only"
+        for backend in [AgentBackend.claude, .codex] where conversations && !groupOnly {
             guard let chat = model.chats.first(where: { $0.backend == backend && $0.title.contains("mac e2e") }) else {
                 check(false, "\(backend.rawValue) test chat exists"); continue
             }
@@ -123,18 +176,66 @@ enum LiveCheck {
         } else if let group = model.groups.first(where: { $0.title.contains("mac e2e") }) {
             model.select(.group(group.id))
             _ = await wait(10) { !model.timeline(group.id).isEmpty }
+            if ProcessInfo.processInfo.environment["HYADEX_E2E_GROUP_MEMBERS"] != nil {
+                let handles = Set(model.group(group.id)?.participants.map(\.handle) ?? [])
+                model.addMember(.codex, toGroup: group.id)
+                check(await wait(30) { (model.group(group.id)?.participants.count ?? 0) == handles.count + 1 }, "group: member added")
+                let added = model.group(group.id)?.participants.first { !handles.contains($0.handle) }
+                log("group: added @\(added?.handle ?? "-") \(added?.sessionID ?? "no session")")
+                check(added?.sessionID != nil, "group: new member has its chat")
+                await shot("group-0-added")
+                if let added { model.removeMember(added.handle, fromGroup: group.id) }
+                check(await wait(30) { Set(model.group(group.id)?.participants.map(\.handle) ?? []) == handles }, "group: member removed")
+            }
             let before = model.timeline(group.id).count
-            model.send("@codex reply with one short sentence that contains the word e2e-group. Do not edit files.",
+            let marker = "e2e-group-\(Int(Date.now.timeIntervalSince1970) % 100000)"
+            model.send("@codex Run `echo \(marker)` in the shell, then reply with one short sentence that contains \(marker). Do not edit files.",
                        toGroup: group.id, mode: .sequential)
+            check(await wait(1) { !(model.pendingSends[group.id] ?? []).isEmpty || model.timeline(group.id).count > before },
+                  "group: sent message shows at once")
             check(await wait(30) { model.timeline(group.id).count > before }, "group: message posted")
-            check(await wait(180) {
-                model.timeline(group.id).contains { item in
-                    if case .message(_, let author, let text, _, _, _, _) = item, author.kind == .agent, text.contains("e2e-group") { return true }
+            check(await wait(60) { !(model.groupLive[group.id] ?? []).isEmpty }, "group: member's live status shown")
+            if let turn = model.groupLive[group.id]?.first {
+                log("group: live @\(turn.author.name) \(turn.activity.map { "\($0.label) \($0.detail?.prefix(60) ?? "")" } ?? "-")")
+            }
+            _ = await wait(40) { model.groupLive[group.id]?.first?.steps.isEmpty == false }
+            await shot("group-1-live")
+            func replyIndex() -> Int? {
+                model.timeline(group.id).lastIndex { item in
+                    if case .message(_, let author, let text, _, _, _, _) = item, author.kind == .agent, text.contains(marker) { return true }
                     return false
                 }
-            }, "group: @codex replied")
+            }
+            check(await wait(180) { replyIndex() != nil }, "group: @codex replied")
+            check(await wait(10) {
+                guard let index = replyIndex(), index > 0 else { return false }
+                if case .tool = model.timeline(group.id)[index - 1] { return true }
+                return false
+            }, "group: the reply carries the work behind it")
+            check(await wait(30) { (model.groupLive[group.id] ?? []).isEmpty }, "group: live status cleared after the reply")
             _ = await wait(30) { model.group(group.id)?.state == .idle }
-            await shot("group-1-reply")
+            await shot("group-2-reply")
+            if ProcessInfo.processInfo.environment["HYADEX_E2E_GROUP_APPROVAL"] != nil {
+                let name = "e2e-member-\(Int(Date.now.timeIntervalSince1970) % 100000).txt"
+                model.send("@claude Create \(name) containing ok, then reply in one sentence that mentions \(name).",
+                           toGroup: group.id, mode: .sequential)
+                check(await wait(180) { !(model.groupApprovals[group.id] ?? []).isEmpty }, "group: member approval shown inline")
+                check(model.groupLive[group.id]?.contains { !$0.approvals.isEmpty } == true, "group: approval sits in the member's turn")
+                check(model.group(group.id)?.participants.first { $0.handle == "claude" }?.state == .needsAction,
+                      "group: member shows it is waiting")
+                await shot("group-3-approval")
+                if let approval = model.groupApprovals[group.id]?.first {
+                    model.decide(approval, .allowed, inGroup: group.id)
+                }
+                check(await wait(180) {
+                    model.timeline(group.id).contains { item in
+                        if case .message(_, let author, let text, _, _, let receipt, _) = item, author.name == "claude",
+                           text.contains(name) { return receipt?.files.first?.diff.isEmpty == false }
+                        return false
+                    }
+                }, "group: approved member answered, and its receipt has the diff")
+                await shot("group-4-approved")
+            }
         } else {
             check(false, "test group exists")
         }
