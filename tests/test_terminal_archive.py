@@ -29,11 +29,6 @@ class TerminalArchiveTests(unittest.IsolatedAsyncioTestCase):
                 "pause_for_session",
                 pause_for_session,
             ),
-            patch.object(
-                agent_server,
-                "terminalize_archived_cross_chat_session",
-                new_callable=AsyncMock,
-            ),
             patch.object(agent_server.asyncio, "to_thread", new_callable=AsyncMock),
         ):
             archive_response = await agent_server.update_session(
@@ -83,11 +78,6 @@ class TerminalArchiveTests(unittest.IsolatedAsyncioTestCase):
                 agent_server.JOBS,
                 "pause_for_session",
                 pause_for_session,
-            ),
-            patch.object(
-                agent_server,
-                "terminalize_archived_cross_chat_session",
-                new_callable=AsyncMock,
             ),
             patch.object(agent_server.asyncio, "to_thread", new_callable=AsyncMock),
             patch.object(agent_server.logger, "warning") as warning,

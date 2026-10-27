@@ -240,13 +240,13 @@ class NativeTitleOwnership(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(server, "read_native_session_title", return_value="Native name"), patch.object(
             server, "append_event", side_effect=append,
-        ), patch.object(server, "finalize_cross_chat_terminal", new_callable=AsyncMock):
+        ), patch.object(server, "revoke_terminal_run_authority", new_callable=AsyncMock):
             await server.append_turn_finished_event("title-chat", {"run_id": "run-test"})
 
     async def test_imported_terminals_do_not_rescan_metadata_per_message(self):
         with patch.object(server, "refresh_native_session_title", new_callable=AsyncMock) as refresh, patch.object(
             server, "append_event", new_callable=AsyncMock, return_value={},
-        ), patch.object(server, "finalize_cross_chat_terminal", new_callable=AsyncMock):
+        ), patch.object(server, "revoke_terminal_run_authority", new_callable=AsyncMock):
             await server.append_turn_finished_event("title-chat", {"run_id": "import_test"})
             await server.append_turn_finished_event("title-chat", {"imported": True})
         refresh.assert_not_awaited()

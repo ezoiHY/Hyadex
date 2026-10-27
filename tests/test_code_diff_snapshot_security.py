@@ -24,7 +24,7 @@ class CodeDiffStateMixin:
             STATE_DIR=state,
             FILES_ROOT=state / "files",
             CODE_DIFFS_ROOT=state / "code_diffs",
-            CROSS_CHAT_AUTHORITY_ROOT=state / "cross_chat_authority",
+            PROVIDER_AUTHORITY_ROOT=state / "cross_chat_authority",
         )
 
     def git(self, repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:

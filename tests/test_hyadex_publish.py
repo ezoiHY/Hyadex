@@ -367,7 +367,7 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
         ))
         stack.enter_context(patch.object(
             agent_server,
-            "CROSS_CHAT_CAPABILITIES",
+            "PROVIDER_AUTHORITIES",
             {
                 hashlib.sha256(b"provider-secret").hexdigest(): {
                     "source_session_id": session_id,

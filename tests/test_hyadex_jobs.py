@@ -411,135 +411,18 @@ class HyadexJobsCLITests(unittest.TestCase):
         self.assertEqual(payload["context_mode"], "chat")
         self.assertEqual(result["job"]["id"], "job_1")
 
-    def test_create_chat_route_defaults_to_instruction(self) -> None:
+    def test_retired_chat_route_options_are_rejected(self) -> None:
+        parser = hyadex_jobs.build_parser()
         route_id = "route_0123456789abcdef0123456789abcdef"
-        parser = hyadex_jobs.build_parser()
-        args = parser.parse_args([
-            "create",
-            "--title", "Route report",
-            "--prompt", "Send the report to @Mobile",
-            "--cron", "0 9 * * *",
-            "--chat-route", route_id,
-        ])
-        seen: dict[str, object] = {}
-
-        def request(method: str, path: str, payload=None):
-            seen.update(method=method, path=path, payload=payload)
-            return {"job": {"id": "job_1", "session_id": "sess/chat"}}
-
-        with (
-            patch.dict(os.environ, self.environment(), clear=True),
-            patch.object(hyadex_jobs, "api_request", request),
+        for arguments in (
+            ["create", "--title", "Routed", "--prompt", "Do work",
+             "--cron", "0 9 * * *", "--chat-route", route_id],
+            ["update", "job_1", "--chat-route", route_id],
+            ["update", "job_1", "--clear-chat-routes"],
         ):
-            args.handler(args)
-
-        self.assertEqual(seen["payload"]["chat_routes"], [{
-            "route_id": route_id,
-            "action": "instruction",
-        }])
-
-    def test_create_chat_route_supports_request_reply(self) -> None:
-        route_id = "route_fedcba9876543210fedcba9876543210"
-        parser = hyadex_jobs.build_parser()
-        args = parser.parse_args([
-            "create",
-            "--title", "Route question",
-            "--prompt", "Ask @Mobile for an answer",
-            "--cron", "0 9 * * *",
-            "--chat-route", f"{route_id}=request_reply",
-        ])
-        seen: dict[str, object] = {}
-
-        def request(method: str, path: str, payload=None):
-            seen.update(method=method, path=path, payload=payload)
-            return {"job": {"id": "job_1", "session_id": "sess/chat"}}
-
-        with (
-            patch.dict(os.environ, self.environment(), clear=True),
-            patch.object(hyadex_jobs, "api_request", request),
-        ):
-            args.handler(args)
-
-        self.assertEqual(seen["payload"]["chat_routes"], [{
-            "route_id": route_id,
-            "action": "request_reply",
-        }])
-
-    def test_update_chat_route_replaces_persisted_routes(self) -> None:
-        route_id = "route_11111111111111111111111111111111"
-        parser = hyadex_jobs.build_parser()
-        calls: list[tuple[str, str, object]] = []
-
-        def request(method: str, path: str, payload=None):
-            calls.append((method, path, payload))
-            if method == "GET":
-                return {"jobs": [{
-                    "id": "job_1",
-                    "session_id": "sess/chat",
-                    "schedule_kind": "cron",
-                }]}
-            return {"job": {"id": "job_1", "session_id": "sess/chat"}}
-
-        with (
-            patch.dict(os.environ, self.environment(), clear=True),
-            patch.object(hyadex_jobs, "api_request", request),
-        ):
-            hyadex_jobs.command_update(parser.parse_args([
-                "update",
-                "job_1",
-                "--chat-route", f"{route_id}=request_reply",
-            ]))
-
-        self.assertEqual(calls[-1][0], "PATCH")
-        self.assertEqual(calls[-1][2], {"chat_routes": [{
-            "route_id": route_id,
-            "action": "request_reply",
-        }]})
-
-    def test_update_can_clear_persisted_chat_routes(self) -> None:
-        parser = hyadex_jobs.build_parser()
-        calls: list[tuple[str, str, object]] = []
-
-        def request(method: str, path: str, payload=None):
-            calls.append((method, path, payload))
-            if method == "GET":
-                return {"jobs": [{
-                    "id": "job_1",
-                    "session_id": "sess/chat",
-                    "schedule_kind": "cron",
-                }]}
-            return {"job": {"id": "job_1", "session_id": "sess/chat"}}
-
-        with (
-            patch.dict(os.environ, self.environment(), clear=True),
-            patch.object(hyadex_jobs, "api_request", request),
-        ):
-            hyadex_jobs.command_update(parser.parse_args([
-                "update",
-                "job_1",
-                "--clear-chat-routes",
-            ]))
-
-        self.assertEqual(calls[-1][0], "PATCH")
-        self.assertEqual(calls[-1][2], {"chat_routes": []})
-
-    def test_chat_route_rejects_raw_ids_nonopaque_ids_and_invalid_actions(self) -> None:
-        parser = hyadex_jobs.build_parser()
-        invalid_routes = (
-            "sess/mobile",
-            "route_too_short",
-            "route_0123456789abcdef0123456789abcdef=final_result",
-        )
-
-        for invalid_route in invalid_routes:
-            with self.subTest(chat_route=invalid_route), self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
-                parser.parse_args([
-                    "create",
-                    "--title", "Bad route",
-                    "--prompt", "Do work",
-                    "--cron", "0 9 * * *",
-                    "--chat-route", invalid_route,
-                ])
+            with self.subTest(arguments=arguments), self.assertRaises(SystemExit), \
+                    redirect_stderr(io.StringIO()):
+                parser.parse_args(arguments)
 
     def test_create_and_update_support_standalone_context(self) -> None:
         parser = hyadex_jobs.build_parser()

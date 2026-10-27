@@ -103,7 +103,7 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.generator.side_effect = pending
         self.append.return_value = self.event
         with patch.object(server, 'refresh_native_session_title', new_callable=AsyncMock), patch.object(
-            server, 'finalize_cross_chat_terminal', new_callable=AsyncMock,
+            server, 'revoke_terminal_run_authority', new_callable=AsyncMock,
         ):
             returned = await asyncio.wait_for(server.append_turn_finished_event('title-chat', self.event), 1)
         self.assertIs(returned, self.event)

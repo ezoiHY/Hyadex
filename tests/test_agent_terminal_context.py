@@ -35,10 +35,7 @@ class AgentTerminalContextTests(unittest.TestCase):
             env["HYADEX_JOBS_CLI"],
             str(agent_server.SERVER_ROOT / "hyadex_jobs.py"),
         )
-        self.assertEqual(
-            env["HYADEX_CHATS_CLI"],
-            str(agent_server.SERVER_ROOT / "hyadex_chats.py"),
-        )
+        self.assertNotIn("HYADEX_CHATS_CLI", env)
         self.assertNotIn("HYADEX_MAIL_CLI", env)
         for name in agent_server.PROVIDER_SECRET_ENV_NAMES:
             self.assertNotIn(name, env)
@@ -201,7 +198,7 @@ class AgentTerminalContextTests(unittest.TestCase):
         developer_prompt = codex_developer_instructions(command)
 
         self.assertIn("`hx_sess_123`", developer_prompt)
-        self.assertIn("run-bound Hyadex provider tool", developer_prompt)
+        self.assertIn("Hyadex provider tool described below", developer_prompt)
         self.assertNotIn("provider-authority block", developer_prompt)
         self.assertNotIn("--chat-id sess-123", developer_prompt)
         self.assertIn("manifests/current.json", developer_prompt)

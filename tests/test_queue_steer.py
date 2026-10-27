@@ -24,6 +24,17 @@ from agent_server import (
 )
 
 
+
+
+class CancelledOnEnterLock:
+    """A lock whose acquisition is cancelled, after the queue fsync."""
+
+    async def __aenter__(self):
+        raise asyncio.CancelledError
+
+    async def __aexit__(self, *_args):
+        return False
+
 class PrepareSteeredTurnTests(unittest.TestCase):
     def test_persists_raw_messages_and_generates_scoped_provider_prompt_at_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -282,12 +293,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                  new_callable=AsyncMock,
                  return_value={"type": "turn_queued"},
              ), \
-             patch.object(
-                 agent_server,
-                 "commit_durable_provider_cross_chat_reference_grants",
-                 new_callable=AsyncMock,
-                 side_effect=asyncio.CancelledError,
-             ), \
+             patch.object(agent_server, "ACTIVE_LOCK", CancelledOnEnterLock()), \
              patch.object(agent_server, "schedule_next_queued_turn") as schedule:
             with self.assertRaises(asyncio.CancelledError):
                 await agent_server.enqueue_turn("chat-1", request, session)
@@ -461,7 +467,6 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
         session = {
             "id": "chat-1",
             "backend": agent_server.BACKEND_CODEX,
-            "provider_cross_chat_routes": [],
         }
         mark_read = AsyncMock(return_value=session)
         enqueue = AsyncMock(return_value={
@@ -509,9 +514,8 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                     agent_server.session_lifecycle_lock("chat-1").locked()
                 )
 
-                routes, read, queued = await asyncio.wait_for(
+                read, queued = await asyncio.wait_for(
                     asyncio.gather(
-                        agent_server.list_agent_handoff_routes("chat-1"),
                         agent_server.mark_session_read(
                             "chat-1",
                             agent_server.ReadSessionRequest(
@@ -528,10 +532,6 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                     timeout=0.5,
                 )
 
-                self.assertEqual(routes, {
-                    "routes": [],
-                    "max_routes": agent_server.PROVIDER_CROSS_CHAT_ROUTE_LEGACY_CLIENT_HINT,
-                })
                 self.assertEqual(read["session"], agent_server.public_session(session))
                 self.assertTrue(queued["queued"])
                 mark_read.assert_awaited_once_with("chat-1", 42)
@@ -642,136 +642,6 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
             finish_cleanup.set()
             await operation
 
-    async def test_cross_chat_queue_failures_deliver_after_both_lifecycle_locks_release(
-        self,
-    ) -> None:
-        sessions = {
-            chat_id: {
-                "id": chat_id,
-                "backend": agent_server.BACKEND_CODEX,
-            }
-            for chat_id in ("chat-a", "chat-b")
-        }
-        queued = {
-            chat_id: deque([{
-                "queued_id": f"queued-{chat_id}",
-                "prompt": "invalid exchange delivery",
-                "purpose": "cross_chat_handoff_delivery",
-                "cross_chat_exchange_id": f"exchange-{chat_id}",
-                "cross_chat_exchange_leg_id": f"leg-{chat_id}",
-                "source_session_id": other_id,
-                "target_session_id": chat_id,
-                "_durable": True,
-                "_paused_after_stop": False,
-            }])
-            for chat_id, other_id in (
-                ("chat-a", "chat-b"),
-                ("chat-b", "chat-a"),
-            )
-        }
-        both_discards_entered = asyncio.Event()
-        discard_count = 0
-        wake_count = 0
-        both_wakes_finished = asyncio.Event()
-
-        async def reject_turn(*_args: object, **_kwargs: object) -> None:
-            raise agent_server.HTTPException(
-                status_code=400,
-                detail="invalid exchange delivery",
-            )
-
-        async def finish_exchange_leg(
-            leg_id: str,
-            **_kwargs: object,
-        ) -> tuple[dict[str, object], dict[str, object]]:
-            nonlocal discard_count
-            target_id = "chat-a" if leg_id == "leg-chat-a" else "chat-b"
-            source_id = "chat-b" if target_id == "chat-a" else "chat-a"
-            discard_count += 1
-            if discard_count == 2:
-                both_discards_entered.set()
-            await both_discards_entered.wait()
-            return (
-                {"id": f"exchange-{target_id}", "status": "failed"},
-                {
-                    "id": leg_id,
-                    "status": "failed",
-                    "source_session_id": source_id,
-                    "target_session_id": target_id,
-                },
-            )
-
-        async def deliver_failure_status(
-            _exchange: dict[str, object],
-            *,
-            failed_session_id: str,
-            failed_leg: dict[str, object],
-        ) -> None:
-            nonlocal wake_count
-            # The deferred wake first waits for this failed target's lock. It
-            # must not retain that lock while starting the opposite chat.
-            self.assertFalse(
-                agent_server.session_lifecycle_lock(
-                    failed_session_id
-                ).locked()
-            )
-            source_id = str(failed_leg.get("source_session_id") or "")
-            async with agent_server.session_lifecycle_lock(source_id):
-                wake_count += 1
-                if wake_count == 2:
-                    both_wakes_finished.set()
-
-        with (
-            patch.object(agent_server.STORE, "sessions", sessions),
-            patch.multiple(
-                agent_server,
-                ACTIVE={},
-                BUSY_SESSIONS=set(),
-                CURRENT_TURNS={},
-                QUEUED_TURNS=queued,
-                RUN_NOW_TURNS={},
-                STEERING_SESSIONS=set(),
-                QUEUE_START_TASKS={},
-                SESSION_TURN_TASKS={},
-                SESSION_LIFECYCLE_LOCKS={},
-                CROSS_CHAT_STATUS_WAKE_TASKS=set(),
-                append_durable_event=AsyncMock(return_value={}),
-                append_event=AsyncMock(return_value={}),
-                append_cross_chat_exchange_leg_terminal_lifecycle=AsyncMock(),
-                append_cross_chat_exchange_terminal_lifecycle=AsyncMock(),
-            ),
-            patch.object(
-                agent_server,
-                "_start_turn_locked",
-                side_effect=reject_turn,
-            ),
-            patch.object(
-                agent_server.CROSS_CHAT,
-                "finish_exchange_leg",
-                side_effect=finish_exchange_leg,
-            ),
-            patch.object(
-                agent_server,
-                "maybe_deliver_cross_chat_exchange_failure_status",
-                side_effect=deliver_failure_status,
-            ),
-        ):
-            await asyncio.wait_for(
-                asyncio.gather(
-                    agent_server.start_next_queued_turn("chat-a"),
-                    agent_server.start_next_queued_turn("chat-b"),
-                ),
-                timeout=0.5,
-            )
-            await asyncio.wait_for(
-                both_wakes_finished.wait(),
-                timeout=0.5,
-            )
-
-        self.assertEqual(discard_count, 2)
-        self.assertEqual(wake_count, 2)
-        self.assertFalse(queued)
-
     async def test_stopping_scheduled_job_releases_human_queue_without_pausing(self) -> None:
         human_turn = {
             "queued_id": "queued-human",
@@ -828,7 +698,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                     STOP_CONFIRM_TIMEOUT_SECONDS=0,
                     append_durable_event=append_durable_event,
                     append_event=AsyncMock(return_value={}),
-                    revoke_cross_chat_capability=AsyncMock(),
+                    revoke_provider_authority=AsyncMock(),
                     cancel_codex_interactions=AsyncMock(),
                     cancel_claude_interactions=AsyncMock(),
                 ), \
@@ -936,7 +806,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                     CODEX_NATIVE_ACTION_TASKS={},
                     STOP_CONFIRM_TIMEOUT_SECONDS=0.01,
                     append_event=append_event,
-                    revoke_cross_chat_capability=AsyncMock(),
+                    revoke_provider_authority=AsyncMock(),
                     cancel_codex_interactions=AsyncMock(),
                     cancel_claude_interactions=AsyncMock(),
                     terminate_process_tree=AsyncMock(return_value=True),

@@ -24,8 +24,8 @@ class RetiredTeamNetworkTests(unittest.IsolatedAsyncioTestCase):
             server.TurnRequest(prompt="hello", secure_peer_envelope_id="old-delivery")
 
     def test_retired_routes_and_helpers_are_absent(self):
-        self.assertTrue({"chats", "jobs", "publish"} <= server.PROVIDER_TOOL_HELPERS)
-        self.assertFalse({"mail", "team"} & server.PROVIDER_TOOL_HELPERS)
+        self.assertTrue({"jobs", "publish"} <= server.PROVIDER_TOOL_HELPERS)
+        self.assertFalse({"mail", "team", "chats"} & server.PROVIDER_TOOL_HELPERS)
         paths = [getattr(route, "path", "") for route in server.app.routes]
         self.assertFalse([path for path in paths if any(name in path for name in (
             "team-hub", "secure-peers", "/agent/team", "/agent/mail",

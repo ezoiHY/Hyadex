@@ -25,27 +25,37 @@ PROVIDER_RUNTIME_ENV_EXACT_NAMES = frozenset({
     "HYADEX_PROVIDER_AUTHORITY_ACTIONS",
     "HYADEX_PROVIDER_JOBS_ACCESS",
     "HYADEX_PROVIDER_SERVER_ORIGIN",
-    "HYADEX_PROVIDER_FINAL_RESULT_HANDOFF",
-    "HYADEX_PROVIDER_TEAM_MAIL_PREBOUND",
-    "HYADEX_CROSS_CHAT_HANDLE_COUNT",
-    "HYADEX_CROSS_CHAT_MODE",
-    "HYADEX_CROSS_CHAT_RESPONSE_EXCHANGE_ID",
-    "HYADEX_CROSS_CHAT_RESPONSE_INBOUND_LEG_ID",
-    "HYADEX_CROSS_CHAT_RESPONSE_FOLLOWUP",
-    "HYADEX_CROSS_CHAT_RESPONSE_ROUTE_ID",
-    "HYADEX_CROSS_CHAT_RESPONSE_MODE",
 })
 
 
-PROVIDER_RUNTIME_ENV_PREFIXES = (
-    "HYADEX_CROSS_CHAT_HANDLE_",
+# Run-scoped names issued by the removed cross-chat and Team features. They
+# are never issued now, but a value inherited from an older parent process is
+# still scrubbed before any provider child can see it.
+LEGACY_PROVIDER_RUNTIME_ENV_EXACT_NAMES = frozenset({
+    "HYADEX_PROVIDER_FINAL_RESULT_HANDOFF",
+    "HYADEX_PROVIDER_TEAM_MAIL_PREBOUND",
+})
+
+
+LEGACY_PROVIDER_RUNTIME_ENV_PREFIXES = (
+    "HYADEX_CROSS_CHAT_",
 )
 
 
 def is_provider_runtime_env_name(name: Any) -> bool:
+    """Whether a run-scoped variable may be issued to a provider process."""
+
+    return str(name or "") in PROVIDER_RUNTIME_ENV_EXACT_NAMES
+
+
+def is_scrubbed_provider_runtime_env_name(name: Any) -> bool:
+    """Whether an inherited variable must be stripped from provider children."""
+
     clean = str(name or "")
-    return clean in PROVIDER_RUNTIME_ENV_EXACT_NAMES or any(
-        clean.startswith(prefix) for prefix in PROVIDER_RUNTIME_ENV_PREFIXES
+    return (
+        is_provider_runtime_env_name(clean)
+        or clean in LEGACY_PROVIDER_RUNTIME_ENV_EXACT_NAMES
+        or clean.startswith(LEGACY_PROVIDER_RUNTIME_ENV_PREFIXES)
     )
 
 
@@ -59,7 +69,7 @@ def scrub_provider_runtime_environment(
     names = {
         name
         for name in environment
-        if name in PROVIDER_SECRET_ENV_NAMES or is_provider_runtime_env_name(name)
+        if name in PROVIDER_SECRET_ENV_NAMES or is_scrubbed_provider_runtime_env_name(name)
     }
     for name in names:
         if shadow:

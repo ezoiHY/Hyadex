@@ -76,23 +76,6 @@ def nonempty_chat_id(value: str) -> str:
     return chat_id
 
 
-def chat_route_selection(value: str) -> dict[str, str]:
-    """Parse an opaque live route without accepting an internal chat id."""
-
-    raw = value.strip()
-    route_id, separator, action = raw.partition("=")
-    if not re.fullmatch(r"route_[0-9a-f]{32}", route_id):
-        raise argparse.ArgumentTypeError(
-            "--chat-route must use an opaque route ID returned by the chats helper"
-        )
-    selected_action = action.strip() if separator else "instruction"
-    if selected_action not in {"instruction", "request_reply"}:
-        raise argparse.ArgumentTypeError(
-            "--chat-route action must be instruction or request_reply"
-        )
-    return {"route_id": route_id, "action": selected_action}
-
-
 def bounded_identity_value(value: str | None, label: str) -> str:
     clean = str(value or "").strip()
     try:
@@ -383,7 +366,6 @@ def command_create(args: argparse.Namespace) -> Any:
         "enabled": not args.disabled,
         "backend": args.backend,
         "context_mode": args.context_mode,
-        "chat_routes": list(args.chat_route or []),
     }
     encoded_chat_id = urllib.parse.quote(chat_id, safe="")
     return {"job": checked_job(api_request("POST", f"/api/agent/sessions/{encoded_chat_id}/jobs", payload))}
@@ -432,10 +414,6 @@ def command_update(args: argparse.Namespace) -> Any:
         patch["loop"] = args.loop
     if args.enabled is not None:
         patch["enabled"] = args.enabled
-    if args.chat_route is not None:
-        patch["chat_routes"] = list(args.chat_route)
-    elif args.clear_chat_routes:
-        patch["chat_routes"] = []
     if not patch:
         raise JobsCLIError("update requires at least one changed field")
     encoded_chat_id = urllib.parse.quote(chat_id, safe="")
@@ -514,16 +492,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="chat",
         help="continue in the parent chat (default) or use a fresh provider context",
     )
-    create_parser.add_argument(
-        "--chat-route",
-        action="append",
-        type=chat_route_selection,
-        metavar="ROUTE_ID[=ACTION]",
-        help=(
-            "persist an exact chat target from the current chats-helper list; "
-            "the prompt must contain that chat's exact @title (repeatable)"
-        ),
-    )
     create_parser.set_defaults(handler=command_create)
 
     update_parser = subparsers.add_parser(
@@ -552,28 +520,10 @@ def build_parser() -> argparse.ArgumentParser:
     enabled_group = update_parser.add_mutually_exclusive_group()
     enabled_group.add_argument("--enable", dest="enabled", action="store_true")
     enabled_group.add_argument("--disable", dest="enabled", action="store_false")
-    update_routes = update_parser.add_mutually_exclusive_group()
-    update_routes.add_argument(
-        "--chat-route",
-        action="append",
-        type=chat_route_selection,
-        metavar="ROUTE_ID[=ACTION]",
-        help=(
-            "replace persisted chat targets using opaque routes from the "
-            "current chats-helper list (repeatable)"
-        ),
-    )
-    update_routes.add_argument(
-        "--clear-chat-routes",
-        action="store_true",
-        help="revoke every persisted chat target from this job",
-    )
     update_parser.set_defaults(
         handler=command_update,
         loop=None,
         enabled=None,
-        chat_route=None,
-        clear_chat_routes=False,
     )
 
     delete_parser = subparsers.add_parser(

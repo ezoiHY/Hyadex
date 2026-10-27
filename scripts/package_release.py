@@ -124,7 +124,6 @@ def main() -> int:
         (package_root / "uninstall.sh").chmod(0o755)
         (package_root / "instances.sh").chmod(0o755)
         (package_root / "hyadex_jobs.py").chmod(0o755)
-        (package_root / "hyadex_chats.py").chmod(0o755)
         (package_root / "hyadex_emergency.py").chmod(0o755)
         (package_root / "hyadex_notify.py").chmod(0o755)
         (package_root / "hyadex_publish.py").chmod(0o755)

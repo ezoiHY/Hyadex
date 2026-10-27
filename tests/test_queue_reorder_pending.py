@@ -50,9 +50,7 @@ class PendingQueueReorderTests(unittest.IsolatedAsyncioTestCase):
         self.recovery = AsyncMock()
         self.journal = AsyncMock()
         self.update_blocker = Mock(return_value=None)
-        self.cross_chat = SimpleNamespace(update=AsyncMock(), update_exchange=AsyncMock())
         self.force_send = AsyncMock()
-        self.delivery_effect = AsyncMock()
         self.run_now = {"other-chat": {"queued_id": "other-promoted"}}
         self.current = {self.session: {"run_id": "running-provider-turn"}}
         self.active = {self.session: object()}
@@ -60,21 +58,14 @@ class PendingQueueReorderTests(unittest.IsolatedAsyncioTestCase):
             "STORE": SimpleNamespace(sessions={self.session: {"id": self.session}}),
             "QUEUE_LOCK": asyncio.Lock(), "QUEUED_TURNS": {},
             "RUN_NOW_TURNS": self.run_now, "CURRENT_TURNS": self.current, "ACTIVE": self.active,
-            "CROSS_CHAT_DELIVERY_PURPOSES": {"cross_chat_handoff_delivery", "secure_peer_handoff_delivery"},
             "wait_for_queue_recovery_admission": self.recovery,
             "server_lifecycle_admission_blocker": self.update_blocker,
             "append_durable_event": self.journal,
-            "CROSS_CHAT": self.cross_chat,
             "force_send_queued_turn": self.force_send,
-            "append_cross_chat_terminal_lifecycle": self.delivery_effect,
-            "append_cross_chat_exchange_terminal_lifecycle": self.delivery_effect,
         })
 
     def tearDown(self):
         self.force_send.assert_not_called()
-        self.delivery_effect.assert_not_called()
-        self.cross_chat.update.assert_not_called()
-        self.cross_chat.update_exchange.assert_not_called()
         self.assertEqual(self.current, {self.session: {"run_id": "running-provider-turn"}})
         self.assertEqual(set(self.active), {self.session})
 
@@ -119,8 +110,8 @@ class PendingQueueReorderTests(unittest.IsolatedAsyncioTestCase):
         await self.move("first", " DOWN ", "second")
         self.assertEqual(self.ids(), ["second", "first"])
 
-    async def test_legacy_requests_keep_delivery_fence_but_can_reorder_normal_messages(self):
-        for purpose in ("cross_chat_handoff_delivery", "secure_peer_handoff_delivery", "scheduled_job"):
+    async def test_legacy_requests_keep_scheduled_fence_but_can_reorder_normal_messages(self):
+        for purpose in ("scheduled_job",):
             for rows in ([self.row("first", purpose), self.row("second")],
                          [self.row("first"), self.row("second", purpose)]):
                 with self.subTest(purpose=purpose, selected=rows[0]["purpose"]):

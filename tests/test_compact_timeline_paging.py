@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import agent_server
+from tests.test_provider_history_sync import legacy_provider_authority_block
 
 
 class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
@@ -127,17 +128,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("prompt", persisted["job"])
 
     def test_all_raw_event_readers_project_legacy_imported_provider_prompts(self) -> None:
-        authority = agent_server.cross_chat_provider_authority_block(
-            [],
-            agent_server.cross_chat_authority_path(
-                "run_raw_egress",
-                "0123456789abcdef0123456789abcdef",
-            ),
-            self.session_id,
-            {"publish"},
-            "blocked",
-            compact=True,
-        )
+        authority = legacy_provider_authority_block(run_id="run_raw_egress", nonce="0123456789abcdef0123456789abcdef", chat_id=self.session_id)
         notice = (
             "<task-notification>\n"
             "<task-id>task_raw1</task-id>\n"
@@ -2687,17 +2678,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([event["seq"] for event in response["events"]], [1, 2])
 
     def test_semantic_index_projects_legacy_imported_provider_prompts(self) -> None:
-        authority = agent_server.cross_chat_provider_authority_block(
-            [],
-            agent_server.cross_chat_authority_path(
-                "run_timeline_sanitizer",
-                "fedcba9876543210fedcba9876543210",
-            ),
-            self.session_id,
-            {"publish"},
-            "blocked",
-            compact=True,
-        )
+        authority = legacy_provider_authority_block(run_id="run_timeline_sanitizer", nonce="fedcba9876543210fedcba9876543210", chat_id=self.session_id)
         generated_notice = (
             "<task-notification>\n"
             "<task-id>task_generated</task-id>\n"

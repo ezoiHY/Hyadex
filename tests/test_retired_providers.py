@@ -59,9 +59,7 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.store.flush_pending_save)
 
     async def test_metadata_edits_work_without_rebinding_or_rewriting_history(self):
-        with patch.object(server, "kill_terminal_session"), patch.object(
-            server, "terminalize_archived_cross_chat_session", new_callable=AsyncMock,
-        ):
+        with patch.object(server, "kill_terminal_session"):
             for changes in ({"title": "Renamed", "folder": "Saved", "pinned": True},
                             {"archived": True}, {"archived": False}):
                 response = await self.client.patch(f"/api/sessions/{self.session_id}", json=changes)

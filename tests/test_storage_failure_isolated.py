@@ -23,7 +23,10 @@ SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
 
 def storage_source():
     tree = ast.parse(SOURCE.read_text())
-    names = {"append_turn_finished_event", "join_task_despite_caller_cancellation", "append_durable_event_batch_sync"}
+    names = {
+        "append_turn_finished_event", "revoke_terminal_run_authority",
+        "join_task_despite_caller_cancellation", "append_durable_event_batch_sync",
+    }
     nodes = [ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)]
     nodes += [deepcopy(node) for node in tree.body
               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
@@ -43,11 +46,10 @@ def storage_source():
               logger=logging.getLogger("isolated-storage"), now_iso=lambda: "2026-01-01T00:00:00Z",
               TransientAdmissionWait=AdmissionWait, ACTIVE_LOCK=asyncio.Lock(), ACTIVE={}, CURRENT_TURNS={},
               STORE=SimpleNamespace(sessions={"chat": {"active_run": {"run_id": "finished-run"}}}),
-              append_event=AsyncMock(), revoke_cross_chat_capability=AsyncMock(),
+              append_event=AsyncMock(), revoke_provider_authority=AsyncMock(),
               refresh_native_session_title=AsyncMock(),
               schedule_generated_session_title=Mock(),
-              finalize_cross_chat_terminal=AsyncMock(), finalize_handoff_digest_turn=AsyncMock(),
-              finish_handoff_digest_delivery=AsyncMock(), concise_error_message=str)
+              concise_error_message=str)
     exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), "<isolated-storage>", "exec"), ns)
     return ns
 
@@ -59,7 +61,7 @@ class StorageFailureTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await ns["append_turn_finished_event"]("chat", {"run_id": "finished-run"})
         ns["append_event"].assert_not_awaited()
-        ns["revoke_cross_chat_capability"].assert_awaited_once_with("finished-run")
+        ns["revoke_provider_authority"].assert_awaited_once_with("finished-run")
         self.assertNotIn("active_run", ns["STORE"].sessions["chat"])
 
     async def test_terminal_enospc_cleans_exact_run_without_fake_event_or_forwarding(self):
@@ -70,8 +72,7 @@ class StorageFailureTests(unittest.IsolatedAsyncioTestCase):
             await ns["append_turn_finished_event"]("chat", {"run_id": "finished-run", "result_text": "Synthetic final"})
         self.assertIs(caught.exception, failure)
         self.assertNotIn("active_run", ns["STORE"].sessions["chat"])
-        ns["revoke_cross_chat_capability"].assert_awaited_once_with("finished-run")
-        ns["finalize_cross_chat_terminal"].assert_not_awaited()
+        ns["revoke_provider_authority"].assert_awaited_once_with("finished-run")
         ns["append_event"].assert_awaited_once()
 
     async def test_failed_old_terminal_preserves_successor_and_cleanup_survives_cancellation(self):
@@ -83,14 +84,15 @@ class StorageFailureTests(unittest.IsolatedAsyncioTestCase):
             await ns["append_turn_finished_event"]("chat", {"run_id": "finished-run"})
         self.assertEqual(ns["STORE"].sessions["chat"]["active_run"], {"run_id": "successor"})
         self.assertEqual(ns["ACTIVE"]["chat"], {"run_id": "successor"})
-        ns["revoke_cross_chat_capability"].assert_awaited_once_with("finished-run")
+        ns["revoke_provider_authority"].assert_awaited_once_with("finished-run")
 
     async def test_successful_retry_uses_real_terminal_and_sdk_failure_does_not_drain_queue(self):
         ns = storage_source()
         event = {"run_id": "finished-run", "type": "turn_finished", "seq": 2}
         ns["append_event"].return_value = event
         self.assertIs(await ns["append_turn_finished_event"]("chat", {"run_id": "finished-run"}), event)
-        ns["finalize_cross_chat_terminal"].assert_awaited_once_with(event)
+        # The recorded terminal retires the exact run's provider authority.
+        ns["revoke_provider_authority"].assert_awaited_once_with("finished-run")
         env = load_probe("iterator", shutting_down=False)
         env["should_schedule_queue_after_finish"] = lambda *_: True
         env["append_turn_finished_event"].side_effect = OSError(errno.ENOSPC, "Synthetic storage full")

@@ -39,7 +39,7 @@ class CoalescedSessionSaveTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server, "CODE_DIFFS_ROOT", self.state_dir / "diffs"),
             patch.object(
                 agent_server,
-                "CROSS_CHAT_AUTHORITY_ROOT",
+                "PROVIDER_AUTHORITY_ROOT",
                 self.state_dir / "authority",
             ),
         ]

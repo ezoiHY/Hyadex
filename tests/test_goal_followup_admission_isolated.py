@@ -23,13 +23,8 @@ FUNCTIONS = {
     "codex_goal_followup_requires_native",
     "codex_goal_steer_selection_is_plain",
     "_run_queued_turn_now_once",
-    "async_route_queue_fields",
+    "queued_turn_uses_retired_routing",
     "stop_turn",
-    "canonical_provider_cross_chat_route_alias",
-    "canonical_provider_cross_chat_route_actions",
-    "normalized_provider_cross_chat_routes",
-    "normalized_provider_cross_chat_route_snapshot",
-    "provider_route_snapshot_allows_native_steer",
 }
 
 
@@ -87,18 +82,12 @@ def load_admission():
         "CODEX_TRANSPORT_APP_SERVER": "app_server",
         "CLAUDE_TRANSPORT_AGENT_SDK": "agent_sdk",
         "CODEX_GOAL_STEER_CLIENT_CAPABILITY": "codex_goal_steer_v1",
-        "PROVIDER_CROSS_CHAT_ROUTE_KIND_REFERENCE": "prompt_reference",
-        "PROVIDER_CROSS_CHAT_ROUTE_KIND_AMBIENT": "ambient_local",
-        "AGENT_AMBIENT_LOCAL_HANDOFFS_ENABLED": True,
-        "PROVIDER_CROSS_CHAT_ROUTE_ALIAS_RE": re.compile(r"^[a-z][a-z0-9_-]{0,31}$"),
-        "PROVIDER_CROSS_CHAT_ROUTE_ID_RE": re.compile(r"^route_[0-9a-f]{32}$"),
-        "PROVIDER_CROSS_CHAT_ROUTE_REVISION_RE": re.compile(r"^rev_[0-9a-f]{32}$"),
-        "PROVIDER_CROSS_CHAT_ROUTE_PAIR_ID_RE": re.compile(r"^pair_[0-9a-f]{32}$"),
-        "PROVIDER_CROSS_CHAT_RECIPROCAL_EFFECT_ID_RE": re.compile(r"^exchange_[0-9a-f]{32}$"),
-        "PROVIDER_CROSS_CHAT_ROUTE_ACTIONS": ("instruction", "request_reply"),
-        "PROVIDER_CROSS_CHAT_ROUTE_ACTION_SET": {"instruction", "request_reply"},
-        "CROSS_CHAT_DELIVERY_PURPOSES": {"local_delivery", "peer_delivery"},
-        "LOCAL_CROSS_CHAT_DELIVERY_PURPOSE": "local_delivery",
+        "RETIRED_TURN_PURPOSES": {"local_delivery", "peer_delivery"},
+        "RETIRED_QUEUED_TURN_FIELDS": (
+            "chat_references", "team_references", "cross_chat_obligation_ids",
+            "cross_chat_exchange_ids", "cross_chat_envelope_id",
+            "cross_chat_exchange_id", "cross_chat_exchange_leg_id",
+        ),
     }
     exec(compile(module, str(SOURCE), "exec"), namespace)
     return namespace
@@ -173,9 +162,6 @@ class GoalFollowupAdmissionTests(unittest.IsolatedAsyncioTestCase):
             "force_send_conflict_detail": Mock(side_effect=lambda *_args, **kwargs: kwargs),
             "queued_codex_runtime_matches_active": Mock(return_value=True),
             "queued_claude_runtime_matches_active": Mock(return_value=False),
-            "provider_route_snapshot_allows_native_steer": Mock(
-                side_effect=self.ns["provider_route_snapshot_allows_native_steer"],
-            ),
             **self.forbidden,
         })
 
@@ -357,11 +343,11 @@ class GoalFollowupAdmissionTests(unittest.IsolatedAsyncioTestCase):
         self.selected["_native_delivery_fenced"] = True
         await self.assert_rejected(guard="delivery_uncertain")
 
-    async def test_selecting_immutable_delivery_still_rejects(self):
-        for purpose in ("local_delivery", "peer_delivery"):
+    async def test_selecting_internal_turn_still_rejects(self):
+        for purpose in ("scheduled_job", "local_delivery", "peer_delivery"):
             with self.subTest(purpose=purpose):
                 self.selected["purpose"] = purpose
-                await self.assert_rejected(guard="selected_cross_chat_delivery")
+                await self.assert_rejected(guard="selected_internal_turn")
                 self.selected.pop("purpose")
 
     async def test_special_purpose_input_cannot_enter_plain_goal_steering(self):
@@ -435,8 +421,6 @@ class GoalFollowupAdmissionTests(unittest.IsolatedAsyncioTestCase):
                     with self.subTest(ordinary=ordinary, current_routes=bool(current_routes), files=files):
                         self.setUp()
                         routes = saved_route_snapshots()
-                        self.assertEqual(self.ns["normalized_provider_cross_chat_route_snapshot"](routes), routes)
-                        self.assertFalse(self.ns["provider_route_snapshot_allows_native_steer"](routes))
                         self.selected.update(
                             prompt="Status report!", model="gpt-6-astra", effort="xhigh",
                             file_ids=files, provider_cross_chat_route_snapshot=routes,
@@ -460,25 +444,12 @@ class GoalFollowupAdmissionTests(unittest.IsolatedAsyncioTestCase):
             ("team_references", [{"id": "new-team"}]),
             ("skill_selection", {"name": "provider-command"}),
             ("prompt", "/mail server remote New message"),
-            ("provider_cross_chat_route_snapshot", [
-                *saved_route_snapshots(), {**saved_route_snapshots()[0], "route_kind": "prompt_reference"},
-            ]),
         ):
             with self.subTest(field=field):
                 self.setUp()
                 self.selected["provider_cross_chat_route_snapshot"] = saved_route_snapshots()
                 self.selected[field] = value
                 await self.assert_rejected()
-
-    async def test_saved_routes_still_require_ordinary_non_goal_authority_replacement(self):
-        self.session.pop("codex_goal")
-        self.active.pop("codex_native_operation_kind")
-        self.current.pop("purpose")
-        self.selected["provider_cross_chat_route_snapshot"] = saved_route_snapshots()
-        before = self.snapshot()
-        with self.assertRaises(self.ns["NonNativeForceSendRequiresLifecycleLock"]):
-            await self.ns["_run_queued_turn_now_once"]("chat", "q-followup", require_native=True)
-        self.assert_untouched(before)
 
     async def test_goal_created_while_waiting_for_queue_lock_uses_goal_lane(self):
         goal = self.session.pop("codex_goal")

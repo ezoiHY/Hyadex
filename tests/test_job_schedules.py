@@ -238,107 +238,23 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("unarchive", str(raised.exception.detail).lower())
         self.assertEqual(store.jobs, {})
 
-    async def test_job_chat_references_persist_update_atomically_and_revoke(
-        self,
-    ) -> None:
-        store = agent_server.JobStore()
-        prompt = "@Target ask for status"
-        reference = agent_server.ChatReference(
-            session_id="target",
-            display_title_snapshot="Target",
-            source_text_start=0,
-            source_text_end=7,
-            action="request_reply",
-        )
-        sessions = {
-            "source": {
-                "id": "source",
-                "title": "Source",
-                "backend": agent_server.BACKEND_CODEX,
-            },
-            "target": {
-                "id": "target",
-                "title": "Target",
-                "backend": agent_server.BACKEND_CODEX,
-            },
-        }
-        with (
-            patch.object(agent_server.STORE, "sessions", sessions),
-            patch.object(agent_server, "AGENT_TOKEN", "test-token"),
-            patch.object(
-                agent_server,
-                "cross_chat_delivery_client_capabilities",
-                return_value=[agent_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY],
-            ),
-            patch.object(store, "save", new_callable=AsyncMock),
-            patch.object(agent_server, "append_event", new_callable=AsyncMock),
-        ):
-            created = await store.create(agent_server.CreateJobRequest(
-                session_id="source",
-                title="Ask target",
-                prompt=prompt,
-                chat_references=[reference],
-            ))
-            self.assertEqual(
-                created["chat_references"],
-                [agent_server.chat_reference_dict(reference)],
-            )
-
-            metadata_only = await store.update(
-                created["id"],
-                {"title": "Ask target later"},
-            )
-            self.assertEqual(
-                metadata_only["chat_references"],
-                [agent_server.chat_reference_dict(reference)],
-            )
-
-            before_invalid_edit = dict(store.jobs[created["id"]])
-            with self.assertRaisesRegex(
-                HTTPException,
-                "does not match",
-            ):
-                await store.update(
-                    created["id"],
-                    {"prompt": "Mention removed"},
-                )
-            self.assertEqual(store.jobs[created["id"]], before_invalid_edit)
-
-            shifted = reference.model_copy(update={
-                "source_text_start": 7,
-                "source_text_end": 14,
-            })
-            shifted_job = await store.update(created["id"], {
-                "prompt": "Please @Target ask for status",
-                "chat_references": [shifted],
-            })
-            self.assertEqual(
-                shifted_job["chat_references"],
-                [agent_server.chat_reference_dict(shifted)],
-            )
-
-            revoked = await store.update(
-                created["id"],
-                {"chat_references": []},
-            )
-            self.assertEqual(revoked["chat_references"], [])
-
     async def test_revocation_revision_fences_stale_dispatch_and_pause(self) -> None:
         store = agent_server.JobStore()
-        reference = agent_server.ChatReference(
-            session_id="target",
-            display_title_snapshot="Target",
-            source_text_start=0,
-            source_text_end=7,
-            action="instruction",
-        )
+        # A job saved before @Chat targets were retired.
+        reference = {
+            "session_id": "target",
+            "display_title_snapshot": "Target",
+            "source_text_start": 0,
+            "source_text_end": 7,
+            "action": "instruction",
+        }
         old_revision = agent_server.new_job_revision()
         store.jobs["job_race"] = {
             "id": "job_race",
             "session_id": "source",
             "title": "Routed job",
             "prompt": "@Target check now",
-            "chat_references": [agent_server.chat_reference_dict(reference)],
+            "chat_references": [reference],
             "schedule_kind": "interval",
             "interval_seconds": 60,
             "timezone": "UTC",
@@ -383,7 +299,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(paused)
         self.assertTrue(store.jobs["job_race"]["enabled"])
-        self.assertEqual(store.jobs["job_race"]["chat_references"], [])
+        self.assertNotIn("chat_references", store.jobs["job_race"])
 
     async def test_admitted_old_occurrence_does_not_advance_edited_schedule(
         self,
@@ -691,93 +607,6 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(current["run_count"], 0)
                     save.assert_not_awaited()
 
-    async def test_run_job_revalidates_and_forwards_exact_chat_references(
-        self,
-    ) -> None:
-        for context_mode in ("chat", "standalone"):
-            with self.subTest(context_mode=context_mode):
-                store = agent_server.JobStore()
-                reference = agent_server.ChatReference(
-                    session_id="target",
-                    display_title_snapshot="Target",
-                    source_text_start=0,
-                    source_text_end=7,
-                    action="request_reply",
-                )
-                store.jobs["job_handoff"] = {
-                    "id": "job_handoff",
-                    "session_id": "source",
-                    "title": "Ask target",
-                    "prompt": "@Target check now",
-                    "chat_references": [
-                        agent_server.chat_reference_dict(reference)
-                    ],
-                    "schedule_kind": "interval",
-                    "context_mode": context_mode,
-                    "enabled": False,
-                    "run_count": 0,
-                }
-                sessions = {
-                    "source": {
-                        "id": "source",
-                        "backend": agent_server.BACKEND_CODEX,
-                    },
-                    "target": {
-                        "id": "target",
-                        "backend": agent_server.BACKEND_CODEX,
-                    },
-                }
-                start_turn = AsyncMock(return_value={"run_id": "run_handoff"})
-                with (
-                    patch.object(agent_server.STORE, "sessions", sessions),
-                    patch.object(agent_server, "AGENT_TOKEN", "test-token"),
-                    patch.object(
-                        agent_server,
-                        "cross_chat_delivery_client_capabilities",
-                        return_value=[
-                            agent_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
-                        ],
-                    ),
-                    patch.object(agent_server, "start_turn", start_turn),
-                    patch.object(store, "mark_ran", new_callable=AsyncMock),
-                    patch.object(store, "save", new_callable=AsyncMock),
-                    patch.object(
-                        agent_server,
-                        "append_event",
-                        new_callable=AsyncMock,
-                    ),
-                ):
-                    await store.run_job("job_handoff")
-                    turn_request = start_turn.await_args.args[1]
-                    self.assertEqual(turn_request.chat_references, [reference])
-                    self.assertEqual(
-                        turn_request.client_capabilities,
-                        [agent_server.CROSS_CHAT_HANDOFFS_V2_CLIENT_CAPABILITY],
-                    )
-                    self.assertEqual(turn_request.purpose, "scheduled_job")
-                    self.assertFalse(start_turn.await_args.kwargs["queue_if_busy"])
-                    self.assertEqual(
-                        start_turn.await_args.kwargs["provider_context_mode"],
-                        context_mode,
-                    )
-                    self.assertTrue(
-                        start_turn.await_args.kwargs[
-                            "scheduled_job_chat_references"
-                        ]
-                    )
-                    self.assertEqual(
-                        start_turn.await_args.kwargs[
-                            "scheduled_job_revision"
-                        ],
-                        store.jobs["job_handoff"]["_revision"],
-                    )
-
-                    sessions["target"]["archived"] = True
-                    start_turn.reset_mock()
-                    with self.assertRaisesRegex(HTTPException, "archived"):
-                        await store.run_job("job_handoff")
-                    start_turn.assert_not_awaited()
-
     async def test_invalid_stored_chat_target_is_durably_paused_for_repair(
         self,
     ) -> None:
@@ -855,85 +684,6 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload["job"]["enabled"])
         self.assertIn("Edit or remove the target", payload["message"])
         self.assertIn("re-enable the job", payload["message"])
-
-    async def test_admission_race_does_not_persist_target_session_id(self) -> None:
-        secret_target_id = "internal-target-session-secret"
-        store = agent_server.JobStore()
-        reference = agent_server.ChatReference(
-            session_id=secret_target_id,
-            display_title_snapshot="Mobile",
-            source_text_start=0,
-            source_text_end=7,
-            action="instruction",
-        )
-        revision = agent_server.new_job_revision()
-        store.jobs["job_race_repair"] = {
-            "id": "job_race_repair",
-            "session_id": "source",
-            "title": "Race repair",
-            "prompt": "@Mobile check now",
-            "chat_references": [agent_server.chat_reference_dict(reference)],
-            "schedule_kind": "interval",
-            "interval_seconds": 60,
-            "timezone": "UTC",
-            "loop": True,
-            "enabled": True,
-            "next_run_at": 100.0,
-            "scheduled_run_at": 100.0,
-            "run_count": 0,
-            "_revision": revision,
-        }
-        sessions = {
-            "source": {
-                "id": "source",
-                "title": "Source",
-                "backend": agent_server.BACKEND_CODEX,
-            },
-            secret_target_id: {
-                "id": secret_target_id,
-                "title": "Mobile",
-                "backend": agent_server.BACKEND_CODEX,
-            },
-        }
-        events = AsyncMock()
-
-        async def archive_target_at_admission(
-            session_id: str,
-            req: agent_server.TurnRequest,
-            **kwargs,
-        ) -> dict:
-            sessions[secret_target_id]["archived"] = True
-            return await agent_server._start_turn_locked(
-                session_id,
-                req,
-                **kwargs,
-            )
-
-        with (
-            patch.object(agent_server.STORE, "sessions", sessions),
-            patch.object(agent_server, "AGENT_TOKEN", "test-token"),
-            patch.object(agent_server, "JOBS", store),
-            patch.object(store, "save", new_callable=AsyncMock),
-            patch.object(agent_server, "append_event", events),
-            patch.object(
-                agent_server,
-                "start_turn",
-                AsyncMock(side_effect=archive_target_at_admission),
-            ),
-        ):
-            with self.assertRaises(
-                agent_server.ScheduledJobChatReferenceRepairRequired
-            ) as raised:
-                await store.run_job("job_race_repair")
-
-        self.assertEqual(str(raised.exception.detail), "saved chat target is archived")
-        self.assertNotIn(secret_target_id, str(raised.exception.detail))
-        events.assert_awaited_once()
-        self.assertEqual(events.await_args.args[1], "job_error")
-        durable_payload = events.await_args.args[2]
-        self.assertNotIn(secret_target_id, json.dumps(durable_payload))
-        self.assertNotIn("chat_references", durable_payload["job"])
-        self.assertEqual(durable_payload["job"]["chat_target_count"], 1)
 
     async def test_deleted_and_unsupported_stored_targets_pause_without_launch(
         self,

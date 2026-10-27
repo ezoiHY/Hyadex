@@ -266,13 +266,6 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
             "title": "Unrelated",
             "backend": agent_server.BACKEND_CODEX,
         }
-        reference = agent_server.ChatReference(
-            session_id="sess_target",
-            display_title_snapshot="Target",
-            source_text_start=0,
-            source_text_end=7,
-            action="instruction",
-        )
         runtime_before = {
             key: parent.get(key)
             for key in (
@@ -318,23 +311,13 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
             ))
             stack.enter_context(patch.object(
                 agent_server,
-                "CROSS_CHAT_AUTHORITY_ROOT",
+                "PROVIDER_AUTHORITY_ROOT",
                 Path(temporary) / "authority",
             ))
             stack.enter_context(patch.object(
                 agent_server,
-                "CROSS_CHAT_CAPABILITIES",
+                "PROVIDER_AUTHORITIES",
                 {},
-            ))
-            stack.enter_context(patch.object(
-                agent_server,
-                "AGENT_AMBIENT_LOCAL_HANDOFFS_ENABLED",
-                True,
-            ))
-            stack.enter_context(patch.object(
-                agent_server,
-                "cross_chat_delivery_client_capabilities",
-                return_value=[agent_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY],
             ))
             stack.enter_context(patch.object(
                 agent_server.STORE,
@@ -412,7 +395,7 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
             result = await agent_server._start_turn_locked(
                 "sess_parent",
                 agent_server.TurnRequest(
-                    prompt="@Target Run independently",
+                    prompt="Run independently",
                     backend=agent_server.BACKEND_CLAUDE,
                     model="sonnet",
                     effort="high",
@@ -420,57 +403,35 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
                     job_id="job_standalone",
                     job_title="Standalone job",
                     job_scheduled_run_at=1_000.0,
-                    client_capabilities=[
-                        agent_server.CROSS_CHAT_HANDOFFS_V2_CLIENT_CAPABILITY
-                    ],
-                    chat_references=[reference],
                 ),
                 queue_if_busy=False,
                 provider_context_mode="standalone",
-                scheduled_job_chat_references=True,
                 scheduled_job_revision=job_revision,
             )
             await asyncio.wait_for(provider_entered.wait(), timeout=1)
             try:
                 capabilities = list(
-                    agent_server.CROSS_CHAT_CAPABILITIES.values()
+                    agent_server.PROVIDER_AUTHORITIES.values()
                 )
                 self.assertEqual(len(capabilities), 1)
                 capability = capabilities[0]
                 self.assertEqual(
-                    capability["grants"],
-                    {("sess_target", "instruction")},
+                    capability["actions"],
+                    {"jobs", "publish", "emergency", "notify"},
                 )
-                self.assertEqual(
-                    len(capability["provider_direct_grants"]),
-                    1,
-                )
-                direct_handle, direct_grant = next(iter(
-                    capability["provider_direct_grants"].items()
-                ))
-                self.assertEqual(direct_grant, {
-                    "target_session_id": "sess_target",
-                    "action": "instruction",
-                })
                 launched_prompt = run_claude.await_args.args[2]
                 self.assertEqual(launched_prompt, "scheduled prompt")
                 launched_env = run_claude.await_args.kwargs[
                     "provider_runtime_env"
                 ]
                 self.assertEqual(
-                    launched_env["HYADEX_CROSS_CHAT_HANDLE_1"],
-                    direct_handle,
+                    launched_env["HYADEX_PROVIDER_AUTHORITY_FILE"],
+                    capability["authority_path"],
                 )
                 self.assertNotIn("sess_target", str(launched_env))
-                self.assertEqual(capability["provider_route_grants"], {})
-                self.assertNotIn(
-                    "agent_cross_chat_routes",
-                    capability["actions"],
-                )
-                self.assertNotIn(
-                    ("sess_unrelated", "instruction"),
-                    capability["grants"],
-                )
+                self.assertFalse(any(
+                    name.startswith("HYADEX_CROSS_CHAT_") for name in launched_env
+                ))
             finally:
                 provider_release.set()
                 await asyncio.gather(*list(tasks.get("sess_parent", set())))
@@ -499,9 +460,7 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(started["backend"], agent_server.BACKEND_CLAUDE)
         self.assertEqual(started["job_revision"], job_revision)
         self.assertEqual(started["job_scheduled_run_at"], 1_000.0)
-        self.assertEqual(started["chat_references"], [
-            agent_server.chat_reference_dict(reference)
-        ])
+        self.assertNotIn("chat_references", started)
 
     def test_standalone_backend_change_clears_inherited_runtime_defaults(self) -> None:
         parent = {

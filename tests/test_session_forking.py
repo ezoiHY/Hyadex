@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import agent_server
+from tests.test_provider_history_sync import legacy_provider_authority_block
 
 
 class ForkHistoryCloneTests(unittest.IsolatedAsyncioTestCase):
@@ -2977,17 +2978,7 @@ class ForkMemoryTests(unittest.TestCase):
 
     def test_legacy_provider_prompts_do_not_enter_fork_memory(self) -> None:
         parent_id = "legacy-memory-parent"
-        authority = agent_server.cross_chat_provider_authority_block(
-            [],
-            agent_server.cross_chat_authority_path(
-                "run_memory_projection",
-                "fedcba0987654321fedcba0987654321",
-            ),
-            parent_id,
-            {"publish"},
-            "blocked",
-            compact=True,
-        )
+        authority = legacy_provider_authority_block(run_id="run_memory_projection", nonce="fedcba0987654321fedcba0987654321", chat_id=parent_id)
         notice = (
             "<task-notification>\n"
             "<task-id>task_mem01</task-id>\n"

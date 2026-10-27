@@ -25,7 +25,7 @@ class IsolatedServerStateMixin:
             STATE_DIR=state,
             FILES_ROOT=state / "files",
             CODE_DIFFS_ROOT=state / "code_diffs",
-            CROSS_CHAT_AUTHORITY_ROOT=state / "cross_chat_authority",
+            PROVIDER_AUTHORITY_ROOT=state / "cross_chat_authority",
         )
 
     def upload(self, content: bytes, filename: str = "notes.txt") -> UploadFile:

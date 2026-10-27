@@ -29,7 +29,7 @@ NAMES = {
     "persist_reasoning_summary",
     "session_lifecycle_lock",
     "_run_queued_turn_now_once", "codex_goal_followup_requires_native",
-    "async_route_queue_fields", "NonNativeForceSendRequiresLifecycleLock",
+    "queued_turn_uses_retired_routing", "NonNativeForceSendRequiresLifecycleLock",
 }
 TREE = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
 NODES = [node for node in TREE.body if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in NAMES]
@@ -90,7 +90,12 @@ class NativeGoalSteerTests(unittest.IsolatedAsyncioTestCase):
             "CodexAppServerRequestError": CodexAppServerRequestError,
             "CodexAppServerSubscriptionClosed": type("SubscriptionClosed", (Exception,), {}),
             "CODEX_GOALS_ENABLED": True, "CODEX_GOAL_STEER_CLIENT_CAPABILITY": "codex_goal_steer_v1",
-            "PROVIDER_CROSS_CHAT_ROUTE_KIND_REFERENCE": "prompt_reference",
+            "RETIRED_TURN_PURPOSES": {"local_delivery", "peer_delivery"},
+            "RETIRED_QUEUED_TURN_FIELDS": (
+                "chat_references", "team_references", "cross_chat_obligation_ids",
+                "cross_chat_exchange_ids", "cross_chat_envelope_id",
+                "cross_chat_exchange_id", "cross_chat_exchange_leg_id",
+            ),
             "BACKEND_CODEX": "codex", "DEFAULT_BACKEND": "codex",
             "CODEX_APP_SERVER_LIFECYCLE_TIMEOUT_SECONDS": 2, "IDLE_KILL_SECONDS": 2,
             "ACTIVE": {"chat": self.active}, "CURRENT_TURNS": {"chat": self.current},
@@ -102,8 +107,6 @@ class NativeGoalSteerTests(unittest.IsolatedAsyncioTestCase):
             "STORE": SimpleNamespace(sessions={"chat": {"backend": "codex", "codex_goal": self.goal}}),
             "codex_goal_time_budget_is_exhausted": lambda session: bool(session.get("codex_goal_time_budget_exhausted")),
             "codex_goal_time_budget_remaining": lambda session: None,
-            "provider_route_snapshot_allows_native_steer": lambda value: not value,
-            "normalized_provider_cross_chat_route_snapshot": lambda value: value or [],
             "queued_codex_runtime_matches_active": lambda *args: True,
             "build_user_provider_prompt": lambda chat, prompt, files: prompt,
             "clean_assistant_text": lambda text: text.strip(),
@@ -272,8 +275,6 @@ class NativeGoalSteerTests(unittest.IsolatedAsyncioTestCase):
                     "HTTPException": AdmissionHTTPException,
                     "BACKEND_CLAUDE": "claude", "CODEX_TRANSPORT_APP_SERVER": "app_server",
                     "CLAUDE_TRANSPORT_AGENT_SDK": "agent_sdk",
-                    "CROSS_CHAT_DELIVERY_PURPOSES": {"local_delivery", "peer_delivery"},
-                    "LOCAL_CROSS_CHAT_DELIVERY_PURPOSE": "local_delivery",
                     "RUN_NOW_TURNS": {}, "STEERING_SESSIONS": set(), "STEERING_WAIT_TASKS": {},
                     "stop_cleanup_in_progress": lambda _: False,
                     "server_lifecycle_admission_blocker": lambda: None,
@@ -372,8 +373,6 @@ class NativeGoalSteerTests(unittest.IsolatedAsyncioTestCase):
             lambda selected: selected.update(skill_selection={"name": "provider-command"}),
             lambda selected: selected.update(prompt="/mail server remote New message"),
             lambda selected: selected.update(purpose="scheduled_job"),
-            lambda selected: selected["provider_cross_chat_route_snapshot"].append(
-                {**saved_route_snapshots()[0], "route_kind": "prompt_reference"}),
         )
         for ordinary in (False, True):
             for index, change in enumerate(changes):

@@ -25,7 +25,7 @@ NAMES = {
     "run_codex_app_server", "retain_codex_goal_run_owner", "bind_active_turn",
     "turn_slot_is_owned", "codex_goal_followup_requires_native",
     "_run_queued_turn_now_once", "NonNativeForceSendRequiresLifecycleLock",
-    "async_route_queue_fields", "await_native_steer_result",
+    "queued_turn_uses_retired_routing", "await_native_steer_result",
     "withdraw_unaccepted_native_steer", "codex_native_archive_rejection",
     # The runner classifies failed terminals before checking continuation
     # fences. Load its real, side-effect-free compaction helpers too.
@@ -146,9 +146,7 @@ class GoalFollowupLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "LIVE_STDOUT_MAX_LINES": 10, "CODEX_APP_SERVER_TOOL_OUTPUT_MAX_CHARS": 4096,
             "CODEX_APP_SERVER_FIRST_ACTIVITY_TIMEOUT_SECONDS": 30,
             "RUN_NOW_PROVIDER_HANDOFF_TIMEOUT_SECONDS": 5,
-            "CROSS_CHAT_DELIVERY_PURPOSES": {"local_delivery", "peer_delivery"},
-            "LOCAL_CROSS_CHAT_DELIVERY_PURPOSE": "local_delivery",
-            "CROSS_CHAT_CAPABILITIES": {"operation": self.authority},
+            "PROVIDER_AUTHORITIES": {"operation": self.authority},
             "RUN_METADATA": {"operation": {"synthetic_authority": "original"}},
             "RUN_NOW_TURNS": {}, "STEERING_SESSIONS": set(), "STEERING_WAIT_TASKS": {},
             "validate_provider_runtime_env": validate_provider_runtime_env,
@@ -180,12 +178,11 @@ class GoalFollowupLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "unpin_codex_app_server_thread": AsyncMock(), "touch_codex_app_server_thread": AsyncMock(),
             "reconcile_provider_task_exit": AsyncMock(), "register_codex_native_action": Mock(),
             "schedule_codex_subagent_finalization": Mock(), "compact_memory_text": lambda value, limit: value[:limit],
-            "maybe_notify_chat_mailbox_codex": AsyncMock(),
             "logger": Mock(),
         })
         self.forbidden = {}
-        for name in ("stop_turn", "pause_active_codex_goal_for_stop", "issue_cross_chat_capability",
-                     "revoke_cross_chat_capability", "run_codex_exec", "capture_git_baseline"):
+        for name in ("stop_turn", "pause_active_codex_goal_for_stop", "issue_provider_authority",
+                     "revoke_provider_authority", "run_codex_exec", "capture_git_baseline"):
             self.ns[name] = self.forbidden[name] = AsyncMock(side_effect=AssertionError(name))
         for name in ("schedule_next_queued_turn", "prepare_steered_turn", "schedule_steered_turn_slot_waiter"):
             self.ns[name] = self.forbidden[name] = Mock(side_effect=AssertionError(name))
@@ -243,7 +240,7 @@ class GoalFollowupLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.current["run_id"], "operation")
         self.assertEqual(self.current["prompt"], "Original goal request")
         self.assertEqual(self.ns["RUN_METADATA"], {"operation": {"synthetic_authority": "original"}})
-        self.assertIs(self.ns["CROSS_CHAT_CAPABILITIES"]["operation"], self.authority)
+        self.assertIs(self.ns["PROVIDER_AUTHORITIES"]["operation"], self.authority)
         self.assertEqual(self.goal["status"], "active")
         self.assertEqual(self.manager.start_turn.await_count, 1)
         for call in self.forbidden.values():
@@ -438,7 +435,7 @@ class GoalFollowupLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(selected["_paused_after_stop"])
         self.assertIs(self.ns["QUEUED_TURNS"]["chat"][0], selected)
         self.turn.interrupt.assert_not_awaited()
-        self.forbidden["revoke_cross_chat_capability"].assert_not_awaited()
+        self.forbidden["revoke_provider_authority"].assert_not_awaited()
         runner.cancel()
         await asyncio.gather(runner, return_exceptions=True)
 
@@ -499,7 +496,7 @@ class GoalFollowupLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(kind == "turn_steered" for kind, _ in self.events), 1)
         self.assert_original_owner()
         await self.finish_runner(runner, turn="turn-2")
-        self.forbidden["revoke_cross_chat_capability"].assert_not_awaited()
+        self.forbidden["revoke_provider_authority"].assert_not_awaited()
 
     async def test_cancel_during_accepted_handoff_settles_uncertain_without_replay(self):
         runner = await self.start()

@@ -440,7 +440,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server, "run_claude", new=launch_provider),
             patch.object(
                 agent_server,
-                "issue_cross_chat_capability",
+                "issue_provider_authority",
                 AsyncMock(return_value=agent_server.STATE_DIR / "test-authority.json"),
             ),
             self.provider_runtime_env_patch(),
@@ -522,16 +522,11 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 agent_server,
-                "issue_cross_chat_capability",
+                "issue_provider_authority",
                 AsyncMock(return_value=agent_server.STATE_DIR / "test-authority.json"),
             ),
             self.provider_runtime_env_patch(),
-            patch.object(agent_server, "revoke_cross_chat_capability", revoke),
-            patch.object(
-                agent_server.CROSS_CHAT,
-                "get",
-                AsyncMock(return_value=None),
-            ),
+            patch.object(agent_server, "revoke_provider_authority", revoke),
             patch.object(
                 agent_server,
                 "scrub_tmux_global_secret_environment",
@@ -544,7 +539,6 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
                 agent_server.TurnRequest(prompt="Live start"),
                 queue_if_busy=False,
                 admission_backend=agent_server.BACKEND_CLAUDE,
-                accepted_obligation_ids=["obligation-live"],
             )
             try:
                 run_id = result["run_id"]
@@ -553,10 +547,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
                     agent_server.CURRENT_TURNS[self.session_id]["run_id"],
                     run_id,
                 )
-                self.assertEqual(
-                    run_metadata[run_id]["cross_chat_obligation_ids"],
-                    ["obligation-live"],
-                )
+                self.assertIn(run_id, run_metadata)
                 revoke.assert_not_awaited()
             finally:
                 provider_release.set()
@@ -621,13 +612,13 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server, "run_claude", new=fail_launch),
             patch.object(
                 agent_server,
-                "issue_cross_chat_capability",
+                "issue_provider_authority",
                 AsyncMock(return_value=agent_server.STATE_DIR / "test-authority.json"),
             ),
             self.provider_runtime_env_patch(),
             patch.object(
                 agent_server,
-                "revoke_cross_chat_capability",
+                "revoke_provider_authority",
                 AsyncMock(side_effect=revoke_and_replace),
             ),
             patch.object(
@@ -712,13 +703,13 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server, "run_claude", new=fail_launch),
             patch.object(
                 agent_server,
-                "issue_cross_chat_capability",
+                "issue_provider_authority",
                 AsyncMock(return_value=agent_server.STATE_DIR / "test-authority.json"),
             ),
             self.provider_runtime_env_patch(),
             patch.object(
                 agent_server,
-                "revoke_cross_chat_capability",
+                "revoke_provider_authority",
                 AsyncMock(side_effect=blocked_revoke),
             ),
             patch.object(
@@ -811,13 +802,13 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(agent_server, "run_claude", new=fail_launch),
             patch.object(
                 agent_server,
-                "issue_cross_chat_capability",
+                "issue_provider_authority",
                 AsyncMock(return_value=agent_server.STATE_DIR / "test-authority.json"),
             ),
             self.provider_runtime_env_patch(),
             patch.object(
                 agent_server,
-                "revoke_cross_chat_capability",
+                "revoke_provider_authority",
                 AsyncMock(side_effect=fail_revoke),
             ),
             patch.object(

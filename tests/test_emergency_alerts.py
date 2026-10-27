@@ -58,7 +58,7 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
         ))
         self.stack.enter_context(patch.object(
             agent_server,
-            "CROSS_CHAT_AUTHORITY_ROOT",
+            "PROVIDER_AUTHORITY_ROOT",
             self.root / "state" / "cross_chat_authority",
         ))
         self.stack.enter_context(patch.object(agent_server, "AGENT_TOKEN", "server-token"))
@@ -70,10 +70,10 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
         self.stack.enter_context(patch.object(agent_server, "QUEUE_RECOVERY_READY", set()))
         self.stack.enter_context(patch.object(agent_server, "DELETING_SESSIONS", set()))
         self.stack.enter_context(patch.object(agent_server, "DELETED_SESSION_TOMBSTONES", set()))
-        self.stack.enter_context(patch.object(agent_server, "CROSS_CHAT_CAPABILITIES", {}))
+        self.stack.enter_context(patch.object(agent_server, "PROVIDER_AUTHORITIES", {}))
         self.stack.enter_context(patch.object(
             agent_server,
-            "CROSS_CHAT_CAPABILITY_LOCK",
+            "PROVIDER_AUTHORITY_LOCK",
             asyncio.Lock(),
         ))
         self.stack.enter_context(patch.object(agent_server, "STOPPED_RUNS", set()))
@@ -136,10 +136,9 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
         *,
         actions: set[str],
     ) -> tuple[Path, str]:
-        path = await agent_server.issue_cross_chat_capability(
+        path = await agent_server.issue_provider_authority(
             session_id,
             run_id,
-            [],
             actions=actions,
         )
         self.assertIsNotNone(path)
@@ -793,11 +792,16 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(purpose=purpose):
                 self.assertFalse(agent_server.provider_turn_may_raise_emergency(purpose))
 
-        actions, _jobs_access = agent_server.native_steer_provider_actions(
-            "source",
-            {"purpose": "handoff_digest"},
-        )
-        self.assertNotIn("emergency", actions)
+        # Every denied purpose belongs to a removed internal delivery. A
+        # legacy row with one can never reach native steering at all.
+        for purpose in agent_server.EMERGENCY_AUTHORITY_DENIED_PURPOSES:
+            with self.subTest(steer_purpose=purpose), self.assertRaises(
+                agent_server.NativeSteerHandoffError
+            ):
+                agent_server.native_steer_provider_actions(
+                    "source",
+                    {"purpose": purpose},
+                )
 
         _path, restricted_token = await self.issue_authority(
             "source",

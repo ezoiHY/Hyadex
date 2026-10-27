@@ -439,8 +439,8 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.previous_goal_quarantine = (
             agent_server.CODEX_QUARANTINED_GOAL_THREADS
         )
-        self.previous_capabilities = agent_server.CROSS_CHAT_CAPABILITIES
-        self.previous_authority_root = agent_server.CROSS_CHAT_AUTHORITY_ROOT
+        self.previous_capabilities = agent_server.PROVIDER_AUTHORITIES
+        self.previous_authority_root = agent_server.PROVIDER_AUTHORITY_ROOT
         self.previous_agent_token = agent_server.AGENT_TOKEN
         self.authority_temporary = tempfile.TemporaryDirectory()
 
@@ -481,8 +481,8 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         agent_server.RUN_METADATA = {}
         agent_server.CODEX_GOAL_SYNC_GENERATIONS = {}
         agent_server.CODEX_QUARANTINED_GOAL_THREADS = {}
-        agent_server.CROSS_CHAT_CAPABILITIES = {}
-        agent_server.CROSS_CHAT_AUTHORITY_ROOT = (
+        agent_server.PROVIDER_AUTHORITIES = {}
+        agent_server.PROVIDER_AUTHORITY_ROOT = (
             Path(self.authority_temporary.name) / "authority"
         )
         agent_server.AGENT_TOKEN = "test-agent-token"
@@ -506,8 +506,8 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         agent_server.CODEX_QUARANTINED_GOAL_THREADS = (
             self.previous_goal_quarantine
         )
-        agent_server.CROSS_CHAT_CAPABILITIES = self.previous_capabilities
-        agent_server.CROSS_CHAT_AUTHORITY_ROOT = self.previous_authority_root
+        agent_server.PROVIDER_AUTHORITIES = self.previous_capabilities
+        agent_server.PROVIDER_AUTHORITY_ROOT = self.previous_authority_root
         agent_server.AGENT_TOKEN = self.previous_agent_token
         self.authority_temporary.cleanup()
 
@@ -810,24 +810,21 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             asyncio.CancelledError(),
         )
 
-    async def test_terminal_releases_slot_before_cross_chat_finalization(
+    async def test_terminal_releases_slot_before_terminal_finalization(
         self,
     ) -> None:
         turn = FakeTurn([
             agent_message(
-                "msg-cross-chat-answer",
-                "The cross-chat answer is ready.",
+                "msg-scheduled-answer",
+                "The scheduled answer is ready.",
                 "final_answer",
             ),
             completed_notification(),
         ])
         manager = FakeManager(turn)
         metadata = {
-            "purpose": "cross_chat_handoff_delivery",
-            "source_session_id": "chat-source",
-            "target_session_id": "chat-native",
-            "cross_chat_exchange_id": "exchange-ordering",
-            "cross_chat_exchange_leg_id": "leg-ordering",
+            "purpose": "scheduled_job",
+            "job_id": "job-ordering",
         }
         agent_server.CURRENT_TURNS["chat-native"].update(metadata)
         agent_server.RUN_METADATA["run-original"] = dict(metadata)
@@ -866,7 +863,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             runner = asyncio.create_task(agent_server.run_codex_app_server(
                 "chat-native",
                 "run-original",
-                "Answer the incoming cross-chat exchange.",
+                "Run the scheduled job.",
                 dict(self.session),
                 Path(self.cwd) / ".runner-test-manifest.json",
                 allow_exec_fallback=False,
@@ -892,12 +889,12 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("run-original", agent_server.RUN_METADATA)
         schedule.assert_called_once_with("chat-native")
 
-    async def test_terminal_cross_chat_finalization_survives_repeated_cancellation(
+    async def test_terminal_finalization_survives_repeated_cancellation(
         self,
     ) -> None:
         turn = FakeTurn([
             agent_message(
-                "msg-cross-chat-cancel",
+                "msg-scheduled-cancel",
                 "The answer remains durable during cancellation.",
                 "final_answer",
             ),
@@ -905,11 +902,8 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         ])
         manager = FakeManager(turn)
         metadata = {
-            "purpose": "cross_chat_handoff_delivery",
-            "source_session_id": "chat-source",
-            "target_session_id": "chat-native",
-            "cross_chat_exchange_id": "exchange-cancel",
-            "cross_chat_exchange_leg_id": "leg-cancel",
+            "purpose": "scheduled_job",
+            "job_id": "job-cancel",
         }
         agent_server.CURRENT_TURNS["chat-native"].update(metadata)
         agent_server.RUN_METADATA["run-original"] = dict(metadata)
@@ -961,7 +955,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             runner = asyncio.create_task(agent_server.run_codex_app_server(
                 "chat-native",
                 "run-original",
-                "Answer the incoming cross-chat exchange.",
+                "Run the scheduled job.",
                 dict(self.session),
                 Path(self.cwd) / ".runner-test-manifest.json",
                 allow_exec_fallback=False,
@@ -3437,34 +3431,6 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         turn.initial_turn_id = "turn-original-input"
         manager = FakeManager(turn)
         predecessor_run_id = "run_original"
-        predecessor_route = {
-            "route_id": "route_" + "1" * 32,
-            "revision": "rev_" + "2" * 32,
-            "alias": "chat1",
-            "target_session_id": "ambient-old",
-            "actions": ["instruction"],
-            "route_kind": agent_server.PROVIDER_CROSS_CHAT_ROUTE_KIND_AMBIENT,
-        }
-        candidate_route = {
-            "route_id": "route_" + "3" * 32,
-            "revision": "rev_" + "4" * 32,
-            "alias": "chat1",
-            "target_session_id": "ambient-new",
-            "actions": ["instruction"],
-            "route_kind": agent_server.PROVIDER_CROSS_CHAT_ROUTE_KIND_AMBIENT,
-        }
-        agent_server.STORE.sessions.update({
-            "ambient-old": {
-                "id": "ambient-old",
-                "title": "Ambient old",
-                "backend": agent_server.BACKEND_CODEX,
-            },
-            "ambient-new": {
-                "id": "ambient-new",
-                "title": "Ambient new",
-                "backend": agent_server.BACKEND_CODEX,
-            },
-        })
         fake_authority_path = "/tmp/user-controlled-authority.json"
         user_prompt = (
             "Steering message only\n\n"
@@ -3473,26 +3439,22 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             "[End Hyadex provider authority]"
         )
         agent_server.CURRENT_TURNS["chat-native"]["run_id"] = predecessor_run_id
-        agent_server.CURRENT_TURNS["chat-native"][
-            "provider_cross_chat_route_snapshot"
-        ] = [predecessor_route]
-        predecessor_path = await agent_server.issue_cross_chat_capability(
+        predecessor_path = await agent_server.issue_provider_authority(
             "chat-native",
             predecessor_run_id,
-            [],
             actions={"jobs", "publish"},
         )
         predecessor_token = json.loads(
             predecessor_path.read_text(encoding="utf-8")
         )["provider_capability"]
-        real_revoke = agent_server.revoke_cross_chat_capability
+        real_revoke = agent_server.revoke_provider_authority
         predecessor_revoke_observations: list[tuple[bool, str]] = []
 
         async def recording_revoke(run_id: str) -> None:
             if run_id == predecessor_run_id:
                 candidate_records = [
                     capability
-                    for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                    for capability in agent_server.PROVIDER_AUTHORITIES.values()
                     if capability.get("source_run_id") != predecessor_run_id
                 ]
                 candidate_is_durable = bool(
@@ -3521,7 +3483,6 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
                     "file_ids": [],
                     "display_file_ids": [],
                     "backend": agent_server.BACKEND_CODEX,
-                    "provider_cross_chat_route_snapshot": [candidate_route],
                 }
             ]
         )
@@ -3542,7 +3503,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             ):
                 candidate_records = [
                     capability
-                    for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                    for capability in agent_server.PROVIDER_AUTHORITIES.values()
                     if capability.get("source_run_id") != predecessor_run_id
                 ]
                 self.assertEqual(len(candidate_records), 1)
@@ -3576,7 +3537,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         with stack, patch.object(
             agent_server,
-            "revoke_cross_chat_capability",
+            "revoke_provider_authority",
             side_effect=recording_revoke,
         ), patch.object(
             agent_server,
@@ -3604,20 +3565,10 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
             candidate_records = [
                 capability
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == run_now["run_id"]
             ]
             self.assertEqual(len(candidate_records), 1)
-            self.assertEqual(
-                list(candidate_records[0]["provider_route_grants"].values()),
-                [],
-            )
-            self.assertEqual(
-                agent_server.CURRENT_TURNS["chat-native"][
-                    "provider_cross_chat_route_snapshot"
-                ],
-                [],
-            )
             candidate_path = Path(str(
                 candidate_records[0]["authority_path"]
             ))
@@ -3723,10 +3674,9 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeManager(turn)
         original_run_id = "run_original"
         agent_server.CURRENT_TURNS["chat-native"]["run_id"] = original_run_id
-        original_path = await agent_server.issue_cross_chat_capability(
+        original_path = await agent_server.issue_provider_authority(
             "chat-native",
             original_run_id,
-            [],
             actions={"jobs", "publish"},
         )
         original_token = json.loads(
@@ -3761,7 +3711,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
             first_record = next(
                 capability
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == first["run_id"]
             )
             first_path = Path(str(first_record["authority_path"]))
@@ -3785,7 +3735,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
             second_record = next(
                 capability
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == second["run_id"]
             )
             second_path = Path(str(second_record["authority_path"]))
@@ -3800,12 +3750,12 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 {
                     str(capability.get("source_run_id") or "")
-                    for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                    for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 },
                 {second["run_id"]},
             )
             self.assertEqual(
-                list(agent_server.CROSS_CHAT_AUTHORITY_ROOT.glob("*.json")),
+                list(agent_server.PROVIDER_AUTHORITY_ROOT.glob("*.json")),
                 [second_path],
             )
             for stale_token in (original_token, first_token):
@@ -3829,10 +3779,10 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(turn.steer_calls), 2)
         self.assertTrue(second_path.exists())
         self.assertEqual(
-            list(agent_server.CROSS_CHAT_AUTHORITY_ROOT.glob("*.json")),
+            list(agent_server.PROVIDER_AUTHORITY_ROOT.glob("*.json")),
             [second_path],
         )
-        await agent_server.revoke_cross_chat_capability(second["run_id"])
+        await agent_server.revoke_provider_authority(second["run_id"])
         self.assertFalse(second_path.exists())
 
     async def test_native_steer_preserves_completed_trace_items_by_item_id(
@@ -4403,149 +4353,6 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(finals), 1)
         self.assertEqual(finals[0]["run_id"], run_now["run_id"])
 
-    async def test_pending_live_cross_chat_wait_pauses_codex_idle_watchdog(self) -> None:
-        turn = FakeTurn()
-        manager = FakeManager(turn)
-        real_wait = asyncio.wait
-
-        async def fast_poll(
-            futures: set[asyncio.Future[object] | asyncio.Task[object]],
-            *,
-            timeout: float | None = None,
-            return_when: str = asyncio.ALL_COMPLETED,
-        ) -> tuple[
-            set[asyncio.Future[object] | asyncio.Task[object]],
-            set[asyncio.Future[object] | asyncio.Task[object]],
-        ]:
-            return await real_wait(
-                futures,
-                timeout=min(0.01, timeout) if timeout is not None else 0.01,
-                return_when=return_when,
-            )
-
-        stack, events, finished, _exec_fallback = self.runner_patches(manager)
-        with stack, patch.object(
-            agent_server.asyncio,
-            "wait",
-            fast_poll,
-        ), patch.object(
-            agent_server,
-            "CODEX_APP_SERVER_FIRST_ACTIVITY_TIMEOUT_SECONDS",
-            0.02,
-        ), patch.object(
-            agent_server,
-            "IDLE_WARN_SECONDS",
-            0.02,
-        ), patch.object(
-            agent_server,
-            "IDLE_KILL_SECONDS",
-            0.03,
-        ), patch.object(
-            agent_server,
-            "provider_run_owns_pending_cross_chat_live_wait",
-            return_value=True,
-        ):
-            runner = asyncio.create_task(
-                agent_server.run_codex_app_server(
-                    "chat-native",
-                    "run-original",
-                    "Wait for a peer",
-                    dict(self.session),
-                    Path(self.cwd) / ".runner-test-manifest.json",
-                    allow_exec_fallback=True,
-                    allow_resume_rollover=False,
-                )
-            )
-            await asyncio.sleep(0.08)
-            self.assertFalse(runner.done())
-            turn.feed(agent_message(
-                "final-after-peer",
-                "Peer answered after the idle window.",
-                "final_answer",
-            ))
-            turn.feed(completed_notification())
-            await asyncio.wait_for(runner, timeout=2)
-
-        self.assertEqual(finished.await_args.args[1]["exit_code"], 0)
-        self.assertFalse(any(
-            call.args[1] in {"error", "idle_warning"}
-            for call in events.await_args_list
-        ))
-        self.assertEqual(turn.interrupt_calls, 0)
-
-    async def test_stale_live_wait_without_replay_resumes_codex_idle_watchdog(self) -> None:
-        turn = FakeTurn()
-        manager = FakeManager(turn)
-        real_wait = asyncio.wait
-        liveness_checks = 0
-
-        async def fast_poll(
-            futures: set[asyncio.Future[object] | asyncio.Task[object]],
-            *,
-            timeout: float | None = None,
-            return_when: str = asyncio.ALL_COMPLETED,
-        ) -> tuple[
-            set[asyncio.Future[object] | asyncio.Task[object]],
-            set[asyncio.Future[object] | asyncio.Task[object]],
-        ]:
-            return await real_wait(
-                futures,
-                timeout=min(0.01, timeout) if timeout is not None else 0.01,
-                return_when=return_when,
-            )
-
-        def live_helper_is_recent(*_args, **_kwargs) -> bool:
-            nonlocal liveness_checks
-            liveness_checks += 1
-            # Registration/a few authenticated heartbeat checks pause the
-            # watchdog. Once the helper stops replaying, freshness expires and
-            # the normal idle watchdog must become authoritative again.
-            return liveness_checks <= 4
-
-        stack, events, finished, _exec_fallback = self.runner_patches(manager)
-        with stack, patch.object(
-            agent_server.asyncio,
-            "wait",
-            fast_poll,
-        ), patch.object(
-            agent_server,
-            "CODEX_APP_SERVER_FIRST_ACTIVITY_TIMEOUT_SECONDS",
-            0.02,
-        ), patch.object(
-            agent_server,
-            "IDLE_WARN_SECONDS",
-            0.02,
-        ), patch.object(
-            agent_server,
-            "IDLE_KILL_SECONDS",
-            0.04,
-        ), patch.object(
-            agent_server,
-            "provider_run_owns_pending_cross_chat_live_wait",
-            side_effect=live_helper_is_recent,
-        ):
-            await asyncio.wait_for(
-                agent_server.run_codex_app_server(
-                    "chat-native",
-                    "run-original",
-                    "Wait for a peer whose helper disappears",
-                    dict(self.session),
-                    Path(self.cwd) / ".runner-test-manifest.json",
-                    allow_exec_fallback=True,
-                    allow_resume_rollover=False,
-                ),
-                timeout=2,
-            )
-
-        self.assertGreater(liveness_checks, 4)
-        self.assertEqual(finished.await_args.args[1]["exit_code"], 1)
-        self.assertTrue(any(
-            call.args[1] == "error"
-            and "idle timeout" in call.args[2]["message"]
-            for call in events.await_args_list
-        ))
-        self.assertGreaterEqual(turn.interrupt_calls, 1)
-
     async def test_first_activity_timeout_fails_fast_instead_of_hanging(self) -> None:
         # turn/start is accepted (FakeManager.start_turn returns a FakeTurn),
         # but nothing is ever fed into it - simulating a notification that
@@ -5067,10 +4874,9 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeManager(turn)
         predecessor_run_id = "run_original"
         agent_server.CURRENT_TURNS["chat-native"]["run_id"] = predecessor_run_id
-        predecessor_path = await agent_server.issue_cross_chat_capability(
+        predecessor_path = await agent_server.issue_provider_authority(
             "chat-native",
             predecessor_run_id,
-            [],
             actions={"jobs", "publish"},
         )
         agent_server.QUEUED_TURNS["chat-native"] = deque(
@@ -5112,7 +4918,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             done, _pending = await asyncio.wait({force_send}, timeout=2)
             self.assertIn(force_send, done)
             self.assertFalse(predecessor_path.exists())
-            self.assertFalse(agent_server.CROSS_CHAT_CAPABILITIES)
+            self.assertFalse(agent_server.PROVIDER_AUTHORITIES)
             turn.feed(agent_message(
                 "commentary-after-uncertain",
                 "Must not be attributed to the old run.",
@@ -5166,10 +4972,9 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeManager(turn)
         predecessor_run_id = "run_original"
         agent_server.CURRENT_TURNS["chat-native"]["run_id"] = predecessor_run_id
-        predecessor_path = await agent_server.issue_cross_chat_capability(
+        predecessor_path = await agent_server.issue_provider_authority(
             "chat-native",
             predecessor_run_id,
-            [],
             actions={"jobs", "publish"},
         )
         agent_server.QUEUED_TURNS["chat-native"] = deque([{
@@ -5215,7 +5020,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(agent_server.NativeSteerHandoffError) as raised:
                 await asyncio.wait_for(force_send, timeout=2)
             self.assertFalse(predecessor_path.exists())
-            self.assertFalse(agent_server.CROSS_CHAT_CAPABILITIES)
+            self.assertFalse(agent_server.PROVIDER_AUTHORITIES)
             turn.feed(completed_notification("failed"))
             await asyncio.wait_for(runner, timeout=2)
 
@@ -5241,10 +5046,9 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeManager(turn)
         predecessor_run_id = "run_original"
         agent_server.CURRENT_TURNS["chat-native"]["run_id"] = predecessor_run_id
-        predecessor_path = await agent_server.issue_cross_chat_capability(
+        predecessor_path = await agent_server.issue_provider_authority(
             "chat-native",
             predecessor_run_id,
-            [],
             actions={"jobs", "publish"},
         )
         agent_server.QUEUED_TURNS["chat-native"] = deque([{
@@ -5290,7 +5094,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
             candidate_records = [
                 capability
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == candidate_run_id
             ]
             self.assertEqual(len(candidate_records), 1)
@@ -5305,7 +5109,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
                 await runner
             self.assertFalse(candidate_path.exists())
             self.assertFalse(predecessor_path.exists())
-            self.assertFalse(agent_server.CROSS_CHAT_CAPABILITIES)
+            self.assertFalse(agent_server.PROVIDER_AUTHORITIES)
             with self.assertRaises(
                 agent_server.NativeSteerHandoffError
             ) as raised:
@@ -5322,10 +5126,9 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeManager(turn)
         predecessor_run_id = "run_original"
         agent_server.CURRENT_TURNS["chat-native"]["run_id"] = predecessor_run_id
-        predecessor_path = await agent_server.issue_cross_chat_capability(
+        predecessor_path = await agent_server.issue_provider_authority(
             "chat-native",
             predecessor_run_id,
-            [],
             actions={"jobs", "publish"},
         )
         agent_server.QUEUED_TURNS["chat-native"] = deque([{
@@ -5355,7 +5158,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             candidate_run_id = str(turn.steer_calls[0][1])
             candidate_records = [
                 capability
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == candidate_run_id
             ]
             self.assertEqual(len(candidate_records), 1)
@@ -5375,7 +5178,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
                 await runner
             self.assertFalse(candidate_path.exists())
             self.assertFalse(predecessor_path.exists())
-            self.assertFalse(agent_server.CROSS_CHAT_CAPABILITIES)
+            self.assertFalse(agent_server.PROVIDER_AUTHORITIES)
             with self.assertRaises(
                 agent_server.NativeSteerHandoffError
             ) as raised:
@@ -5394,10 +5197,9 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeManager(turn)
         predecessor_run_id = "run_original"
         agent_server.CURRENT_TURNS["chat-native"]["run_id"] = predecessor_run_id
-        predecessor_path = await agent_server.issue_cross_chat_capability(
+        predecessor_path = await agent_server.issue_provider_authority(
             "chat-native",
             predecessor_run_id,
-            [],
             actions={"jobs", "publish"},
         )
         predecessor_token = json.loads(
@@ -5451,7 +5253,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 {
                     str(capability.get("source_run_id") or "")
-                    for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                    for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 },
                 {predecessor_run_id},
             )
@@ -5831,38 +5633,26 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             f"{model}-different",
         )
 
-    async def test_cross_chat_bearing_predecessor_uses_restart_without_candidate_authority(
+    async def test_retired_routing_predecessor_uses_restart_without_candidate_authority(
         self,
     ) -> None:
         model, effort, service_tier = agent_server.codex_runtime_settings(
             self.session
         )
-        predecessor_run_id = "run_cross_chat_predecessor"
-        agent_server.STORE.sessions["neighbor"] = {
-            "id": "neighbor",
-            "backend": agent_server.BACKEND_CLAUDE,
+        predecessor_run_id = "run_legacy_routing_predecessor"
+        # A run recovered from an older server can still carry removed
+        # cross-chat routing state; it must never be steered natively.
+        reference = {
+            "session_id": "neighbor",
+            "display_title_snapshot": "Neighbor",
+            "source_text_start": 0,
+            "source_text_end": 8,
+            "action": "instruction",
         }
-        reference = agent_server.ChatReference(
-            session_id="neighbor",
-            display_title_snapshot="Neighbor",
-            source_text_start=0,
-            source_text_end=8,
-            action="instruction",
-        )
-        predecessor_path = await agent_server.issue_cross_chat_capability(
+        predecessor_path = await agent_server.issue_provider_authority(
             "chat-native",
             predecessor_run_id,
-            [reference],
         )
-        route = {
-            "route_id": "route_" + "a" * 32,
-            "revision": "rev_" + "b" * 32,
-            "alias": "neighbor",
-            "target_session_id": "neighbor",
-            "actions": ["instruction"],
-            "created_at": "2026-08-21T00:00:00Z",
-            "updated_at": "2026-08-21T00:00:00Z",
-        }
         native_queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         active = {
             "run_id": predecessor_run_id,
@@ -5877,7 +5667,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         }
         markers = (
             {"purpose": "cross_chat_handoff_delivery"},
-            {"chat_references": [agent_server.chat_reference_dict(reference)]},
+            {"chat_references": [reference]},
             {"cross_chat_obligation_ids": ["handoff_pending"]},
             {"cross_chat_exchange_ids": ["exchange_pending"]},
             {"cross_chat_envelope_id": "handoff_delivery"},
@@ -5889,11 +5679,10 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
                     "revision": "pcmdrev_" + "b" * 32,
                 }
             },
-            {"provider_cross_chat_route_snapshot": [route]},
         )
 
         for index, marker in enumerate(markers):
-            queued_id = f"queued-cross-chat-{index}"
+            queued_id = f"queued-legacy-routing-{index}"
             agent_server.ACTIVE["chat-native"] = dict(active)
             agent_server.CURRENT_TURNS["chat-native"] = {
                 "run_id": predecessor_run_id,
@@ -5923,10 +5712,9 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         combined = {
-            "chat_references": [agent_server.chat_reference_dict(reference)],
+            "chat_references": [reference],
             "cross_chat_obligation_ids": ["handoff_pending"],
             "cross_chat_exchange_ids": ["exchange_pending"],
-            "provider_cross_chat_route_snapshot": [route],
         }
         agent_server.ACTIVE["chat-native"] = dict(active)
         agent_server.CURRENT_TURNS["chat-native"] = {
@@ -5936,7 +5724,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             **combined,
         }
         agent_server.QUEUED_TURNS["chat-native"] = deque([{
-            "queued_id": "queued-cross-chat-restart",
+            "queued_id": "queued-legacy-routing-restart",
             "prompt": "must restart",
             "file_ids": [],
             "backend": agent_server.BACKEND_CODEX,
@@ -5961,7 +5749,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await agent_server.run_queued_turn_now(
                 "chat-native",
-                "queued-cross-chat-restart",
+                "queued-legacy-routing-restart",
             )
 
         self.assertFalse(result.get("native_steer", False))
@@ -5972,7 +5760,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             {
                 str(capability.get("source_run_id") or "")
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
             },
             {predecessor_run_id},
         )

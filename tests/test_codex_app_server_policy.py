@@ -81,7 +81,7 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Scheduled jobs", instructions)
         self.assertNotIn("Current jobs for this chat", instructions)
         self.assertIn(str(agent_server.codex_manifest_path("chat-1")), instructions)
-        self.assertIn("run-bound Hyadex provider tool", instructions)
+        self.assertIn("Hyadex provider tool described below", instructions)
         self.assertIn(
             f"Use only `{agent_server.CLAUDE_PROVIDER_MCP_TOOL_NAME}`",
             instructions,
@@ -385,7 +385,7 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(manager.resume_calls), 1)
         policy = manager.resume_calls[0][1]["developerInstructions"]
         self.assertIn("sessions/chat-child/manifests/current.json", policy)
-        self.assertIn("run-bound Hyadex provider tool", policy)
+        self.assertIn("Hyadex provider tool described below", policy)
         self.assertNotIn("provider-authority block", policy)
         self.assertNotIn("--chat-id chat-child", policy)
         self.assertIn("hx_chat_child", policy)

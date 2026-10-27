@@ -210,7 +210,7 @@ class CodexChildContinuationTests(unittest.IsolatedAsyncioTestCase):
         result = self.ns["finalize_owned_turn_finished"].await_args
         self.assertEqual(result.args[:2], ("chat", "operation"))
         self.assertEqual(result.kwargs["payload"]["result_text"], "Collected 2")
-        self.assertIs(self.ns["CROSS_CHAT_CAPABILITIES"]["operation"], self.authority)
+        self.assertIs(self.ns["PROVIDER_AUTHORITIES"]["operation"], self.authority)
         self.assertEqual(self.ns["RUN_METADATA"], {"operation": {"synthetic_authority": "original"}})
         self.manager.request.assert_not_awaited()
         self.ns["stop_codex_goal_resume"].assert_not_awaited()

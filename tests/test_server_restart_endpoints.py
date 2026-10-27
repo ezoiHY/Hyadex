@@ -773,7 +773,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(health["server_instance_id"], SERVER_INSTANCE_ID)
         self.assertEqual(health["capabilities"]["server_restart"], capability)
-        self.assertEqual(health["api_contract_version"], 29)
+        self.assertEqual(health["api_contract_version"], 30)
         snapshot = capability_builder.call_args.args[0]
         self.assertEqual(snapshot["version"], 2)
         self.assertRegex(snapshot["revision"], r"^[0-9a-f]{64}$")
@@ -1149,7 +1149,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 response = await agent_server.require_agent_token(
                     http_request(
                         method="POST",
-                        path="/api/agent/cross-chat/handoffs",
+                        path="/api/agent/sessions/chat/jobs",
                         token=None,
                         client_host="203.0.113.10",
                     ),

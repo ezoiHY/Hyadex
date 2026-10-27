@@ -196,7 +196,6 @@ class FakeClaudeManager:
         configuration_key: str,
         query_session_id: str | None = None,
         on_supervisor_ready: object | None = None,
-        pending_mail_hint: Callable[[], str | None] | None = None,
     ) -> FakeClaudeRun:
         self.start_calls.append(
             (
@@ -272,7 +271,6 @@ class FakeClaudeManagerFailingAfterOwnership(FakeClaudeManager):
         configuration_key: str,
         query_session_id: str | None = None,
         on_supervisor_ready: object | None = None,
-        pending_mail_hint: Callable[[], str | None] | None = None,
     ) -> FakeClaudeRun:
         self.start_calls.append(
             (chat_id, prompt, run_id, options, configuration_key, query_session_id)
@@ -298,7 +296,6 @@ class SequencedClaudeManager(FakeClaudeManager):
         configuration_key: str,
         query_session_id: str | None = None,
         on_supervisor_ready: object | None = None,
-        pending_mail_hint: Callable[[], str | None] | None = None,
     ) -> FakeClaudeRun:
         self.start_calls.append(
             (
@@ -345,7 +342,6 @@ class PermissionDuringStartManager(SequencedClaudeManager):
         configuration_key: str,
         query_session_id: str | None = None,
         on_supervisor_ready: object | None = None,
-        pending_mail_hint: Callable[[], str | None] | None = None,
     ) -> FakeClaudeRun:
         call_number = len(self.start_calls) + 1
         self.start_calls.append(
@@ -366,7 +362,7 @@ class PermissionDuringStartManager(SequencedClaudeManager):
         if call_number in self.jobs_authorization_on_calls:
             matching = [
                 capability
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == run_id
             ]
             if len(matching) != 1:
@@ -428,7 +424,6 @@ class BlockingCandidateStartManager(SequencedClaudeManager):
         configuration_key: str,
         query_session_id: str | None = None,
         on_supervisor_ready: object | None = None,
-        pending_mail_hint: Callable[[], str | None] | None = None,
     ) -> FakeClaudeRun:
         call_number = len(self.start_calls) + 1
         self.start_calls.append(
@@ -467,7 +462,6 @@ class SafeFailingCandidateStartManager(SequencedClaudeManager):
         configuration_key: str,
         query_session_id: str | None = None,
         on_supervisor_ready: object | None = None,
-        pending_mail_hint: Callable[[], str | None] | None = None,
     ) -> FakeClaudeRun:
         call_number = len(self.start_calls) + 1
         self.start_calls.append((
@@ -484,7 +478,7 @@ class SafeFailingCandidateStartManager(SequencedClaudeManager):
         if call_number == 2:
             matching = [
                 capability
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == run_id
             ]
             if len(matching) != 1:
@@ -551,8 +545,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.previous_stop_fence_retries = agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS
         self.previous_stop_fence_locks = agent_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS
         self.previous_stop_fence_attempts = agent_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS
-        self.previous_capabilities = agent_server.CROSS_CHAT_CAPABILITIES
-        self.previous_authority_root = agent_server.CROSS_CHAT_AUTHORITY_ROOT
+        self.previous_capabilities = agent_server.PROVIDER_AUTHORITIES
+        self.previous_authority_root = agent_server.PROVIDER_AUTHORITY_ROOT
         self.previous_agent_token = agent_server.AGENT_TOKEN
         self.authority_temporary = tempfile.TemporaryDirectory()
 
@@ -596,8 +590,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS = {}
         agent_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS = {}
         agent_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS = {}
-        agent_server.CROSS_CHAT_CAPABILITIES = {}
-        agent_server.CROSS_CHAT_AUTHORITY_ROOT = (
+        agent_server.PROVIDER_AUTHORITIES = {}
+        agent_server.PROVIDER_AUTHORITY_ROOT = (
             Path(self.authority_temporary.name) / "authority"
         )
         agent_server.AGENT_TOKEN = "test-agent-token"
@@ -669,8 +663,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS = self.previous_stop_fence_retries
         agent_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS = self.previous_stop_fence_locks
         agent_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS = self.previous_stop_fence_attempts
-        agent_server.CROSS_CHAT_CAPABILITIES = self.previous_capabilities
-        agent_server.CROSS_CHAT_AUTHORITY_ROOT = self.previous_authority_root
+        agent_server.PROVIDER_AUTHORITIES = self.previous_capabilities
+        agent_server.PROVIDER_AUTHORITY_ROOT = self.previous_authority_root
         agent_server.AGENT_TOKEN = self.previous_agent_token
         self.authority_temporary.cleanup()
 
@@ -2392,8 +2386,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             first_read = await handler({"helper": "jobs", "arguments": ["list"]})
             second_read = await handler({"helper": "jobs", "arguments": ["list"]})
             mutation = {
-                "helper": "chats",
-                "arguments": ["send", "--route", "route-1"],
+                "helper": "jobs",
+                "arguments": ["create", "--title", "Nightly", "--prompt", "Run"],
                 "stdin": "same body",
             }
             first_mutation = await handler(mutation)
@@ -2802,7 +2796,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             collect_recent_leftover_manifests=AsyncMock(),
             publish_turn_code_diff=AsyncMock(),
             terminate_process_tree=AsyncMock(side_effect=terminate),
-            revoke_cross_chat_capability=AsyncMock(),
+            revoke_provider_authority=AsyncMock(),
             cancel_codex_interactions=AsyncMock(),
             cancel_claude_interactions=AsyncMock(),
             quarantine_codex_goal_thread=quarantine,
@@ -2988,7 +2982,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             collect_manifest=AsyncMock(),
             collect_recent_leftover_manifests=AsyncMock(),
             publish_turn_code_diff=AsyncMock(),
-            revoke_cross_chat_capability=AsyncMock(),
+            revoke_provider_authority=AsyncMock(),
             cancel_codex_interactions=AsyncMock(),
             cancel_claude_interactions=AsyncMock(
                 side_effect=gated_cancel_interactions
@@ -3693,59 +3687,23 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         )
         agent_server.CLAUDE_SDK_MANAGER = manager
         predecessor_run_id = "run_claude"
-        predecessor_route = {
-            "route_id": "route_" + "5" * 32,
-            "revision": "rev_" + "6" * 32,
-            "alias": "chat1",
-            "target_session_id": "ambient-claude-old",
-            "actions": ["instruction"],
-            "route_kind": (
-                agent_server.PROVIDER_CROSS_CHAT_ROUTE_KIND_AMBIENT
-            ),
-        }
-        candidate_route = {
-            "route_id": "route_" + "7" * 32,
-            "revision": "rev_" + "8" * 32,
-            "alias": "chat1",
-            "target_session_id": "ambient-claude-new",
-            "actions": ["instruction"],
-            "route_kind": (
-                agent_server.PROVIDER_CROSS_CHAT_ROUTE_KIND_AMBIENT
-            ),
-        }
-        agent_server.STORE.sessions.update({
-            "ambient-claude-old": {
-                "id": "ambient-claude-old",
-                "title": "Ambient Claude old",
-                "backend": agent_server.BACKEND_CLAUDE,
-            },
-            "ambient-claude-new": {
-                "id": "ambient-claude-new",
-                "title": "Ambient Claude new",
-                "backend": agent_server.BACKEND_CLAUDE,
-            },
-        })
         agent_server.CURRENT_TURNS["chat-claude"]["run_id"] = predecessor_run_id
-        agent_server.CURRENT_TURNS["chat-claude"][
-            "provider_cross_chat_route_snapshot"
-        ] = [predecessor_route]
-        predecessor_path = await agent_server.issue_cross_chat_capability(
+        predecessor_path = await agent_server.issue_provider_authority(
             "chat-claude",
             predecessor_run_id,
-            [],
             actions={"jobs", "publish"},
         )
         predecessor_token = json.loads(
             predecessor_path.read_text(encoding="utf-8")
         )["provider_capability"]
-        real_revoke = agent_server.revoke_cross_chat_capability
+        real_revoke = agent_server.revoke_provider_authority
         predecessor_revoke_observations: list[tuple[bool, str]] = []
 
         async def recording_revoke(run_id: str) -> None:
             if run_id == predecessor_run_id:
                 candidate_records = [
                     capability
-                    for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                    for capability in agent_server.PROVIDER_AUTHORITIES.values()
                     if capability.get("source_run_id") != predecessor_run_id
                 ]
                 candidate_path_value = (
@@ -3811,7 +3769,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             ):
                 candidate_records = [
                     capability
-                    for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                    for capability in agent_server.PROVIDER_AUTHORITIES.values()
                     if capability.get("source_run_id") != predecessor_run_id
                 ]
                 self.assertEqual(len(candidate_records), 1)
@@ -3849,7 +3807,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         revoke_patcher = patch.object(
             agent_server,
-            "revoke_cross_chat_capability",
+            "revoke_provider_authority",
             side_effect=recording_revoke,
         )
         revoke_patcher.start()
@@ -3950,7 +3908,6 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     "queued_id": "queued-next",
                     "prompt": "Steer",
                     "file_ids": [],
-                    "provider_cross_chat_route_snapshot": [candidate_route],
                 },
                 "remaining": 0,
                 "future": steer_future,
@@ -3994,20 +3951,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             steer_result = await asyncio.wait_for(steer_future, 0.5)
             candidate_records = [
                 capability
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == candidate_run_id
             ]
             self.assertEqual(len(candidate_records), 1)
-            self.assertEqual(
-                list(candidate_records[0]["provider_route_grants"].values()),
-                [],
-            )
-            self.assertEqual(
-                agent_server.CURRENT_TURNS["chat-claude"][
-                    "provider_cross_chat_route_snapshot"
-                ],
-                [],
-            )
             candidate_path = Path(str(
                 candidate_records[0]["authority_path"]
             ))
@@ -4063,10 +4010,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         ])
         original_run_id = "run_claude"
         agent_server.CURRENT_TURNS["chat-claude"]["run_id"] = original_run_id
-        original_path = await agent_server.issue_cross_chat_capability(
+        original_path = await agent_server.issue_provider_authority(
             "chat-claude",
             original_run_id,
-            [],
             actions={"jobs", "publish"},
         )
         original_token = json.loads(
@@ -4234,7 +4180,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
             first_record = next(
                 capability
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == first["run_id"]
             )
             first_path = Path(str(first_record["authority_path"]))
@@ -4249,7 +4195,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
             second_record = next(
                 capability
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == second["run_id"]
             )
             second_path = Path(str(second_record["authority_path"]))
@@ -4264,12 +4210,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 {
                     str(capability.get("source_run_id") or "")
-                    for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                    for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 },
                 {second["run_id"]},
             )
             self.assertEqual(
-                list(agent_server.CROSS_CHAT_AUTHORITY_ROOT.glob("*.json")),
+                list(agent_server.PROVIDER_AUTHORITY_ROOT.glob("*.json")),
                 [second_path],
             )
             for stale_token in (original_token, first_token):
@@ -4297,10 +4243,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(second_path.exists())
         self.assertEqual(
-            list(agent_server.CROSS_CHAT_AUTHORITY_ROOT.glob("*.json")),
+            list(agent_server.PROVIDER_AUTHORITY_ROOT.glob("*.json")),
             [second_path],
         )
-        await agent_server.revoke_cross_chat_capability(second["run_id"])
+        await agent_server.revoke_provider_authority(second["run_id"])
         self.assertFalse(second_path.exists())
 
     async def test_typed_tool_results_finish_from_assistant_and_user_messages(self) -> None:
@@ -4965,57 +4911,6 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(append_finished.await_args.args[1]["exit_code"], 0)
         self.assertFalse(any(
             call.args[1] in {"idle_warning", "error"}
-            for call in append_event.await_args_list
-        ))
-        runtime_failure.assert_not_called()
-
-    async def test_pending_live_cross_chat_wait_pauses_sdk_watchdogs(self) -> None:
-        class DelayedTerminalClaudeRun(FakeClaudeRun):
-            def __init__(self) -> None:
-                super().__init__()
-                self.delivered = False
-
-            async def __anext__(self) -> object:
-                if self.delivered:
-                    await asyncio.Event().wait()
-                self.delivered = True
-                await asyncio.sleep(0.06)
-                return {
-                    "type": "result",
-                    "result": "Peer answered after the old deadline",
-                    "session_id": "provider",
-                    "terminal_reason": "end_turn",
-                }
-
-        with patch.object(
-            agent_server,
-            "provider_run_owns_pending_cross_chat_live_wait",
-            return_value=True,
-        ):
-            _manager, append_event, append_finished, runtime_failure = (
-                await self._run_sdk_timeout_case(
-                    DelayedTerminalClaudeRun(),
-                    pre_ack_timeout=0.01,
-                    post_ack_timeout=0.01,
-                    turn_timeout=0.01,
-                    idle_warn=0.005,
-                    idle_timeout=0.01,
-                    project_result={
-                        "session_id": "provider",
-                        "result_text": "Peer answered after the old deadline",
-                        "is_error": False,
-                        "error": "",
-                        "subtype": "success",
-                        "terminal_reason": "end_turn",
-                        "aborted": False,
-                    },
-                )
-            )
-
-        terminal = append_finished.await_args.args[1]
-        self.assertEqual(terminal["exit_code"], 0)
-        self.assertFalse(any(
-            call.args[1] in {"error", "idle_warning"}
             for call in append_event.await_args_list
         ))
         runtime_failure.assert_not_called()
@@ -5832,10 +5727,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = SafeFailingCandidateStartManager([first])
         predecessor_run_id = "run_claude"
         agent_server.CURRENT_TURNS["chat-claude"]["run_id"] = predecessor_run_id
-        predecessor_path = await agent_server.issue_cross_chat_capability(
+        predecessor_path = await agent_server.issue_provider_authority(
             "chat-claude",
             predecessor_run_id,
-            [],
             actions={"jobs", "publish"},
         )
         predecessor_token = json.loads(
@@ -6002,7 +5896,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     {
                         str(capability.get("source_run_id") or "")
-                        for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                        for capability in agent_server.PROVIDER_AUTHORITIES.values()
                     },
                     {predecessor_run_id},
                 )
@@ -6046,11 +5940,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             {
                 str(capability.get("source_run_id") or "")
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
             },
             {predecessor_run_id},
         )
-        await agent_server.revoke_cross_chat_capability(predecessor_run_id)
+        await agent_server.revoke_provider_authority(predecessor_run_id)
         self.assertFalse(predecessor_path.exists())
 
     async def test_cancellation_during_candidate_query_is_never_replayed(self) -> None:
@@ -6059,13 +5953,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         collect_manifest = AsyncMock()
         predecessor_run_id = "run_claude"
         agent_server.CURRENT_TURNS["chat-claude"]["run_id"] = predecessor_run_id
-        predecessor_path = await agent_server.issue_cross_chat_capability(
+        predecessor_path = await agent_server.issue_provider_authority(
             "chat-claude",
             predecessor_run_id,
-            [],
             actions={"jobs", "publish"},
         )
-        real_revoke = agent_server.revoke_cross_chat_capability
+        real_revoke = agent_server.revoke_provider_authority
         revoke_observations: list[tuple[str, bool]] = []
 
         async def record_ordered_revoke(run_id: str) -> None:
@@ -6082,7 +5975,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         revoke_patcher = patch.object(
             agent_server,
-            "revoke_cross_chat_capability",
+            "revoke_provider_authority",
             side_effect=record_ordered_revoke,
         )
         revoke_patcher.start()
@@ -6192,7 +6085,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             candidate_run_id = str(manager.start_calls[1][2])
             candidate_records = [
                 capability
-                for capability in agent_server.CROSS_CHAT_CAPABILITIES.values()
+                for capability in agent_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == candidate_run_id
             ]
             self.assertEqual(len(candidate_records), 1)
@@ -6212,7 +6105,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(raised.exception.safe_to_requeue)
         self.assertFalse(predecessor_path.exists())
         self.assertFalse(candidate_path.exists())
-        self.assertFalse(agent_server.CROSS_CHAT_CAPABILITIES)
+        self.assertFalse(agent_server.PROVIDER_AUTHORITIES)
         self.assertIn((candidate_run_id, False), revoke_observations)
         self.assertIn((predecessor_run_id, False), revoke_observations)
         self.assertEqual(manager.evict_calls, [("chat-claude", True)])

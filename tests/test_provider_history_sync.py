@@ -85,17 +85,37 @@ def task_notification_event(
     return event
 
 
-def legacy_provider_authority_block(*, compact: bool = True, chat_id: str = SANITIZER_CHAT_ID) -> str:
-    return agent_server.cross_chat_provider_authority_block(
-        [],
-        agent_server.cross_chat_authority_path(
-            SANITIZER_RUN_ID,
-            SANITIZER_NONCE,
-        ),
-        chat_id,
-        {"publish"},
-        "blocked",
-        compact=compact,
+def legacy_provider_authority_block(
+    *,
+    compact: bool = True,
+    chat_id: str = SANITIZER_CHAT_ID,
+    run_id: str = SANITIZER_RUN_ID,
+    nonce: str = SANITIZER_NONCE,
+) -> str:
+    """Return the publish-only run-authority suffix older servers appended.
+
+    Current servers deliver authority out of band; these literals reproduce
+    what legacy provider history still contains.
+    """
+
+    path = agent_server.provider_authority_path(run_id, nonce)
+    if compact:
+        return (
+            "\n\n[Hyadex provider authority]\n"
+            f"authority-file={path} chat-id={chat_id} "
+            "(bound to this server, chat, and live run)\n"
+            "actions=publish,jobs=blocked\n"
+            "usage: see Hyadex instructions\n"
+            "[End Hyadex provider authority]\n"
+        )
+    return (
+        "\n\n[Hyadex provider authority]\n"
+        "This authority file is bound to this server, chat, and live run. "
+        "Use it only through the Hyadex helper CLIs; never read, print, quote, copy, or expose it.\n"
+        "- Jobs access is blocked for this chat. No Jobs helper command is authorized.\n"
+        f'- Publish: `"$HYADEX_PUBLISH_CLI" --authority-file {path} --chat-id {chat_id} FILE`\n'
+        "Do not read, print, quote, or expose the authority file.\n"
+        "[End Hyadex provider authority]\n"
     )
 
 
@@ -451,7 +471,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
                 chat_id="sess_previous_hyadex_chat",
             )
         ).replace(
-            str(agent_server.CROSS_CHAT_AUTHORITY_ROOT),
+            str(agent_server.PROVIDER_AUTHORITY_ROOT),
             "/home/migrated-user/.hyadex/cross_chat_authority",
         )
         migrated_projection = (
@@ -472,7 +492,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
     def test_authority_lookalikes_and_nonterminal_blocks_are_preserved(self) -> None:
         exact = "User-owned evidence" + legacy_provider_authority_block(compact=True)
         wrong_root = exact.replace(
-            str(agent_server.CROSS_CHAT_AUTHORITY_ROOT),
+            str(agent_server.PROVIDER_AUTHORITY_ROOT),
             "/tmp/not-hyadex-authority",
         )
         wrong_chat = "User-owned evidence" + legacy_provider_authority_block(
@@ -495,7 +515,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
                 )
 
         portable_migration = exact.replace(
-            str(agent_server.CROSS_CHAT_AUTHORITY_ROOT),
+            str(agent_server.PROVIDER_AUTHORITY_ROOT),
             "/home/migrated-user/.hyadex/cross_chat_authority",
         )
         self.assertEqual(
@@ -530,7 +550,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
                     SANITIZER_RUN_ID,
                 )
 
-        current_path = str(agent_server.cross_chat_authority_path(
+        current_path = str(agent_server.provider_authority_path(
             SANITIZER_RUN_ID,
             SANITIZER_NONCE,
         ))

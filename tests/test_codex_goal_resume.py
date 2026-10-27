@@ -220,7 +220,7 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
             "server_lifecycle_admission_blocker": Mock(return_value=None),
             "wait_for_queue_recovery_admission": AsyncMock(),
             "turn_start_blocker": AsyncMock(return_value=None),
-            "revoke_cross_chat_capability": AsyncMock(),
+            "revoke_provider_authority": AsyncMock(),
             "cancel_codex_interactions": AsyncMock(),
             "cancel_claude_interactions": AsyncMock(),
             "schedule_next_queued_turn": Mock(),

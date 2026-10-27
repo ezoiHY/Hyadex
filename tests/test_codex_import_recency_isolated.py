@@ -72,7 +72,7 @@ class CodexImportRecencyTests(unittest.IsolatedAsyncioTestCase):
     def test_real_output_and_native_activity_still_bump_recency(self):
         for kind, payload in (("turn_started", {"prompt": "Real user"}), ("assistant_text", {"text": "Real answer"}),
                               ("turn_finished", {**self.batch[2], "result_text": "Unmatched answer"}),
-                              ("chat_conversation_message_received", {}), ("job_ran", {}), ("file_uploaded", {})):
+                              ("job_ran", {}), ("file_uploaded", {})):
             with self.subTest(kind=kind):
                 self.assertTrue(self.ns["should_bump_session_updated_at"](kind, payload))
 

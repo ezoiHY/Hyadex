@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import agent_server
+from tests.test_provider_history_sync import legacy_provider_authority_block
 
 
 class TimelineSearchForkTests(unittest.TestCase):
@@ -101,17 +102,7 @@ class TimelineSearchForkTests(unittest.TestCase):
             migrated.close()
 
     def test_search_sanitizes_only_structural_provider_import_records(self) -> None:
-        authority = agent_server.cross_chat_provider_authority_block(
-            [],
-            agent_server.cross_chat_authority_path(
-                "run_search_sanitizer",
-                "0123456789abcdef0123456789abcdef",
-            ),
-            self.session_id,
-            {"publish"},
-            "blocked",
-            compact=True,
-        )
+        authority = legacy_provider_authority_block(run_id="run_search_sanitizer", nonce="0123456789abcdef0123456789abcdef", chat_id=self.session_id)
         generated_notice = (
             "<task-notification>\n"
             "<task-id>task_generated</task-id>\n"

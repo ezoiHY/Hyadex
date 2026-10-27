@@ -35,7 +35,7 @@ class ArtifactManifestContractTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(agent_server, "CODE_DIFFS_ROOT", root / "code-diffs"),
                 patch.object(
                     agent_server,
-                    "CROSS_CHAT_AUTHORITY_ROOT",
+                    "PROVIDER_AUTHORITY_ROOT",
                     root / "cross-chat-authority",
                 ),
                 patch.object(agent_server, "EVENT_SEQ_CACHE", {}),

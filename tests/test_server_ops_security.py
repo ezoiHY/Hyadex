@@ -15,7 +15,6 @@ from pydantic import ValidationError
 
 import agent_server
 from hyadex.providers import runtime as provider_runtime
-import hyadex_chats
 import hyadex_emergency
 import hyadex_jobs
 import hyadex_publish
@@ -115,7 +114,6 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_helper_parsers_disable_protected_option_abbreviations(self):
         cases = (
-            (hyadex_chats.parser(), ["--auth", "evil", "list"]),
             (hyadex_jobs.build_parser(), ["--auth", "evil", "list"]),
             (hyadex_publish.build_parser(), ["--auth", "evil"]),
             (
@@ -136,10 +134,6 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
     async def test_helper_subcommands_disable_all_option_abbreviations(self):
         cases = (
             (
-                hyadex_chats.parser(),
-                ["--authority-file", "a", "send", "--t", "opaque", "--message", "x"],
-            ),
-            (
                 hyadex_jobs.build_parser(),
                 ["create", "--title", "x", "--prompt", "x", "--int", "20"],
             ),
@@ -156,28 +150,20 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(SystemExit):
                     parser.parse_args(arguments)
 
-    async def test_provider_selects_async_chat_mode_from_grant_only(self):
-        runtime_env = {
-            "HYADEX_CROSS_CHAT_HANDLE_1": "opaque-handle",
-            "HYADEX_CROSS_CHAT_HANDLE_1_ACTION": "request_reply",
-            "HYADEX_CROSS_CHAT_HANDLE_1_ASYNC": "0",
-        }
-        for flag in ("--async-response", "--async"):
-            with self.subTest(flag=flag):
+    async def test_provider_tool_rejects_retired_chat_routing_flags(self):
+        for arguments in (
+            ["list", "--async-response"],
+            ["list", "--async"],
+            ["list", "--target-index", "1"],
+        ):
+            with self.subTest(arguments=arguments):
                 with self.assertRaises(agent_server.ProviderToolError):
                     agent_server.resolve_provider_tool_arguments(
-                        "chats",
-                        ["ask", "--target-index", "1", flag],
-                        runtime_env,
+                        "jobs", arguments, {},
                     )
-        runtime_env["HYADEX_CROSS_CHAT_HANDLE_1_ASYNC"] = "1"
         self.assertEqual(
-            agent_server.resolve_provider_tool_arguments(
-                "chats",
-                ["ask", "--target-index", "1"],
-                runtime_env,
-            ),
-            ["ask", "--target", "opaque-handle", "--async-response"],
+            agent_server.resolve_provider_tool_arguments("jobs", ["list"], {}),
+            ["list"],
         )
 
     async def test_provider_tool_cached_result_never_outlives_live_authority(self):
@@ -309,74 +295,6 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertEqual(executor.await_count, 2)
 
-    async def test_provider_tool_preserves_structured_chat_transport_error(self):
-        exchange_id = "exchange_" + "1" * 32
-        inbound_leg_id = "leg_" + "2" * 32
-        lease_id = "lease_" + "3" * 32
-        receipt = {
-            "ok": False,
-            "exchange_id": exchange_id,
-            "inbound_leg_id": inbound_leg_id,
-            "live_response_lease_id": lease_id,
-            "transport_error": True,
-            "retryable": True,
-            "message": "Retry the existing wait with the same lease.",
-        }
-        value = {
-            "helper": "chats",
-            "arguments": [
-                "wait",
-                "--exchange",
-                exchange_id,
-                "--inbound-leg",
-                inbound_leg_id,
-                "--lease",
-                lease_id,
-            ],
-        }
-        for backend, owner_kwargs in (
-            (
-                agent_server.BACKEND_CODEX,
-                {
-                    "provider_thread_id": "thread-live",
-                    "provider_turn_id": "turn-live",
-                },
-            ),
-            (
-                agent_server.BACKEND_CLAUDE,
-                {"claude_owner_token": "owner-live"},
-            ),
-        ):
-            with self.subTest(backend=backend):
-                process = FakeProviderProcess(
-                    stdout=(json.dumps(receipt) + "\n").encode(),
-                    stderr=b"incidental runtime warning\n",
-                    returncode=2,
-                )
-                with patch.object(
-                    agent_server,
-                    "provider_tool_capability_snapshot",
-                    AsyncMock(return_value=(Path("/private/authority"), {})),
-                ), patch.object(
-                    agent_server,
-                    "agent_runner_env",
-                    return_value={},
-                ), patch.object(
-                    agent_server.asyncio,
-                    "create_subprocess_exec",
-                    AsyncMock(return_value=process),
-                ):
-                    text, is_error = await agent_server.execute_provider_tool(
-                        "chat-live",
-                        "run_live",
-                        value,
-                        backend=backend,
-                        **owner_kwargs,
-                    )
-
-                self.assertTrue(is_error)
-                self.assertEqual(json.loads(text), receipt)
-
     async def test_provider_tool_generic_failure_keeps_stderr_precedence(self):
         process = FakeProviderProcess(
             stdout=b"partial non-JSON output\n",
@@ -399,7 +317,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             text, is_error = await agent_server.execute_provider_tool(
                 "chat-live",
                 "run_live",
-                {"helper": "chats", "arguments": ["list"]},
+                {"helper": "jobs", "arguments": ["list"]},
                 backend=agent_server.BACKEND_CODEX,
                 provider_thread_id="thread-live",
                 provider_turn_id="turn-live",
@@ -426,16 +344,16 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             )
         with self.assertRaises(agent_server.ProviderToolError):
             agent_server.validate_provider_tool_input({
-                "helper": "chats",
+                "helper": "jobs",
                 "arguments": [
-                    "read",
+                    "get",
                     "x" * (agent_server.PROVIDER_TOOL_MAX_ARGUMENT_CHARS + 1),
                 ],
             })
         with self.assertRaises(agent_server.ProviderToolError):
             agent_server.validate_provider_tool_input({
-                "helper": "chats",
-                "arguments": ["send", "--route", "route"],
+                "helper": "publish",
+                "arguments": ["--title", "report"],
                 "stdin": "\U0001f4e6" * (
                     agent_server.PROVIDER_TOOL_MAX_STDIN_BYTES // 4 + 1
                 ),
@@ -444,13 +362,13 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(malformed=repr(malformed)):
                 with self.assertRaises(agent_server.ProviderToolError):
                     agent_server.validate_provider_tool_input({
-                        "helper": "chats",
-                        "arguments": ["read", malformed],
+                        "helper": "jobs",
+                        "arguments": ["get", malformed],
                     })
                 with self.assertRaises(agent_server.ProviderToolError):
                     agent_server.validate_provider_tool_input({
-                        "helper": "chats",
-                        "arguments": ["send", "--route", "route"],
+                        "helper": "publish",
+                        "arguments": ["--title", "report"],
                         "stdin": malformed,
                     })
         with self.assertRaises(provider_runtime.ProviderRuntimeContextError):
@@ -459,27 +377,12 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
     async def test_provider_tool_rejects_huge_target_index_as_safe_error(self):
         with self.assertRaises(agent_server.ProviderToolError):
             agent_server.resolve_provider_tool_arguments(
-                "chats",
-                ["ask", "--target-index", "9" * 5_000],
+                "jobs",
+                ["list", "--target-index", "9" * 5_000],
                 {},
             )
 
     async def test_provider_tool_preserves_supported_message_and_job_boundaries(self):
-        route_body = "r" * agent_server.PROVIDER_CROSS_CHAT_ROUTE_BODY_MAX_CHARS
-        helper, arguments, stdin = agent_server.validate_provider_tool_input({
-            "helper": "chats",
-            "arguments": [
-                "send",
-                "--route",
-                "route_" + "a" * 32,
-                "--message",
-                route_body,
-            ],
-        })
-        self.assertEqual(helper, "chats")
-        self.assertEqual(arguments[-1], route_body)
-        self.assertEqual(stdin, "")
-
         job_prompt = "j" * agent_server.MAX_JOB_PROMPT_CHARS
         helper, arguments, _stdin = agent_server.validate_provider_tool_input({
             "helper": "jobs",
@@ -496,18 +399,14 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(helper, "jobs")
         self.assertEqual(arguments[4], job_prompt)
 
-        direct_body = "d" * agent_server.CROSS_CHAT_HANDOFF_BODY_MAX_CHARS
-        _helper, arguments, _stdin = agent_server.validate_provider_tool_input({
-            "helper": "chats",
-            "arguments": [
-                "send",
-                "--target-index",
-                "1",
-                "--message",
-                direct_body,
-            ],
+        message = "m" * agent_server.PROVIDER_TOOL_MAX_ARGUMENT_CHARS
+        helper, arguments, stdin = agent_server.validate_provider_tool_input({
+            "helper": "notify",
+            "arguments": ["--message", message],
         })
-        self.assertEqual(arguments[-1], direct_body)
+        self.assertEqual(helper, "notify")
+        self.assertEqual(arguments[-1], message)
+        self.assertEqual(stdin, "")
 
     async def test_provider_tool_rejects_abbreviated_identity_overrides(self):
         for argument in (
@@ -602,8 +501,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             "params": {
                 "name": "run",
                 "arguments": {
-                    "helper": "chats",
-                    "arguments": ["read", "\ud800"],
+                    "helper": "jobs",
+                    "arguments": ["get", "\ud800"],
                 },
                 "_meta": {
                     "callId": "call-malformed-unicode",
@@ -929,14 +828,14 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         token_hash = agent_server.hashlib.sha256(token.encode()).hexdigest()
         request = http_request(
             "GET",
-            "/api/agent/cross-chat/routes",
+            "/api/agent/sessions/chat/jobs",
             headers=[
                 (b"x-hyadex-provider-capability", token.encode()),
             ],
         )
         request.scope["client"] = ("192.0.2.40", 50000)
         downstream = AsyncMock(
-            return_value=agent_server.JSONResponse({"routes": []})
+            return_value=agent_server.JSONResponse({"jobs": []})
         )
         with patch.object(
             agent_server,
@@ -944,7 +843,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             "192.0.2.40",
         ), patch.object(
             agent_server,
-            "CROSS_CHAT_CAPABILITIES",
+            "PROVIDER_AUTHORITIES",
             {token_hash: {"source_run_id": "run-specific-bind"}},
         ):
             response = await agent_server.require_agent_token(
@@ -1246,7 +1145,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                     receive=body_must_not_be_read,
                 )
                 downstream = AsyncMock()
-                with patch.object(agent_server, "CROSS_CHAT_CAPABILITIES", {}):
+                with patch.object(agent_server, "PROVIDER_AUTHORITIES", {}):
                     response = await agent_server.require_agent_token(
                         request,
                         downstream,
@@ -1283,7 +1182,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 downstream = AsyncMock()
                 with patch.object(
                     agent_server,
-                    "CROSS_CHAT_CAPABILITIES",
+                    "PROVIDER_AUTHORITIES",
                     {token_hash: {"source_run_id": "run-live"}},
                 ):
                     response = await agent_server.require_agent_token(
@@ -1323,7 +1222,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         downstream = AsyncMock()
         with patch.object(
             agent_server,
-            "CROSS_CHAT_CAPABILITIES",
+            "PROVIDER_AUTHORITIES",
             {token_hash: {"source_run_id": "run-live"}},
         ):
             response = await agent_server.require_agent_token(request, downstream)
@@ -1379,7 +1278,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch.object(
             agent_server,
-            "CROSS_CHAT_CAPABILITIES",
+            "PROVIDER_AUTHORITIES",
             {token_hash: {"source_run_id": "run-live"}},
         ):
             response = await agent_server.require_agent_token(
@@ -1427,7 +1326,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch.object(
             agent_server,
-            "CROSS_CHAT_CAPABILITIES",
+            "PROVIDER_AUTHORITIES",
             {token_hash: {"source_run_id": "run-live"}},
         ):
             response = await agent_server.require_agent_token(
@@ -1440,35 +1339,6 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             received_body,
             b'{"request_id":"request-1","message":"help"}',
         )
-
-    async def test_cross_chat_cli_headers_pass_agent_helper_middleware(self):
-        token = "live-provider-capability"
-        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        headers = [
-            (name.lower().encode("ascii"), value.encode("ascii"))
-            for name, value in hyadex_chats.provider_headers(token).items()
-        ]
-        request = http_request(
-            "GET",
-            "/api/agent/cross-chat/routes",
-            headers=headers,
-        )
-        downstream = AsyncMock(
-            return_value=agent_server.JSONResponse({"routes": []})
-        )
-
-        with patch.object(
-            agent_server,
-            "CROSS_CHAT_CAPABILITIES",
-            {token_hash: {"source_run_id": "run-live"}},
-        ):
-            response = await agent_server.require_agent_token(
-                request,
-                downstream,
-            )
-
-        self.assertEqual(response.status_code, 200)
-        downstream.assert_awaited_once_with(request)
 
     def test_agent_helper_loopback_rejects_proxy_identity_headers(self):
         self.assertTrue(

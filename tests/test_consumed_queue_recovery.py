@@ -35,12 +35,7 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
             events_path=lambda _session_id: self.path,
             server_lifecycle_admission_blocker=lambda: None,
             _start_turn_locked=self.launch,
-            maybe_start_chat_mailbox_locked=AsyncMock(),
             schedule_next_queued_turn=self.schedule,
-        ))
-        self.scope.enter_context(patch.object(
-            agent_server.CROSS_CHAT, "pending_mailbox_migration_candidates",
-            AsyncMock(return_value=[]),
         ))
 
     def schedule(self, session_id: str) -> None:
