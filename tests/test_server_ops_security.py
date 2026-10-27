@@ -15,9 +15,9 @@ from pydantic import ValidationError
 
 import agent_server
 from hyadex.providers import runtime as provider_runtime
-import hyadex_emergency
-import hyadex_jobs
-import hyadex_publish
+from hyadex.cli import emergency as hyadex_emergency
+from hyadex.cli import jobs as hyadex_jobs
+from hyadex.cli import publish as hyadex_publish
 
 
 def http_request(

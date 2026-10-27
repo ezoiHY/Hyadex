@@ -5,7 +5,7 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-import hyadex_notify
+from hyadex.cli import notify as hyadex_notify
 
 
 class FakeResponse:

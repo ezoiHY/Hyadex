@@ -123,10 +123,10 @@ def main() -> int:
         (package_root / "install.sh").chmod(0o755)
         (package_root / "uninstall.sh").chmod(0o755)
         (package_root / "instances.sh").chmod(0o755)
-        (package_root / "hyadex_jobs.py").chmod(0o755)
-        (package_root / "hyadex_emergency.py").chmod(0o755)
-        (package_root / "hyadex_notify.py").chmod(0o755)
-        (package_root / "hyadex_publish.py").chmod(0o755)
+        (package_root / "hyadex/cli/jobs.py").chmod(0o755)
+        (package_root / "hyadex/cli/emergency.py").chmod(0o755)
+        (package_root / "hyadex/cli/notify.py").chmod(0o755)
+        (package_root / "hyadex/cli/publish.py").chmod(0o755)
         with tarfile.open(archive_path, "w:gz", format=tarfile.PAX_FORMAT) as archive:
             archive.add(package_root, arcname=package_root.name)
 

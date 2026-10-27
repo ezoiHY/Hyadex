@@ -13,7 +13,12 @@ import urllib.request
 import uuid
 from typing import Any
 
-from hyadex_emergency import (
+if __package__ in (None, ""):
+    # Run by path: make the repository importable for the shared helpers.
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from hyadex.cli.emergency import (
     EmergencyCLIError,
     NoRedirectHandler,
     clean_emergency_message,

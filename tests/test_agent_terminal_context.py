@@ -30,11 +30,11 @@ class AgentTerminalContextTests(unittest.TestCase):
         self.assertTrue(env["HYADEX_MANIFEST_PATH"].endswith("/manifests/current.json"))
         self.assertEqual(
             env["HYADEX_PUBLISH_CLI"],
-            str(agent_server.SERVER_ROOT / "hyadex_publish.py"),
+            str(agent_server.SERVER_ROOT / "hyadex/cli/publish.py"),
         )
         self.assertEqual(
             env["HYADEX_JOBS_CLI"],
-            str(agent_server.SERVER_ROOT / "hyadex_jobs.py"),
+            str(agent_server.SERVER_ROOT / "hyadex/cli/jobs.py"),
         )
         self.assertNotIn("HYADEX_CHATS_CLI", env)
         self.assertNotIn("HYADEX_MAIL_CLI", env)
@@ -46,7 +46,7 @@ class AgentTerminalContextTests(unittest.TestCase):
 
         self.assertEqual(
             env["HYADEX_PUBLISH_CLI"],
-            str(agent_server.SERVER_ROOT / "hyadex_publish.py"),
+            str(agent_server.SERVER_ROOT / "hyadex/cli/publish.py"),
         )
         self.assertNotIn("HYADEX_MAIL_CLI", env)
         for name in agent_server.PROVIDER_SECRET_ENV_NAMES:

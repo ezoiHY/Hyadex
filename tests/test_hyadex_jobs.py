@@ -8,7 +8,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import hyadex_jobs
+from hyadex.cli import jobs as hyadex_jobs
 
 
 class HyadexJobsCLITests(unittest.TestCase):

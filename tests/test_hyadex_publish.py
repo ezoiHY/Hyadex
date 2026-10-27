@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 from starlette.requests import Request
 
 import agent_server
-import hyadex_publish
+from hyadex.cli import publish as hyadex_publish
 
 
 def request_for(

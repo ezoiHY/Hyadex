@@ -16,6 +16,7 @@ from typing import Any
 
 from fastapi import Request
 
+from hyadex.cli import HELPER_SCRIPTS
 from hyadex.core.config import (
     AGENT_TOKEN,
     BACKEND_CODEX,
@@ -25,17 +26,16 @@ from hyadex.core.config import (
     PROVIDER_AUTHORITY_ROOT,
     PROVIDER_JOBS_ACCESS_MODE_SET,
     SERVER_INSTANCE_NAME,
-    SERVER_ROOT,
 )
 from hyadex.core.paths import codex_manifest_path, write_all
 from hyadex.core.runs import RUNS
-from hyadex.core.sessions import PROVIDER_AUTHORITIES, PROVIDER_AUTHORITY_LOCK, STORE
-from hyadex.core.session_settings import effective_provider_jobs_access
 from hyadex.core.session_codex import (
     add_provider_no_proxy_environment,
     codex_provider_mcp_connection_host,
     provider_helper_server_origin,
 )
+from hyadex.core.session_settings import effective_provider_jobs_access
+from hyadex.core.sessions import PROVIDER_AUTHORITIES, PROVIDER_AUTHORITY_LOCK, STORE
 from hyadex.core.state import DELETED_SESSION_TOMBSTONES, DELETING_SESSIONS
 from hyadex.core.util import decoded_exact_header_secret, runner_env, server_identity
 from hyadex.providers.claude.history import provider_session_identifier
@@ -863,10 +863,10 @@ def agent_runner_env(
         env,
         codex_provider_mcp_connection_host(),
     )
-    env["HYADEX_JOBS_CLI"] = str(SERVER_ROOT / "hyadex_jobs.py")
-    env["HYADEX_PUBLISH_CLI"] = str(SERVER_ROOT / "hyadex_publish.py")
-    env["HYADEX_EMERGENCY_CLI"] = str(SERVER_ROOT / "hyadex_emergency.py")
-    env["HYADEX_NOTIFY_CLI"] = str(SERVER_ROOT / "hyadex_notify.py")
+    env["HYADEX_JOBS_CLI"] = str(HELPER_SCRIPTS["jobs"])
+    env["HYADEX_PUBLISH_CLI"] = str(HELPER_SCRIPTS["publish"])
+    env["HYADEX_EMERGENCY_CLI"] = str(HELPER_SCRIPTS["emergency"])
+    env["HYADEX_NOTIFY_CLI"] = str(HELPER_SCRIPTS["notify"])
     env.update(validate_provider_runtime_env(provider_runtime_env))
     return env
 

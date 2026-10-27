@@ -122,8 +122,11 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         from hyadex.core import config
 
         self.assertEqual(config.SERVER_ROOT, ROOT.resolve())
-        for helper in ("hyadex_jobs.py", "hyadex_publish.py", "hyadex_emergency.py", "hyadex_notify.py"):
-            self.assertTrue((config.SERVER_ROOT / helper).is_file(), helper)
+        from hyadex.cli import HELPER_SCRIPTS
+
+        for name, helper in HELPER_SCRIPTS.items():
+            self.assertTrue(helper.is_file(), name)
+            self.assertEqual(helper.parent, config.SERVER_ROOT / "hyadex" / "cli")
 
 
     def test_body_parsing_is_detected_through_included_routers(self):

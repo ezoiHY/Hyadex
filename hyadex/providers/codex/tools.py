@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from hyadex.cli import HELPER_SCRIPTS
 from hyadex.core.config import (
     BACKEND_CLAUDE,
     BACKEND_CODEX,
@@ -28,12 +29,12 @@ from hyadex.core.config import (
 )
 from hyadex.core.processes import terminate_process_tree
 from hyadex.core.runs import RUNS
-from hyadex.core.sessions import PROVIDER_AUTHORITIES, PROVIDER_AUTHORITY_LOCK, STORE
-from hyadex.core.session_settings import codex_runtime_settings
 from hyadex.core.session_codex import (
     existing_codex_app_server_manager,
     provider_helper_server_origin,
 )
+from hyadex.core.session_settings import codex_runtime_settings
+from hyadex.core.sessions import PROVIDER_AUTHORITIES, PROVIDER_AUTHORITY_LOCK, STORE
 from hyadex.features.side_questions import (
     codex_app_server_service_tier,
     flatten_codex_config_overrides,
@@ -189,10 +190,10 @@ async def execute_provider_tool(
     )
     resolved = resolve_provider_tool_arguments(helper, arguments, runtime_env)
     scripts = {
-        "jobs": SERVER_ROOT / "hyadex_jobs.py",
-        "publish": SERVER_ROOT / "hyadex_publish.py",
-        "emergency": SERVER_ROOT / "hyadex_emergency.py",
-        "notify": SERVER_ROOT / "hyadex_notify.py",
+        "jobs": HELPER_SCRIPTS["jobs"],
+        "publish": HELPER_SCRIPTS["publish"],
+        "emergency": HELPER_SCRIPTS["emergency"],
+        "notify": HELPER_SCRIPTS["notify"],
 
     }
     command = [sys.executable, str(scripts[helper]), "--authority-file", str(authority_path)]

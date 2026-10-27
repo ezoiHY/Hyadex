@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from hyadex.cli import HELPER_SCRIPTS
 from hyadex.core.config import (
     BACKEND_CODEX,
     CODEX_APP_SERVER_TOOL_OUTPUT_MAX_CHARS,
@@ -21,7 +22,6 @@ from hyadex.core.config import (
     MAX_CODEX_SESSION_INDEX_BYTES,
     MAX_CODEX_SESSION_INDEX_LINES,
     MAX_LOCAL_TRANSCRIPT_LINE_BYTES,
-    SERVER_ROOT,
 )
 from hyadex.core.server import SERVER
 from hyadex.core.util import normalized_network_address, runner_env
@@ -289,10 +289,10 @@ def codex_app_server_env() -> dict[str, str]:
         env,
         codex_provider_mcp_connection_host(),
     )
-    env["HYADEX_JOBS_CLI"] = str(SERVER_ROOT / "hyadex_jobs.py")
-    env["HYADEX_PUBLISH_CLI"] = str(SERVER_ROOT / "hyadex_publish.py")
-    env["HYADEX_EMERGENCY_CLI"] = str(SERVER_ROOT / "hyadex_emergency.py")
-    env["HYADEX_NOTIFY_CLI"] = str(SERVER_ROOT / "hyadex_notify.py")
+    env["HYADEX_JOBS_CLI"] = str(HELPER_SCRIPTS["jobs"])
+    env["HYADEX_PUBLISH_CLI"] = str(HELPER_SCRIPTS["publish"])
+    env["HYADEX_EMERGENCY_CLI"] = str(HELPER_SCRIPTS["emergency"])
+    env["HYADEX_NOTIFY_CLI"] = str(HELPER_SCRIPTS["notify"])
     scrub_provider_runtime_environment(env)
     return env
 
