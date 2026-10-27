@@ -143,6 +143,11 @@ from hyadex.store.files import atomic_json
 from hyadex.store.transcripts import jsonl_records
 import title_generation
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 agent hosts
+    tomllib = None
+
 logger = logging.getLogger("hyadex-server")
 
 FORK_INTERNAL_RUN_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()

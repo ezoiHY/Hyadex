@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import APIRouter, HTTPException
 from hyadex.app import ApplicationBindings, create_app
 import agent_server
+from tests.runtime_state import ServerNamespace, patch_server_namespace
 import httpx
 from pydantic import BaseModel, Field
 
@@ -50,9 +51,8 @@ def load_routes(add_cleanup):
         {"support": {"available": True}}, inventory))
     ns["claude_runtime_snapshot"] = AsyncMock(return_value={"available": True, "goal": None})
     ns["claude_sdk_manager"] = AsyncMock(return_value=SimpleNamespace(clear_goal=AsyncMock()))
-    overrides = patch.dict(agent_server.__dict__, ns)
-    overrides.start()
-    add_cleanup(overrides.stop)
+    overrides = patch_server_namespace(agent_server, ns)
+    add_cleanup(overrides.close)
     runs = patch.multiple(agent_server.RUNS, active={}, active_lock=asyncio.Lock())
     runs.start()
     add_cleanup(runs.stop)
@@ -63,8 +63,10 @@ def load_routes(add_cleanup):
     async def authorize(request, call_next):
         return await call_next(request)
 
-    agent_server.app = create_app(ApplicationBindings(router, authorize))
-    return agent_server.__dict__
+    namespace = ServerNamespace(agent_server)
+    add_cleanup(namespace.close)
+    namespace["app"] = create_app(ApplicationBindings(router, authorize))
+    return namespace
 
 
 class ClaudeGoalRouteTests(unittest.IsolatedAsyncioTestCase):

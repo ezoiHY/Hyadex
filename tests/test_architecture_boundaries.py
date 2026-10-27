@@ -76,5 +76,32 @@ class ArchitectureBoundaryTests(unittest.TestCase):
                 self.assertEqual(pattern.findall(path.read_text()), [])
 
 
+    def test_split_modules_resolve_every_global_they_use(self):
+        # Code moved out of agent_server.py must not keep using a name that
+        # only agent_server defines; that would fail at call time.
+        import builtins
+        import importlib
+        import symtable
+
+        from tests import server_source
+
+        missing = []
+        for relative in server_source.EXTRACTED:
+            module = importlib.import_module(relative[:-3].replace("/", "."))
+            source = (ROOT / relative).read_text()
+
+            def walk(table, path=""):
+                for symbol in table.get_symbols():
+                    name = symbol.get_name()
+                    if (symbol.is_global() and symbol.is_referenced() and name not in module.__dict__
+                            and not hasattr(builtins, name)):
+                        missing.append(f"{relative}: {path}: {name}")
+                for child in table.get_children():
+                    walk(child, f"{path}.{child.get_name()}" if path else child.get_name())
+
+            walk(symtable.symtable(source, relative, "exec"))
+        self.assertEqual(missing, [])
+
+
 if __name__ == "__main__":
     unittest.main()
