@@ -178,6 +178,14 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
 logger = logging.getLogger("hyadex-server")
 
 # --- Extracted modules ---
+from hyadex.api import files as files_routes
+from hyadex.api.files import (
+    file_response_media_type,
+    get_session_file,
+    get_session_linked_file,
+    list_session_files,
+    upload_file,
+)
 from hyadex.api import agent as agent_routes
 from hyadex.api.agent import (
     acknowledge_session_emergency,
@@ -2000,11 +2008,6 @@ if len(PROVIDER_THREAD_INSTRUCTION_ADDENDUM) > MAX_PROVIDER_STATIC_INSTRUCTIONS_
 WIRING.jobs = JOBS
 
 
-def file_response_media_type(meta: dict[str, Any]) -> str:
-    filename = str(meta.get("filename") or Path(str(meta.get("path") or "")).name)
-    return effective_content_type(filename, str(meta.get("content_type") or ""))
-
-
 def route_auth_for_scope(app: Any, method: str, path: str, *, any_method: bool = False) -> RouteAuth:
     """The declaration of the route a request would reach (default ``user``).
 
@@ -2288,138 +2291,6 @@ router.include_router(create_group_router(
 ))
 
 
-@router.post("/api/sessions/{session_id}/files")
-async def upload_file(session_id: str, file: UploadFile = File(...)) -> dict[str, Any]:
-    session = STORE.sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="session not found")
-    ensure_session_not_deleting(session_id)
-    if bool(session.get("archived")):
-        raise HTTPException(status_code=409, detail="archived chats cannot accept uploads")
-
-    ensure_dirs()
-    file_id = f"file_{uuid.uuid4().hex[:16]}"
-    filename = safe_name(file.filename or "upload")
-    final_root = FILES_ROOT / file_id
-    staging_root = Path(tempfile.mkdtemp(
-        prefix=f".{file_id}-upload-",
-        dir=str(FILES_ROOT),
-    ))
-    staged_file = staging_root / filename
-    copy_task = asyncio.create_task(asyncio.to_thread(
-        stage_upload_file_sync,
-        file.file,
-        staged_file,
-    ))
-    try:
-        size = await asyncio.shield(copy_task)
-    except BaseException:
-        with suppress(BaseException):
-            await join_task_despite_caller_cancellation(copy_task)
-        with suppress(BaseException):
-            await remove_upload_tree(staging_root)
-        raise
-
-    dest = final_root / filename
-    meta = {
-        "id": file_id,
-        "session_id": session_id,
-        "kind": "upload",
-        "filename": filename,
-        "path": str(dest),
-        "size": size,
-        "content_type": effective_content_type(filename, file.content_type),
-        "created_at": now_iso(),
-    }
-    try:
-        await run_upload_worker(
-            write_upload_metadata_sync,
-            staging_root / "meta.json",
-            meta,
-        )
-        commit_task = asyncio.create_task(commit_staged_upload(
-            session_id,
-            staging_root,
-            final_root,
-            meta,
-        ))
-        try:
-            await asyncio.shield(commit_task)
-        except asyncio.CancelledError:
-            await join_task_despite_caller_cancellation(commit_task)
-            raise
-        return {"file": meta}
-    finally:
-        await remove_upload_tree(staging_root)
-
-
-@router.get("/api/sessions/{session_id}/files")
-async def list_session_files(
-    session_id: str,
-    limit: int | None = Query(default=None, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    content_prefix: str | None = Query(default=None),
-) -> dict[str, Any]:
-    if session_id not in STORE.sessions:
-        raise HTTPException(status_code=404, detail="session not found")
-    records = await asyncio.to_thread(list_session_file_records, session_id)
-    if content_prefix:
-        prefix = content_prefix.strip().lower()
-        records = [
-            rec for rec in records
-            if str(rec.get("content_type") or "").lower().startswith(prefix)
-        ]
-    total = len(records)
-    if limit is None:
-        return {
-            "files": records,
-            "total": total,
-            "offset": 0,
-            "limit": total,
-            "has_more": False,
-        }
-    page = records[offset:offset + limit]
-    return {
-        "files": page,
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-        "has_more": offset + len(page) < total,
-    }
-
-
-@router.get("/api/sessions/{session_id}/links/file")
-@router.head("/api/sessions/{session_id}/links/file")
-async def get_session_linked_file(session_id: str, target: str) -> FileResponse:
-    if session_id not in STORE.sessions:
-        raise HTTPException(status_code=404, detail="session not found")
-    meta = await asyncio.to_thread(session_file_for_link, session_id, target)
-    return FileResponse(
-        meta["path"],
-        media_type=file_response_media_type(meta),
-        filename=meta.get("filename"),
-        content_disposition_type="inline",
-    )
-
-
-@router.get("/api/sessions/{session_id}/files/{file_id}")
-@router.head("/api/sessions/{session_id}/files/{file_id}")
-async def get_session_file(session_id: str, file_id: str) -> FileResponse:
-    if session_id not in STORE.sessions:
-        raise HTTPException(status_code=404, detail="session not found")
-    meta = await asyncio.to_thread(
-        require_session_file_meta,
-        session_id,
-        file_id,
-    )
-    return FileResponse(
-        meta["path"],
-        media_type=file_response_media_type(meta),
-        filename=meta.get("filename"),
-        content_disposition_type="inline",
-    )
-
-
 def main() -> int:
     configure_server_logging(STATE_DIR)
     parser = argparse.ArgumentParser(description="HyadexServer")
@@ -2456,6 +2327,7 @@ def main() -> int:
 
 
 # --- Route modules ---
+mount_routes(router, files_routes.router)
 mount_routes(router, agent_routes.router)
 mount_routes(router, jobs_routes.router)
 mount_routes(router, turns_routes.router)
@@ -2479,7 +2351,7 @@ app = create_app(ApplicationBindings(
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], sys.modules['hyadex.api.terminal'], sys.modules['hyadex.api.sessions'], sys.modules['hyadex.api.search'], sys.modules['hyadex.api.providers'], sys.modules['hyadex.api.turns'], sys.modules['hyadex.api.jobs'], sys.modules['hyadex.api.agent'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], sys.modules['hyadex.api.terminal'], sys.modules['hyadex.api.sessions'], sys.modules['hyadex.api.search'], sys.modules['hyadex.api.providers'], sys.modules['hyadex.api.turns'], sys.modules['hyadex.api.jobs'], sys.modules['hyadex.api.agent'], sys.modules['hyadex.api.files'], )
 
 
 # Module globals that core code reaches through WIRING.
