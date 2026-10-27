@@ -10,9 +10,9 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-import execution_install as files
-import execution_manage as manage
-from hyadex import installation
+from hyadex.ops.execution import install as files
+from hyadex.ops.execution import manage
+from hyadex.ops import installation
 from tests import test_execution_install as install_tests
 from tests import test_execution_manage as manage_tests
 
@@ -213,7 +213,7 @@ class SourceInstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory).resolve()
             env = installation.staging_environment(home)
-            script = [sys.executable, '-B', str(root / 'hyadex/installation.py')]
+            script = [sys.executable, '-B', str(root / 'hyadex/ops/installation.py')]
             for args, status in ((['--help'], 0), (['--prepare-only'], 2), (['--team-hub-host'], 2), (['--show-token'], 1)):
                 result = subprocess.run([*script, *args], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, status, result.stderr)

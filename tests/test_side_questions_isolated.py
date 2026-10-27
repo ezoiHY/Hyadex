@@ -56,7 +56,7 @@ class ShutdownBudgetTests(unittest.TestCase):
                    and node.targets[0].id in budget_names}
         maximum = (budgets["MAX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS"]
                    + declared * budgets["SERVER_SHUTDOWN_PHASE_TIMEOUT_SECONDS"] + 5.0)
-        from execution_manage import NativeServices
+        from hyadex.ops.execution.manage import NativeServices
         self.assertGreaterEqual(NativeServices.__init__.__kwdefaults__["timeout"], maximum + 30.0)
 
 

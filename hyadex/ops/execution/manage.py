@@ -27,9 +27,9 @@ from typing import Any, Callable
 import urllib.parse
 import uuid
 
-import execution_install as files
-from execution_transport import _read_secret
-from execution_http import request_json
+from hyadex.ops.execution import install as files
+from hyadex.ops.execution.transport import _read_secret
+from hyadex.ops.execution.http import request_json
 
 
 class InstallationLock:

@@ -3,7 +3,12 @@ import json
 import unittest
 import uuid
 
-from execution_control import ExecutionControl, ExecutionControlError, MAINTENANCE_PATH, STATUS_PATH
+from hyadex.ops.execution.control import (
+    ExecutionControl,
+    ExecutionControlError,
+    MAINTENANCE_PATH,
+    STATUS_PATH,
+)
 
 
 class ExecutionControlTests(unittest.IsolatedAsyncioTestCase):

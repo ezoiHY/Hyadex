@@ -9,7 +9,13 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from execution_service import ComponentHealth, ProcessLease, WorkerLifespan, remove_stale_worker_socket, serve_worker
+from hyadex.ops.execution.service import (
+    ComponentHealth,
+    ProcessLease,
+    WorkerLifespan,
+    remove_stale_worker_socket,
+    serve_worker,
+)
 
 
 class LeaseTests(unittest.TestCase):
@@ -127,8 +133,8 @@ class LifespanTests(unittest.IsolatedAsyncioTestCase):
             args = SimpleNamespace(application="agent_server:app", runtime_dir=root / "other")
             module = SimpleNamespace(STATE_DIR=root / "state")
             with ProcessLease(args.runtime_dir, "worker") as lease:
-                with patch("execution_service.load_application", return_value=(module, object())), \
-                        patch("execution_service.remove_stale_worker_socket") as remove:
+                with patch("hyadex.ops.execution.service.load_application", return_value=(module, object())), \
+                        patch("hyadex.ops.execution.service.remove_stale_worker_socket") as remove:
                     with self.assertRaisesRegex(ValueError, "state directory"):
                         await serve_worker(args, lease)
                     remove.assert_not_called()

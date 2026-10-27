@@ -29,7 +29,7 @@ from hyadex.core.config import (
 from hyadex.core.server_logging import command_log_hints, fd_log_hints, unique_log_hints
 from hyadex.core.util import compact_memory_text
 from hyadex.providers.runtime import PROVIDER_SECRET_ENV_NAMES
-import server_instances
+from hyadex.ops import instances as server_instances
 
 logger = logging.getLogger("hyadex-server")
 

@@ -15,7 +15,8 @@ class PackageBoundariesTests(unittest.TestCase):
                 [sys.executable, '-B', '-c', '''
 from pathlib import Path
 import sys
-from hyadex import installation, inventory
+from hyadex import inventory
+from hyadex.ops import installation
 from hyadex.features import group_engine as groups, autopilot, job_schedules, job_context
 from hyadex.api.app import ApplicationBindings, create_app
 from hyadex.core import transcripts

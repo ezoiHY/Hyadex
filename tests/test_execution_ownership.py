@@ -14,7 +14,10 @@ import unittest
 import urllib.error
 import urllib.request
 
-from execution_ownership import acquire_state_ownership, _release_state_ownership_for_tests
+from hyadex.ops.execution.ownership import (
+    acquire_state_ownership,
+    _release_state_ownership_for_tests,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +46,7 @@ class StateOwnershipTests(unittest.TestCase):
 
     def test_another_process_is_refused_until_owner_exits(self):
         owner = self.acquire()
-        command = [sys.executable, "-B", "-c", "from pathlib import Path; from execution_ownership import acquire_state_ownership; import sys; acquire_state_ownership(Path(sys.argv[1]))", str(self.root)]
+        command = [sys.executable, "-B", "-c", "from pathlib import Path; from hyadex.ops.execution.ownership import acquire_state_ownership; import sys; acquire_state_ownership(Path(sys.argv[1]))", str(self.root)]
         denied = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=10)
         self.assertNotEqual(denied.returncode, 0)
         self.assertIn("already owns this state directory", denied.stderr)

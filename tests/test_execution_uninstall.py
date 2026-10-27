@@ -11,8 +11,8 @@ import unittest
 from unittest import mock
 import uuid
 
-import execution_install as files
-import execution_uninstall as uninstall
+from hyadex.ops.execution import install as files
+from hyadex.ops.execution import uninstall
 from tests import test_execution_install as support
 
 
@@ -297,7 +297,7 @@ class SplitUninstallTests(unittest.TestCase):
         self.assertEqual(self.control.released, [])
 
     def test_purge_cli_never_accepts_yes_without_interactive_exact_path(self):
-        process = subprocess.run([sys.executable, "-B", str(Path(uninstall.__file__)),
+        process = subprocess.run([sys.executable, "-B", str(Path(uninstall.__file__).resolve().parents[3] / "execution_uninstall.py"),
             "--root", str(self.root), "--config-root", str(self.config), "--state-root", str(self.state),
             "--home", str(self.layout.home), "--yes", "--purge-state"],
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)

@@ -84,7 +84,7 @@ HYADEX_SERVER_DISPLAY_NAME = canonical_server_display_name(
 async def connection_addresses(request: Request) -> dict[str, Any]:
     require_native_admin_control(request)
     # Discover only on explicit QR sharing, never on the frequently polled health path.
-    from server_instances import candidate_addresses, connection_choices, tailscale_status
+    from hyadex.ops.instances import candidate_addresses, connection_choices, tailscale_status
 
     def discover() -> list[str]:
         choices = connection_choices(

@@ -99,7 +99,7 @@ from starlette.datastructures import Headers
 import uvicorn
 import websockets
 from hyadex.providers.codex import auth as codex_auth
-import server_instances
+from hyadex.ops import instances as server_instances
 from hyadex.ops import session_ownership as local_session_ownership
 from hyadex.providers import usage as provider_usage
 

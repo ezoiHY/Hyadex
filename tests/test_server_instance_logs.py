@@ -13,8 +13,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import execution_install
-import server_instances as instances
+from hyadex.ops.execution import install as execution_install
+from hyadex.ops import instances
 
 
 class InstanceLogTests(unittest.TestCase):

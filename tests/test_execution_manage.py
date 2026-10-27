@@ -9,8 +9,8 @@ import subprocess
 import unittest
 from unittest import mock
 
-import execution_install as files
-import execution_manage as manage
+from hyadex.ops.execution import install as files
+from hyadex.ops.execution import manage
 from tests import test_execution_install as install_tests
 
 

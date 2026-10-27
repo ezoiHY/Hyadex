@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from hyadex.inventory import FILES
-from hyadex.installation import validate_source
+from hyadex.ops.installation import validate_source
 from scripts.package_release import validate_release_files
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class ReleaseFileManifestTests(unittest.TestCase):
     def test_inventory_is_complete_and_unique(self):
         self.assertEqual(len(FILES), len(set(FILES)))
-        self.assertTrue({'LICENSE', 'NOTICE', 'hyadex/inventory.py', 'hyadex/installation.py'} <= set(FILES))
+        self.assertTrue({'LICENSE', 'NOTICE', 'hyadex/inventory.py', 'hyadex/ops/installation.py'} <= set(FILES))
         runtime = {str(p.relative_to(ROOT)) for p in (ROOT / 'hyadex').rglob('*.py')}
         self.assertTrue(runtime <= set(FILES), runtime - set(FILES))
         validate_release_files(ROOT)

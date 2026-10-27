@@ -23,8 +23,8 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-import execution_install as install
-from execution_manage import NativeServices
+from hyadex.ops.execution import install
+from hyadex.ops.execution.manage import NativeServices
 from tests import server_source
 
 

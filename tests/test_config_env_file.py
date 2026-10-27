@@ -20,7 +20,7 @@ import agent_server
 class ParseConfigEnvFileTests(unittest.TestCase):
     def test_new_installer_environment_matches_actual_runtime_parser(self) -> None:
         from types import SimpleNamespace
-        from execution_install import render_environment
+        from hyadex.ops.execution.install import render_environment
         values = {'HYADEX_SERVER_NAME': "Harry's Mac", 'PROVIDER_KEY': 'quotes " and \\ and $HOME', 'UNICODE': '中文', 'EMPTY': ''}
         self.assertEqual(agent_server.parse_config_env_file(render_environment(SimpleNamespace(environment=values)).decode()), values)
 

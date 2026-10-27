@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
-from execution_transport import (
+from hyadex.ops.execution.transport import (
     ExecutionGateway,
     ExecutionTransportError,
     ExecutionTransportServer,
@@ -534,7 +534,7 @@ class ExecutionTransportTests(unittest.IsolatedAsyncioTestCase):
             return ensure_execution_secret(path)
 
         with ThreadPoolExecutor(max_workers=2) as executor, mock.patch(
-                "execution_transport.secrets.token_hex", side_effect=paused_token):
+                "hyadex.ops.execution.transport.secrets.token_hex", side_effect=paused_token):
             first = executor.submit(ensure_execution_secret, path)
             try:
                 self.assertTrue(writing.wait(1))

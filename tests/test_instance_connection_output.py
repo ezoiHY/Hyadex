@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import server_instances as instances
+from hyadex.ops import instances
 
 
 CONNECTED = {"status": "connected", "ipv4": "100.100.10.20"}

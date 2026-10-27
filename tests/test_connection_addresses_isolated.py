@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from fastapi.testclient import TestClient
 from hyadex.api.app import ApplicationBindings, create_app
 import agent_server
-import server_instances
+from hyadex.ops import instances as server_instances
 from tests.runtime_state import patch_server_multiple
 
 

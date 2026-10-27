@@ -83,7 +83,7 @@ from hyadex.providers.codex.tools import (
 from hyadex.providers.registry import request_client_is_provider_helper_local
 from hyadex.api.autopilot import create_autopilot_router
 from hyadex.api.groups import create_group_router
-import server_instances
+from hyadex.ops import instances as server_instances
 from hyadex.features import side_question_service as side_questions
 
 

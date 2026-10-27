@@ -515,7 +515,7 @@ class UvicornShutdownSettingTests(unittest.TestCase):
             * agent_server.SERVER_SHUTDOWN_PHASE_TIMEOUT_SECONDS
             + 5.0
         )
-        from execution_manage import NativeServices
+        from hyadex.ops.execution.manage import NativeServices
         self.assertGreaterEqual(NativeServices.__init__.__kwdefaults__["timeout"], watchdog_budget + 30.0)
 
 

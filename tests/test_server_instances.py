@@ -17,7 +17,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import server_instances as instances
+from hyadex.ops import instances
 from tests import server_source
 
 ROOT = Path(__file__).resolve().parents[1]

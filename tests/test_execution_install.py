@@ -15,8 +15,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-import execution_install as install
-from execution_transport import ensure_execution_secret
+from hyadex.ops.execution import install
+from hyadex.ops.execution.transport import ensure_execution_secret
 
 
 class ExecutionInstallTests(unittest.TestCase):

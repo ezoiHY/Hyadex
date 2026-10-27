@@ -17,7 +17,7 @@ import unittest
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from server_instances import Instance, Registry
+from hyadex.ops.instances import Instance, Registry
 
 ROOT = Path(__file__).resolve().parents[1]
 

@@ -6,7 +6,7 @@ import logging.handlers
 import os
 import re
 import secrets
-import server_instances
+from hyadex.ops import instances as server_instances
 import unicodedata
 import uuid
 from contextvars import ContextVar

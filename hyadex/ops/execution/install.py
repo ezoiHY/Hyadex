@@ -404,7 +404,7 @@ def installed_layout(root: Path) -> ExecutionLayout:
 
 def prepare_runtime(layout: ExecutionLayout) -> None:
     """Create private IPC state; never rotate an existing control token."""
-    from execution_transport import ensure_execution_secret
+    from hyadex.ops.execution.transport import ensure_execution_secret
 
     layout.validate()
     _ensure_directory(layout.runtime_dir, private=True)
@@ -767,7 +767,7 @@ def pending_worker_operation(root: Path, runtime_root: Path) -> str | None:
     if uninstall.exists() or uninstall.is_symlink():
         if journal.exists() or journal.is_symlink():
             raise RuntimeError("activation and uninstall both claim execution ownership")
-        from execution_uninstall import pending_uninstall_operation
+        from hyadex.ops.execution.uninstall import pending_uninstall_operation
         return pending_uninstall_operation(root, runtime_root)
     if not journal.exists() and not journal.is_symlink():
         return None

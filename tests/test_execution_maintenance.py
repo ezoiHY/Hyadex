@@ -5,8 +5,8 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-from execution_control import ExecutionControlError
-from execution_maintenance import ExecutionMaintenance
+from hyadex.ops.execution.control import ExecutionControlError
+from hyadex.ops.execution.maintenance import ExecutionMaintenance
 
 
 class RetirementTests(unittest.TestCase):
@@ -61,7 +61,7 @@ class RetirementTests(unittest.TestCase):
 
     def test_failed_persistence_does_not_authorize_retirement(self):
         lease = self.acquire()
-        with patch("execution_maintenance.os.replace", side_effect=OSError("disk unavailable")):
+        with patch("hyadex.ops.execution.maintenance.os.replace", side_effect=OSError("disk unavailable")):
             with self.assertRaises(OSError):
                 self.manager.apply("seal", self.operation, lease["lease_id"], 30, {})
         self.assertFalse(self.manager.lease["sealed"])

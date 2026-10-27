@@ -22,14 +22,14 @@ import subprocess
 import sys
 import tempfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]  # repository root
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import execution_install as files
-from execution_manage import ActivationController, InstallationLock, NativeServices
+from hyadex.ops.execution import install as files
+from hyadex.ops.execution.manage import ActivationController, InstallationLock, NativeServices
 from hyadex.inventory import FILES
-from server_instances import Instance, check_path, exclusive_lock, instance_name
+from hyadex.ops.instances import Instance, check_path, exclusive_lock, instance_name
 
 
 def read_environment(path: Path) -> dict[str, str]:

@@ -13,9 +13,9 @@ import unittest
 from unittest import mock
 from types import SimpleNamespace
 
-import execution_http as transport
-import execution_install as files
-from execution_manage import WorkerControl
+from hyadex.ops.execution import http as transport
+from hyadex.ops.execution import install as files
+from hyadex.ops.execution.manage import WorkerControl
 
 
 # A real separate process owns the accepted socket; it never prints the fixture
@@ -56,7 +56,7 @@ GATEWAY = r'''
 import asyncio, json, os, socket, sys
 from pathlib import Path
 import uvicorn
-from execution_transport import ExecutionGateway, ExecutionTransportServer, ensure_execution_secret
+from hyadex.ops.execution.transport import ExecutionGateway, ExecutionTransportServer, ensure_execution_secret
 async def main():
     root = Path(sys.argv[1])
     ensure_execution_secret(root / "t")

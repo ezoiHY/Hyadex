@@ -24,7 +24,7 @@ import uuid
 
 import httpx
 
-import execution_install as install
+from hyadex.ops.execution import install
 from scripts.package_release import DIRECTORY_FILES, FILES
 
 

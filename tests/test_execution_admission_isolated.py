@@ -11,8 +11,8 @@ import unittest
 from unittest.mock import AsyncMock, patch
 import uuid
 
-from execution_control import ExecutionControlError
-from execution_maintenance import ExecutionMaintenance
+from hyadex.ops.execution.control import ExecutionControlError
+from hyadex.ops.execution.maintenance import ExecutionMaintenance
 from hyadex.core.runs import NamespaceRuns
 from hyadex.core.server import NamespaceServer
 from tests import server_source
@@ -118,9 +118,9 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
         old.mkdir()
         (self.root / "current").symlink_to(new)
         self.ns["SERVER_ROOT"] = old
-        with patch("execution_install.active_worker_release", return_value=old):
+        with patch("hyadex.ops.execution.install.active_worker_release", return_value=old):
             self.assertTrue(self.ns["official_server_release_tree"]())
-        with patch("execution_install.active_worker_release", side_effect=ValueError("invalid")):
+        with patch("hyadex.ops.execution.install.active_worker_release", side_effect=ValueError("invalid")):
             self.assertFalse(self.ns["official_server_release_tree"]())
         self.ns["EXECUTION_MAINTENANCE"] = None
         self.assertFalse(self.ns["official_server_release_tree"]())

@@ -16,7 +16,7 @@ import time
 from typing import Any, Callable
 import uuid
 
-from execution_control import ExecutionControlError
+from hyadex.ops.execution.control import ExecutionControlError
 
 
 class ExecutionMaintenance:

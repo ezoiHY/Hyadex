@@ -110,7 +110,7 @@ from hyadex.providers.registry import (
     sweep_orphaned_provider_children,
 )
 from hyadex.providers.claude.subagents import CLAUDE_STOP_FENCE_ATTEMPT_TASKS
-import server_instances
+from hyadex.ops import instances as server_instances
 
 logger = logging.getLogger("hyadex-server")
 
@@ -343,7 +343,7 @@ def official_server_release_tree() -> bool:
     try:
         current = (install_root / "current").resolve(strict=True)
         if SERVER.execution_maintenance is not None:
-            from execution_install import active_worker_release
+            from hyadex.ops.execution.install import active_worker_release
 
             # Only the owned installation manifest can authorize the older
             # execution runtime once the public gateway advances. Service
@@ -1144,7 +1144,7 @@ async def bounded_shutdown_phase(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from execution_ownership import acquire_state_ownership
+    from hyadex.ops.execution.ownership import acquire_state_ownership
 
     validate_listener_auth()
     # Both the maintained legacy entrypoint and the split worker pass here.
@@ -1154,7 +1154,7 @@ async def lifespan(app: FastAPI):
     install_root = os.environ.get("HYADEX_SERVER_INSTALL_DIR")
     if SERVER.execution_maintenance is None and install_root:
         # Never admit work over a journal the retired in-app updater left.
-        from execution_install import refuse_retired_activation
+        from hyadex.ops.execution.install import refuse_retired_activation
         refuse_retired_activation(Path(install_root).expanduser().resolve())
     if SERVER.state_process_lock is None:
         SERVER.state_process_lock = server_instances.acquire_state_lock(STATE_DIR)
