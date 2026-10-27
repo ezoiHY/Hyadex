@@ -11,7 +11,7 @@ import unicodedata
 import uuid
 from contextvars import ContextVar
 from fastapi import HTTPException
-from hyadex.providers.claude import CLAUDE_PROVIDER_MCP_SERVER_NAME
+from hyadex.providers.claude.sdk import CLAUDE_PROVIDER_MCP_SERVER_NAME
 from hyadex.providers.runtime import PROVIDER_SECRET_ENV_NAMES
 from hyadex.providers.runtime import is_scrubbed_provider_runtime_env_name
 from hyadex.providers.runtime import scrub_provider_runtime_environment
@@ -521,7 +521,7 @@ CLAUDE_SDK_IDLE_WARN_SECONDS = max(
 )
 # A Codex app-server notification can be silently dropped if it arrives for a
 # subscription that already closed (see _route_notification in
-# hyadex/providers/codex.py) - the turn then waits forever with zero visible
+# hyadex/providers/codex/app_server.py) - the turn then waits forever with zero visible
 # activity, but IDLE_WARN/IDLE_KILL_SECONDS above are sized for legitimate
 # gaps *between* activity on an already-productive turn, not "nothing has
 # happened since the turn started." This bounds only that first-activity

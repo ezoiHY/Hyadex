@@ -398,12 +398,12 @@ Gemini runtime were not exercised. **Availability:** source only.
 ## 2026-10-26 — Native provider package and shared runtime contract
 
 - Moved the Claude SDK actor client and Codex app-server transport unchanged
-  into `hyadex/providers/claude.py` and `codex.py`. Removed their old root files
+  into `hyadex/providers/claude/sdk.py` and `codex.py`. Removed their old root files
   and updated static/inline imports, mock targets and all runtime inventories.
 - Extracted exact-user-text validation, bounded control context, per-turn
   environment validation and secret scrubbing into `hyadex/providers/runtime.py`.
   Legacy secret names remain scrubbed. No provider protocol or control-data
-  semantics changed. Claude's internal logger is now `hyadex.providers.claude`.
+  semantics changed. Claude's internal logger is now `hyadex.providers.claude.sdk`.
 - Four test fixtures now use the production validator instead of extracted or
   pass-through replacements. Invalid synthetic environment keys were corrected
   in those fixtures and their consumers. The fast suite includes both native

@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from hyadex.providers.codex import CodexAppServerClient, CodexAppServerRequestError, CodexAppServerTimeout
+from hyadex.providers.codex.app_server import CodexAppServerClient, CodexAppServerRequestError, CodexAppServerTimeout
 from tests.test_codex_app_server import FakeProcessFactory, NO_RESPONSE
 
 

@@ -11,7 +11,7 @@ import unittest
 from hyadex.runs import NamespaceRuns
 from unittest.mock import AsyncMock, Mock
 
-from hyadex.providers.claude import ClaudeSDKSupervisorClosed
+from hyadex.providers.claude.sdk import ClaudeSDKSupervisorClosed
 from tests import server_source
 
 

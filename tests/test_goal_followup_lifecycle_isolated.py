@@ -15,7 +15,7 @@ import unittest
 from hyadex.providers.runtime import validate_provider_runtime_env
 from unittest.mock import AsyncMock, Mock
 
-from hyadex.providers.codex import CodexAppServerDisconnected
+from hyadex.providers.codex.app_server import CodexAppServerDisconnected
 from tests.test_goal_followup_admission_isolated import AdmissionHTTPException, saved_route_snapshots
 from tests import test_goal_native_steer_isolated as native_goal_fixture
 from hyadex.runs import NamespaceRuns

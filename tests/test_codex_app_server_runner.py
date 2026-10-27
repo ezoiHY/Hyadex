@@ -13,7 +13,7 @@ from starlette.requests import Request
 
 import agent_server
 from tests.runtime_state import patch_server_multiple
-from hyadex.providers.codex import (
+from hyadex.providers.codex.app_server import (
     CodexAppServerDisconnected,
     CodexAppServerRequestError,
     CodexAppServerTimeout,

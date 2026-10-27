@@ -96,7 +96,7 @@ class NativeModelLabelTests(unittest.TestCase):
 class NativeSDKCatalogCaptureTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_sdk_factory_reuses_connect_metadata_without_extra_process(self):
         from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
-        from hyadex.providers.claude import default_claude_sdk_client_factory
+        from hyadex.providers.claude.sdk import default_claude_sdk_client_factory
         with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {"HOME": root, "PATH": ""}, clear=True):
             catalog.clear_native_models()
             self.addCleanup(catalog.clear_native_models)
@@ -117,7 +117,7 @@ class NativeSDKCatalogCaptureTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_connect_does_not_seed_cache(self):
         from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
-        from hyadex.providers.claude import default_claude_sdk_client_factory
+        from hyadex.providers.claude.sdk import default_claude_sdk_client_factory
         with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {"HOME": root, "PATH": ""}, clear=True):
             catalog.clear_native_models()
             self.addCleanup(catalog.clear_native_models)

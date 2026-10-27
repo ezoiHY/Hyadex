@@ -19,7 +19,10 @@ from hyadex import groups, autopilot, installation, inventory
 from hyadex.app import ApplicationBindings, create_app
 from hyadex.store import transcripts
 from hyadex.jobs import schedules, context
-from hyadex.providers import claude, codex, runtime
+from hyadex.providers import runtime
+from hyadex.providers.claude import sdk
+from hyadex.providers.codex import app_server
+from hyadex.core import config
 from hyadex.routes.groups import create_group_router
 from hyadex.routes.autopilot import create_autopilot_router
 assert 'agent_server' not in sys.modules

@@ -8,7 +8,7 @@ import tempfile
 import unicodedata
 
 
-from hyadex.providers.codex import CodexAppServerClient
+from hyadex.providers.codex.app_server import CodexAppServerClient
 from codex_side_question import isolated_config
 from side_questions import isolated_environment, run_isolated_command
 
@@ -75,7 +75,7 @@ def supports_codex_titles(schema: dict) -> bool:
 
 async def generate_codex_title(prompt: str, *, executable: str, model: str | None,
                                env: dict) -> str | None:
-    from hyadex.providers.codex import config_args
+    from hyadex.providers.codex.app_server import config_args
 
     env = isolated_environment(env)
     # Fresh ephemeral thread, never a fork/resume: only the bounded excerpt is sent.

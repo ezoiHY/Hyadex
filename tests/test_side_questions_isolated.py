@@ -1007,7 +1007,7 @@ class ServerCallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.status_code, 404)
 
     async def test_native_sdk_lifecycle_errors_have_safe_http_statuses(self):
-        from hyadex.providers.claude import (
+        from hyadex.providers.claude.sdk import (
             ClaudeSDKConfigurationConflict, ClaudeSDKGenerationChanged,
             ClaudeSDKRunActive, ClaudeSDKUnavailable,
         )

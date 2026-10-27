@@ -12,8 +12,8 @@ route collection, authorization middleware and lifespan to the application facto
 | `hyadex/jobs/schedules.py` | Interval, cron, RRULE and timezone calculations | Calendar libraries; no runtime state |
 | `hyadex/jobs/context.py` | Chat/standalone provider context policy | Explicit default backend and allowed backends |
 | `hyadex/providers/runtime.py` | Exact user input, bounded runtime control data and environment scrubbing | No runtime state |
-| `hyadex/providers/claude.py` | Claude SDK actor ownership and lifecycle | Native SDK factory and callbacks; lazy model-catalog/side-question adapters |
-| `hyadex/providers/codex.py` | Multiplexed Codex app-server JSON-RPC transport and CLI configuration overrides | Process factory and explicit callbacks |
+| `hyadex/providers/claude/sdk.py` | Claude SDK actor ownership and lifecycle | Native SDK factory and callbacks; lazy model-catalog/side-question adapters |
+| `hyadex/providers/codex/app_server.py` | Multiplexed Codex app-server JSON-RPC transport and CLI configuration overrides | Process factory and explicit callbacks |
 | `hyadex/events.py` | Fan-out of committed chat events to live sockets and observers | Subscribers registered by the application |
 | `hyadex/runs.py` | In-memory turn lifecycle state: provider slot, stop, steering, durable queue | No I/O |
 | `hyadex/groups.py` | Group models, timeline, dispatch, recovery | `GroupRuntime` supplied by the application |

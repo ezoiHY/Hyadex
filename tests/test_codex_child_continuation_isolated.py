@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 
-from hyadex.providers.codex import CodexAppServerClient, CodexAppServerTurn, CodexAppServerTimeout
+from hyadex.providers.codex.app_server import CodexAppServerClient, CodexAppServerTurn, CodexAppServerTimeout
 from tests import test_goal_followup_lifecycle_isolated as ordinary_fixture
 from hyadex.runs import NamespaceRuns
 from tests import server_source

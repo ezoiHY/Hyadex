@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 from importlib.metadata import version
 from typing import Any
 
-from hyadex.providers.claude import (
+from hyadex.providers.claude.sdk import (
     CLAUDE_NON_DURABLE_SCHEDULER_TOOLS,
     CLAUDE_PROVIDER_MCP_SERVER_NAME,
     CLAUDE_PROVIDER_MCP_TOOL_NAME,
@@ -1505,7 +1505,7 @@ class ClaudeSDKSupervisorTests(unittest.IsolatedAsyncioTestCase):
         )
         client = factory.clients[0]
 
-        with self.assertLogs("hyadex.providers.claude", level="WARNING") as captured:
+        with self.assertLogs("hyadex.providers.claude.sdk", level="WARNING") as captured:
             await asyncio.sleep(0.03)
         self.assertIn("continuing to wait", "\n".join(captured.output))
         self.assertFalse(handle.done)

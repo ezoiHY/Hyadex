@@ -24,7 +24,7 @@ from typing import Callable
 
 from claude_history_provenance import ClaudeInterruptionTracker
 from claude_goals import ClaudeGoalHistoryNormalizer, is_claude_synthetic_no_response
-from hyadex.providers.claude import CLAUDE_SDK_LITERAL_MESSAGE_PREFIX
+from hyadex.providers.claude.sdk import CLAUDE_SDK_LITERAL_MESSAGE_PREFIX
 
 
 from hyadex.store.transcripts import jsonl_records, scan_check, CHUNK_BYTES, SCAN_SECONDS

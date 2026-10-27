@@ -16,7 +16,7 @@ from starlette.requests import Request
 
 import agent_server
 from tests.runtime_state import patch_server, patch_server_multiple
-from hyadex.providers.claude import ClaudeSDKQueryError, ClaudeSDKUnavailable
+from hyadex.providers.claude.sdk import ClaudeSDKQueryError, ClaudeSDKUnavailable
 
 
 class FakeClaudeRun:

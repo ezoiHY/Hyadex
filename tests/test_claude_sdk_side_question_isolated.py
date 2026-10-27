@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from hyadex.providers.claude import (
+from hyadex.providers.claude.sdk import (
     ClaudeSDKConfigurationConflict,
     ClaudeSDKGenerationChanged,
     ClaudeSDKSupervisorManager,

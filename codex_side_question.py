@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import tempfile
 
-from hyadex.providers.codex import CodexAppServerClient, CodexAppServerError, decline_server_request
+from hyadex.providers.codex.app_server import CodexAppServerClient, CodexAppServerError, decline_server_request
 from side_questions import (
     MAX_OUTPUT_BYTES, SideQuestionError, isolated_environment, run_isolated_command,
 )
@@ -56,7 +56,7 @@ def isolated_config() -> dict:
 
 def side_chat_config(parent_config: dict | None = None) -> dict:
     """Keep native tools, without inheriting a main run's helper transport."""
-    from hyadex.providers.claude import CLAUDE_PROVIDER_MCP_SERVER_NAME
+    from hyadex.providers.claude.sdk import CLAUDE_PROVIDER_MCP_SERVER_NAME
 
     config = deepcopy(parent_config or {})
     name = CLAUDE_PROVIDER_MCP_SERVER_NAME
@@ -192,7 +192,7 @@ class NativeCodexSideChat:
         # Preserve Codex's auth/runtime location. Overriding sqlite_home while
         # retaining the user's history root can trigger a complete reindex.
         config.update({"log_dir": str(Path(temporary) / "log"), "history.persistence": "none"})
-        from hyadex.providers.codex import config_args
+        from hyadex.providers.codex.app_server import config_args
         args = config_args(config)
         self._client = CodexAppServerClient(
             self.executable, cwd=self.cwd or temporary, env_factory=lambda: self.env,

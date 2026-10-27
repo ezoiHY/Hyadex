@@ -101,7 +101,7 @@ import server_instances
 import local_session_ownership
 import provider_usage
 
-from hyadex.providers.codex import (
+from hyadex.providers.codex.app_server import (
     CodexAppServerDisconnected,
     CodexAppServerError,
     CodexAppServerManager,
@@ -111,7 +111,7 @@ from hyadex.providers.codex import (
     CodexAppServerTimeout,
     decline_server_request,
 )
-from hyadex.providers.claude import (
+from hyadex.providers.claude.sdk import (
     CLAUDE_NON_DURABLE_SCHEDULER_TOOLS,
     CLAUDE_PROVIDER_MCP_SERVER_NAME,
     CLAUDE_PROVIDER_MCP_TOOL_NAME,
@@ -48432,7 +48432,7 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
         async def ask(self, question, *, history):
             current = self.current()
             if backend == BACKEND_CLAUDE:
-                from hyadex.providers.claude import (ClaudeSDKGenerationChanged, ClaudeSDKConfigurationConflict,
+                from hyadex.providers.claude.sdk import (ClaudeSDKGenerationChanged, ClaudeSDKConfigurationConflict,
                     ClaudeSDKRunActive, ClaudeSDKSupervisorError)
                 try:
                     cwd = existing_cwd(str(current.get("cwd") or DEFAULT_CWD))
