@@ -126,5 +126,24 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             self.assertTrue((config.SERVER_ROOT / helper).is_file(), helper)
 
 
+    def test_body_parsing_is_detected_through_included_routers(self):
+        # Mutation admission waits for the body only on routes that parse
+        # one; routes of included routers (groups) must be recognised too.
+        from starlette.requests import Request
+
+        import agent_server
+        from hyadex.core.http import request_route_parses_body
+
+        def parses(method: str, path: str) -> bool:
+            return request_route_parses_body(Request({
+                "type": "http", "method": method, "path": path, "root_path": "",
+                "headers": [], "query_string": b"", "app": agent_server.app}))
+
+        self.assertTrue(parses("POST", "/api/groups"))
+        self.assertTrue(parses("POST", "/api/groups/g_1/messages"))
+        self.assertTrue(parses("POST", "/api/sessions/s/turns"))
+        self.assertFalse(parses("GET", "/api/health"))
+
+
 if __name__ == "__main__":
     unittest.main()

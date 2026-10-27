@@ -382,9 +382,24 @@ def release_unsafe_http_mutation(
 def request_route_parses_body(request: Request) -> bool:
     """Return whether FastAPI consumes the body before invoking the handler."""
 
-    for route in request.app.router.routes:
+    return _routes_parse_body(request.app.router.routes, request.scope)
+
+
+def _routes_parse_body(routes: Any, scope: Any) -> bool:
+    for route in routes:
+        # Included routers are matched through their own routes: the wrapper
+        # itself has no body field.
+        nested = getattr(getattr(route, "original_router", None), "routes", None)
+        if nested is not None:
+            try:
+                match, _child_scope = route.matches(scope)
+            except Exception:
+                continue
+            if match == Match.FULL:
+                return _routes_parse_body(nested, scope)
+            continue
         try:
-            match, _child_scope = route.matches(request.scope)
+            match, _child_scope = route.matches(scope)
         except Exception:
             continue
         if match == Match.FULL:
