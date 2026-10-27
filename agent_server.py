@@ -178,6 +178,21 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
 logger = logging.getLogger("hyadex-server")
 
 # --- Extracted modules ---
+from hyadex.api import terminal as terminal_routes
+from hyadex.api.terminal import (
+    capture_session_tmux_pane,
+    delete_session_terminal,
+    exit_terminal_auto_scroll,
+    get_session_terminal,
+    get_session_terminal_windows,
+    get_session_tmux_panes,
+    input_session_terminal,
+    open_session_terminal,
+    resize_session_terminal,
+    resize_terminal_pane,
+    run_session_terminal_action,
+    session_terminal,
+)
 from hyadex.api import admin as admin_routes
 from hyadex.api.admin import (
     get_codex_goals_admin_endpoint,
@@ -1937,21 +1952,6 @@ def deferred_force_send_response_for_client(
     )
 
 
-def resize_terminal_pane(session_id: str, columns: int, rows: int) -> dict[str, Any]:
-    with terminal_session_lock(session_id):
-        require_existing_terminal_session(session_id)
-        _cols, line_count = resize_terminal_window(session_id, columns, rows)
-        return terminal_snapshot(session_id, lines=line_count)
-
-
-def exit_terminal_auto_scroll(session_id: str) -> None:
-    if shutil.which("tmux") is None:
-        return
-    name = terminal_session_name(session_id)
-    if tmux_session_exists(name):
-        run_tmux(["send-keys", "-X", "-t", name, "cancel"], check=False)
-
-
 def file_response_media_type(meta: dict[str, Any]) -> str:
     filename = str(meta.get("filename") or Path(str(meta.get("path") or "")).name)
     return effective_content_type(filename, str(meta.get("content_type") or ""))
@@ -2273,51 +2273,6 @@ router.include_router(create_group_router(
     subprotocol=lambda ws: websocket_endpoint_subprotocol(ws, EVENTS_WEBSOCKET_PROTOCOL),
     send_timeout=WEBSOCKET_SEND_TIMEOUT_SECONDS,
 ))
-
-
-@router.get("/api/sessions/{session_id}/terminal")
-async def get_session_terminal(session_id: str, lines: int = 240) -> dict[str, Any]:
-    return await asyncio.to_thread(terminal_snapshot, session_id, lines=lines)
-
-
-@router.post("/api/sessions/{session_id}/terminal/open")
-async def open_session_terminal(session_id: str, req: TerminalOpenRequest) -> dict[str, Any]:
-    return await asyncio.to_thread(ensure_terminal_session, session_id, req.cwd)
-
-
-@router.post("/api/sessions/{session_id}/terminal/input")
-async def input_session_terminal(session_id: str, req: TerminalInputRequest) -> dict[str, Any]:
-    return await asyncio.to_thread(send_terminal_input, session_id, req.text, enter=req.enter, key=req.key)
-
-
-@router.post("/api/sessions/{session_id}/terminal/resize")
-async def resize_session_terminal(session_id: str, req: TerminalResizeRequest) -> dict[str, Any]:
-    return await asyncio.to_thread(resize_terminal_pane, session_id, req.columns, req.rows)
-
-
-@router.get("/api/sessions/{session_id}/terminal/windows")
-async def get_session_terminal_windows(session_id: str) -> dict[str, Any]:
-    return await asyncio.to_thread(terminal_windows_snapshot, session_id)
-
-
-@router.post("/api/sessions/{session_id}/terminal/action")
-async def run_session_terminal_action(session_id: str, req: TerminalActionRequest) -> dict[str, Any]:
-    return await asyncio.to_thread(terminal_action, session_id, req.action, req.target)
-
-
-@router.delete("/api/sessions/{session_id}/terminal")
-async def delete_session_terminal(session_id: str) -> dict[str, Any]:
-    return await asyncio.to_thread(kill_terminal_session, session_id)
-
-
-@router.get("/api/sessions/{session_id}/tmux")
-async def get_session_tmux_panes(session_id: str, include_all: bool = False) -> dict[str, Any]:
-    return await asyncio.to_thread(tmux_panes_snapshot, session_id, include_all=include_all)
-
-
-@router.get("/api/sessions/{session_id}/tmux/capture")
-async def capture_session_tmux_pane(session_id: str, pane_id: str, lines: int = 500) -> dict[str, Any]:
-    return await asyncio.to_thread(capture_tmux_pane, session_id, pane_id, lines=lines)
 
 
 @router.get("/api/sessions")
@@ -3457,140 +3412,6 @@ async def run_job(job_id: str) -> dict[str, Any]:
     return await JOBS.request_manual_run(job_id)
 
 
-@router.websocket("/api/sessions/{session_id}/terminal/ws")
-async def session_terminal(
-    session_id: str,
-    ws: WebSocket,
-    columns: int = 120,
-    rows: int = 36,
-    cwd: str | None = None,
-) -> None:
-    selected_subprotocol = websocket_endpoint_subprotocol(
-        ws,
-        TERMINAL_WEBSOCKET_PROTOCOL,
-    )
-    if not websocket_authorized(ws):
-        await ws.accept(subprotocol=selected_subprotocol)
-        await ws.close(code=4401)
-        return
-    if session_id not in STORE.sessions:
-        await ws.accept(subprotocol=selected_subprotocol)
-        await ws.close(code=4404)
-        return
-    if bool(STORE.sessions[session_id].get("archived")):
-        await ws.accept(subprotocol=selected_subprotocol)
-        await ws.close(code=4409)
-        return
-
-    cols, lines = terminal_dimensions(columns, rows)
-    reserved = await TERMINAL_ATTACHMENTS.reserve(session_id, ws)
-    if not reserved:
-        await ws.accept(subprotocol=selected_subprotocol)
-        await ws.close(code=1012)
-        return
-    process: subprocess.Popen[bytes] | None = None
-    master_fd: int | None = None
-    try:
-        await ws.accept(subprotocol=selected_subprotocol)
-        process, master_fd, name = await TERMINAL_ATTACHMENTS.spawn(
-            session_id,
-            ws,
-            cwd,
-            cols,
-            lines,
-        )
-        await ws.send_json({
-            "type": "ready",
-            "session_id": session_id,
-            "name": name,
-            "columns": cols,
-            "rows": lines,
-        })
-
-        async def pump_output() -> None:
-            assert master_fd is not None
-            while True:
-                try:
-                    data = await read_terminal_output(master_fd)
-                except OSError as exc:
-                    if exc.errno in {errno.EIO, errno.EBADF}:
-                        return
-                    raise
-                if not data:
-                    return
-                await ws.send_bytes(data)
-
-        async def receive_input() -> None:
-            assert master_fd is not None
-            auto_scroll_mode = False
-            try:
-                while True:
-                    message = await ws.receive()
-                    if message["type"] == "websocket.disconnect":
-                        return
-                    data = message.get("bytes")
-                    if data:
-                        if auto_scroll_mode:
-                            await asyncio.to_thread(exit_terminal_auto_scroll, session_id)
-                            auto_scroll_mode = False
-                        await write_terminal_input(master_fd, data)
-                        continue
-                    text = message.get("text")
-                    if not text:
-                        continue
-                    try:
-                        control = json.loads(text)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(control, dict):
-                        continue
-                    if control.get("type") == "resize":
-                        # Control frames are untrusted and may come from a
-                        # mixed-version or partially restored renderer. Match
-                        # scroll handling: discard malformed geometry without
-                        # turning it into a fatal WebSocket error.
-                        with suppress(TypeError, ValueError):
-                            next_cols, next_rows = terminal_dimensions(control.get("columns"), control.get("rows"))
-                            set_pty_dimensions(master_fd, next_cols, next_rows)
-                            await asyncio.to_thread(resize_terminal_window, session_id, next_cols, next_rows)
-                    elif control.get("type") == "scroll":
-                        with suppress(TypeError, ValueError):
-                            auto_scroll_mode = await asyncio.to_thread(
-                                scroll_terminal_history,
-                                session_id,
-                                int(control.get("delta") or 0),
-                                managed=auto_scroll_mode,
-                            )
-            finally:
-                if auto_scroll_mode:
-                    await asyncio.to_thread(exit_terminal_auto_scroll, session_id)
-
-        output_task = asyncio.create_task(pump_output())
-        input_task = asyncio.create_task(receive_input())
-        done, pending = await asyncio.wait(
-            {output_task, input_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
-        await asyncio.gather(*pending, return_exceptions=True)
-        for task in done:
-            with suppress(WebSocketDisconnect, RuntimeError, OSError):
-                task.result()
-    except (WebSocketDisconnect, TerminalAttachmentAdmissionClosed):
-        pass
-    except Exception as exc:
-        logger.warning("terminal websocket failed session=%s error=%s", session_id, exc)
-        with suppress(RuntimeError):
-            await ws.send_json({"type": "error", "message": str(exc)[:1000]})
-    finally:
-        if process is not None and master_fd is not None:
-            await asyncio.to_thread(stop_terminal_client, process, master_fd)
-        await TERMINAL_ATTACHMENTS.release(ws)
-        with suppress(RuntimeError):
-            await ws.close()
-
-
 @router.websocket("/api/sessions/{session_id}/events")
 async def session_events(
     session_id: str,
@@ -4235,6 +4056,7 @@ def main() -> int:
 
 
 # --- Route modules ---
+mount_routes(router, terminal_routes.router)
 mount_routes(router, admin_routes.router)
 mount_routes(router, health_routes.router)
 mount_routes(router, provider_mcp_routes.router)
@@ -4251,7 +4073,7 @@ app = create_app(ApplicationBindings(
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], sys.modules['hyadex.api.terminal'], )
 
 
 # Module globals that core code reaches through WIRING.
