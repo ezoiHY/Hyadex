@@ -38,7 +38,7 @@ from hyadex.core.wiring import WIRING
 from hyadex.features.terminal import _update_session
 from hyadex.features.usage import HUB
 from hyadex.providers.claude.runtime import ClaudeGoalRequest, TurnRequest
-from hyadex.providers.codex.runtime import CodexGoalRequest
+from hyadex.providers.codex.goals import CodexGoalRequest
 
 
 def new_job_revision() -> str:

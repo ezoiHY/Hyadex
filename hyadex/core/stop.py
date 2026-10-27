@@ -79,13 +79,12 @@ from hyadex.providers.claude.runtime import (
     queued_claude_runtime_matches_active,
     stop_cleanup_in_progress,
 )
-from hyadex.providers.codex.runtime import (
-    cancel_codex_interactions,
-    CODEX_NATIVE_ACTION_TASKS,
+from hyadex.providers.codex.runtime import queued_codex_runtime_matches_active
+from hyadex.providers.codex.interactions import cancel_codex_interactions
+from hyadex.providers.codex.managers import CODEX_NATIVE_ACTION_TASKS, release_codex_control_slot
+from hyadex.providers.codex.goals import (
     pause_active_codex_goal_for_stop,
     quarantine_codex_goal_thread,
-    queued_codex_runtime_matches_active,
-    release_codex_control_slot,
     settle_idle_codex_goal_for_stop,
 )
 from hyadex.providers.registry import normalize_steering_lineage, queued_turn_uses_retired_routing

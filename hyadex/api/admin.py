@@ -15,7 +15,7 @@ from hyadex.ops.lifecycle import (
     require_server_restart_control,
     ServerRestartRequest,
 )
-from hyadex.providers.codex.runtime import (
+from hyadex.providers.codex.goals import (
     CODEX_GOALS_ADMIN_MAX_BODY_BYTES,
     CodexGoalsAdminRequest,
     get_codex_goals_admin,

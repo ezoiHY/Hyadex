@@ -100,7 +100,7 @@ from hyadex.providers.claude.sdk import (
     ClaudeSDKSupervisorManager,
     ClaudeSDKUnavailable,
 )
-from hyadex.providers.codex.runtime import build_claude_sdk_options
+from hyadex.providers.codex.commands import build_claude_sdk_options
 from hyadex.providers.registry import (
     build_user_provider_prompt,
     issue_native_steer_provider_authority,

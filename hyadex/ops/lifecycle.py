@@ -102,11 +102,11 @@ from hyadex.providers.claude.runtime import (
 )
 from hyadex.providers.codex.runtime import (
     active_provider_background_work_labels,
-    close_codex_app_server_manager,
     provider_background_work_labels_from_snapshot,
-    recover_abandoned_codex_compactions_after_start,
-    SIDE_QUESTIONS,
 )
+from hyadex.providers.codex.commands import SIDE_QUESTIONS
+from hyadex.providers.codex.interactions import close_codex_app_server_manager
+from hyadex.providers.codex.threads import recover_abandoned_codex_compactions_after_start
 from hyadex.providers.registry import (
     kill_registered_provider_children,
     prepare_provider_background_work_snapshot,

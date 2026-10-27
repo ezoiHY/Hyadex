@@ -75,10 +75,10 @@ from hyadex.features.group_runtime import GROUPS
 from hyadex.features.usage import HUB, join_task_despite_caller_cancellation
 from hyadex.ops.lifecycle import AUTOPILOT, lifespan, uvicorn_graceful_shutdown_seconds
 from hyadex.providers.authority import request_exact_registered_provider_capability
-from hyadex.providers.codex.runtime import (
+from hyadex.providers.codex.commands import SIDE_QUESTIONS
+from hyadex.providers.codex.tools import (
     request_client_is_codex_provider_mcp_local,
     request_exact_codex_provider_mcp_secret,
-    SIDE_QUESTIONS,
 )
 from hyadex.providers.registry import request_client_is_provider_helper_local
 from hyadex.routes.autopilot import create_autopilot_router

@@ -31,12 +31,12 @@ from hyadex.providers.claude.runtime import (
     resolve_claude_interaction,
 )
 from hyadex.providers.claude.sdk import ClaudeSDKSupervisorError
-from hyadex.providers.codex.runtime import (
-    codex_runtime_snapshot,
-    CodexGoalRequest,
+from hyadex.providers.codex.runtime import codex_runtime_snapshot
+from hyadex.providers.codex.interactions import (
     CodexInteractionResponseRequest,
     resolve_codex_interaction,
 )
+from hyadex.providers.codex.goals import CodexGoalRequest
 
 router = APIRouter()
 

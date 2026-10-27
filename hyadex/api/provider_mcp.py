@@ -18,13 +18,13 @@ from hyadex.core.runs import RUNS
 from hyadex.core.sessions import STORE
 from hyadex.core.state import DELETED_SESSION_TOMBSTONES, DELETING_SESSIONS
 from hyadex.providers.authority import ProviderToolError
-from hyadex.providers.codex.runtime import (
+from hyadex.providers.codex.tools import (
     codex_provider_mcp_jsonrpc_error,
     codex_provider_mcp_run_proof,
     codex_provider_mcp_tool_definition,
     execute_provider_tool_once,
-    session_references_codex_thread,
 )
+from hyadex.providers.codex.threads import session_references_codex_thread
 from hyadex.providers.instructions import PROVIDER_TOOL_MAX_BODY_BYTES
 
 router = APIRouter()
