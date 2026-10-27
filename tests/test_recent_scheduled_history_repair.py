@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import claude_history_repair as repair
+from hyadex.providers.claude import history_repair as repair
 
 
 def encode(rows):

@@ -7,11 +7,13 @@ import re
 import tempfile
 import unittest
 from unittest import mock
-import codex_history_repair as repair
+from hyadex.providers.codex import history_repair as repair
 
-from codex_history_repair import (
-    CodexNativeHistoryRepairCache, CodexNativeHistoryProofUnavailable,
-    filter_native_codex_history_items, _native_assistant_text,
+from hyadex.providers.codex.history_repair import (
+    CodexNativeHistoryRepairCache,
+    CodexNativeHistoryProofUnavailable,
+    filter_native_codex_history_items,
+    _native_assistant_text,
 )
 from tests.test_codex_goal_history_isolated import load_projection
 from tests import server_source
@@ -214,12 +216,12 @@ class CodexNativeHistoryRepairTests(unittest.TestCase):
                          "run_id": "native-1", "type": "assistant_text", "text": f"unrelated body {index}"})
         self.events.write_text("".join(json.dumps(row) + "\n" for row in rows))
         items = [self.parse(row) for row in self.raw]
-        with mock.patch("codex_history_repair.MAX_KEYS", 12):
+        with mock.patch("hyadex.providers.codex.history_repair.MAX_KEYS", 12):
             result = filter_native_codex_history_items("chat", PROVIDER, self.events, items)
         self.assertEqual([item["text"] for item in result], ["", ""])
 
     def test_legacy_repair_capacity_failure_is_not_retried_on_unchanged_input(self):
-        with mock.patch("codex_history_repair.MAX_KEYS", 1), self.assertRaises(CodexNativeHistoryProofUnavailable) as error:
+        with mock.patch("hyadex.providers.codex.history_repair.MAX_KEYS", 1), self.assertRaises(CodexNativeHistoryProofUnavailable) as error:
             self.prepare()
         self.assertTrue(getattr(error.exception, "deterministic", False))
 
@@ -845,7 +847,7 @@ class CodexNativeHistoryRepairTests(unittest.TestCase):
         self.assertEqual(len(self.cache.signature("chat")), 4)
 
     def test_relevant_key_budget_exhaustion_defers_instead_of_importing_raw_text(self):
-        with mock.patch("codex_history_repair.MAX_KEYS", 1):
+        with mock.patch("hyadex.providers.codex.history_repair.MAX_KEYS", 1):
             with self.assertRaises(CodexNativeHistoryProofUnavailable):
                 filter_native_codex_history_items("chat", PROVIDER, self.events, [self.parse(self.raw[0])])
             with self.assertRaises(CodexNativeHistoryProofUnavailable):
@@ -868,7 +870,7 @@ class CodexNativeHistoryRepairTests(unittest.TestCase):
         self.assertEqual(checks, 5)
         self.assertFalse(self.cache.is_prepared("chat", PROVIDER))
         self.prepare()
-        with mock.patch("codex_history_repair._native_records", side_effect=AssertionError("hot-path read")):
+        with mock.patch("hyadex.providers.codex.history_repair._native_records", side_effect=AssertionError("hot-path read")):
             self.prepare()
             self.assertEqual(self.cache.project_event("chat", self.imports[0])["prompt"], "")
             self.assertIsNone(self.cache.project_event("chat", self.native[0]))

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 
-from codex_history_repair import CodexNativeHistoryProofUnavailable
+from hyadex.providers.codex.history_repair import CodexNativeHistoryProofUnavailable
 from tests.test_codex_goal_history_isolated import load_projection
 
 

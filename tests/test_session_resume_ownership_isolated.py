@@ -8,7 +8,7 @@ import unittest
 
 from fastapi import HTTPException
 
-import local_session_ownership
+from hyadex.ops import session_ownership as local_session_ownership
 from tests.session_store_fixture import make_namespace
 
 

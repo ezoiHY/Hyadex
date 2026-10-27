@@ -2,7 +2,10 @@
 from copy import deepcopy
 import unittest
 
-from claude_history_provenance import ClaudeInterruptionTracker, normalize_claude_interruption_context
+from hyadex.providers.claude.history_provenance import (
+    ClaudeInterruptionTracker,
+    normalize_claude_interruption_context,
+)
 
 
 SESSION = "89b7a49a-4d4b-4f25-85c0-7ad297b0ea6b"

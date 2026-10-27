@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-import title_generation as titles
+from hyadex.features import title_generation as titles
 
 
 def schema():

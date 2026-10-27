@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock
 
 from tests.test_codex_goal_history_isolated import load_projection, source_user
 from tests import test_codex_native_history_repair as native_fixture
-from codex_history_repair import CodexNativeHistoryProofUnavailable
+from hyadex.providers.codex.history_repair import CodexNativeHistoryProofUnavailable
 
 
 KIND = "multi_agent.subagent_notification"

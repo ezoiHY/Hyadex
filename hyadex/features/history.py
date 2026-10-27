@@ -23,7 +23,7 @@ import uuid
 
 from fastapi import HTTPException
 
-from claude_history_provenance import (
+from hyadex.providers.claude.history_provenance import (
     ClaudeInterruptionTracker,
     normalize_claude_interruption_context,
 )
@@ -95,8 +95,8 @@ from hyadex.providers.codex.history import (
     codex_transcript_meta,
     find_codex_history,
 )
-from hyadex.store.transcripts import scan_check, SCAN_SECONDS
-import local_session_ownership
+from hyadex.core.transcripts import scan_check, SCAN_SECONDS
+from hyadex.ops import session_ownership as local_session_ownership
 
 logger = logging.getLogger("hyadex-server")
 

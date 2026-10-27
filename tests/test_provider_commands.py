@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import provider_commands
-from provider_commands import (
+from hyadex.providers import commands as provider_commands
+from hyadex.providers.commands import (
     MAX_PROVIDER_COMMANDS,
     canonical_provider_command_name,
     claude_provider_command_inventory,

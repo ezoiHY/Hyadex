@@ -25,7 +25,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-import codex_auth
+from hyadex.providers.codex import auth as codex_auth
 from hyadex.core.config import (
     BACKEND_CLAUDE,
     BACKEND_CODEX,
@@ -369,7 +369,7 @@ from hyadex.providers.codex.subagents import (
     record_codex_subagent_limit_application,
 )
 from hyadex.providers.claude.subagents import normalize_subagent_status
-from provider_commands import (
+from hyadex.providers.commands import (
     claude_provider_command_inventory,
     codex_provider_command_inventory,
     empty_provider_command_inventory,
@@ -377,7 +377,7 @@ from provider_commands import (
     ProviderCommandInventory,
     ProviderCommandRecord,
 )
-import side_questions
+from hyadex.features import side_question_service as side_questions
 
 logger = logging.getLogger("hyadex-server")
 

@@ -19,7 +19,7 @@ import uuid
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
-from claude_background_reconciliation import (
+from hyadex.providers.claude.background_reconciliation import (
     pending_task_reconciliations,
     reconciliation_envelope,
     SESSION_FIELD as CLAUDE_BACKGROUND_SESSION_FIELD,
@@ -194,7 +194,7 @@ from hyadex.features.history import history_file_stamp
 from hyadex.features.side_questions import codex_app_server_service_tier, CODEX_GOALS_RECONFIGURING
 from hyadex.features.terminal import scrub_tmux_global_secret_environment
 from hyadex.features.usage import HUB, join_task_despite_caller_cancellation
-from hyadex.jobs.context import VALID_JOB_CONTEXT_MODES
+from hyadex.features.job_context import VALID_JOB_CONTEXT_MODES
 from hyadex.providers.authority import (
     agent_runner_env,
     issue_provider_authority,
@@ -364,7 +364,7 @@ from hyadex.providers.runtime import (
     ProviderTurnPayload,
     validate_provider_runtime_env,
 )
-from provider_commands import ProviderCommandRecord
+from hyadex.providers.commands import ProviderCommandRecord
 
 logger = logging.getLogger("hyadex-server")
 

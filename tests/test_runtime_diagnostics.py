@@ -865,7 +865,7 @@ class NativeModelDiscoveryIntegrationTests(unittest.TestCase):
         with patch.object(agent_server, "runner_env", return_value={"SAFE": "1"}), patch.object(
             agent_server, "RUNTIME_CATALOG_TIMEOUT_SECONDS", 2.0,
         ), patch(
-            "claude_model_catalog.cached_native_models",
+            "hyadex.providers.claude.model_catalog.cached_native_models",
             return_value=[{"value": "opus", "label": "Opus 5.5"}],
         ) as probe:
             models, status = agent_server.discover_claude_native_models()
@@ -876,7 +876,7 @@ class NativeModelDiscoveryIntegrationTests(unittest.TestCase):
     def test_native_probe_failure_does_not_leak_or_poison_readiness(self):
         ready = {"status": "ready"}
         with patch.dict(agent_server.RUNTIME_DIAGNOSTICS, {"claude": ready}, clear=True), patch(
-            "claude_model_catalog.cached_native_models", side_effect=RuntimeError("private@example.com secret"),
+            "hyadex.providers.claude.model_catalog.cached_native_models", side_effect=RuntimeError("private@example.com secret"),
         ), self.assertLogs(agent_server.logger, level="DEBUG") as logs:
             self.assertEqual(agent_server.discover_claude_native_models(), ([], "unavailable"))
             self.assertEqual(agent_server.RUNTIME_DIAGNOSTICS["claude"], ready)

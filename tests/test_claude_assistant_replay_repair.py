@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-import claude_history_repair as repair
+from hyadex.providers.claude import history_repair as repair
 from tests.test_claude_history_provenance_isolated import load_projection
 from tests.test_recent_scheduled_history_repair import encode
 

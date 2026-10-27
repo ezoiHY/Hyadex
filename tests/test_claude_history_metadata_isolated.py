@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import unittest
 from unittest.mock import Mock
-from claude_history_provenance import ClaudeInterruptionTracker
+from hyadex.providers.claude.history_provenance import ClaudeInterruptionTracker
 from tests import server_source
 
 

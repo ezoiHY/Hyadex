@@ -8,7 +8,7 @@ import logging.handlers
 import re
 from typing import Any
 
-from claude_background_reconciliation import normalize_task_receipts
+from hyadex.providers.claude.background_reconciliation import normalize_task_receipts
 from hyadex.core.config import (
     BACKEND_CLAUDE,
     STOP_CONFIRM_TIMEOUT_SECONDS,

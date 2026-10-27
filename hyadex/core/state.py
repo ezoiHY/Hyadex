@@ -10,7 +10,7 @@ from typing import Any, Literal
 import weakref
 
 from hyadex.core.config import hyadex_setting
-from hyadex.events import EventBus
+from hyadex.core.event_bus import EventBus
 
 EVENT_SEQ_CACHE: dict[str, int] = {}
 EVENT_SEQ_LOCK = asyncio.Lock()

@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import httpx
 from fastapi import FastAPI, HTTPException
 
-import side_questions as side
+from hyadex.features import side_question_service as side
 
 
 class SyncTests(unittest.IsolatedAsyncioTestCase):

@@ -39,7 +39,7 @@ from hyadex.core.paths import (
     uploads_dir,
 )
 from hyadex.providers.runtime import scrub_provider_runtime_environment
-from hyadex.store.transcripts import jsonl_records
+from hyadex.core.transcripts import jsonl_records
 
 
 def server_identity() -> str:

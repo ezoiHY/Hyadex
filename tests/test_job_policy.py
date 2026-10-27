@@ -2,7 +2,7 @@
 import unittest
 
 from fastapi import HTTPException
-from hyadex.jobs.context import resolve_job_context_contract
+from hyadex.features.job_context import resolve_job_context_contract
 
 
 class JobContextPolicyTests(unittest.TestCase):

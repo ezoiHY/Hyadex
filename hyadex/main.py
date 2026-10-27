@@ -29,7 +29,7 @@ from hyadex.api import (
     turns as turns_routes,
 )
 from hyadex.api.common import require_native_admin_control
-from hyadex.app import ApplicationBindings, create_app
+from hyadex.api.app import ApplicationBindings, create_app
 from hyadex.core.config import (
     AGENT_TOKEN,
     EVENTS_WEBSOCKET_PROTOCOL,
@@ -81,10 +81,10 @@ from hyadex.providers.codex.tools import (
     request_exact_codex_provider_mcp_secret,
 )
 from hyadex.providers.registry import request_client_is_provider_helper_local
-from hyadex.routes.autopilot import create_autopilot_router
-from hyadex.routes.groups import create_group_router
+from hyadex.api.autopilot import create_autopilot_router
+from hyadex.api.groups import create_group_router
 import server_instances
-import side_questions
+from hyadex.features import side_question_service as side_questions
 
 
 # Provider runners register themselves with the turn engine on import.

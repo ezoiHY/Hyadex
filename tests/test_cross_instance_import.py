@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import agent_server
 import httpx
-import local_session_ownership as instances
+from hyadex.ops import session_ownership as instances
 from tests.native_transcripts import write_claude_transcript, write_codex_transcript
 
 

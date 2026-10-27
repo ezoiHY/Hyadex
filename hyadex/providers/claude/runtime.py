@@ -25,14 +25,14 @@ import uuid
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from claude_background_reconciliation import (
+from hyadex.providers.claude.background_reconciliation import (
     CONSUMED_EVENT as CLAUDE_BACKGROUND_CONSUMED_EVENT,
     normalize_task_receipts,
     pending_reconciliation_state,
     RECONCILED_EVENT as CLAUDE_BACKGROUND_RECONCILED_EVENT,
     SESSION_FIELD as CLAUDE_BACKGROUND_SESSION_FIELD,
 )
-from claude_goals import ClaudeGoalProjection
+from hyadex.providers.claude.native_goals import ClaudeGoalProjection
 from hyadex.core.config import (
     BACKEND_CLAUDE,
     CLAUDE_BIN,
@@ -154,7 +154,7 @@ from hyadex.providers.claude.subagents import (
     CLAUDE_STOP_FENCE_ATTEMPT_LOCKS,
     CLAUDE_STOP_FENCE_ATTEMPT_TASKS,
 )
-import provider_usage
+from hyadex.providers import usage as provider_usage
 
 logger = logging.getLogger("hyadex-server")
 

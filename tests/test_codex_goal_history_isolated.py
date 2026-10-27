@@ -18,7 +18,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 import uuid
-from codex_history_repair import codex_public_item_origin, filter_native_codex_history_items
+from hyadex.providers.codex.history_repair import (
+    codex_public_item_origin,
+    filter_native_codex_history_items,
+)
 from tests import server_source
 
 

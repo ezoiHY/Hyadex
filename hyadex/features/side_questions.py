@@ -5,7 +5,7 @@ from typing import Any
 
 from hyadex.core.server import SERVER
 from hyadex.core.lifecycle_admission import server_lifecycle_admission_blocker
-import side_questions
+from hyadex.features import side_question_service as side_questions
 
 CODEX_GOALS_RECONFIGURING = False
 

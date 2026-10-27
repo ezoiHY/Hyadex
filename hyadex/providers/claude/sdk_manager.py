@@ -499,7 +499,7 @@ class ClaudeSDKSupervisorManager:
         separate control request and cancellation; side failures never stop,
         disconnect, or retire the parent's supervisor.
         """
-        from claude_side_question import ask_native_side_question
+        from hyadex.providers.claude.side_question import ask_native_side_question
 
         clean_chat_id = str(chat_id or "").strip()
         supervisor = await self._pin_mcp_supervisor(

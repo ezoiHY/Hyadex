@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import AsyncMock
 import uuid
 
-import claude_background_reconciliation as receipts
+from hyadex.providers.claude import background_reconciliation as receipts
 from tests import server_source
 
 

@@ -7,7 +7,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-import claude_model_catalog as catalog
+from hyadex.providers.claude import model_catalog as catalog
 
 class NativeModelLabelTests(unittest.TestCase):
     def parse(self, *models):

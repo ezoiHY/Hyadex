@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
-from hyadex.app import ApplicationBindings, create_app
+from hyadex.api.app import ApplicationBindings, create_app
 import agent_server
 import server_instances
 from tests.runtime_state import patch_server_multiple

@@ -19,7 +19,7 @@ import re
 import uuid
 from typing import Any
 
-from side_questions import (
+from hyadex.features.side_question_service import (
     MAX_OUTPUT_BYTES,
     MAX_QUESTION_CHARS,
     SideQuestionError,

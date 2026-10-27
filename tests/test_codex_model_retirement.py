@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import agent_server
-import codex_auth
+from hyadex.providers.codex import auth as codex_auth
 
 
 class CodexModelRetirementTests(unittest.IsolatedAsyncioTestCase):

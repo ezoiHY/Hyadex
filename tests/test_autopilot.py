@@ -15,12 +15,12 @@ from typing import Any
 from unittest.mock import patch
 
 from fastapi import APIRouter, HTTPException
-from hyadex.app import ApplicationBindings, create_app
+from hyadex.api.app import ApplicationBindings, create_app
 from fastapi.testclient import TestClient
 
-from hyadex import autopilot
-from hyadex.routes.autopilot import create_autopilot_router
-from hyadex.autopilot import (
+from hyadex.features import autopilot
+from hyadex.api.autopilot import create_autopilot_router
+from hyadex.features.autopilot import (
     ApproveRequest,
     AutopilotEngine,
     CreateRunRequest,
@@ -30,8 +30,8 @@ from hyadex.autopilot import (
     parse_plan,
     parse_verdict,
 )
-from hyadex.groups import GroupEngine
-from hyadex.routes.groups import create_group_router
+from hyadex.features.group_engine import GroupEngine
+from hyadex.api.groups import create_group_router
 from tests.test_group_chat import FakeRuntime
 
 

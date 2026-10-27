@@ -12,8 +12,8 @@ import re
 from typing import Any, Iterator
 import unicodedata
 
-from claude_history_provenance import normalize_claude_interruption_context
-from claude_history_repair import ClaudeMetadataRepairCache
+from hyadex.providers.claude.history_provenance import normalize_claude_interruption_context
+from hyadex.providers.claude.history_repair import ClaudeMetadataRepairCache
 from hyadex.core.config import (
     BACKEND_CLAUDE,
     BACKEND_CODEX,
@@ -27,7 +27,7 @@ from hyadex.core.config import (
     MAX_WORKSPACE_PATH_CHARS,
 )
 from hyadex.core.util import contained_jsonl_path
-from hyadex.store.transcripts import jsonl_records
+from hyadex.core.transcripts import jsonl_records
 
 logger = logging.getLogger("hyadex-server")
 

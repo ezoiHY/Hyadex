@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock
 import uuid
 
-from codex_history_repair import CodexNativeHistoryProofUnavailable
+from hyadex.providers.codex.history_repair import CodexNativeHistoryProofUnavailable
 from tests import server_source
 
 

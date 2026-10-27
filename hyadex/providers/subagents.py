@@ -15,7 +15,7 @@ import weakref
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from claude_background_reconciliation import normalize_task_receipts
+from hyadex.providers.claude.background_reconciliation import normalize_task_receipts
 from hyadex.core.config import (
     BACKEND_CLAUDE,
     BACKEND_CODEX,
@@ -62,7 +62,7 @@ from hyadex.providers.codex.config import (
 )
 from hyadex.providers.codex.history import codex_runtime_user_item_kind
 from hyadex.providers.state import PROVIDERS
-from hyadex.store.files import atomic_json
+from hyadex.core.file_store import atomic_json
 
 logger = logging.getLogger("hyadex-server")
 

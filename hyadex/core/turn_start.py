@@ -80,7 +80,7 @@ from hyadex.features.files import (
 from hyadex.features.side_questions import CODEX_GOALS_RECONFIGURING
 from hyadex.features.terminal import scrub_tmux_global_secret_environment
 from hyadex.features.usage import join_task_despite_caller_cancellation
-from hyadex.jobs.context import VALID_JOB_CONTEXT_MODES
+from hyadex.features.job_context import VALID_JOB_CONTEXT_MODES
 from hyadex.providers.authority import issue_provider_authority, provider_authority_runtime_env
 from hyadex.providers.claude.runtime import stop_cleanup_in_progress, TurnRequest
 from hyadex.providers.codex.commands import (

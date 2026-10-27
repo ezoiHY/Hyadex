@@ -83,12 +83,12 @@ from hyadex.features.job_history import read_scheduled_job_runs
 from hyadex.features.side_questions import CODEX_GOALS_RECONFIGURING
 from hyadex.features.terminal import terminal_windows_snapshot
 from hyadex.features.usage import join_task_despite_caller_cancellation
-from hyadex.jobs.context import (
+from hyadex.features.job_context import (
     job_context_mode,
     resolve_job_context_contract,
     VALID_JOB_CONTEXT_MODES,
 )
-from hyadex.jobs.schedules import (
+from hyadex.features.job_schedules import (
     job_schedule_kind,
     next_job_occurrence,
     normalize_cron_expression,
@@ -103,7 +103,7 @@ from hyadex.providers.claude.runtime import stop_cleanup_in_progress, TurnReques
 from hyadex.providers.codex.runtime import turn_start_blocker
 from hyadex.providers.instructions import MAX_JOB_PROMPT_CHARS
 from hyadex.providers.registry import authorize_provider_action
-from hyadex.store.files import atomic_json
+from hyadex.core.file_store import atomic_json
 
 logger = logging.getLogger("hyadex-server")
 

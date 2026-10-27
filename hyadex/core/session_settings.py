@@ -12,7 +12,7 @@ from typing import Any, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-import codex_auth
+from hyadex.providers.codex import auth as codex_auth
 from hyadex.core.config import (
     BACKEND_CLAUDE,
     BACKEND_CODEX,

@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-import codex_side_question as adapter
+from hyadex.providers.codex import side_question as adapter
 from hyadex.providers.claude.sdk import CLAUDE_PROVIDER_MCP_SERVER_NAME
-from side_questions import SideQuestionError
+from hyadex.features.side_question_service import SideQuestionError
 
 
 def protocol_schema():

@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 from datetime import datetime
 import io
 import os
-from hyadex.store.transcripts import jsonl_records
+from hyadex.core.transcripts import jsonl_records
 import hashlib
 import hmac
 import json
@@ -21,9 +21,15 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 import uuid
-from claude_history_provenance import ClaudeInterruptionTracker, normalize_claude_interruption_context
-from claude_history_repair import filter_native_claude_mailbox_wake_items
-from codex_history_repair import CodexNativeHistoryRepairCache, filter_native_codex_history_items
+from hyadex.providers.claude.history_provenance import (
+    ClaudeInterruptionTracker,
+    normalize_claude_interruption_context,
+)
+from hyadex.providers.claude.history_repair import filter_native_claude_mailbox_wake_items
+from hyadex.providers.codex.history_repair import (
+    CodexNativeHistoryRepairCache,
+    filter_native_codex_history_items,
+)
 from tests import server_source
 
 

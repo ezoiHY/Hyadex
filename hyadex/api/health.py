@@ -69,9 +69,9 @@ from hyadex.providers.codex.commands import (
 )
 from hyadex.providers.registry import discover_runtime_catalog, runtime_diagnostics_snapshot
 from hyadex.providers.state import PROVIDERS
-from provider_commands import MAX_PROVIDER_COMMANDS
-import provider_usage
-import side_questions
+from hyadex.providers.commands import MAX_PROVIDER_COMMANDS
+from hyadex.providers import usage as provider_usage
+from hyadex.features import side_question_service as side_questions
 
 router = APIRouter()
 

@@ -680,7 +680,7 @@ class CodexAppServerClientTests(unittest.IsolatedAsyncioTestCase):
                     client._delete_late_fork_child.assert_awaited_once()
 
     async def test_side_chat_stop_closes_transport_with_lost_open_response(self) -> None:
-        import codex_side_question as side
+        from hyadex.providers.codex import side_question as side
 
         for stalled_method in ("initialize", "thread/fork"):
             with self.subTest(stalled_method=stalled_method):
@@ -722,7 +722,7 @@ class CodexAppServerClientTests(unittest.IsolatedAsyncioTestCase):
                     cleanup.assert_not_awaited()
 
     async def test_side_chat_stop_during_spawn_reaps_late_process_handle(self) -> None:
-        import codex_side_question as side
+        from hyadex.providers.codex import side_question as side
 
         factory = FakeProcessFactory()
         entered, release = asyncio.Event(), asyncio.Event()

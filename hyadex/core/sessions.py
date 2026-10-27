@@ -25,7 +25,7 @@ import uuid
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-import codex_auth
+from hyadex.providers.codex import auth as codex_auth
 from hyadex.core.config import (
     ABANDONED_FORK_THREADS_FILE,
     BACKEND_CLAUDE,
@@ -192,9 +192,9 @@ from hyadex.providers.instructions import (
 )
 from hyadex.providers.runtime import scrub_provider_runtime_environment
 from hyadex.providers.state import PROVIDERS
-from hyadex.store.files import atomic_json
-from hyadex.store.transcripts import jsonl_records
-import title_generation
+from hyadex.core.file_store import atomic_json
+from hyadex.core.transcripts import jsonl_records
+from hyadex.features import title_generation
 
 try:
     import tomllib

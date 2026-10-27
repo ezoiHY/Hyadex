@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-import claude_side_question as side
+from hyadex.providers.claude import side_question as side
 
 
 class NativeClient:

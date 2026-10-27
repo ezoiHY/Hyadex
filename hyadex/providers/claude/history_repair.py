@@ -22,12 +22,15 @@ import threading
 from types import MappingProxyType
 from typing import Callable
 
-from claude_history_provenance import ClaudeInterruptionTracker
-from claude_goals import ClaudeGoalHistoryNormalizer, is_claude_synthetic_no_response
+from hyadex.providers.claude.history_provenance import ClaudeInterruptionTracker
+from hyadex.providers.claude.native_goals import (
+    ClaudeGoalHistoryNormalizer,
+    is_claude_synthetic_no_response,
+)
 from hyadex.providers.claude.sdk import CLAUDE_SDK_LITERAL_MESSAGE_PREFIX
 
 
-from hyadex.store.transcripts import jsonl_records, scan_check, CHUNK_BYTES, SCAN_SECONDS
+from hyadex.core.transcripts import jsonl_records, scan_check, CHUNK_BYTES, SCAN_SECONDS
 
 MAX_BYTES = 96 * 1024 * 1024
 MAX_EVENTS_BYTES = 32 * 1024 * 1024

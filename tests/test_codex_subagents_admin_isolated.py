@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, ValidationError
 
 from tests.test_codex_subagent_config_isolated import code as config_code
-from hyadex.store.files import atomic_json
+from hyadex.core.file_store import atomic_json
 from tests import server_source
 
 

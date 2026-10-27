@@ -9,8 +9,8 @@ import unicodedata
 
 
 from hyadex.providers.codex.app_server import CodexAppServerClient
-from codex_side_question import isolated_config
-from side_questions import isolated_environment, run_isolated_command
+from hyadex.providers.codex.side_question import isolated_config
+from hyadex.features.side_question_service import isolated_environment, run_isolated_command
 
 
 TIMEOUT_SECONDS = 45

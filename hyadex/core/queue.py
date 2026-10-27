@@ -19,15 +19,15 @@ import uuid
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from claude_history_provenance import (
+from hyadex.providers.claude.history_provenance import (
     ClaudeInterruptionTracker,
     normalize_claude_interruption_context,
 )
-from claude_history_repair import (
+from hyadex.providers.claude.history_repair import (
     enrich_interruption_origins,
     filter_native_claude_mailbox_wake_items,
 )
-from codex_history_repair import (
+from hyadex.providers.codex.history_repair import (
     codex_public_item_origin,
     CodexNativeHistoryProofUnavailable,
     filter_native_codex_history_items,
@@ -148,7 +148,7 @@ from hyadex.features.history import (
     unsynced_history_items,
 )
 from hyadex.features.usage import HUB, join_task_despite_caller_cancellation
-from hyadex.jobs.schedules import parse_job_timestamp
+from hyadex.features.job_schedules import parse_job_timestamp
 from hyadex.providers.authority import (
     NativeSteerHandoffError,
     strip_all_legacy_hyadex_provider_authority_suffixes,
@@ -200,7 +200,7 @@ from hyadex.providers.claude.subagents import (
     discard_unused_claude_stop_fence_attempt_lock,
     evict_claude_sdk_chat,
 )
-from hyadex.store.transcripts import jsonl_records
+from hyadex.core.transcripts import jsonl_records
 
 logger = logging.getLogger("hyadex-server")
 

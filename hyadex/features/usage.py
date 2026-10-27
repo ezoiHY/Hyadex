@@ -23,7 +23,7 @@ from hyadex.core.config import (
 )
 from hyadex.core.server_logging import concise_error_message
 from hyadex.providers.claude.history import session_provider_id
-import provider_usage
+from hyadex.providers import usage as provider_usage
 
 logger = logging.getLogger("hyadex-server")
 

@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from claude_goals import ClaudeGoalProjection
+from hyadex.providers.claude.native_goals import ClaudeGoalProjection
 from hyadex.core.config import (
     BACKEND_CLAUDE,
     CLAUDE_TRANSPORT,

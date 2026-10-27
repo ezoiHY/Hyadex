@@ -44,7 +44,7 @@ from hyadex.providers.runtime import (
     is_scrubbed_provider_runtime_env_name,
     PROVIDER_SECRET_ENV_NAMES,
 )
-import provider_usage
+from hyadex.providers import usage as provider_usage
 
 logger = logging.getLogger("hyadex-server")
 
@@ -443,7 +443,7 @@ def claude_fallback_model_options() -> list[dict[str, Any]]:
 
 
 def discover_claude_native_models() -> tuple[list[dict[str, Any]], str]:
-    from claude_model_catalog import cached_native_models
+    from hyadex.providers.claude.model_catalog import cached_native_models
 
     try:
         models = cached_native_models(CLAUDE_BIN, env=runner_env())

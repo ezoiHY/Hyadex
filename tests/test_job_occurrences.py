@@ -4,7 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from hyadex.jobs import schedules
+from hyadex.features import job_schedules as schedules
 
 
 def timestamp(value: str, timezone_name: str = "UTC") -> float:

@@ -12,7 +12,7 @@ import unicodedata
 from hyadex.core.config import EMERGENCY_MESSAGE_MAX_CHARS
 from hyadex.core.paths import events_path
 from hyadex.core.state import NOTIFICATION_EVENT_FIELDS
-from hyadex.store.transcripts import jsonl_records
+from hyadex.core.transcripts import jsonl_records
 
 
 def clean_emergency_message(value: Any) -> str:

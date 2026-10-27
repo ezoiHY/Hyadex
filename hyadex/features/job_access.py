@@ -9,8 +9,8 @@ from fastapi import HTTPException, Request
 
 from hyadex.core.session_settings import effective_provider_jobs_access
 from hyadex.core.sessions import STORE
-from hyadex.jobs.context import job_context_mode
-from hyadex.jobs.schedules import job_schedule_kind
+from hyadex.features.job_context import job_context_mode
+from hyadex.features.job_schedules import job_schedule_kind
 from hyadex.providers.registry import authorize_provider_action
 
 

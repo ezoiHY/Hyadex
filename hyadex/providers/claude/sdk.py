@@ -481,7 +481,10 @@ def default_claude_sdk_client_factory(options: Any) -> ClaudeSDKClientProtocol:
         ) from exc
     class GoalAwareClaudeSDKClient(ClaudeSDKClient):
         async def connect(self, prompt=None) -> None:
-            from claude_model_catalog import native_catalog_key, remember_native_models
+            from hyadex.providers.claude.model_catalog import (
+                native_catalog_key,
+                remember_native_models,
+            )
 
             # Read metadata already produced by this real connection. Never
             # open a second connection merely to populate a model picker.
@@ -1779,7 +1782,7 @@ class ClaudeSDKSupervisor:
     ) -> None:
         error: BaseException | None = None
         try:
-            from claude_side_question import is_native_side_question_progress
+            from hyadex.providers.claude.side_question import is_native_side_question_progress
 
             async for message in client.receive_messages():
                 # Native side-control lifecycle packets are not main-turn

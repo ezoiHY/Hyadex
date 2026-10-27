@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import provider_usage
+from hyadex.providers import usage as provider_usage
 from tests import test_codex_subagents_admin_isolated as admin_fixture
 from tests.test_provider_usage import FakeManager
 from tests import server_source

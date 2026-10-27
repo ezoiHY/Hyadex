@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 import agent_server
-from provider_commands import ProviderCommandRecord, codex_provider_command_inventory
+from hyadex.providers.commands import ProviderCommandRecord, codex_provider_command_inventory
 
 
 class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):

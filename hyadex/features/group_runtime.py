@@ -9,7 +9,7 @@ import uuid
 
 from fastapi import HTTPException
 
-from hyadex import groups as group_chat
+from hyadex.features import group_engine as group_chat
 from hyadex.core.config import (
     BACKEND_CLAUDE,
     BACKEND_CODEX,

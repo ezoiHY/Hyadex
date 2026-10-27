@@ -5,9 +5,17 @@ import asyncio
 from contextlib import suppress
 from typing import Any, Awaitable, Callable
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
-from hyadex.groups import (
-    GROUP_ID_RE, MAX_EVENTS_PAGE, CreateGroupRequest, GroupEngine, GroupError,
-    GroupGoalRequest, ParticipantSpec, PostGroupMessageRequest, UpdateGroupRequest, hub_key,
+from hyadex.features.group_engine import (
+    GROUP_ID_RE,
+    MAX_EVENTS_PAGE,
+    CreateGroupRequest,
+    GroupEngine,
+    GroupError,
+    GroupGoalRequest,
+    ParticipantSpec,
+    PostGroupMessageRequest,
+    UpdateGroupRequest,
+    hub_key,
 )
 
 def create_group_router(

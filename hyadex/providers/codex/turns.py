@@ -208,7 +208,7 @@ from hyadex.providers.codex.subagents import (
     schedule_codex_subagent_finalization,
 )
 from hyadex.providers.claude.subagents import normalize_subagent_status
-from provider_commands import ProviderCommandRecord
+from hyadex.providers.commands import ProviderCommandRecord
 
 logger = logging.getLogger("hyadex-server")
 

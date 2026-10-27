@@ -7,8 +7,8 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 import agent_server as server
-import claude_history_repair as claude
-import codex_history_repair as codex
+from hyadex.providers.claude import history_repair as claude
+from hyadex.providers.codex import history_repair as codex
 
 
 MIB = 1024 * 1024

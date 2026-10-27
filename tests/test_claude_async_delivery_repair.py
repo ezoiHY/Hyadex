@@ -3,7 +3,7 @@ import hashlib
 import unittest
 from unittest.mock import patch
 
-import claude_history_repair as repair
+from hyadex.providers.claude import history_repair as repair
 from tests import test_claude_assistant_replay_repair as fixtures
 from tests.test_recent_scheduled_history_repair import encode
 

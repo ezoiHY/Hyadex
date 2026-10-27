@@ -11,12 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from hyadex.app import ApplicationBindings, create_app
+from hyadex.api.app import ApplicationBindings, create_app
 from fastapi.testclient import TestClient
 
-from hyadex import groups as group_chat
-from hyadex.routes.groups import create_group_router
-from hyadex.groups import (
+from hyadex.features import group_engine as group_chat
+from hyadex.api.groups import create_group_router
+from hyadex.features.group_engine import (
     CreateGroupRequest,
     GroupEngine,
     GroupGoalRequest,

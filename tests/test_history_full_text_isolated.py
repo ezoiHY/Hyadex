@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import Mock
 
-from claude_history_repair import _text_key
+from hyadex.providers.claude.history_repair import _text_key
 
 from tests.test_claude_history_metadata_isolated import load_projection as claude_projection, user_event
 from tests.test_codex_history_metadata_isolated import projection as codex_projection, assistant

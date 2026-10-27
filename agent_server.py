@@ -26,7 +26,7 @@ import importlib.util
 import inspect
 import io
 import json
-from hyadex.store.transcripts import jsonl_records, scan_check, SCAN_SECONDS
+from hyadex.core.transcripts import jsonl_records, scan_check, SCAN_SECONDS
 import logging
 import logging.handlers
 import math
@@ -63,7 +63,7 @@ from typing import Any, AsyncIterator, Callable, Iterable, Iterator, Literal
 from urllib.parse import quote, unquote, urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
-from hyadex.app import ApplicationBindings, create_app
+from hyadex.api.app import ApplicationBindings, create_app
 from hyadex.providers.runtime import (
     MAX_PROVIDER_RUNTIME_CONTEXT_BYTES,
     MAX_PROVIDER_RUNTIME_ENV_VARS,
@@ -76,7 +76,7 @@ from hyadex.providers.runtime import (
     validate_provider_runtime_context,
     validate_provider_runtime_env,
 )
-from hyadex.jobs.schedules import (
+from hyadex.features.job_schedules import (
     VALID_JOB_SCHEDULE_KINDS,
     job_schedule_kind,
     next_job_occurrence,
@@ -87,8 +87,10 @@ from hyadex.jobs.schedules import (
     parse_job_timestamp,
     requested_job_schedule_kind,
 )
-from hyadex.jobs.context import (
-    VALID_JOB_CONTEXT_MODES, job_context_mode, resolve_job_context_contract,
+from hyadex.features.job_context import (
+    VALID_JOB_CONTEXT_MODES,
+    job_context_mode,
+    resolve_job_context_contract,
 )
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -96,10 +98,10 @@ from starlette.routing import Match
 from starlette.datastructures import Headers
 import uvicorn
 import websockets
-import codex_auth
+from hyadex.providers.codex import auth as codex_auth
 import server_instances
-import local_session_ownership
-import provider_usage
+from hyadex.ops import session_ownership as local_session_ownership
+from hyadex.providers import usage as provider_usage
 
 from hyadex.providers.codex.app_server import (
     CodexAppServerDisconnected,
@@ -133,7 +135,7 @@ from hyadex.providers.claude.sdk import (
     default_claude_sdk_client_factory,
 )
 from hyadex.providers.claude.sdk_manager import ClaudeSDKSupervisorManager
-from provider_commands import (
+from hyadex.providers.commands import (
     MAX_PROVIDER_COMMANDS,
     ProviderCommandInventory,
     ProviderCommandRecord,
@@ -141,15 +143,25 @@ from provider_commands import (
     codex_provider_command_inventory,
     empty_provider_command_inventory,
 )
-from hyadex.store.files import atomic_json
-from claude_history_repair import ClaudeMetadataRepairCache, enrich_interruption_origins, filter_native_claude_mailbox_wake_items
-from codex_history_repair import (
-    CodexGoalHistoryRepairCache, CodexNativeHistoryRepairCache, CodexNativeHistoryProofUnavailable,
-    codex_public_item_origin, filter_native_codex_history_items,
+from hyadex.core.file_store import atomic_json
+from hyadex.providers.claude.history_repair import (
+    ClaudeMetadataRepairCache,
+    enrich_interruption_origins,
+    filter_native_claude_mailbox_wake_items,
 )
-from claude_history_provenance import ClaudeInterruptionTracker, normalize_claude_interruption_context
-from claude_goals import ClaudeGoalProjection
-from claude_background_reconciliation import (
+from hyadex.providers.codex.history_repair import (
+    CodexGoalHistoryRepairCache,
+    CodexNativeHistoryRepairCache,
+    CodexNativeHistoryProofUnavailable,
+    codex_public_item_origin,
+    filter_native_codex_history_items,
+)
+from hyadex.providers.claude.history_provenance import (
+    ClaudeInterruptionTracker,
+    normalize_claude_interruption_context,
+)
+from hyadex.providers.claude.native_goals import ClaudeGoalProjection
+from hyadex.providers.claude.background_reconciliation import (
     CONSUMED_EVENT as CLAUDE_BACKGROUND_CONSUMED_EVENT,
     RECONCILED_EVENT as CLAUDE_BACKGROUND_RECONCILED_EVENT,
     SESSION_FIELD as CLAUDE_BACKGROUND_SESSION_FIELD,
@@ -158,17 +170,17 @@ from claude_background_reconciliation import (
     pending_task_reconciliations,
     reconciliation_envelope,
 )
-from hyadex import autopilot
-from hyadex.routes.autopilot import create_autopilot_router
-from hyadex import groups as group_chat
-from hyadex.events import EventBus
+from hyadex.features import autopilot
+from hyadex.api.autopilot import create_autopilot_router
+from hyadex.features import group_engine as group_chat
+from hyadex.core.event_bus import EventBus
 from hyadex.providers.state import PROVIDERS, ProviderState
 from hyadex.core.server import SERVER, ServerState
 from hyadex.core.wiring import WIRING
 from hyadex.core.runs import RUNS, RunState
-from hyadex.routes.groups import create_group_router
-import side_questions
-import title_generation
+from hyadex.api.groups import create_group_router
+from hyadex.features import side_question_service as side_questions
+from hyadex.features import title_generation
 
 try:
     import tomllib

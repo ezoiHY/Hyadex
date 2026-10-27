@@ -3,7 +3,12 @@ from __future__ import annotations
 
 from typing import Any
 from fastapi import APIRouter, Query
-from hyadex.autopilot import AutopilotEngine, ApproveRequest, CreateRunRequest, FeedbackRequest
+from hyadex.features.autopilot import (
+    AutopilotEngine,
+    ApproveRequest,
+    CreateRunRequest,
+    FeedbackRequest,
+)
 
 def create_autopilot_router(engine: AutopilotEngine) -> APIRouter:
     router = APIRouter()

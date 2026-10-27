@@ -10,7 +10,7 @@ import stat
 import time
 from typing import Any, Iterator
 
-from codex_history_repair import (
+from hyadex.providers.codex.history_repair import (
     codex_public_item_origin,
     CodexGoalHistoryRepairCache,
     CodexNativeHistoryRepairCache,

@@ -2,7 +2,7 @@
 import asyncio
 import unittest
 
-from hyadex.events import EventBus
+from hyadex.core.event_bus import EventBus
 
 
 class EventBusTests(unittest.IsolatedAsyncioTestCase):

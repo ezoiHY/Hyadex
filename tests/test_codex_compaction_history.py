@@ -7,8 +7,9 @@ import tempfile
 import unittest
 from unittest import mock
 
-from codex_history_repair import (
-    CodexNativeHistoryRepairCache, filter_native_codex_history_items,
+from hyadex.providers.codex.history_repair import (
+    CodexNativeHistoryRepairCache,
+    filter_native_codex_history_items,
 )
 from tests.test_codex_goal_history_isolated import load_projection
 
@@ -162,7 +163,7 @@ class CodexCompactionHistoryTests(unittest.TestCase):
         ordinary["payload"]["content"][0]["text"] = "A genuine assistant answer"
         item = self.parse(ordinary)
         before = self.files()
-        with mock.patch("codex_history_repair._prove_native_source",
+        with mock.patch("hyadex.providers.codex.history_repair._prove_native_source",
                         side_effect=AssertionError("ordinary assistant triggered source scan")) as prove:
             self.assertEqual(self.filter_pending([item]), [item])
             prove.assert_not_called()

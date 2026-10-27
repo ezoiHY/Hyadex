@@ -17,7 +17,10 @@ from unittest.mock import AsyncMock, patch
 
 import agent_server as server
 from tests.runtime_state import patch_server_multiple
-from codex_history_repair import CodexNativeHistoryRepairCache, CodexNativeHistoryProofUnavailable
+from hyadex.providers.codex.history_repair import (
+    CodexNativeHistoryRepairCache,
+    CodexNativeHistoryProofUnavailable,
+)
 
 
 class HistoryResponsivenessTests(unittest.IsolatedAsyncioTestCase):

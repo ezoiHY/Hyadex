@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-import codex_auth
+from hyadex.providers.codex import auth as codex_auth
 from hyadex.core.config import (
     BACKEND_CODEX,
     CODEX_APP_SERVER_MAX_LOADED_THREADS,

@@ -18,7 +18,7 @@ import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
-import local_session_ownership
+from hyadex.ops import session_ownership as local_session_ownership
 from tests import test_codex_subagent_config_isolated as config_fixture
 from hyadex.core.runs import NamespaceRuns
 from tests import server_source

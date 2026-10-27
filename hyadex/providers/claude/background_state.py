@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 import uuid
 
-from claude_background_reconciliation import (
+from hyadex.providers.claude.background_reconciliation import (
     CONSUMED_EVENT as CLAUDE_BACKGROUND_CONSUMED_EVENT,
     normalize_task_receipts,
     pending_reconciliation_state,

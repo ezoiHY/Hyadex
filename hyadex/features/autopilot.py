@@ -46,8 +46,8 @@ from typing import Any, Callable, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from hyadex import groups as group_chat
-from hyadex.groups import GroupEngine, ParticipantSpec, PostGroupMessageRequest
+from hyadex.features import group_engine as group_chat
+from hyadex.features.group_engine import GroupEngine, ParticipantSpec, PostGroupMessageRequest
 
 
 logger = logging.getLogger("hyadex.autopilot")

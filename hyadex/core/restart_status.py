@@ -8,7 +8,7 @@ from typing import Any
 
 from hyadex.core.config import SERVER_INSTANCE_ID, SERVER_RESTART_STATUS_FILE
 from hyadex.core.util import utc_timestamp
-from hyadex.store.files import atomic_json
+from hyadex.core.file_store import atomic_json
 
 SERVER_RESTART_PHASES = {"idle", "accepted", "signaling", "complete", "failed"}
 SERVER_RESTART_ACTIVE_PHASES = {"accepted", "signaling"}

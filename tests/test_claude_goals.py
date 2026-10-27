@@ -8,7 +8,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
-from claude_goals import ClaudeGoalProjection, ClaudeGoalHistoryNormalizer, is_claude_synthetic_no_response, MAX_GOAL_RECORD_BYTES
+from hyadex.providers.claude.native_goals import (
+    ClaudeGoalProjection,
+    ClaudeGoalHistoryNormalizer,
+    is_claude_synthetic_no_response,
+    MAX_GOAL_RECORD_BYTES,
+)
 from tests import server_source
 
 

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-import claude_history_repair as repair
+from hyadex.providers.claude import history_repair as repair
 from tests.test_claude_history_metadata_isolated import load_projection, user_event
 from tests import server_source
 

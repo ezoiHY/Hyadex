@@ -11,13 +11,13 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from fastapi import APIRouter, HTTPException
-from hyadex.app import ApplicationBindings, create_app
+from hyadex.api.app import ApplicationBindings, create_app
 import agent_server
 from tests.runtime_state import ServerNamespace, patch_server_namespace
 import httpx
 from pydantic import BaseModel, Field
 
-from claude_goals import ClaudeGoalProjection
+from hyadex.providers.claude.native_goals import ClaudeGoalProjection
 from hyadex.providers.claude.sdk import ClaudeSDKSupervisorError
 
 

@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 from starlette.requests import Request
 
-import side_questions as side
+from hyadex.features import side_question_service as side
 from hyadex.core.runs import NamespaceRuns
 from hyadex.core.server import NamespaceServer
 from tests import server_source
@@ -764,7 +764,7 @@ class ServerGlueTests(unittest.TestCase):
         for forbidden in ("ACTIVE", "QUEUED_TURNS", "BUSY_SESSIONS", "post_turn", "emit(", "save(",
                           "provider_authority", "goal/", "resume_thread", "fork_thread",
                           "read_context_snapshot", "conversation_snapshot", "build_prompt",
-                          "side_questions.answer_claude", "answer_codex_side_question"):
+                          "hyadex.features.side_question_service.answer_claude", "answer_codex_side_question"):
             self.assertNotIn(forbidden, text)
         self.assertIn("manager.ask_side_question", text)
         self.assertIn("NativeCodexSideChat", text)
@@ -883,7 +883,7 @@ class ServerCallbackTests(unittest.IsolatedAsyncioTestCase):
             "model_reasoning_summary": "detailed",
             "mcp_servers._hyadex_internal_provider_9f3a2c71.url": "parent-only-secret",
         }
-        with patch.dict(sys.modules, {"codex_side_question": SimpleNamespace(NativeCodexSideChat=self.codex_factory)}):
+        with patch.dict(sys.modules, {"hyadex.providers.codex.side_question": SimpleNamespace(NativeCodexSideChat=self.codex_factory)}):
             chat = await self.namespace["create_native_side_chat"]("chat")
             await chat.ask("Read a new file", history=[])
         options = self.codex_factory.call_args.kwargs
@@ -911,7 +911,7 @@ class ServerCallbackTests(unittest.IsolatedAsyncioTestCase):
         self.session["backend"] = "codex"
         chat = await self.namespace["create_native_side_chat"]("chat")
         self.namespace["CODEX_GOALS_RECONFIGURING"] = True
-        with patch.dict(sys.modules, {"codex_side_question": SimpleNamespace(NativeCodexSideChat=self.codex_factory)}):
+        with patch.dict(sys.modules, {"hyadex.providers.codex.side_question": SimpleNamespace(NativeCodexSideChat=self.codex_factory)}):
             with self.assertRaises(side.SideQuestionError) as raised:
                 await chat.ask("Why?", history=[])
             self.assertEqual(raised.exception.status_code, 409)
@@ -926,7 +926,7 @@ class ServerCallbackTests(unittest.IsolatedAsyncioTestCase):
         initial_queue = json.dumps(self.parent_queue, sort_keys=True)
         initial_bytes = self.path.read_bytes()
         with patch.object(side, "read_context_snapshot", side_effect=AssertionError("snapshot forbidden")), \
-                patch.dict(sys.modules, {"codex_side_question": SimpleNamespace(NativeCodexSideChat=self.codex_factory)}):
+                patch.dict(sys.modules, {"hyadex.providers.codex.side_question": SimpleNamespace(NativeCodexSideChat=self.codex_factory)}):
             claude = await self.namespace["create_native_side_chat"]("chat")
             first = await claude.ask("Why?", history=[])
             self.assertEqual(first["answer"], "Native Claude answer")
@@ -967,7 +967,7 @@ class ServerCallbackTests(unittest.IsolatedAsyncioTestCase):
         initial_active = json.dumps(self.parent_active, sort_keys=True)
         initial_queue = json.dumps(self.parent_queue, sort_keys=True)
         initial_session = json.dumps(self.session, sort_keys=True)
-        with patch.dict(sys.modules, {"codex_side_question": SimpleNamespace(NativeCodexSideChat=self.codex_factory)}):
+        with patch.dict(sys.modules, {"hyadex.providers.codex.side_question": SimpleNamespace(NativeCodexSideChat=self.codex_factory)}):
             claude = await self.namespace["create_native_side_chat"]("chat")
             await claude.ask("Explain that", history=history)
             self.assertEqual(self.manager.ask_side_question.await_args.kwargs["history"], history)

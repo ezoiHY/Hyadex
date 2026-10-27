@@ -17,15 +17,15 @@ import uuid
 
 from fastapi import HTTPException
 
-from claude_history_provenance import (
+from hyadex.providers.claude.history_provenance import (
     ClaudeInterruptionTracker,
     normalize_claude_interruption_context,
 )
-from claude_history_repair import (
+from hyadex.providers.claude.history_repair import (
     enrich_interruption_origins,
     filter_native_claude_mailbox_wake_items,
 )
-from codex_history_repair import (
+from hyadex.providers.codex.history_repair import (
     codex_public_item_origin,
     CodexNativeHistoryProofUnavailable,
     filter_native_codex_history_items,
@@ -99,7 +99,7 @@ from hyadex.features.history import (
     unsynced_history_items,
 )
 from hyadex.features.usage import HUB, join_task_despite_caller_cancellation
-from hyadex.jobs.schedules import parse_job_timestamp
+from hyadex.features.job_schedules import parse_job_timestamp
 from hyadex.providers.authority import (
     NativeSteerHandoffError,
     strip_all_legacy_hyadex_provider_authority_suffixes,
@@ -137,7 +137,7 @@ from hyadex.providers.codex.history import (
     merge_codex_history_duplicate,
 )
 from hyadex.providers.registry import strip_hyadex_provider_context
-from hyadex.store.transcripts import jsonl_records
+from hyadex.core.transcripts import jsonl_records
 
 logger = logging.getLogger("hyadex-server")
 
@@ -591,7 +591,7 @@ def claude_history_event_item(
     *,
     expected_session_id: str | None = None,
 ) -> dict[str, Any] | None:
-    from claude_goals import is_claude_synthetic_no_response
+    from hyadex.providers.claude.native_goals import is_claude_synthetic_no_response
     if is_claude_synthetic_no_response(event):
         return None
     if event.get("isSidechain") is True:
@@ -665,7 +665,7 @@ def parse_claude_history_events(
     expected_session_id: str | None = None,
     interruption_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    from claude_goals import ClaudeGoalHistoryNormalizer
+    from hyadex.providers.claude.native_goals import ClaudeGoalHistoryNormalizer
     items: deque[dict[str, Any]] = deque(
         maxlen=normalized_history_import_limit(limit)
     )
@@ -851,7 +851,7 @@ def parse_codex_history_events(
     items: deque[dict[str, str]] = deque(
         maxlen=normalized_history_import_limit(limit)
     )
-    from codex_history_repair import CodexCompactionSummaryTracker
+    from hyadex.providers.codex.history_repair import CodexCompactionSummaryTracker
     compaction = CodexCompactionSummaryTracker()
     for event in events:
         compaction.discard_summary(items, event)
@@ -912,9 +912,9 @@ def parse_provider_history_delta(
     last_append_state = None
     blocked_on_unseen_message = False
     tracker = ClaudeInterruptionTracker(interruption_context) if backend == BACKEND_CLAUDE else None
-    from claude_goals import ClaudeGoalHistoryNormalizer
+    from hyadex.providers.claude.native_goals import ClaudeGoalHistoryNormalizer
     goal_history = ClaudeGoalHistoryNormalizer() if backend == BACKEND_CLAUDE else None
-    from codex_history_repair import CodexCompactionSummaryTracker
+    from hyadex.providers.codex.history_repair import CodexCompactionSummaryTracker
     compaction = CodexCompactionSummaryTracker() if backend == BACKEND_CODEX else None
     if goal_history is not None:
         goal_history.seed(path, start)

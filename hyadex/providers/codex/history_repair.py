@@ -21,13 +21,20 @@ import time
 from typing import Callable
 from datetime import datetime
 
-from claude_history_repair import (
-    MAX_EVENTS_BYTES, MAX_KEYS, MAX_SESSIONS, MAX_TARGETS,
-    _DIGEST, _Unproven, _records, _stamp, _text_key,
+from hyadex.providers.claude.history_repair import (
+    MAX_EVENTS_BYTES,
+    MAX_KEYS,
+    MAX_SESSIONS,
+    MAX_TARGETS,
+    _DIGEST,
+    _Unproven,
+    _records,
+    _stamp,
+    _text_key,
 )
 
 
-from hyadex.store.transcripts import jsonl_records
+from hyadex.core.transcripts import jsonl_records
 
 MAX_PRIOR_SOURCE_PATHS = 2
 MAX_AGGREGATE_SOURCE_BYTES = 96 * 1024 * 1024

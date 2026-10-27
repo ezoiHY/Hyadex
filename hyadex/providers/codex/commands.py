@@ -15,7 +15,7 @@ import weakref
 
 from fastapi import HTTPException
 
-import codex_auth
+from hyadex.providers.codex import auth as codex_auth
 from hyadex.core.config import (
     BACKEND_CLAUDE,
     BACKEND_CODEX,
@@ -204,7 +204,7 @@ from hyadex.providers.codex.subagents import (
     codex_session_has_live_subagents,
     record_codex_subagent_limit_application,
 )
-from provider_commands import (
+from hyadex.providers.commands import (
     claude_provider_command_inventory,
     codex_provider_command_inventory,
     empty_provider_command_inventory,
@@ -212,7 +212,7 @@ from provider_commands import (
     ProviderCommandInventory,
     ProviderCommandRecord,
 )
-import side_questions
+from hyadex.features import side_question_service as side_questions
 
 logger = logging.getLogger("hyadex-server")
 
@@ -1581,7 +1581,7 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
                 except ClaudeSDKSupervisorError:
                     raise side_questions.SideQuestionError(503, "Claude native side questions are unavailable; retry after reconnecting") from None
             else:
-                from codex_side_question import NativeCodexSideChat
+                from hyadex.providers.codex.side_question import NativeCodexSideChat
                 if self.codex is None:
                     cwd = existing_cwd(str(current.get("cwd") or DEFAULT_CWD))
                     model, effort, service_tier = codex_runtime_settings(current)

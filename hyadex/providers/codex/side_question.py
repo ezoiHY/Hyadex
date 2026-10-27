@@ -14,8 +14,11 @@ from pathlib import Path
 import tempfile
 
 from hyadex.providers.codex.app_server import CodexAppServerClient, CodexAppServerError, decline_server_request
-from side_questions import (
-    MAX_OUTPUT_BYTES, SideQuestionError, isolated_environment, run_isolated_command,
+from hyadex.features.side_question_service import (
+    MAX_OUTPUT_BYTES,
+    SideQuestionError,
+    isolated_environment,
+    run_isolated_command,
 )
 
 

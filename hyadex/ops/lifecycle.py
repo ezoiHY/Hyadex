@@ -22,7 +22,7 @@ import uuid
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from hyadex import autopilot
+from hyadex.features import autopilot
 from hyadex.core.config import (
     AGENT_TOKEN,
     CONFIG_ENV_APPLIED,

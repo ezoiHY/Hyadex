@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from codex_history_repair import CodexGoalHistoryRepairCache
+from hyadex.providers.codex.history_repair import CodexGoalHistoryRepairCache
 
 
 PROVIDER = "01a084e2-bbf4-7543-82e2-a40e3e65737e"
@@ -171,26 +171,26 @@ class CodexHistoryRepairTests(unittest.TestCase):
     def test_positive_and_negative_preparation_are_cached_without_hot_path_io(self):
         target = self.fixture()[0]
         self.prepare()
-        with patch("codex_history_repair._prove", side_effect=AssertionError("repeated source scan")):
+        with patch("hyadex.providers.codex.history_repair._prove", side_effect=AssertionError("repeated source scan")):
             self.assertFalse(self.prepare())
             self.assertTrue(self.cache.is_prepared("chat", PROVIDER))
             self.assertTrue(self.cache.is_hidden("chat", target))
             self.assertTrue(self.cache.signature("chat"))
         self.cache.forget("chat")
         self.cache.prepare("chat", PROVIDER, self.events, None, self.root, normalize, classify)
-        with patch("codex_history_repair._prove", side_effect=AssertionError("repeated missing-source scan")):
+        with patch("hyadex.providers.codex.history_repair._prove", side_effect=AssertionError("repeated missing-source scan")):
             self.assertFalse(self.prepare())
             self.assertTrue(self.cache.is_prepared("chat", PROVIDER))
             self.assertFalse(self.cache.is_hidden("chat", target))
 
     def test_forget_during_preparation_prevents_resurrection(self):
         self.fixture()
-        from codex_history_repair import _prove
+        from hyadex.providers.codex.history_repair import _prove
         def prepare_and_forget(*args):
             proof = _prove(*args)
             self.cache.forget("chat")
             return proof
-        with patch("codex_history_repair._prove", side_effect=prepare_and_forget):
+        with patch("hyadex.providers.codex.history_repair._prove", side_effect=prepare_and_forget):
             self.prepare()
         self.assertFalse(self.cache.is_prepared("chat", PROVIDER))
 
@@ -212,18 +212,18 @@ class CodexHistoryRepairTests(unittest.TestCase):
         previous = "11111111-2222-3333-4444-555555555555"
         current = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         sources, targets = self.histories([(PROVIDER, [user("First goal")]), (previous, [user("Second goal")])])
-        from codex_history_repair import _records
+        from hyadex.providers.codex.history_repair import _records
         opened = []
         def records(path, stamp):
             opened.append(path)
             yield from _records(path, stamp)
-        with patch("codex_history_repair._records", side_effect=records), \
+        with patch("hyadex.providers.codex.history_repair._records", side_effect=records), \
                 patch.object(Path, "glob", side_effect=AssertionError("unexpected root discovery")), \
                 patch.object(Path, "rglob", side_effect=AssertionError("unexpected root discovery")):
             self.assertTrue(self.prepare_current(current))
         self.assertEqual(opened, [self.events, sources[previous].resolve(), sources[PROVIDER].resolve()])
         self.assertTrue(all(self.cache.is_hidden("chat", target) for target in targets.values()))
-        with patch("codex_history_repair._records", side_effect=AssertionError("hot-path I/O")):
+        with patch("hyadex.providers.codex.history_repair._records", side_effect=AssertionError("hot-path I/O")):
             self.assertFalse(self.prepare_current(current))
             self.assertTrue(all(self.cache.is_hidden("chat", target) for target in targets.values()))
 
@@ -235,8 +235,8 @@ class CodexHistoryRepairTests(unittest.TestCase):
             (oldest, [user("Old")]), (recent, [user("Recent")]), (PROVIDER, [user("Newest")]),
             (current, [user("Current")]),
         ])
-        from codex_history_repair import _records
-        with patch("codex_history_repair._records", wraps=_records) as reads:
+        from hyadex.providers.codex.history_repair import _records
+        with patch("hyadex.providers.codex.history_repair._records", wraps=_records) as reads:
             self.prepare_current(current, sources[current])
         self.assertEqual([call.args[0] for call in reads.call_args_list],
             [self.events, sources[current].resolve(), sources[PROVIDER].resolve(), sources[recent].resolve()])
@@ -251,9 +251,9 @@ class CodexHistoryRepairTests(unittest.TestCase):
             (PROVIDER, [user("Oldest")]), (previous, [user("Recent")]), (current, [user("Current")]),
         ])
         budget = sources[current].stat().st_size + sources[previous].stat().st_size
-        from codex_history_repair import _records
-        with patch("codex_history_repair.MAX_AGGREGATE_SOURCE_BYTES", budget), \
-                patch("codex_history_repair._records", wraps=_records) as reads:
+        from hyadex.providers.codex.history_repair import _records
+        with patch("hyadex.providers.codex.history_repair.MAX_AGGREGATE_SOURCE_BYTES", budget), \
+                patch("hyadex.providers.codex.history_repair._records", wraps=_records) as reads:
             self.prepare_current(current, sources[current])
         self.assertEqual([call.args[0] for call in reads.call_args_list],
             [self.events, sources[current].resolve(), sources[previous].resolve()])
@@ -264,15 +264,15 @@ class CodexHistoryRepairTests(unittest.TestCase):
     def test_aggregate_record_budget_commits_only_completely_scanned_sources(self):
         current = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         sources, targets = self.histories([(PROVIDER, [user("Previous")]), (current, [user("Current")])])
-        from codex_history_repair import _records
+        from hyadex.providers.codex.history_repair import _records
         source_records = []
         def records(path, stamp):
             for record in _records(path, stamp):
                 if path != self.events:
                     source_records.append(path)
                 yield record
-        with patch("codex_history_repair.MAX_AGGREGATE_SOURCE_RECORDS", 3), \
-                patch("codex_history_repair._records", side_effect=records):
+        with patch("hyadex.providers.codex.history_repair.MAX_AGGREGATE_SOURCE_RECORDS", 3), \
+                patch("hyadex.providers.codex.history_repair._records", side_effect=records):
             self.prepare_current(current, sources[current])
         self.assertEqual(len(source_records), 3)
         self.assertTrue(self.cache.is_hidden("chat", targets[current]))

@@ -10,7 +10,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from hyadex.store import transcripts as reader
+from hyadex.core import transcripts as reader
 class StreamingTranscriptTests(unittest.TestCase):
     def parse(self, raw, **kwargs):
         return list(reader.jsonl_records(io.BytesIO(raw), end=len(raw), **kwargs))
@@ -190,7 +190,7 @@ class StreamingTranscriptTests(unittest.TestCase):
         probe = """
 import json,resource,sys
 from pathlib import Path
-from hyadex.store.transcripts import jsonl_records
+from hyadex.core.transcripts import jsonl_records
 p=Path(sys.argv[1])
 with p.open('rb') as stream:
     for event, _offset, _raw in jsonl_records(stream,end=p.stat().st_size):

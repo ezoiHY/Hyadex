@@ -136,7 +136,7 @@ from hyadex.providers.claude.subagents import (
     CLAUDE_STOP_FENCE_ATTEMPT_TASKS,
     evict_claude_sdk_chat,
 )
-import local_session_ownership
+from hyadex.ops import session_ownership as local_session_ownership
 
 logger = logging.getLogger("hyadex-server")
 

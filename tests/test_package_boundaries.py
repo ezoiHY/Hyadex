@@ -15,16 +15,16 @@ class PackageBoundariesTests(unittest.TestCase):
                 [sys.executable, '-B', '-c', '''
 from pathlib import Path
 import sys
-from hyadex import groups, autopilot, installation, inventory
-from hyadex.app import ApplicationBindings, create_app
-from hyadex.store import transcripts
-from hyadex.jobs import schedules, context
+from hyadex import installation, inventory
+from hyadex.features import group_engine as groups, autopilot, job_schedules, job_context
+from hyadex.api.app import ApplicationBindings, create_app
+from hyadex.core import transcripts
 from hyadex.providers import runtime
 from hyadex.providers.claude import sdk
 from hyadex.providers.codex import app_server
 from hyadex.core import config
-from hyadex.routes.groups import create_group_router
-from hyadex.routes.autopilot import create_autopilot_router
+from hyadex.api.groups import create_group_router
+from hyadex.api.autopilot import create_autopilot_router
 assert 'agent_server' not in sys.modules
 assert list(Path.home().iterdir()) == []
 assert not hasattr(groups, 'create_group_router')

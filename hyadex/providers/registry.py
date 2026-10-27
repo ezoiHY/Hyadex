@@ -120,9 +120,9 @@ from hyadex.providers.instructions import HYADEX_CONTEXT_END_MARKER
 from hyadex.providers.runtime import assert_provider_user_message_unchanged, ProviderTurnPayload
 from hyadex.providers.state import PROVIDERS
 from hyadex.providers.codex.subagents import prepare_codex_subagent_terminal_snapshot
-from hyadex.store.files import atomic_json
-import local_session_ownership
-from provider_commands import ProviderCommandInventory
+from hyadex.core.file_store import atomic_json
+from hyadex.ops import session_ownership as local_session_ownership
+from hyadex.providers.commands import ProviderCommandInventory
 
 logger = logging.getLogger("hyadex-server")
 
@@ -815,7 +815,7 @@ def record_runtime_failure(
         is_auth_failure = is_auth_failure or "oauth session expired and could not be refreshed" in lower
     if is_auth_failure:
         if backend == BACKEND_CLAUDE:
-            from claude_model_catalog import clear_native_models
+            from hyadex.providers.claude.model_catalog import clear_native_models
             clear_native_models()
         current = runtime_diagnostic_payload(
             backend,

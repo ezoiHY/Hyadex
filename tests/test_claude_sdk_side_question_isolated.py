@@ -12,7 +12,7 @@ from hyadex.providers.claude.sdk import (
     ClaudeSDKUnavailable,
 )
 from hyadex.providers.claude.sdk_manager import ClaudeSDKSupervisorManager
-from side_questions import SideQuestionError
+from hyadex.features.side_question_service import SideQuestionError
 from tests.test_claude_sdk_client import FakeClaudeClient, FakeFactory
 
 
@@ -62,7 +62,7 @@ class ClaudeSDKSideQuestionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.manager._pins, {"chat": 1})
             return answer
 
-        with patch("claude_side_question.ask_native_side_question", native):
+        with patch("hyadex.providers.claude.side_question.ask_native_side_question", native):
             self.assertEqual(await self.ask(history=history,
                 expected_provider_id="existing-provider-session"), answer)
         client = self.factory.clients[0]
@@ -105,7 +105,7 @@ class ClaudeSDKSideQuestionTests(unittest.IsolatedAsyncioTestCase):
             await release.wait()
             return {"answer": "Side answer"}
 
-        with patch("claude_side_question.ask_native_side_question", native):
+        with patch("hyadex.providers.claude.side_question.ask_native_side_question", native):
             side = self.ask()
             await asyncio.wait_for(started.wait(), 1)
             main = await self.start_main()
@@ -132,7 +132,7 @@ class ClaudeSDKSideQuestionTests(unittest.IsolatedAsyncioTestCase):
             started.set()
             await asyncio.Future()
 
-        with patch("claude_side_question.ask_native_side_question", pending):
+        with patch("hyadex.providers.claude.side_question.ask_native_side_question", pending):
             side = self.ask()
             await asyncio.wait_for(started.wait(), 1)
             side.cancel()
@@ -141,7 +141,7 @@ class ClaudeSDKSideQuestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager._pins, {})
         self.assertFalse(main.done)
         self.assertEqual(client.calls, original_calls)
-        with patch("claude_side_question.ask_native_side_question", side_effect=SideQuestionError(503, "Unavailable")):
+        with patch("hyadex.providers.claude.side_question.ask_native_side_question", side_effect=SideQuestionError(503, "Unavailable")):
             with self.assertRaises(SideQuestionError):
                 await self.ask()
         self.assertEqual(client.calls, original_calls)
@@ -156,7 +156,7 @@ class ClaudeSDKSideQuestionTests(unittest.IsolatedAsyncioTestCase):
         original_calls = list(client.calls)
         saved_options = {**self.options, "effort": "max"}
 
-        with patch("claude_side_question.ask_native_side_question",
+        with patch("hyadex.providers.claude.side_question.ask_native_side_question",
                    return_value={"answer": "Live context"}) as native:
             answer = await self.manager.ask_side_question(
                 "chat", "Status?", options=saved_options,
@@ -188,7 +188,7 @@ class ClaudeSDKSideQuestionTests(unittest.IsolatedAsyncioTestCase):
             await release.wait()
             return {"answer": "Done"}
 
-        with patch("claude_side_question.ask_native_side_question", native):
+        with patch("hyadex.providers.claude.side_question.ask_native_side_question", native):
             side = self.ask()
             await asyncio.wait_for(started.wait(), 1)
             self.assertFalse(await self.manager.evict("chat"))
@@ -219,7 +219,7 @@ class ClaudeSDKSideQuestionTests(unittest.IsolatedAsyncioTestCase):
             await finish_new.wait()
             return {"answer": "Replacement"}
 
-        with patch("claude_side_question.ask_native_side_question", native):
+        with patch("hyadex.providers.claude.side_question.ask_native_side_question", native):
             old = self.ask()
             await asyncio.wait_for(first_started.wait(), 1)
             self.assertTrue(await self.manager.evict("chat", force=True))
@@ -252,7 +252,7 @@ class ClaudeSDKSideQuestionTests(unittest.IsolatedAsyncioTestCase):
             return client
 
         self.manager._client_factory = make_client
-        with patch("claude_side_question.ask_native_side_question") as native:
+        with patch("hyadex.providers.claude.side_question.ask_native_side_question") as native:
             side = self.ask()
             await asyncio.wait_for(connecting.wait(), 1)
             side.cancel()
@@ -268,7 +268,7 @@ class ClaudeSDKSideQuestionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cold_connection_failure_unpins_without_retiring_supervisor(self) -> None:
         self.factory.connect_error = RuntimeError("Synthetic connect failure")
-        with patch("claude_side_question.ask_native_side_question") as native:
+        with patch("hyadex.providers.claude.side_question.ask_native_side_question") as native:
             with self.assertRaises(ClaudeSDKUnavailable):
                 await self.ask()
             native.assert_not_called()
@@ -282,7 +282,7 @@ class ClaudeSDKSideQuestionTests(unittest.IsolatedAsyncioTestCase):
         for resume in (None, "", "different-provider"):
             with self.subTest(resume=resume):
                 self.options = {"resume": resume}
-                with patch("claude_side_question.ask_native_side_question") as native:
+                with patch("hyadex.providers.claude.side_question.ask_native_side_question") as native:
                     with self.assertRaises(ClaudeSDKUnavailable):
                         await self.ask(expected_provider_id="existing-provider-session")
                     native.assert_not_called()
@@ -293,7 +293,7 @@ class ClaudeSDKSideQuestionTests(unittest.IsolatedAsyncioTestCase):
         self.options = {"resume": None}
         main = await self.start_main()
         original_calls = list(self.factory.clients[0].calls)
-        with patch("claude_side_question.ask_native_side_question", return_value={"answer": "Live context"}) as native:
+        with patch("hyadex.providers.claude.side_question.ask_native_side_question", return_value={"answer": "Live context"}) as native:
             self.assertEqual(await self.ask(expected_provider_id="now-bound-provider"),
                              {"answer": "Live context"})
             self.assertIs(native.call_args.args[0], self.factory.clients[0])

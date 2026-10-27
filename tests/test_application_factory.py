@@ -6,7 +6,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from hyadex.app import ApplicationBindings, create_app
+from hyadex.api.app import ApplicationBindings, create_app
 
 
 class ApplicationFactoryTests(unittest.TestCase):

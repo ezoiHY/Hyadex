@@ -12,7 +12,7 @@ import time
 from typing import Any
 import uuid
 
-from claude_background_reconciliation import (
+from hyadex.providers.claude.background_reconciliation import (
     pending_task_reconciliations,
     reconciliation_envelope,
     SESSION_FIELD as CLAUDE_BACKGROUND_SESSION_FIELD,
@@ -123,7 +123,7 @@ from hyadex.providers.claude.subagents import (
     claude_sdk_type,
     evict_claude_sdk_chat,
 )
-from provider_commands import ProviderCommandRecord
+from hyadex.providers.commands import ProviderCommandRecord
 
 logger = logging.getLogger("hyadex-server")
 

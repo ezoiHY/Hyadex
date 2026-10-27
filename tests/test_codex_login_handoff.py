@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 from fastapi import HTTPException
 from fastapi import FastAPI
 import httpx
-import codex_auth
+from hyadex.providers.codex import auth as codex_auth
 from tests import test_codex_binary_refresh_isolated as binary
 from hyadex.core.runs import NamespaceRuns
 from tests import server_source
