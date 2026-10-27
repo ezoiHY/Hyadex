@@ -49,13 +49,13 @@ from hyadex.core.sessions import (
     append_event,
     CLAUDE_STOP_FENCE_SESSIONS,
     ensure_session_not_deleting,
-    existing_codex_app_server_manager,
     register_session_task,
     revoke_provider_authority,
-    server_lifecycle_admission_blocker,
     session_lifecycle_lock,
     STORE,
 )
+from hyadex.core.session_titles import server_lifecycle_admission_blocker
+from hyadex.core.session_codex import existing_codex_app_server_manager
 from hyadex.core.state import (
     RUN_NOW_COMPLETED_MAX,
     RUN_NOW_COMPLETED_RESULTS,

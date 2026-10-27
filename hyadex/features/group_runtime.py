@@ -22,13 +22,8 @@ from hyadex.core.event_log import read_events
 from hyadex.core.paths import existing_cwd, now_iso
 from hyadex.core.queue import unqueue_turn
 from hyadex.core.runs import RUNS
-from hyadex.core.sessions import (
-    CreateSessionRequest,
-    ensure_session_not_deleting,
-    session_lifecycle_lock,
-    STORE,
-    UpdateSessionRequest,
-)
+from hyadex.core.sessions import ensure_session_not_deleting, session_lifecycle_lock, STORE
+from hyadex.core.session_settings import CreateSessionRequest, UpdateSessionRequest
 from hyadex.core.state import EVENTS
 from hyadex.core.stop import request_explicit_stop
 from hyadex.core.turns import interactive_client_capabilities, set_claude_goal, start_turn_durably

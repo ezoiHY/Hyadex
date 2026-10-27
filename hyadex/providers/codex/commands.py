@@ -53,22 +53,23 @@ from hyadex.core.server import SERVER
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
     append_event,
-    codex_app_server_env,
-    codex_app_server_managers,
-    CODEX_RETIRED_APP_SERVER_MANAGERS,
-    codex_runtime_settings,
-    CODEX_SESSION_APP_SERVER_MANAGERS,
-    CODEX_THREAD_SESSION_INDEX,
-    effective_claude_permission_mode,
     ensure_session_not_deleting,
-    existing_codex_app_server_manager,
     native_session_available,
     register_session_task,
-    server_lifecycle_admission_blocker,
-    session_codex_thread_id,
     session_lifecycle_lock,
     session_system_prompt,
     STORE,
+)
+from hyadex.core.session_titles import server_lifecycle_admission_blocker
+from hyadex.core.session_settings import codex_runtime_settings, effective_claude_permission_mode
+from hyadex.core.session_codex import (
+    codex_app_server_env,
+    codex_app_server_managers,
+    CODEX_RETIRED_APP_SERVER_MANAGERS,
+    CODEX_SESSION_APP_SERVER_MANAGERS,
+    CODEX_THREAD_SESSION_INDEX,
+    existing_codex_app_server_manager,
+    session_codex_thread_id,
 )
 from hyadex.core.util import (
     compact_memory_text,

@@ -49,19 +49,21 @@ from hyadex.core.processes import (
 from hyadex.core.runs import RUNS
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
-    ensure_backend_update_allowed,
-    ensure_claude_permission_mode_update_allowed,
     ensure_session_not_deleting,
     ensure_session_not_initializing,
-    execution_maintenance_blocks_work,
-    managed_server_restart_blocks_work,
     meaningful_chat_cwd,
-    preview_session_runtime_update,
     public_session,
     session_lifecycle_lock,
     STORE,
+)
+from hyadex.core.session_titles import execution_maintenance_blocks_work
+from hyadex.core.session_settings import (
+    ensure_backend_update_allowed,
+    ensure_claude_permission_mode_update_allowed,
+    preview_session_runtime_update,
     UpdateSessionRequest,
 )
+from hyadex.core.restart_status import managed_server_restart_blocks_work
 from hyadex.core.state import DELETING_SESSIONS, SESSION_LIFECYCLE_UPDATE_FIELDS
 from hyadex.core.util import runner_env, terminal_dimensions
 from hyadex.core.wiring import WIRING

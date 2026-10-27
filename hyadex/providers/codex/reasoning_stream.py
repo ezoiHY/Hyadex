@@ -9,7 +9,8 @@ from typing import Any
 from hyadex.core.config import BACKEND_CODEX
 from hyadex.core.event_log import reasoning_summary_stream_snapshot
 from hyadex.core.paths import events_path, now_iso
-from hyadex.core.sessions import append_event, event_delivery_lock, last_event_seq_from_file
+from hyadex.core.sessions import append_event, event_delivery_lock
+from hyadex.core.event_seq import last_event_seq_from_file
 from hyadex.core.state import (
     DELETED_SESSION_TOMBSTONES,
     DELETING_SESSIONS,

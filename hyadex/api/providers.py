@@ -8,12 +8,8 @@ from fastapi import APIRouter, HTTPException
 from hyadex.core.config import CLAUDE_TRANSPORT_AGENT_SDK, CODEX_GOALS_ENABLED
 from hyadex.core.http import router
 from hyadex.core.runs import RUNS
-from hyadex.core.sessions import (
-    codex_goal_time_budget_is_exhausted,
-    ensure_session_not_deleting,
-    session_lifecycle_lock,
-    STORE,
-)
+from hyadex.core.sessions import ensure_session_not_deleting, session_lifecycle_lock, STORE
+from hyadex.core.session_settings import codex_goal_time_budget_is_exhausted
 from hyadex.core.turns import set_claude_goal, start_claude_goal_command
 from hyadex.providers.codex.controls import (
     _delete_codex_goal_locked,

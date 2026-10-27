@@ -45,8 +45,8 @@ from hyadex.core.event_log import (
 )
 from hyadex.core.paths import code_diffs_dir, now_iso, safe_name
 from hyadex.core.runs import RUNS
-from hyadex.core.sessions import (
-    append_event,
+from hyadex.core.sessions import append_event
+from hyadex.core.session_files import (
     guess_content_type,
     list_session_file_records,
     read_file_meta_record,

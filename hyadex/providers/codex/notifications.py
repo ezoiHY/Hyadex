@@ -24,8 +24,13 @@ from hyadex.core.runs import RUNS
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
     append_event,
+    remember_codex_native_compaction_terminal,
+    session_lifecycle_lock,
+    STORE,
+)
+from hyadex.core.session_settings import codex_goal_time_budget_is_exhausted
+from hyadex.core.session_codex import (
     codex_app_server_managers,
-    codex_goal_time_budget_is_exhausted,
     CODEX_RETIRED_APP_SERVER_MANAGERS,
     CODEX_SESSION_APP_SERVER_MANAGERS,
     CODEX_SUBAGENT_INDEX_LOCK,
@@ -33,10 +38,7 @@ from hyadex.core.sessions import (
     CODEX_SUBAGENT_STATE,
     existing_codex_app_server_manager,
     native_codex_compaction_id,
-    remember_codex_native_compaction_terminal,
     session_codex_thread_id,
-    session_lifecycle_lock,
-    STORE,
 )
 from hyadex.core.util import clean_assistant_text
 from hyadex.features.usage import (

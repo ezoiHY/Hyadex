@@ -29,14 +29,12 @@ from hyadex.core.config import (
 )
 from hyadex.core.paths import codex_manifest_path, write_all
 from hyadex.core.runs import RUNS
-from hyadex.core.sessions import (
+from hyadex.core.sessions import PROVIDER_AUTHORITIES, PROVIDER_AUTHORITY_LOCK, STORE
+from hyadex.core.session_settings import effective_provider_jobs_access
+from hyadex.core.session_codex import (
     add_provider_no_proxy_environment,
     codex_provider_mcp_connection_host,
-    effective_provider_jobs_access,
-    PROVIDER_AUTHORITIES,
-    PROVIDER_AUTHORITY_LOCK,
     provider_helper_server_origin,
-    STORE,
 )
 from hyadex.core.state import DELETED_SESSION_TOMBSTONES, DELETING_SESSIONS
 from hyadex.core.util import decoded_exact_header_secret, runner_env, server_identity

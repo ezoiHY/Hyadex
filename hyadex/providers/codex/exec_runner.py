@@ -30,7 +30,8 @@ from hyadex.core.queue import (
     watch_manifest_artifacts,
 )
 from hyadex.core.runs import RUNS
-from hyadex.core.sessions import append_event, codex_output_text, STORE
+from hyadex.core.sessions import append_event, STORE
+from hyadex.core.session_codex import codex_output_text
 from hyadex.core.state import LIVE_STDOUT_MAX_LINES
 from hyadex.core.turns import (
     append_active_stdout,

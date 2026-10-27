@@ -64,21 +64,23 @@ from hyadex.core.server import SERVER
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
     append_event,
+    PROVIDER_AUTHORITIES,
+    PROVIDER_AUTHORITY_LOCK,
+    revoke_provider_authority,
+    STORE,
+)
+from hyadex.core.session_settings import (
     clamp_codex_runtime_effort,
-    codex_default_service_tier,
     codex_goal_time_budget_remaining,
     codex_retired_model_replacements,
     codex_user_config_defaults,
     effective_provider_jobs_access,
-    PROVIDER_AUTHORITIES,
-    PROVIDER_AUTHORITY_LOCK,
     REMOVED_PROVIDER_MESSAGE,
     retired_session_runtime_message,
-    revoke_provider_authority,
     RUNTIME_DIAGNOSTICS,
     RUNTIME_DIAGNOSTICS_LOCK,
-    STORE,
 )
+from hyadex.core.session_codex import codex_default_service_tier
 from hyadex.core.state import AGENT_HELPER_PROXY_HEADERS
 from hyadex.core.util import (
     compact_memory_text,

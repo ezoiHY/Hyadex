@@ -71,10 +71,63 @@ from hyadex.core.config import (
     SESSIONS_FILE,
     VALID_BACKENDS,
 )
+from hyadex.core.event_seq import forget_event_seq, record_event_index_entry, repair_event_log_tail
 from hyadex.core.paths import code_diffs_dir, events_path, existing_cwd, now_iso, session_dir
+from hyadex.core.restart_status import (
+    MANAGED_SERVER_RESTART_ACTIVE_DETAIL,
+    managed_server_restart_blocks_work,
+)
 from hyadex.core.runs import RUNS
 from hyadex.core.server import SERVER
 from hyadex.core.server_logging import concise_error_message
+from hyadex.core.session_alerts import (
+    active_emergency_alerts,
+    apply_emergency_lifecycle_event,
+    emergency_lifecycle_events_after,
+    emergency_summary,
+    reconcile_session_agent_notifications,
+    reconcile_session_emergency_alerts,
+)
+from hyadex.core.session_codex import (
+    ABANDONED_FORK_PROVIDER_THREADS,
+    bounded_codex_output_text,
+    codex_app_server_env,
+    codex_compaction_count,
+    CODEX_COMPACTION_TERMINAL_HISTORY_LIMIT,
+    codex_default_service_tier,
+    codex_session_index_thread_names,
+    CODEX_SUBAGENT_INDEX_LOCK,
+    CODEX_SUBAGENT_LIVE_GENERATIONS,
+    CODEX_SUBAGENT_LIVE_MANAGERS,
+    CODEX_SUBAGENT_SESSION_INDEX,
+    CODEX_SUBAGENT_STATE,
+    CODEX_THREAD_SESSION_INDEX,
+    ensure_codex_thread_not_pending_fork_cleanup,
+    existing_codex_app_server_manager,
+    native_codex_compaction_terminal_aliases,
+    session_codex_thread_id,
+    TIMELINE_INDEX_CODEX_COMPACTION_TYPES,
+    timeline_index_codex_lifecycle_key,
+)
+from hyadex.core.session_files import delete_session_owned_file_records
+from hyadex.core.session_settings import (
+    codex_goal_time_budget_is_exhausted,
+    codex_runtime_settings,
+    CreateSessionRequest,
+    effective_claude_permission_mode,
+    effective_provider_jobs_access,
+    normalize_runtime_effort,
+    preview_session_runtime_update,
+    RUNTIME_DIAGNOSTICS,
+    RUNTIME_DIAGNOSTICS_LOCK,
+    session_backend_locked,
+)
+from hyadex.core.session_titles import (
+    cancel_generated_session_title,
+    read_native_session_title,
+    server_lifecycle_admission_blocker,
+    title_runtime_key,
+)
 from hyadex.core.state import (
     DELETED_SESSION_TOMBSTONES,
     DELETING_SESSIONS,
@@ -149,130 +202,6 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
     tomllib = None
 
 logger = logging.getLogger("hyadex-server")
-
-FORK_INTERNAL_RUN_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
-FORK_INTERNAL_RUN_LOCKS: dict[str, threading.Lock] = {}
-
-
-def durable_event_seq(event: Any) -> int | None:
-    """Return a persisted event sequence only for the canonical JSON shape."""
-
-    if not isinstance(event, dict):
-        return None
-    value = event.get("seq")
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        return None
-    return value
-
-
-def last_event_seq_from_file(path: Path) -> int:
-    """Read the last JSONL event seq without scanning huge chat histories."""
-    if not path.exists():
-        return 0
-    try:
-        with path.open("rb") as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            if size <= 0:
-                return 0
-            # Retain only the one line fragment that crosses the next chunk
-            # boundary.  Keeping every previously inspected chunk here makes
-            # a cold-cache recovery consume memory proportional to the whole
-            # transcript when its newest rows are invalid.
-            suffix = b""
-            pos = size
-            # A tool result can legitimately make the last JSONL row larger
-            # than 16 MiB. Stop only after finding a valid event; memory stays
-            # bounded to one record plus the fixed-size read chunk.
-            while pos > 0:
-                chunk_size = min(pos, 256 * 1024)
-                pos -= chunk_size
-                f.seek(pos)
-                lines = (f.read(chunk_size) + suffix).split(b"\n")
-                if pos > 0:
-                    suffix = lines.pop(0)
-                for raw_line in reversed(lines):
-                    if not raw_line.strip():
-                        continue
-                    with suppress(Exception):
-                        event = json.loads(raw_line.decode("utf-8", "replace"))
-                        seq = durable_event_seq(event)
-                        if seq is not None:
-                            return seq
-    except Exception as exc:
-        logger.warning("failed to read last event seq for %s: %s", path, exc)
-    return 0
-
-
-def repair_event_log_tail(path: Path) -> int:
-    """Restore a JSONL append boundary and return its last durable sequence.
-
-    ``append_event`` writes each record and its newline together, but a process
-    or filesystem failure can still leave a partial final record behind.  A
-    later append must truncate that fragment first; otherwise the two JSON
-    objects are joined into one permanently unreadable line.  A complete JSON
-    object that merely lacks its newline is retained.
-
-    This slow path runs only when a process-local sequence cache is cold (or a
-    prior append failed), and callers serialize it with ``event_delivery_lock``.
-    """
-
-    if not path.exists():
-        return 0
-    try:
-        with path.open("rb+") as stream:
-            stream.seek(0, os.SEEK_END)
-            size = stream.tell()
-            if size <= 0:
-                return 0
-            stream.seek(size - 1)
-            if stream.read(1) == b"\n":
-                return last_event_seq_from_file(path)
-
-            # Missing newline: locate the beginning of the final record.  This
-            # is deliberately unbounded but off-loop and only happens during
-            # recovery; silently keeping an arbitrarily long corrupt fragment
-            # is worse than a one-time reverse scan.
-            cursor = size
-            line_start = 0
-            while cursor > 0:
-                chunk_size = min(cursor, 256 * 1024)
-                cursor -= chunk_size
-                stream.seek(cursor)
-                chunk = stream.read(chunk_size)
-                newline = chunk.rfind(b"\n")
-                if newline >= 0:
-                    line_start = cursor + newline + 1
-                    break
-            stream.seek(line_start)
-            raw_tail = stream.read(size - line_start)
-            try:
-                event = json.loads(raw_tail.decode("utf-8"))
-                seq = durable_event_seq(event)
-                if seq is None:
-                    raise ValueError("final JSON value is not a sequenced event")
-            except Exception:
-                stream.seek(line_start)
-                stream.truncate()
-                stream.flush()
-                os.fsync(stream.fileno())
-                with suppress(OSError):
-                    events_index_path(path).unlink()
-                return last_event_seq_from_file(path)
-
-            # The record itself is valid. Complete its JSONL framing rather
-            # than discarding an event that was fully written before a crash.
-            stream.seek(0, os.SEEK_END)
-            stream.write(b"\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-            return seq
-    except FileNotFoundError:
-        return 0
-    except OSError as exc:
-        logger.error("failed to repair event log tail for %s: %s", path, exc)
-        raise
-
 
 async def next_event_seq(session_id: str, path: Path) -> int:
     # Keep the global lock to a memory-only critical section. A cold chat may
@@ -392,480 +321,9 @@ async def reconcile_event_seq_after_failed_write(
         )
 
 
-def events_index_path(path: Path) -> Path:
-    """Sparse seq->byte-offset checkpoints stored next to events.jsonl."""
-    return path.with_suffix(".idx")
-
-
-def read_event_index(path: Path) -> list[tuple[int, int]] | None:
-    """Return the validated ``(seq, offset)`` checkpoints for ``path`` or None.
-
-    The index is bound to the transcript's inode and every offset must lie
-    inside the current file; anything else is treated as missing so a
-    rewritten or truncated transcript can never make a reader skip events.
-    """
-
-    index_path = events_index_path(path)
-    try:
-        raw = json.loads(index_path.read_bytes())
-        stat = path.stat()
-    except (OSError, ValueError):
-        return None
-    if (
-        not isinstance(raw, dict)
-        or raw.get("version") != EVENT_INDEX_VERSION
-        or raw.get("inode") != stat.st_ino
-        or not isinstance(raw.get("entries"), list)
-    ):
-        return None
-    entries: list[tuple[int, int]] = []
-    previous_seq = 0
-    previous_offset = -1
-    for item in raw["entries"]:
-        try:
-            seq, offset = int(item[0]), int(item[1])
-        except (TypeError, ValueError, IndexError):
-            return None
-        if seq <= previous_seq or offset <= previous_offset or offset >= stat.st_size:
-            return None
-        entries.append((seq, offset))
-        previous_seq, previous_offset = seq, offset
-    return entries
-
-
-def write_event_index(path: Path, entries: list[tuple[int, int]]) -> None:
-    """Atomically replace events.idx; concurrent writers cannot interleave."""
-
-    index_path = events_index_path(path)
-    try:
-        inode = path.stat().st_ino
-    except OSError:
-        return
-    payload = json.dumps(
-        {
-            "version": EVENT_INDEX_VERSION,
-            "inode": inode,
-            "entries": [[seq, offset] for seq, offset in entries],
-        },
-        separators=(",", ":"),
-    )
-    tmp = index_path.with_name(
-        f"{index_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
-    )
-    try:
-        tmp.write_text(payload, encoding="utf-8")
-        os.replace(tmp, index_path)
-    except OSError:
-        with suppress(OSError):
-            tmp.unlink()
-
-
-def record_event_index_entry(path: Path, seq: int, offset: int) -> None:
-    """Append one stride checkpoint after ``append_event`` wrote line ``seq``."""
-
-    entries = [
-        entry
-        for entry in (read_event_index(path) or [])
-        if entry[0] < seq and entry[1] < offset
-    ]
-    entries.append((seq, offset))
-    write_event_index(path, entries)
-
-
 def event_delivery_lock(session_id: str) -> asyncio.Lock:
     """Serialize persisted and live event delivery within one chat."""
     return EVENT_DELIVERY_LOCKS.setdefault(session_id, asyncio.Lock())
-
-
-async def forget_event_seq(
-    session_id: str,
-    *,
-    preserve_at_least: int | None = None,
-    preserve_delivery_lock: bool = False,
-) -> None:
-    async with EVENT_SEQ_LOCK:
-        if preserve_at_least is None:
-            EVENT_SEQ_CACHE.pop(session_id, None)
-        else:
-            EVENT_SEQ_CACHE[session_id] = max(
-                int(EVENT_SEQ_CACHE.get(session_id) or 0),
-                max(0, int(preserve_at_least)),
-            )
-    if not preserve_delivery_lock:
-        # A delete owns this lock while SessionStore removes the transcript and
-        # calls us. Replacing that still-held object would let an append enter a
-        # fresh lock and recreate the deleted log concurrently. An unlocked
-        # entry remains safe to evict; event_delivery_lock() enters an unlocked
-        # asyncio.Lock without yielding to another task between lookup/acquire.
-        delivery_lock = EVENT_DELIVERY_LOCKS.get(session_id)
-        if delivery_lock is not None and not delivery_lock.locked():
-            EVENT_DELIVERY_LOCKS.pop(session_id, None)
-        repair_lock = EVENT_SEQ_REPAIR_LOCKS.get(session_id)
-        if repair_lock is not None and not repair_lock.locked():
-            EVENT_SEQ_REPAIR_LOCKS.pop(session_id, None)
-    # A cold timeline scan holds a native threading.Lock and can take seconds.
-    # Wait for it off-loop, but retain ownership through caller cancellation so
-    # deletion cannot release its event lock before the late invalidation lands.
-    def invalidate_timeline_index() -> None:
-        timeline_lock = timeline_index_session_lock(session_id)
-        with timeline_lock:
-            with TIMELINE_INDEX_CACHE_LOCK:
-                TIMELINE_INDEX_CACHE.pop(session_id, None)
-
-    invalidation_task = asyncio.create_task(
-        asyncio.to_thread(invalidate_timeline_index)
-    )
-    try:
-        await asyncio.shield(invalidation_task)
-    except asyncio.CancelledError as cancellation:
-        await join_task_despite_caller_cancellation(invalidation_task)
-        raise cancellation
-    FORK_INTERNAL_RUN_CACHE.pop(session_id, None)
-    FORK_INTERNAL_RUN_LOCKS.pop(session_id, None)
-
-
-def codex_provider_mcp_connection_host(bind_address: str | None = None) -> str:
-    """Resolve a reachable same-host MCP address for every supported bind."""
-
-    configured = str(
-        SERVER.bind_address if bind_address is None else bind_address
-    ).strip()
-    if configured.lower() == "localhost":
-        return "127.0.0.1"
-    address = normalized_network_address(configured)
-    if address.is_unspecified:
-        return "::1" if isinstance(address, ipaddress.IPv6Address) else "127.0.0.1"
-    return str(address)
-
-
-# Set only by the independently managed execution entrypoint, before startup.
-# Public bind/port remain unchanged for native client discovery.
-PROVIDER_CALLBACK_ORIGIN: str | None = None
-
-
-def provider_helper_server_origin() -> str:
-    """Return the exact same-host origin used by provider helper transports."""
-
-    if PROVIDER_CALLBACK_ORIGIN is not None:
-        return PROVIDER_CALLBACK_ORIGIN
-    host = codex_provider_mcp_connection_host()
-    url_host = (
-        f"[{host}]"
-        if isinstance(normalized_network_address(host), ipaddress.IPv6Address)
-        else host
-    )
-    return f"http://{url_host}:{SERVER.port}"
-
-
-def add_provider_no_proxy_environment(
-    environment: dict[str, str],
-    host: str,
-) -> None:
-    """Keep the process-secret same-host transport out of ambient proxies."""
-
-    required = [host]
-    if ":" in host:
-        required.append(f"[{host}]")
-    for name in ("NO_PROXY", "no_proxy"):
-        existing = [
-            item.strip()
-            for item in str(environment.get(name) or "").split(",")
-            if item.strip()
-        ]
-        for item in required:
-            if item not in existing:
-                existing.append(item)
-        environment[name] = ",".join(existing)
-
-
-class CreateSessionRequest(BaseModel):
-    title: str | None = None
-    auto_title_enabled: bool | None = None
-    folder: str | None = None
-    cwd: str | None = None
-    backend: str | None = None
-    model: str | None = None
-    effort: str | None = None
-    subagent_limit: int | None = Field(default=None, strict=True, ge=1)
-    system_prompt: str | None = Field(default=None, max_length=MAX_SESSION_SYSTEM_PROMPT_CHARS)
-    pinned: bool | None = None
-    archived: bool | None = None
-    provider_session_id: str | None = None
-    session_id: str | None = None
-    claude_session_id: str | None = None
-    codex_thread_id: str | None = None
-    claude_permission_mode: Literal[
-        "default",
-        "acceptEdits",
-        "plan",
-        "bypassPermissions",
-        "dontAsk",
-        "auto",
-    ] | None = None
-    codex_approval_policy: Literal["never", "on-request", "untrusted"] | None = None
-    codex_sandbox_mode: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
-    codex_permission_profile: str | None = Field(default=None, max_length=240)
-    codex_approvals_reviewer: Literal["user", "auto_review", "guardian_subagent"] | None = None
-    provider_jobs_access: Literal["full", "read_only", "blocked"] | None = None
-    import_history: bool | None = None
-
-
-class UpdateSessionRequest(BaseModel):
-    title: str | None = None
-    auto_title_enabled: bool | None = None
-    folder: str | None = None
-    cwd: str | None = None
-    backend: str | None = None
-    model: str | None = None
-    effort: str | None = None
-    subagent_limit: int | None = Field(default=None, strict=True, ge=1)
-    system_prompt: str | None = Field(default=None, max_length=MAX_SESSION_SYSTEM_PROMPT_CHARS)
-    pinned: bool | None = None
-    archived: bool | None = None
-    claude_permission_mode: Literal[
-        "default",
-        "acceptEdits",
-        "plan",
-        "bypassPermissions",
-        "dontAsk",
-        "auto",
-    ] | None = None
-    codex_approval_policy: Literal["never", "on-request", "untrusted"] | None = None
-    codex_sandbox_mode: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
-    codex_permission_profile: str | None = Field(default=None, max_length=240)
-    codex_approvals_reviewer: Literal["user", "auto_review", "guardian_subagent"] | None = None
-    provider_jobs_access: Literal["full", "read_only", "blocked"] | None = None
-
-
-class ReadSessionRequest(BaseModel):
-    last_read_agent_event_seq: int | None = None
-
-
-def normalize_runtime_effort(backend: str, effort: Any, *, strict: bool = False) -> str | None:
-    clean = str(effort or "").strip().lower()
-    if not clean:
-        return None
-    if str(backend or "").strip().lower() != BACKEND_CODEX:
-        return clean
-
-    normalized = CODEX_EFFORT_ALIASES.get(clean, clean)
-    if normalized in CODEX_EFFORTS:
-        return normalized
-    if strict:
-        supported = ", ".join(sorted(CODEX_EFFORTS))
-        raise HTTPException(status_code=400, detail=f"Codex effort must be one of: {supported}")
-    logger.warning("dropping unsupported Codex effort value=%r", effort)
-    return None
-
-
-def normalize_runtime_effort_for_model(
-    backend: str,
-    model: Any,
-    effort: Any,
-    *,
-    strict: bool = False,
-) -> str | None:
-    """Normalize an effort and reject known-incompatible Codex model pairs.
-
-    Unknown/custom model ids remain provider-owned. For picker-visible Codex
-    models, fail before launch rather than advertising a saved effort that the
-    provider will ignore or reject later.
-    """
-    normalized = normalize_runtime_effort(backend, effort, strict=strict)
-    if normalized is None or str(backend or "").strip().lower() != BACKEND_CODEX:
-        return normalized
-
-    clean_model = str(model or "").strip()
-    if not clean_model:
-        configured_model, _configured_effort, _configured_service_tier = (
-            codex_user_config_defaults()
-        )
-        clean_model = configured_model or CODEX_DEFAULT_MODEL
-    supported = CODEX_FALLBACK_MODEL_EFFORTS.get(clean_model)
-    if supported is None or normalized in supported:
-        return normalized
-    if strict:
-        choices = ", ".join(supported)
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Codex model {clean_model} does not support effort {normalized}; "
-                f"choose one of: {choices}"
-            ),
-        )
-    logger.warning(
-        "dropping unsupported Codex model/effort pair model=%s effort=%s",
-        clean_model,
-        normalized,
-    )
-    return None
-
-
-def clamp_codex_runtime_effort(model: str, effort: Any) -> str:
-    """Return a launch-safe effort without rewriting the saved preference.
-
-    The Codex config file can outlive a model or can contain an effort copied
-    from another model.  Known fallback models are clamped to their nearest
-    supported level at launch. Unknown/discovered model ids remain owned by
-    Codex because a static server table must not reject newer capabilities.
-    """
-
-    normalized = normalize_runtime_effort(BACKEND_CODEX, effort)
-    supported = CODEX_FALLBACK_MODEL_EFFORTS.get(str(model or "").strip())
-    if supported is None:
-        return normalized or CODEX_DEFAULT_EFFORT
-    if normalized in supported:
-        return normalized
-
-    if normalized in CODEX_EFFORT_ORDER:
-        requested_index = CODEX_EFFORT_ORDER.index(normalized)
-        ranked_supported = [
-            (CODEX_EFFORT_ORDER.index(candidate), candidate)
-            for candidate in supported
-            if candidate in CODEX_EFFORT_ORDER
-        ]
-        lower_or_equal = [
-            item for item in ranked_supported if item[0] <= requested_index
-        ]
-        if lower_or_equal:
-            clamped = max(lower_or_equal)[1]
-        elif ranked_supported:
-            clamped = min(ranked_supported)[1]
-        else:
-            clamped = supported[0]
-    else:
-        default_effort = normalize_runtime_effort(
-            BACKEND_CODEX,
-            CODEX_DEFAULT_EFFORT,
-        )
-        clamped = (
-            default_effort
-            if default_effort in supported
-            else supported[-1]
-        )
-    logger.warning(
-        "clamping unsupported Codex runtime effort model=%s requested=%r effective=%s",
-        model,
-        effort,
-        clamped,
-    )
-    return clamped
-
-
-REMOVED_PROVIDER_MESSAGE = "This provider was removed. Its saved chat history remains readable."
-REMOVED_ENDPOINT_MESSAGE = "Custom API endpoints were removed. This chat's saved history remains readable."
-
-
-def retired_session_runtime_message(sess: dict[str, Any]) -> str | None:
-    """Chats whose runtime no longer exists keep readable history but never run.
-
-    A chat saved against a removed custom endpoint must not silently continue
-    on the native login: that would send its history to another account.
-    """
-    if str(sess.get("backend") or DEFAULT_BACKEND).lower() not in VALID_BACKENDS:
-        return REMOVED_PROVIDER_MESSAGE
-    if "custom" in (sess.get("codex_provider"), sess.get("provider_connection")):
-        return REMOVED_ENDPOINT_MESSAGE
-    return None
-
-
-def preview_session_runtime_update(
-    sess: dict[str, Any],
-    patch: dict[str, Any],
-) -> dict[str, Any]:
-    """Validate and preview provider runtime fields without mutating state."""
-
-    current_backend = str(sess.get("backend") or DEFAULT_BACKEND).lower()
-    retired = retired_session_runtime_message(sess)
-    if retired:
-        if set(patch) - {"title", "folder", "pinned", "archived", "auto_title_enabled"}:
-            raise HTTPException(410, retired)
-        # Organizing saved history must not bind credentials, migrate the
-        # provider or validate settings for a runtime that no longer exists.
-        return {**sess, "model": sess.get("model"), "effort": sess.get("effort")}
-    prospective_backend = (
-        str(patch["backend"]).lower()
-        if patch.get("backend") is not None
-        else current_backend
-    )
-    if prospective_backend not in VALID_BACKENDS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"backend must be one of {sorted(VALID_BACKENDS)}",
-        )
-    backend_changed = prospective_backend != current_backend
-    if backend_changed and session_backend_locked(sess):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "backend is locked after the chat starts; fork or create "
-                "a new chat to use another backend"
-            ),
-        )
-
-    prospective_model = (
-        str(patch.get("model") or "").strip() or None
-        if "model" in patch
-        else None if backend_changed else sess.get("model")
-    )
-    previous_model = prospective_model
-    if prospective_backend == BACKEND_CODEX and prospective_model:
-        prospective_model = codex_available_model(str(prospective_model))
-    prospective_effort = (
-        patch.get("effort")
-        if "effort" in patch
-        else None if backend_changed else sess.get("effort")
-    )
-    if prospective_model != previous_model and prospective_effort:
-        # Saved/queued settings may contain a level unsupported by the new
-        # model. Validate the vocabulary, then preserve the nearest level.
-        prospective_effort = clamp_codex_runtime_effort(
-            str(prospective_model),
-            normalize_runtime_effort(BACKEND_CODEX, prospective_effort, strict="effort" in patch),
-        )
-    normalized_effort = normalize_runtime_effort_for_model(
-        prospective_backend, prospective_model, prospective_effort, strict="effort" in patch,
-    )
-
-    preview = dict(sess)
-    preview["backend"] = prospective_backend
-    preview["model"] = prospective_model
-    preview["effort"] = normalized_effort
-    if backend_changed:
-        provider_id_field = {
-            BACKEND_CLAUDE: "claude_session_id",
-            BACKEND_CODEX: "codex_thread_id",
-        }[prospective_backend]
-        preview["session_id"] = sess.get(provider_id_field)
-    return preview
-
-
-def effective_claude_permission_mode(sess: dict[str, Any]) -> str:
-    """Return one canonical SDK permission mode for persisted/legacy chats."""
-
-    value = str(
-        sess.get("claude_permission_mode")
-        or CLAUDE_DEFAULT_PERMISSION_MODE
-    ).strip()
-    return (
-        value
-        if value in CLAUDE_PERMISSION_MODES
-        else CLAUDE_DEFAULT_PERMISSION_MODE
-    )
-
-
-def effective_provider_jobs_access(sess: dict[str, Any] | None) -> str:
-    """Return the durable agent Jobs policy for a persisted or legacy chat."""
-
-    value = str(
-        (sess or {}).get("provider_jobs_access")
-        or PROVIDER_JOBS_ACCESS_DEFAULT
-    ).strip().lower()
-    return (
-        value
-        if value in PROVIDER_JOBS_ACCESS_MODE_SET
-        else PROVIDER_JOBS_ACCESS_DEFAULT
-    )
 
 
 def clean_session_system_prompt(value: Any) -> str | None:
@@ -961,248 +419,6 @@ def write_abandoned_fork_thread_ids(
         path or ABANDONED_FORK_THREADS_FILE,
         {"thread_ids": sorted(thread_ids)},
     )
-
-
-def clean_emergency_message(value: Any) -> str:
-    """Return bounded, one-line plain text suitable for high-priority UI."""
-
-    characters: list[str] = []
-    for character in str(value or "")[: EMERGENCY_MESSAGE_MAX_CHARS * 4]:
-        category = unicodedata.category(character)
-        characters.append(" " if category.startswith("C") else character)
-    return " ".join("".join(characters).split())[:EMERGENCY_MESSAGE_MAX_CHARS]
-
-
-def normalized_emergency_alert(value: Any) -> dict[str, Any] | None:
-    if not isinstance(value, dict):
-        return None
-    alert_id = str(value.get("id") or "").strip()
-    message = clean_emergency_message(value.get("message"))
-    raised_at = str(value.get("raised_at") or "").strip()
-    source_run_id = str(value.get("source_run_id") or "").strip()
-    if (
-        not re.fullmatch(r"emergency_[0-9a-f]{32}", alert_id)
-        or not message
-        or not raised_at
-    ):
-        return None
-    return {
-        "id": alert_id,
-        "status": "active",
-        "severity": "critical",
-        "message": message,
-        "raised_at": raised_at[:80],
-        "source_run_id": source_run_id[:160] or None,
-    }
-
-
-def reversed_jsonl_events(
-    path: Path, *, retained_fields: frozenset[str] | None = None,
-) -> Iterator[dict[str, Any]]:
-    """Read newest-first in linear work, without accumulating a giant line.
-
-    Find offsets in fixed blocks. Emergency readers only retain lifecycle
-    fields; unrelated text/media is validated and skipped in bounded chunks.
-    Other consumers retain the full event contract.
-    """
-
-    if not path.exists():
-        return
-    chunk_size = 256 * 1024
-    with path.open("rb") as source:
-        source.seek(0, os.SEEK_END)
-        position = end = source.tell()
-
-        def read_event(start: int, stop: int) -> dict[str, Any] | None:
-            if stop <= start:
-                return None
-            source.seek(start)
-            if retained_fields is not None:
-                for event, _, _ in jsonl_records(
-                    source, end=stop, project=False, require_newline=False,
-                    retained_fields=retained_fields, deadline=float("inf"),
-                    # This is a server-owned journal, not a native import.
-                    # A tool payload can legitimately contain many values.
-                    # Keep retained metadata bounded; scan omitted values in
-                    # linear time without the importer's value-count ceiling.
-                    max_nodes=None, max_depth=512,
-                ):
-                    return event
-                return None
-            with suppress(ValueError, UnicodeError):
-                event = json.loads(source.read(stop - start).decode("utf-8", "replace"))
-                if isinstance(event, dict):
-                    return event
-            return None
-
-        while position > 0:
-            read_size = min(chunk_size, position)
-            position -= read_size
-            source.seek(position)
-            block = source.read(read_size)
-            offset = len(block)
-            while (offset := block.rfind(b"\n", 0, offset)) >= 0:
-                start = position + offset + 1
-                event = read_event(start, end)
-                if event is not None:
-                    yield event
-                end = start - 1
-        event = read_event(0, end)
-        if event is not None:
-            yield event
-
-
-EMERGENCY_EVENT_FIELDS = frozenset({
-    "id", "seq", "type", "ts", "session_id", "run_id",
-    "emergency_alert", "emergency_alert_id", "emergency_request_id", "emergency_request_digest",
-})
-
-
-def notification_events_after(
-    session_id: str,
-    after_seq: int,
-) -> tuple[list[dict[str, Any]], int]:
-    newest_seq = max(0, int(after_seq or 0))
-    events: list[dict[str, Any]] = []
-    for event in reversed_jsonl_events(events_path(session_id), retained_fields=NOTIFICATION_EVENT_FIELDS):
-        seq = int(event.get("seq") or 0)
-        newest_seq = max(newest_seq, seq)
-        if seq <= after_seq:
-            break
-        if event.get("type") == "agent_notification":
-            events.append(event)
-    events.reverse()
-    return events, newest_seq
-
-
-def reconcile_session_agent_notifications(session_id: str, sess: dict[str, Any]) -> bool:
-    through = max(0, int(sess.get("_notification_reconciled_through_seq") or 0))
-    checkpoint = through or max(0, int(sess.get("latest_event_seq") or 0))
-    events, newest_seq = notification_events_after(session_id, checkpoint)
-    if not events and not through:
-        return False
-    before = (
-        sess.get("latest_notification_level"), sess.get("latest_notification_message"),
-        sess.get("unread_notification_level"), sess.get("unread_notification_seq"), through,
-    )
-    if not through and events:
-        sess.pop("unread_notification_level", None)
-        sess.pop("unread_notification_seq", None)
-    read_seq = int(sess.get("last_read_agent_event_seq") or 0)
-    ranks = {"normal": 1, "important": 2, "emergency": 3}
-    for event in events:
-        level = event.get("notification_level")
-        seq = int(event.get("seq") or 0)
-        if level not in ranks or seq <= 0:
-            continue
-        sess["latest_notification_level"] = level
-        sess["latest_notification_message"] = event.get("message")
-        if seq > int(sess.get("latest_agent_event_seq") or 0):
-            sess["latest_agent_event_seq"] = seq
-            sess["latest_agent_event_at"] = event.get("ts")
-            sess["latest_agent_event_type"] = "agent_notification"
-        if seq > int(sess.get("latest_event_seq") or 0):
-            sess["latest_event_seq"] = seq
-            sess["latest_event_at"] = event.get("ts")
-            sess["latest_event_type"] = "agent_notification"
-        if seq > read_seq and ranks[level] >= ranks.get(sess.get("unread_notification_level"), 0):
-            sess["unread_notification_level"] = level
-            sess["unread_notification_seq"] = seq
-    if int(sess.get("unread_notification_seq") or 0) <= read_seq:
-        sess.pop("unread_notification_level", None)
-        sess.pop("unread_notification_seq", None)
-    if newest_seq:
-        sess["_notification_reconciled_through_seq"] = newest_seq
-    after = (
-        sess.get("latest_notification_level"), sess.get("latest_notification_message"),
-        sess.get("unread_notification_level"), sess.get("unread_notification_seq"),
-        int(sess.get("_notification_reconciled_through_seq") or 0),
-    )
-    return before != after
-
-
-def emergency_lifecycle_events_after(
-    session_id: str,
-    after_seq: int,
-) -> tuple[list[dict[str, Any]], int]:
-    """Return every emergency lifecycle record after a durable projection."""
-
-    newest_seq = max(0, int(after_seq or 0))
-    events: list[dict[str, Any]] = []
-    for event in reversed_jsonl_events(
-        events_path(session_id), retained_fields=EMERGENCY_EVENT_FIELDS,
-    ):
-        seq = int(event.get("seq") or 0)
-        newest_seq = max(newest_seq, seq)
-        if seq <= after_seq:
-            break
-        if str(event.get("type") or "") in {
-            "emergency_alert_raised",
-            "emergency_alert_acknowledged",
-        }:
-            events.append(event)
-    events.reverse()
-    return events, newest_seq
-
-
-def active_emergency_alerts(sess: dict[str, Any]) -> list[dict[str, Any]]:
-    values = sess.get("_emergency_alerts")
-    if not isinstance(values, list):
-        values = []
-    by_id: dict[str, dict[str, Any]] = {}
-    for value in values:
-        alert = normalized_emergency_alert(value)
-        if alert:
-            by_id[alert["id"]] = alert
-    return list(by_id.values())
-
-
-def apply_emergency_lifecycle_event(
-    alerts: list[dict[str, Any]],
-    event: dict[str, Any],
-) -> list[dict[str, Any]]:
-    by_id = {str(alert["id"]): dict(alert) for alert in alerts}
-    event_type = str(event.get("type") or "")
-    if event_type == "emergency_alert_raised":
-        alert = normalized_emergency_alert(event.get("emergency_alert"))
-        if alert:
-            by_id[alert["id"]] = alert
-    elif event_type == "emergency_alert_acknowledged":
-        alert_id = str(event.get("emergency_alert_id") or "").strip()
-        by_id.pop(alert_id, None)
-    return list(by_id.values())
-
-
-def reconcile_session_emergency_alerts(
-    session_id: str,
-    sess: dict[str, Any],
-) -> bool:
-    """Repair summary state from the durable tail after an interrupted save."""
-
-    before = active_emergency_alerts(sess)
-    alerts = before
-    previous_through = max(
-        0,
-        int(sess.get("_emergency_reconciled_through_seq") or 0),
-    )
-    lifecycle_events, reconciled_through = emergency_lifecycle_events_after(
-        session_id,
-        previous_through,
-    )
-    for event in lifecycle_events:
-        alerts = apply_emergency_lifecycle_event(alerts, event)
-    if alerts:
-        sess["_emergency_alerts"] = alerts
-    else:
-        sess.pop("_emergency_alerts", None)
-    if reconciled_through:
-        sess["_emergency_reconciled_through_seq"] = reconciled_through
-    return alerts != before or reconciled_through != previous_through
-
-
-def emergency_summary(sess: dict[str, Any]) -> tuple[dict[str, Any] | None, int]:
-    alerts = active_emergency_alerts(sess)
-    return (dict(alerts[-1]) if alerts else None, len(alerts))
 
 
 def encode_sessions_json(sessions: dict[str, dict[str, Any]]) -> str:
@@ -2486,70 +1702,12 @@ STORE = SessionStore()
 CLAUDE_STOP_FENCE_SESSIONS: set[str] = set()
 
 
-CODEX_RETIRED_APP_SERVER_MANAGERS: list[CodexAppServerManager] = []
-CODEX_SESSION_APP_SERVER_MANAGERS: dict[str, CodexAppServerManager] = {}
-
-
-CODEX_THREAD_SESSION_INDEX: dict[str, str] = {}
-
-
-CODEX_SUBAGENT_SESSION_INDEX: dict[str, str] = {}
-CODEX_SUBAGENT_STATE: dict[str, dict[str, Any]] = {}
-# Runtime-only proof that an active child state came from the current provider
-# generation. Persisted "running" cards are historical hints, not evidence
-# that work survived an HyadexServer/app-server restart.
-CODEX_SUBAGENT_LIVE_GENERATIONS: dict[str, int] = {}
-CODEX_SUBAGENT_LIVE_MANAGERS: dict[str, Any] = {}
-# Timeline indexes are built in worker threads while provider notifications
-# update these maps on the event loop. Protect compound mutations and snapshots
-# so a semantic-page rebuild never iterates a dictionary that is changing.
-CODEX_SUBAGENT_INDEX_LOCK = threading.RLock()
-
-
-CODEX_COMPACTION_TERMINAL_HISTORY_LIMIT = 128
-
-
 PROVIDER_AUTHORITY_LOCK = asyncio.Lock()
 # Indexed only by SHA-256(token); plaintext exists solely in the mode-0600
 # per-run authority file supplied to the provider. This scopes API authority;
 # it is not an OS sandbox against hostile processes running as the same Unix
 # account. Host account permissions remain the outer trust boundary.
 PROVIDER_AUTHORITIES: dict[str, dict[str, Any]] = {}
-
-
-RUNTIME_DIAGNOSTICS: dict[str, dict[str, Any]] = {}
-RUNTIME_DIAGNOSTICS_LOCK = threading.RLock()
-
-
-ABANDONED_FORK_PROVIDER_THREADS: set[str] = set()
-
-
-def ensure_codex_thread_not_pending_fork_cleanup(thread_id: Any) -> None:
-    """Fence provider identities while post-crash fork cleanup owns them."""
-
-    clean_thread_id = str(thread_id or "").strip()
-    if clean_thread_id and clean_thread_id in ABANDONED_FORK_PROVIDER_THREADS:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "this Codex thread is being retired after an interrupted fork; "
-                "retry after cleanup completes"
-            ),
-        )
-
-
-def session_codex_thread_id(session: dict[str, Any]) -> str:
-    """Return the chat's Codex root whether Codex is active or parked."""
-
-    parked = str(session.get("codex_thread_id") or "").strip()
-    if parked:
-        return parked
-    if (
-        str(session.get("backend") or DEFAULT_BACKEND).strip().lower()
-        == BACKEND_CODEX
-    ):
-        return str(session.get("session_id") or "").strip()
-    return ""
 
 
 def session_lifecycle_lock(session_id: str) -> asyncio.Lock:
@@ -3038,84 +2196,11 @@ def event_output_text(value: Any) -> str:
     return str(value)
 
 
-def file_record_belongs_to_session(record: Any, session_id: str) -> bool:
-    if not isinstance(record, dict):
-        return True
-    owner = str(record.get("session_id") or "").strip()
-    return not owner or owner == session_id
-
-
-def event_establishes_session_file_origin(event: dict[str, Any], session_id: str) -> bool:
-    """Return whether a nested file record genuinely originated in this chat."""
-    event_owner = str(event.get("session_id") or "").strip()
-    original_owner = str(event.get("original_session_id") or "").strip()
-    return (
-        event.get("forked") is not True
-        and (not event_owner or event_owner == session_id)
-        and (not original_owner or original_owner == session_id)
-    )
-
-
-def read_file_meta_record(file_id: str) -> dict[str, Any] | None:
-    clean_file_id = normalized_file_id(file_id)
-    if not clean_file_id:
-        return None
-    meta_path = FILES_ROOT / clean_file_id / "meta.json"
-    if not meta_path.is_file():
-        return None
-    with suppress(Exception):
-        record = json.loads(meta_path.read_text(encoding="utf-8"))
-        if isinstance(record, dict):
-            return record
-    return None
-
-
-def delete_session_owned_file_records(session_id: str) -> int:
-    """Delete only registry entries explicitly owned by a removed chat."""
-    removed = 0
-    if not FILES_ROOT.is_dir():
-        return removed
-    for entry in FILES_ROOT.iterdir():
-        if entry.is_symlink() or not entry.is_dir():
-            continue
-        metadata = read_file_meta_record(entry.name)
-        if str((metadata or {}).get("session_id") or "").strip() != session_id:
-            continue
-        try:
-            shutil.rmtree(entry)
-            removed += 1
-        except OSError as exc:
-            logger.warning(
-                "failed to remove session-owned file session=%s file_id=%s: %s",
-                session_id,
-                entry.name,
-                concise_error_message(exc),
-            )
-    return removed
-
-
 def delete_session_local_roots(session_id: str) -> None:
     """Remove both session-local storage trees for one retired chat."""
 
     shutil.rmtree(session_dir(session_id), ignore_errors=True)
     shutil.rmtree(code_diffs_dir(session_id), ignore_errors=True)
-
-
-def event_files_belong_to_session(event: dict[str, Any], session_id: str | None = None) -> bool:
-    owner = str(session_id or event.get("session_id") or "").strip()
-    if not owner:
-        return True
-    for key in ("file", "artifact"):
-        record = event.get(key)
-        if not file_record_belongs_to_session(record, owner):
-            return False
-        if (
-            isinstance(record, dict)
-            and not str(record.get("session_id") or "").strip()
-            and not event_establishes_session_file_origin(event, owner)
-        ):
-            return False
-    return True
 
 
 def session_codex_subagent_states(session_id: str) -> list[dict[str, Any]]:
@@ -3159,96 +2244,6 @@ def rebuild_codex_subagent_indexes() -> None:
         for child_thread_id, session_id, state in rebuilt:
             CODEX_SUBAGENT_SESSION_INDEX[child_thread_id] = session_id
             CODEX_SUBAGENT_STATE[child_thread_id] = state
-
-
-TIMELINE_INDEX_CODEX_GOAL_TYPES = {
-    "codex_goal_budget_limited",
-}
-TIMELINE_INDEX_CODEX_COMPACTION_TYPES = {
-    "codex_compaction_started",
-    "codex_compaction_completed",
-}
-
-
-def timeline_index_codex_lifecycle_key(
-    event: dict[str, Any],
-) -> str | None:
-    """Return the stable semantic key for durable Codex control markers."""
-    event_type = str(event.get("type") or "")
-    if event_type in TIMELINE_INDEX_CODEX_GOAL_TYPES:
-        return "codex:goal-budget"
-    if event_type not in TIMELINE_INDEX_CODEX_COMPACTION_TYPES:
-        return None
-    compaction_id = str(event.get("compaction_id") or "").strip()
-    if compaction_id:
-        return f"codex:compaction:{compaction_id}"
-    operation_id = str(event.get("operation_id") or "").strip()
-    if operation_id:
-        return f"codex:compaction:{operation_id}"
-    native_id = (
-        str(event.get("turn_id") or "").strip()
-        or str(event.get("item_id") or "").strip()
-        or str(event.get("id") or "").strip()
-        or str(event.get("seq") or "")
-    )
-    return f"codex:compaction:{native_id}"
-
-
-def native_codex_compaction_id(
-    thread_id: str,
-    turn_id: str | None,
-    item_id: str | None,
-) -> str:
-    """Return one durable identity shared by native start/completion events."""
-
-    return ":".join((
-        "native",
-        str(thread_id or "-").strip() or "-",
-        str(turn_id or "-").strip() or "-",
-        str(item_id or "-").strip() or "-",
-    ))
-
-
-def native_codex_compaction_terminal_aliases(
-    thread_id: str,
-    turn_id: str | None,
-    item_id: str | None,
-) -> tuple[str, ...]:
-    """Return stable, unambiguous identities for a provider compaction.
-
-    App-server can replay a completion with either the turn or item field
-    omitted after the owning ACTIVE record has been released. Thread+turn and
-    thread+item remain safe aliases; thread alone does not, because it could
-    suppress a later legitimate compaction on the same conversation.
-
-    The thread+turn alias is only produced while the item id is unknown. One
-    long turn can compact several times, each with its own item id, so a
-    lookup that carries an item id must never be satisfied by the turn alias
-    of an earlier compaction in the same turn.
-    """
-
-    thread_id = str(thread_id or "").strip()
-    turn_id = str(turn_id or "").strip()
-    item_id = str(item_id or "").strip()
-    if not thread_id or (not turn_id and not item_id):
-        return ()
-
-    aliases = [
-        f"codex:compaction:{native_codex_compaction_id(thread_id, turn_id, item_id)}"
-    ]
-    alias_parts = (("item", item_id),) if item_id else (("turn", turn_id),)
-    for kind, value in alias_parts:
-        if not value:
-            continue
-        encoded = json.dumps(
-            [thread_id, value],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8", errors="surrogatepass")
-        aliases.append(
-            f"codex:compaction-native:{kind}:{hashlib.sha256(encoded).hexdigest()}"
-        )
-    return tuple(aliases)
 
 
 def remember_codex_native_compaction_terminal(
@@ -3296,12 +2291,6 @@ def remember_codex_native_compaction_terminal(
     ]
 
 
-def timeline_index_session_lock(session_id: str) -> threading.Lock:
-    return TIMELINE_INDEX_LOCK_STRIPES[
-        hash(session_id) % len(TIMELINE_INDEX_LOCK_STRIPES)
-    ]
-
-
 async def revoke_terminal_run_authority(session_id: str, event: dict[str, Any]) -> None:
     """Retire the exact run's provider authority after its terminal event."""
 
@@ -3319,15 +2308,6 @@ async def revoke_terminal_run_authority(session_id: str, event: dict[str, Any]) 
         )
 
 
-def codex_compaction_count(sess: dict[str, Any]) -> int:
-    """Return the persisted per-thread compaction tally, tolerating bad data."""
-
-    value = sess.get("codex_compaction_count")
-    if isinstance(value, bool) or not isinstance(value, int):
-        return 0
-    return max(0, value)
-
-
 def normalized_local_session_cwd(value: Any) -> str | None:
     clean = str(value or "").strip()
     if not clean or len(clean) > MAX_WORKSPACE_PATH_CHARS:
@@ -3336,27 +2316,6 @@ def normalized_local_session_cwd(value: Any) -> str | None:
     if not candidate.is_absolute():
         return None
     return os.path.normpath(str(candidate))
-
-
-def read_native_session_title(sess: dict[str, Any]) -> str | None:
-    """Read existing native metadata only; never launch a CLI or model request.
-
-    Missing/changed provider formats intentionally leave the prompt fallback.
-    Claude and Codex use the same roots as history discovery. Cursor reads only
-    exact-workspace, exact-session naming metadata, never conversation blobs.
-    """
-    backend = str(sess.get("backend") or DEFAULT_BACKEND)
-    provider_id = provider_session_identifier(session_provider_id(sess))
-    if not provider_id:
-        return None
-    if backend == BACKEND_CLAUDE:
-        candidates = claude_history_candidates(provider_id)
-        if len(candidates) != 1:
-            return None
-        return claude_transcript_title(candidates[0], provider_id)
-    if backend == BACKEND_CODEX:
-        return native_session_title(codex_session_index_thread_names().get(provider_id))
-    return None
 
 
 async def refresh_native_session_title(session_id: str) -> None:
@@ -3392,24 +2351,6 @@ async def refresh_native_session_title(session_id: str) -> None:
             "native title lookup skipped session=%s error=%s",
             session_id, type(exc).__name__,
         )
-
-
-def title_runtime_key(sess: dict[str, Any]) -> tuple:
-    return (sess.get("backend") or DEFAULT_BACKEND, session_provider_id(sess), sess.get("model"))
-
-
-def cancel_generated_session_title(session_id: str) -> None:
-    task = GENERATED_TITLE_TASKS.get(session_id)
-    if task is not None and not task.done():
-        task.cancel()
-
-
-async def close_generated_session_titles() -> None:
-    tasks = tuple(GENERATED_TITLE_TASKS.values())
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def generate_session_title(session_id: str, snapshot: dict, reply: str) -> None:
@@ -3481,41 +2422,6 @@ def schedule_generated_session_title(session_id: str, event: dict) -> None:
             GENERATED_TITLE_TASKS.pop(session_id, None)
 
     task.add_done_callback(finished)
-
-
-def codex_session_index_thread_names() -> dict[str, str]:
-    """Best-effort id -> human title map. Not authoritative: many real Codex
-
-    sessions (including every ``codex exec`` run) never get an entry here, so
-    this is only used to prefer a nicer label, never to decide what counts as
-    a session — that comes from scanning the transcripts themselves.
-    """
-    names: dict[str, str] = {}
-    if not CODEX_SESSION_INDEX_PATH.exists():
-        return names
-    with suppress(OSError):
-        if CODEX_SESSION_INDEX_PATH.stat().st_size > MAX_CODEX_SESSION_INDEX_BYTES:
-            return names
-        with CODEX_SESSION_INDEX_PATH.open("rb") as stream:
-            for _index in range(MAX_CODEX_SESSION_INDEX_LINES):
-                raw_line = stream.readline(MAX_LOCAL_TRANSCRIPT_LINE_BYTES + 1)
-                if not raw_line:
-                    break
-                if len(raw_line) > MAX_LOCAL_TRANSCRIPT_LINE_BYTES:
-                    continue
-                if not raw_line.strip():
-                    continue
-                try:
-                    entry = json.loads(raw_line)
-                except (ValueError, UnicodeDecodeError, RecursionError):
-                    continue
-                if not isinstance(entry, dict):
-                    continue
-                provider_id = provider_session_identifier(entry.get("id"))
-                thread_name = native_session_title(entry.get("thread_name"))
-                if provider_id and thread_name:
-                    names[provider_id] = thread_name
-    return names
 
 
 HISTORY_MAINTENANCE_STATE: dict[str, dict[str, Any]] = {}
@@ -3648,26 +2554,6 @@ def public_session(sess: dict[str, Any], *, summary: bool = False) -> dict[str, 
     return public
 
 
-def codex_app_server_env() -> dict[str, str]:
-    """Process-wide environment; chat scope is supplied explicitly per thread."""
-    env = runner_env()
-    codex_dir = os.path.dirname(os.path.abspath(CODEX_BIN))
-    if codex_dir and codex_dir not in env.get("PATH", "").split(os.pathsep):
-        env["PATH"] = codex_dir + os.pathsep + env.get("PATH", "")
-    server_origin = provider_helper_server_origin()
-    env["HYADEX_SERVER_URL"] = server_origin
-    add_provider_no_proxy_environment(
-        env,
-        codex_provider_mcp_connection_host(),
-    )
-    env["HYADEX_JOBS_CLI"] = str(SERVER_ROOT / "hyadex_jobs.py")
-    env["HYADEX_PUBLISH_CLI"] = str(SERVER_ROOT / "hyadex_publish.py")
-    env["HYADEX_EMERGENCY_CLI"] = str(SERVER_ROOT / "hyadex_emergency.py")
-    env["HYADEX_NOTIFY_CLI"] = str(SERVER_ROOT / "hyadex_notify.py")
-    scrub_provider_runtime_environment(env)
-    return env
-
-
 async def mark_provider_context_usage_unavailable(
     session_id: str,
     backend: str,
@@ -3719,107 +2605,6 @@ async def mark_provider_context_usage_unavailable(
         await broadcast_provider_runtime_changed(session_id, signal)
 
 
-def codex_app_server_managers() -> tuple[CodexAppServerManager, ...]:
-    managers: list[CodexAppServerManager] = []
-    for manager in (PROVIDERS.codex_manager, *CODEX_RETIRED_APP_SERVER_MANAGERS):
-        if manager is not None and not any(manager is item for item in managers):
-            managers.append(manager)
-    return tuple(managers)
-
-
-def existing_codex_app_server_manager(sess: dict[str, Any] | None = None) -> CodexAppServerManager | None:
-    session_id = str((sess or {}).get("id") or "")
-    owner = CODEX_SESSION_APP_SERVER_MANAGERS.get(session_id)
-    if not (owner is not None and any(owner is item for item in codex_app_server_managers())):
-        thread_id = str(session_provider_id(sess) or "") if sess else ""
-        owner = next((item for item in codex_app_server_managers()
-                      if thread_id and item.is_thread_loaded(thread_id)), None)
-    return owner or PROVIDERS.codex_manager
-
-
-def session_backend_locked(sess: dict[str, Any]) -> bool:
-    return bool(sess.get("backend_locked")) or any(
-        str(sess.get(key) or "").strip()
-        for key in (
-            "session_id",
-            "claude_session_id",
-            "codex_thread_id",
-            "cursor_session_id",
-            "opencode_session_id",
-            "gemini_session_id",
-        )
-    )
-
-
-def codex_user_config_path() -> Path:
-    return Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser() / "config.toml"
-
-
-def load_codex_user_config(path: Path) -> dict[str, Any]:
-    if tomllib is not None:
-        with path.open("rb") as f:
-            return tomllib.load(f)
-
-    # Python 3.10 has no stdlib TOML parser. Only these top-level strings are
-    # needed here; nested Codex configuration remains owned by the CLI.
-    wanted = {"model", "model_reasoning_effort", "service_tier", "developer_instructions"}
-    payload: dict[str, Any] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("["):
-            break
-        key, separator, raw_value = line.partition("=")
-        key = key.strip()
-        if not separator or key not in wanted:
-            continue
-        lexer = shlex.shlex(raw_value, posix=True)
-        lexer.whitespace_split = True
-        lexer.commenters = "#"
-        values = list(lexer)
-        if values:
-            payload[key] = values[0]
-    return payload
-
-
-def codex_user_config_defaults() -> tuple[str, str, str]:
-    path = codex_user_config_path()
-    try:
-        payload = load_codex_user_config(path)
-    except Exception as exc:
-        logger.debug("codex config default discovery skipped path=%s: %s", path, exc)
-        return "", "", ""
-    model = str(payload.get("model") or "").strip()
-    effort = str(payload.get("model_reasoning_effort") or "").strip()
-    service_tier = str(payload.get("service_tier") or "").strip()
-    return model, effort, service_tier
-
-
-def codex_default_service_tier(model: str) -> str:
-    return CODEX_FALLBACK_SERVICE_TIERS.get(str(model or "").strip(), "")
-
-
-def codex_retired_model_replacements() -> dict[str, str]:
-    """Scope retirement to native ChatGPT auth, never API/custom endpoints."""
-    with RUNTIME_DIAGNOSTICS_LOCK:
-        diagnostic = RUNTIME_DIAGNOSTICS.get(BACKEND_CODEX) or {}
-        checked_at = diagnostic.get("_codex_auth_mode_checked_at_epoch", diagnostic.get("checked_at_epoch")) or 0
-        observed = (str(diagnostic.get("_codex_auth_mode") or "")
-                    if time.time() - checked_at < RUNTIME_DIAGNOSTIC_TTL_SECONDS else "")
-        replacement = PROVIDERS.codex_model_migration_target
-    mode = codex_auth.native_model_auth_mode(
-        codex_app_server_env(), cwd=existing_cwd(DEFAULT_CWD), observed_mode=observed,
-    )
-    if mode != "chatgpt":
-        return {}
-    return {model: replacement for model in sorted(codex_auth.CHATGPT_RETIRED_MODELS)}
-
-
-def codex_available_model(model: str) -> str:
-    return codex_retired_model_replacements().get(model, model)
-
-
 def session_prompt_addendum(sess: dict[str, Any]) -> str:
     custom_prompt = str(sess.get("system_prompt") or "").strip()
     if not custom_prompt:
@@ -3831,46 +2616,6 @@ def session_prompt_addendum(sess: dict[str, Any]) -> str:
     )
 
 
-def codex_runtime_settings(sess: dict[str, Any]) -> tuple[str, str, str]:
-    configured_model, configured_effort, configured_service_tier = codex_user_config_defaults()
-    model = codex_available_model(str(sess.get("model") or configured_model or CODEX_DEFAULT_MODEL).strip())
-    effort = clamp_codex_runtime_effort(
-        model,
-        sess.get("effort") or configured_effort or CODEX_DEFAULT_EFFORT,
-    )
-    service_tier = configured_service_tier or codex_default_service_tier(model)
-    return model, effort, service_tier
-
-
-def codex_goal_time_budget_remaining(sess: dict[str, Any]) -> float | None:
-    goal = sess.get("codex_goal")
-    limit = sess.get("codex_goal_time_budget_seconds")
-    if (
-        not isinstance(goal, dict)
-        or isinstance(limit, bool)
-        or not isinstance(limit, (int, float))
-        or limit <= 0
-    ):
-        return None
-    if sess.get("codex_goal_time_budget_exhausted") is True:
-        return 0.0
-    used = goal.get("timeUsedSeconds")
-    used_seconds = (
-        float(used)
-        if isinstance(used, (int, float)) and not isinstance(used, bool)
-        else 0.0
-    )
-    if used_seconds >= float(limit):
-        return 0.0
-    if str(goal.get("status") or "") != "active":
-        return None
-    return max(0.0, float(limit) - used_seconds)
-
-
-def codex_goal_time_budget_is_exhausted(sess: dict[str, Any]) -> bool:
-    return codex_goal_time_budget_remaining(sess) == 0
-
-
 def session_system_prompt(
     session_id: str,
     sess: dict[str, Any],
@@ -3878,172 +2623,6 @@ def session_system_prompt(
 ) -> str:
     del session_id, manifest_path
     return CLAUDE_PROMPT_PRELUDE.format() + session_prompt_addendum(sess)
-
-
-def codex_output_text(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    with suppress(Exception):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    return str(value)
-
-
-def bounded_codex_output_text(value: Any) -> str:
-    text = codex_output_text(value)
-    if len(text) <= CODEX_APP_SERVER_TOOL_OUTPUT_MAX_CHARS:
-        return text
-    marker = "[Earlier tool output truncated by HyadexServer]\n"
-    tail_chars = max(0, CODEX_APP_SERVER_TOOL_OUTPUT_MAX_CHARS - len(marker))
-    return marker + (text[-tail_chars:] if tail_chars else "")
-
-
-def guess_content_type(filename: str) -> str:
-    lower = filename.lower()
-    if lower.endswith((".mp4", ".m4v")):
-        return "video/mp4"
-    if lower.endswith(".mov"):
-        return "video/quicktime"
-    if lower.endswith(".webm"):
-        return "video/webm"
-    if lower.endswith(".png"):
-        return "image/png"
-    if lower.endswith((".jpg", ".jpeg")):
-        return "image/jpeg"
-    if lower.endswith(".gif"):
-        return "image/gif"
-    if lower.endswith(".pdf"):
-        return "application/pdf"
-    if lower.endswith((".md", ".markdown")):
-        return "text/markdown"
-    if lower.endswith(".txt"):
-        return "text/plain"
-    if lower.endswith(".csv"):
-        return "text/csv"
-    if lower.endswith(".json"):
-        return "application/json"
-    return "application/octet-stream"
-
-
-def effective_content_type(filename: str, recorded: str | None = None) -> str:
-    content_type = str(recorded or "").strip()
-    base_type = content_type.split(";", 1)[0].strip().lower()
-    if not base_type or base_type in {"application/octet-stream", "binary/octet-stream"}:
-        return guess_content_type(filename)
-    return content_type
-
-
-SERVER_RESTART_PHASES = {"idle", "accepted", "signaling", "complete", "failed"}
-SERVER_RESTART_ACTIVE_PHASES = {"accepted", "signaling"}
-
-
-SERVER_RESTART_ACCEPTED_STALE_SECONDS = 10.0
-
-
-EXECUTION_MAINTENANCE_ACTIVE_DETAIL = "HyadexServer execution worker is in maintenance"
-MANAGED_SERVER_RESTART_ACTIVE_DETAIL = "HyadexServer is restarting"
-
-
-SERVER_RESTART_SIGNAL_LOCK = threading.Lock()
-
-
-def execution_maintenance_blocks_work() -> bool:
-    """Return whether the owned execution worker is reserved for retirement."""
-    return SERVER.execution_maintenance is not None and SERVER.execution_maintenance.is_held()
-
-
-def server_lifecycle_admission_blocker() -> str | None:
-    if execution_maintenance_blocks_work():
-        return EXECUTION_MAINTENANCE_ACTIVE_DETAIL
-    if managed_server_restart_blocks_work():
-        return MANAGED_SERVER_RESTART_ACTIVE_DETAIL
-    return None
-
-
-def read_server_restart_status() -> dict[str, Any]:
-    try:
-        value = json.loads(SERVER_RESTART_STATUS_FILE.read_text())
-        if not isinstance(value, dict):
-            value = {}
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        value = {}
-    phase = str(value.get("phase") or "idle")
-    value["phase"] = phase if phase in SERVER_RESTART_PHASES else "idle"
-    return value
-
-
-def write_server_restart_status(**changes: Any) -> dict[str, Any]:
-    value = read_server_restart_status()
-    value.update(changes)
-    value["updated_at"] = utc_timestamp()
-    atomic_json(SERVER_RESTART_STATUS_FILE, value)
-    return value
-
-
-def managed_server_restart_blocks_work(
-    status: dict[str, Any] | None = None,
-) -> bool:
-    current = (
-        status
-        if status is not None
-        else reconcile_stale_server_restart_acceptance()
-    )
-    return str(current.get("phase") or "") in SERVER_RESTART_ACTIVE_PHASES
-
-
-def server_restart_status_age_seconds(status: dict[str, Any]) -> float:
-    timestamp: datetime | None = None
-    for name in ("completed_at", "failed_at", "updated_at", "requested_at"):
-        try:
-            candidate = datetime.fromisoformat(
-                str(status.get(name) or "").replace("Z", "+00:00")
-            )
-        except (TypeError, ValueError):
-            continue
-        timestamp = (
-            candidate
-            if candidate.tzinfo is not None
-            else candidate.replace(tzinfo=timezone.utc)
-        )
-        break
-    if timestamp is None:
-        return float("inf")
-    return max(
-        0.0,
-        (datetime.now(timezone.utc) - timestamp).total_seconds(),
-    )
-
-
-def reconcile_stale_server_restart_acceptance() -> dict[str, Any]:
-    """Fail a same-process acceptance whose response worker never started."""
-
-    status = read_server_restart_status()
-    if (
-        str(status.get("phase") or "") != "accepted"
-        or str(status.get("_source_instance_id") or "") != SERVER_INSTANCE_ID
-        or server_restart_status_age_seconds(status)
-        < SERVER_RESTART_ACCEPTED_STALE_SECONDS
-    ):
-        return status
-    with SERVER_RESTART_SIGNAL_LOCK:
-        status = read_server_restart_status()
-        if (
-            str(status.get("phase") or "") == "accepted"
-            and str(status.get("_source_instance_id") or "")
-            == SERVER_INSTANCE_ID
-            and server_restart_status_age_seconds(status)
-            >= SERVER_RESTART_ACCEPTED_STALE_SECONDS
-        ):
-            status = write_server_restart_status(
-                phase="failed",
-                message=(
-                    "HyadexServer could not begin the accepted restart. "
-                    "Retry after refreshing the server connection."
-                ),
-                failed_at=utc_timestamp(),
-            )
-    return status
 
 
 def native_session_available(session_id: str) -> bool:
@@ -4057,65 +2636,6 @@ def native_session_available(session_id: str) -> bool:
         and not session.get("_history_import_initializing")
         and not session.get("_fork_initializing")
     )
-
-
-async def ensure_claude_permission_mode_update_allowed(
-    session_id: str,
-    current: dict[str, Any],
-    patch: dict[str, Any],
-) -> None:
-    """Allow a validated mode save for the next turn.
-
-    ``_start_turn_locked`` snapshots the session before scheduling provider
-    work, and Claude's permission callback reads the captured ACTIVE value.
-    The lifecycle lock serializes that snapshot with this PATCH, so whichever
-    operation wins applies atomically to exactly the intended turn.
-    """
-
-    _ = session_id, current, patch
-
-
-async def ensure_backend_update_allowed(
-    session_id: str,
-    current: dict[str, Any],
-    patch: dict[str, Any],
-) -> None:
-    """Fence real backend changes while provider work owns the session.
-
-    ``start_turn`` registers its request task before it acquires the session
-    lifecycle lock or reserves ``BUSY_SESSIONS``.  Checking the task registry
-    closes that launch race, including a first turn with no provider identity
-    yet, while still allowing idempotent saves from older clients.
-    """
-
-    if "backend" not in patch or patch.get("backend") is None:
-        return
-    current_backend = str(
-        current.get("backend") or DEFAULT_BACKEND
-    ).strip().lower()
-    requested_backend = str(
-        patch.get("backend") or current_backend
-    ).strip().lower()
-    if requested_backend == current_backend:
-        return
-
-    async with RUNS.active_lock:
-        provider_starting = any(
-            not task.done()
-            for task in tuple(RUNS.turn_tasks.get(session_id) or ())
-        )
-        if (
-            session_id in RUNS.busy
-            or RUNS.active.get(session_id) is not None
-            or provider_starting
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "wait for or stop the active turn before changing its "
-                    "backend"
-                ),
-            )
 
 
 def empty_chat_revision(session: dict[str, Any]) -> str:
@@ -4144,64 +2664,3 @@ def empty_chat_dismissed_for(session: dict[str, Any], client_id: str) -> bool:
             and state["dismissed_by"].get(client_id) == empty_chat_revision(session))
 
 
-def iter_session_events(session_id: str):
-    path = events_path(session_id)
-    if not path.exists():
-        return
-    with path.open("r", encoding="utf-8", errors="ignore") as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            try:
-                event = json.loads(line)
-            except Exception:
-                continue
-            if event_files_belong_to_session(event, session_id):
-                yield event
-
-
-def list_session_file_records(session_id: str) -> list[dict[str, Any]]:
-    records: dict[str, dict[str, Any]] = {}
-    for meta_path in FILES_ROOT.glob("*/meta.json"):
-        try:
-            rec = json.loads(meta_path.read_text())
-        except Exception:
-            continue
-        if rec.get("session_id") == session_id and rec.get("id"):
-            records[str(rec["id"])] = rec
-
-    for event in iter_session_events(session_id):
-        for key in ("file", "artifact"):
-            rec = event.get(key)
-            if (
-                isinstance(rec, dict)
-                and rec.get("id")
-                and file_record_belongs_to_session(rec, session_id)
-            ):
-                if (
-                    not str(rec.get("session_id") or "").strip()
-                    and not event_establishes_session_file_origin(event, session_id)
-                ):
-                    continue
-                meta = read_file_meta_record(str(rec.get("id") or ""))
-                meta_owner = str((meta or {}).get("session_id") or "").strip()
-                if meta_owner and meta_owner != session_id:
-                    continue
-                out = dict(rec)
-                out["event_id"] = event.get("id")
-                out["event_seq"] = event.get("seq")
-                out["event_type"] = event.get("type")
-                records[str(rec["id"])] = out
-
-    normalized = []
-    for rec in records.values():
-        current = dict(rec)
-        filename = str(current.get("filename") or Path(str(current.get("path") or "")).name)
-        current["content_type"] = effective_content_type(filename, str(current.get("content_type") or ""))
-        normalized.append(current)
-
-    return sorted(
-        normalized,
-        key=lambda rec: (str(rec.get("created_at") or ""), str(rec.get("filename") or "")),
-        reverse=True,
-    )

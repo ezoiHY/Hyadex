@@ -15,12 +15,8 @@ from hyadex.core.config import FILES_ROOT
 from hyadex.core.http import router
 from hyadex.core.paths import now_iso, safe_name
 from hyadex.core.queue import commit_staged_upload
-from hyadex.core.sessions import (
-    effective_content_type,
-    ensure_session_not_deleting,
-    list_session_file_records,
-    STORE,
-)
+from hyadex.core.sessions import ensure_session_not_deleting, STORE
+from hyadex.core.session_files import effective_content_type, list_session_file_records
 from hyadex.core.util import ensure_dirs
 from hyadex.features.files import (
     remove_upload_tree,

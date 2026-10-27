@@ -39,8 +39,6 @@ from hyadex.core.queue import (
 )
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
-    active_emergency_alerts,
-    clean_emergency_message,
     ensure_session_not_deleting,
     ensure_session_not_initializing,
     PROVIDER_AUTHORITIES,
@@ -50,6 +48,7 @@ from hyadex.core.sessions import (
     sorted_sessions,
     STORE,
 )
+from hyadex.core.session_alerts import active_emergency_alerts, clean_emergency_message
 from hyadex.core.util import server_identity
 from hyadex.features.emergency import (
     AcknowledgeEmergencyRequest,

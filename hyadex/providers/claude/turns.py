@@ -50,12 +50,12 @@ from hyadex.core.server import SERVER
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
     append_event,
-    effective_claude_permission_mode,
     event_output_text,
     mark_provider_context_usage_unavailable,
     revoke_provider_authority,
     STORE,
 )
+from hyadex.core.session_settings import effective_claude_permission_mode
 from hyadex.core.state import LIVE_STDOUT_MAX_LINES
 from hyadex.core.turns import (
     append_active_stdout,

@@ -17,7 +17,8 @@ from hyadex.core.paths import now_iso
 from hyadex.core.queue import request_fields_set, wait_for_queue_recovery_admission
 from hyadex.core.runs import RUNS
 from hyadex.core.server_logging import concise_error_message
-from hyadex.core.sessions import append_event, codex_runtime_settings, STORE
+from hyadex.core.sessions import append_event, STORE
+from hyadex.core.session_settings import codex_runtime_settings
 from hyadex.providers.claude.history import session_provider_id
 from hyadex.providers.codex.app_server import CodexAppServerManager
 from hyadex.providers.codex.commands import acquire_codex_control_thread

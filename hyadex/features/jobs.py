@@ -52,17 +52,18 @@ from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
     append_event,
     CLAUDE_STOP_FENCE_SESSIONS,
-    effective_provider_jobs_access,
-    EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
-    list_session_file_records,
-    MANAGED_SERVER_RESTART_ACTIVE_DETAIL,
-    reversed_jsonl_events,
     ScheduledJobChatReferenceRepairRequired,
-    server_lifecycle_admission_blocker,
-    session_backend_locked,
     STORE,
-    timeline_index_session_lock,
 )
+from hyadex.core.session_titles import (
+    EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
+    server_lifecycle_admission_blocker,
+)
+from hyadex.core.session_settings import effective_provider_jobs_access, session_backend_locked
+from hyadex.core.restart_status import MANAGED_SERVER_RESTART_ACTIVE_DETAIL
+from hyadex.core.session_files import list_session_file_records
+from hyadex.core.event_seq import timeline_index_session_lock
+from hyadex.core.session_alerts import reversed_jsonl_events
 from hyadex.core.state import (
     DELETED_SESSION_TOMBSTONES,
     DELETING_SESSIONS,

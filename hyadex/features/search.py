@@ -39,12 +39,10 @@ from hyadex.core.queue import (
     prepare_claude_history_metadata_repair,
     prepare_codex_goal_history_repair,
 )
-from hyadex.core.sessions import (
-    event_files_belong_to_session,
-    STORE,
-    timeline_index_codex_lifecycle_key,
-    timeline_index_session_lock,
-)
+from hyadex.core.sessions import STORE
+from hyadex.core.session_files import event_files_belong_to_session
+from hyadex.core.event_seq import timeline_index_session_lock
+from hyadex.core.session_codex import timeline_index_codex_lifecycle_key
 from hyadex.core.state import (
     RUN_TRACE_EVENT_TYPES,
     TIMELINE_INDEX_CACHE_LOCK,

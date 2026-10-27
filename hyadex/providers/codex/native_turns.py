@@ -17,11 +17,11 @@ from hyadex.core.runs import RUNS
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
     append_event,
-    codex_goal_time_budget_remaining,
     remember_codex_native_compaction_terminal,
     session_lifecycle_lock,
     STORE,
 )
+from hyadex.core.session_settings import codex_goal_time_budget_remaining
 from hyadex.core.turns import schedule_next_queued_turn
 from hyadex.core.util import clean_assistant_text
 from hyadex.features.usage import join_task_despite_caller_cancellation

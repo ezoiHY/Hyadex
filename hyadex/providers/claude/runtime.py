@@ -72,16 +72,16 @@ from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import (
     append_event,
     CLAUDE_STOP_FENCE_SESSIONS,
-    effective_claude_permission_mode,
     ensure_session_not_deleting,
     event_output_text,
-    iter_session_events,
     register_session_task,
-    server_lifecycle_admission_blocker,
     session_lifecycle_lock,
     session_system_prompt,
     STORE,
 )
+from hyadex.core.session_titles import server_lifecycle_admission_blocker
+from hyadex.core.session_settings import effective_claude_permission_mode
+from hyadex.core.session_files import iter_session_events
 from hyadex.core.state import DELETED_SESSION_TOMBSTONES, DELETING_SESSIONS
 from hyadex.core.util import (
     _patch_changed_paths,
