@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 from fastapi import FastAPI, HTTPException, Request
@@ -32,7 +33,7 @@ FUNCTIONS = {
     "require_native_admin_control", "token_matches", "decoded_exact_header_secret",
     "request_exact_native_token_header_authorized", "privileged_native_browser_request_forbidden",
     "privileged_native_json_transport", "bounded_request_content_length",
-    "prebuffer_bounded_request_body", "require_agent_token",
+    "prebuffer_bounded_request_body", "prebuffer_declared_body", "require_agent_token",
 }
 MODELS = {"CodexSubagentsAdminRequest", "CodexGoalsAdminRequest"}
 tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
@@ -70,7 +71,10 @@ class CodexSubagentsAdminTests(unittest.IsolatedAsyncioTestCase):
             "CODEX_PROVIDER_MCP_PATH": "/api/provider-mcp",
             "CODEX_GOALS_ADMIN_MAX_BODY_BYTES": 256,
             "secure_peer_attachment_content_match": lambda path: None,
-            "is_agent_helper_route": lambda method, path: False,
+            # The real server reads this declaration from the matched route.
+            "route_auth_for_scope": lambda app, method, path, any_method=False: SimpleNamespace(
+                kind="native_admin" if path == "/api/admin/codex/subagents" else "user",
+                body_limit=256 if path == "/api/admin/codex/subagents" else None),
             "UNSAFE_HTTP_MUTATION_METHODS": {"POST", "PUT", "PATCH", "DELETE"},
         }
         exec(config_code, self.ns)
@@ -87,7 +91,7 @@ class CodexSubagentsAdminTests(unittest.IsolatedAsyncioTestCase):
         return await self.ns["put_codex_subagents_admin"](req)
 
     def request(self, method="GET", headers=None, query=b""):
-        return Request({"type": "http", "method": method,
+        return Request({"type": "http", "method": method, "app": None,
             "path": "/api/admin/codex/subagents", "scheme": "http",
             "server": ("127.0.0.1", 1), "client": ("127.0.0.1", 2),
             "headers": headers if headers is not None else [(b"x-hyadex-token", b"synthetic-native-token")],

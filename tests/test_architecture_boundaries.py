@@ -40,6 +40,25 @@ class ArchitectureBoundaryTests(unittest.TestCase):
             with self.subTest(module=str(path.relative_to(ROOT))):
                 self.assertNotRegex(path.read_text(), r"STORE\._lock")
 
+    def test_auth_middleware_has_no_route_paths(self):
+        # Policies are declared on routes (RouteAuth); the middleware only
+        # enforces the declaration of the route a request reaches.
+        body = segment(top_level("require_agent_token"))
+        self.assertEqual(re.findall(r'"/api/[^"]+"', body), [])
+
+    def test_agent_and_admin_routes_declare_their_auth(self):
+        import agent_server
+        from tests.test_route_inventory import registered_routes
+
+        for method, path in sorted(registered_routes(agent_server.app)):
+            if method in {"HEAD", "WS"} or not path.startswith(("/api/agent/", "/api/admin/")):
+                continue
+            with self.subTest(route=f"{method} {path}"):
+                auth = agent_server.route_auth_for_scope(agent_server.app, method, path)
+                expected = ({"agent_helper", "provider_mcp"} if path.startswith("/api/agent/")
+                            else {"native_admin", "restart"})
+                self.assertIn(auth.kind, expected)
+
 
 if __name__ == "__main__":
     unittest.main()

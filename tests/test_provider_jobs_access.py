@@ -314,6 +314,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         ):
             request = Request({
                 "type": "http",
+                "app": agent_server.app,
                 "method": method,
                 "path": path,
                 "headers": [

@@ -61,7 +61,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, AsyncIterator, Callable, Iterable, Iterator, Literal
 from urllib.parse import quote, unquote, urlparse
 
-from fastapi import APIRouter, BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from hyadex.app import ApplicationBindings, create_app
 from hyadex.providers.runtime import (
     MAX_PROVIDER_RUNTIME_CONTEXT_BYTES,
@@ -47160,32 +47160,92 @@ async def lifespan(app: FastAPI):
 
 router = APIRouter()
 
-AGENT_HELPER_ROUTE_RULES: tuple[tuple[str, re.Pattern[str], int], ...] = (
-    ("GET", re.compile(r"^/api/agent/sessions/[^/]+/jobs$"), 0),
-    ("POST", re.compile(r"^/api/agent/sessions/[^/]+/jobs$"), 512 * 1024),
-    ("GET", re.compile(r"^/api/agent/sessions/[^/]+/jobs/[^/]+/runs$"), 0),
-    ("PATCH", re.compile(r"^/api/agent/sessions/[^/]+/jobs/[^/]+$"), 512 * 1024),
-    ("DELETE", re.compile(r"^/api/agent/sessions/[^/]+/jobs/[^/]+$"), 0),
-    (
-        "POST",
-        re.compile(r"^/api/agent/sessions/[^/]+/artifacts$"),
-        16 * 1024 * 1024,
-    ),
-    ("POST", re.compile(r"^/api/agent/sessions/[^/]+/emergency-alerts$"), 8 * 1024),
-    ("POST", re.compile(r"^/api/agent/sessions/[^/]+/notifications$"), 8 * 1024),
-)
+RouteAuthKind = Literal["user", "agent_helper", "provider_mcp", "native_admin", "restart"]
 
 
-def agent_helper_route_body_limit(method: str, path: str) -> int | None:
-    normalized_method = str(method or "").upper()
-    for allowed_method, pattern, body_limit in AGENT_HELPER_ROUTE_RULES:
-        if normalized_method == allowed_method and pattern.fullmatch(path):
-            return body_limit
+@dataclass(frozen=True)
+class RouteAuth:
+    """How a route is admitted, declared where the route is defined.
+
+    The auth middleware enforces it from request headers before FastAPI reads
+    the body, so an unauthenticated caller can never make the server buffer or
+    parse one. Routes without a declaration are ``user`` routes (the client
+    bearer). As a dependency it does nothing; handlers that need more repeat
+    their own checks.
+
+    - ``agent_helper``: an in-chat helper with its run's provider capability,
+      from a local provider process; the bearer is not a substitute.
+    - ``provider_mcp``: Codex's local MCP tool channel, with its process secret.
+    - ``native_admin``: native operator settings; header token only.
+    - ``restart``: server restart; header token only, outside mutation admission.
+
+    ``body_limit`` bounds unsafe-method bodies (``None``: no route limit).
+    """
+
+    kind: RouteAuthKind = "user"
+    body_limit: int | None = None
+
+    def __call__(self) -> None:
+        return None
+
+
+USER_ROUTE = RouteAuth()
+
+
+def route_auth(kind: RouteAuthKind, body_limit: int | None = None) -> list[Any]:
+    """``dependencies=route_auth(...)`` for a route decorator."""
+    return [Depends(RouteAuth(kind, body_limit))]
+
+
+def declared_route_auth(route: Any) -> RouteAuth | None:
+    for dependency in getattr(route, "dependencies", None) or ():
+        if isinstance(getattr(dependency, "dependency", None), RouteAuth):
+            return dependency.dependency
     return None
 
 
+def declared_auth_routes(routes: Any) -> tuple[tuple[Any, RouteAuth], ...]:
+    """Every route with a non-default declaration, including included routers."""
+    found: list[tuple[Any, RouteAuth]] = []
+    for route in routes:
+        nested = getattr(getattr(route, "original_router", None), "routes", None)
+        if nested is not None:
+            found.extend(declared_auth_routes(nested))
+            continue
+        auth = declared_route_auth(route)
+        if auth is not None and auth.kind != "user":
+            found.append((route, auth))
+    return tuple(found)
+
+
+ROUTE_AUTH_INDEX: "weakref.WeakKeyDictionary[Any, tuple[tuple[Any, RouteAuth], ...]]" = weakref.WeakKeyDictionary()
+
+
+def route_auth_for_scope(app: Any, method: str, path: str, *, any_method: bool = False) -> RouteAuth:
+    """The declaration of the route a request would reach (default ``user``).
+
+    Only the few declared routes are matched, so ordinary requests pay one
+    short scan. ``any_method`` also accepts a path match with another method,
+    for preflight requests.
+    """
+    index = ROUTE_AUTH_INDEX.get(app)
+    if index is None:
+        index = ROUTE_AUTH_INDEX[app] = declared_auth_routes(app.router.routes)
+    scope = {"type": "http", "method": str(method or "").upper(), "path": path, "root_path": ""}
+    for route, auth in index:
+        match, _child = route.matches(scope)
+        if match == Match.FULL or (any_method and match == Match.PARTIAL):
+            return auth
+    return USER_ROUTE
+
+
+def agent_helper_route_body_limit(method: str, path: str) -> int | None:
+    auth = route_auth_for_scope(app, method, path)
+    return auth.body_limit if auth.kind == "agent_helper" else None
+
+
 def is_agent_helper_route(method: str, path: str) -> bool:
-    return agent_helper_route_body_limit(method, path) is not None
+    return route_auth_for_scope(app, method, path).kind == "agent_helper"
 
 
 def privileged_native_browser_request_forbidden(request: Request) -> bool:
@@ -47424,30 +47484,34 @@ def privileged_native_json_transport(
     return declared_size, None
 
 
+async def prebuffer_declared_body(request: Request, body_limit: int | None) -> JSONResponse | None:
+    """Reject a body over the route's declared limit before reading it."""
+    if body_limit is None:
+        return None
+    declared_size, framing_error = bounded_request_content_length(request, max_body_bytes=body_limit)
+    if framing_error is not None:
+        status_code, detail = framing_error
+        return JSONResponse({"detail": detail}, status_code=status_code)
+    body_error = await prebuffer_bounded_request_body(request, max_body_bytes=body_limit, declared_size=declared_size)
+    if body_error is not None:
+        status_code, detail = body_error
+        return JSONResponse({"detail": detail}, status_code=status_code)
+    return None
+
+
 async def require_agent_token(request: Request, call_next):
-    codex_goals_admin_route = request.url.path in {
-        "/api/admin/codex/goals", "/api/admin/codex/subagents",
-    }
-    codex_provider_mcp_route = (
-        request.url.path == CODEX_PROVIDER_MCP_PATH
-    )
-    if request.method == "OPTIONS" and (
-        codex_goals_admin_route
-        or codex_provider_mcp_route
-    ):
-        return JSONResponse({"detail": "forbidden"}, status_code=403)
-    if request.method == "OPTIONS" or (
-        not request.url.path.startswith("/api/")
-    ):
+    path = request.url.path
+    if request.method == "OPTIONS":
+        # Preflight never reaches native controls or the provider channel.
+        preflight = route_auth_for_scope(request.app, "OPTIONS", path, any_method=True)
+        if preflight.kind in {"native_admin", "provider_mcp"}:
+            return JSONResponse({"detail": "forbidden"}, status_code=403)
         return await call_next(request)
-    # Agent helper routes use a per-run provider capability and perform their
-    # own exact-local-peer + action/session validation in-route. They never accept the
-    # client/admin bearer as a substitute for that capability.
-    agent_helper_route = is_agent_helper_route(
-        request.method,
-        request.url.path,
-    )
-    if codex_provider_mcp_route:
+    if not path.startswith("/api/"):
+        return await call_next(request)
+    auth = route_auth_for_scope(request.app, request.method, path)
+
+    if auth.kind == "provider_mcp":
         if (
             request.method.upper() != "POST"
             or agent_helper_browser_request_forbidden(request)
@@ -47458,23 +47522,12 @@ async def require_agent_token(request: Request, call_next):
                 {"detail": "Codex provider MCP transport is forbidden"},
                 status_code=403,
             )
-        declared_size, framing_error = bounded_request_content_length(
-            request,
-            max_body_bytes=PROVIDER_TOOL_MAX_BODY_BYTES,
-        )
-        if framing_error is not None:
-            status_code, detail = framing_error
-            return JSONResponse({"detail": detail}, status_code=status_code)
-        body_error = await prebuffer_bounded_request_body(
-            request,
-            max_body_bytes=PROVIDER_TOOL_MAX_BODY_BYTES,
-            declared_size=declared_size,
-        )
-        if body_error is not None:
-            status_code, detail = body_error
-            return JSONResponse({"detail": detail}, status_code=status_code)
+        if (rejected := await prebuffer_declared_body(request, auth.body_limit)) is not None:
+            return rejected
         request.state.codex_provider_mcp_authenticated = True
-    if agent_helper_route:
+    elif auth.kind == "agent_helper":
+        # Helpers use a per-run provider capability and validate their action
+        # and session in-route. The client bearer is never a substitute.
         if (
             agent_helper_browser_request_forbidden(request)
             or not request_client_is_provider_helper_local(request)
@@ -47488,33 +47541,10 @@ async def require_agent_token(request: Request, call_next):
                 {"detail": "provider capability is invalid"},
                 status_code=403,
             )
-        body_limit = agent_helper_route_body_limit(
-            request.method,
-            request.url.path,
-        )
-        if (
-            body_limit is not None
-            and request.method.upper() in UNSAFE_HTTP_MUTATION_METHODS
-        ):
-            declared_size, framing_error = bounded_request_content_length(
-                request,
-                max_body_bytes=body_limit,
-            )
-            if framing_error is not None:
-                status_code, detail = framing_error
-                return JSONResponse({"detail": detail}, status_code=status_code)
-            body_error = await prebuffer_bounded_request_body(
-                request,
-                max_body_bytes=body_limit,
-                declared_size=declared_size,
-            )
-            if body_error is not None:
-                status_code, detail = body_error
-                return JSONResponse({"detail": detail}, status_code=status_code)
-
-    if (
-        codex_goals_admin_route
-    ):
+        if request.method.upper() in UNSAFE_HTTP_MUTATION_METHODS:
+            if (rejected := await prebuffer_declared_body(request, auth.body_limit)) is not None:
+                return rejected
+    elif auth.kind == "native_admin":
         if privileged_native_browser_request_forbidden(request):
             return JSONResponse({"detail": "forbidden"}, status_code=403)
         if not AGENT_TOKEN:
@@ -47529,10 +47559,10 @@ async def require_agent_token(request: Request, call_next):
             )
         if not request_exact_native_token_header_authorized(request):
             return JSONResponse({"detail": "unauthorized"}, status_code=401)
-        if codex_goals_admin_route and request.method.upper() == "PUT":
+        if request.method.upper() == "PUT" and auth.body_limit is not None:
             declared_size, transport_error = privileged_native_json_transport(
                 request,
-                max_body_bytes=CODEX_GOALS_ADMIN_MAX_BODY_BYTES,
+                max_body_bytes=auth.body_limit,
                 label="Codex settings",
                 require_content_length=True,
             )
@@ -47541,28 +47571,20 @@ async def require_agent_token(request: Request, call_next):
                 return JSONResponse({"detail": detail}, status_code=status_code)
             body_error = await prebuffer_bounded_request_body(
                 request,
-                max_body_bytes=CODEX_GOALS_ADMIN_MAX_BODY_BYTES,
+                max_body_bytes=auth.body_limit,
                 declared_size=declared_size,
             )
             if body_error is not None:
                 status_code, detail = body_error
                 return JSONResponse({"detail": detail}, status_code=status_code)
-    if (
-        not agent_helper_route
-        and not codex_provider_mcp_route
-        and True
-        and True
-        and True
-        and True
-        # Restart has a stricter header-only check below, including its
-        # structured error contract. URL credentials must reach that rejection.
-        and request.url.path != "/api/admin/restart"
-        and not request_authorized(request)
-    ):
-        logger.warning("unauthorized request method=%s path=%s host=%s", request.method, request.url.path, request.client.host if request.client else "-")
+
+    # Restart has a stricter header-only check below, including its structured
+    # error contract; URL credentials must reach that rejection.
+    if auth.kind in {"user", "native_admin"} and not request_authorized(request):
+        logger.warning("unauthorized request method=%s path=%s host=%s", request.method, path, request.client.host if request.client else "-")
         return JSONResponse({"detail": "unauthorized"}, status_code=401)
 
-    if request.url.path == "/api/admin/restart":
+    if auth.kind == "restart":
         if server_restart_browser_request_forbidden(request):
             return JSONResponse({"detail": "forbidden"}, status_code=403)
         # Enforce the privileged route's header-only authentication before
@@ -47600,11 +47622,11 @@ async def require_agent_token(request: Request, call_next):
                 status_code, detail = transport_error
                 return JSONResponse({"detail": detail}, status_code=status_code)
 
+    # Restart drives the lifecycle fence itself, so it is not admitted as an
+    # ordinary mutation.
     unsafe_mutation = (
         request.method.upper() in UNSAFE_HTTP_MUTATION_METHODS
-        and request.url.path not in {
-            "/api/admin/restart",
-        }
+        and auth.kind != "restart"
     )
     if not unsafe_mutation:
         return await call_next(request)
@@ -47800,7 +47822,7 @@ def codex_provider_mcp_jsonrpc_error(
     })
 
 
-@router.post(CODEX_PROVIDER_MCP_PATH)
+@router.post(CODEX_PROVIDER_MCP_PATH, dependencies=route_auth("provider_mcp", PROVIDER_TOOL_MAX_BODY_BYTES))
 async def codex_provider_mcp(request: Request) -> Response:
     """Minimal Streamable-HTTP MCP endpoint for the static Codex tool."""
 
@@ -49392,13 +49414,13 @@ router.include_router(create_group_router(
 ))
 
 
-@router.get("/api/admin/codex/goals")
+@router.get("/api/admin/codex/goals", dependencies=route_auth("native_admin"))
 async def get_codex_goals_admin_endpoint(request: Request) -> dict[str, Any]:
     require_native_admin_control(request)
     return await get_codex_goals_admin()
 
 
-@router.put("/api/admin/codex/goals")
+@router.put("/api/admin/codex/goals", dependencies=route_auth("native_admin", CODEX_GOALS_ADMIN_MAX_BODY_BYTES))
 async def put_codex_goals_admin_endpoint(
     req: CodexGoalsAdminRequest,
     request: Request,
@@ -49407,13 +49429,13 @@ async def put_codex_goals_admin_endpoint(
     return await put_codex_goals_admin(req)
 
 
-@router.get("/api/admin/codex/subagents")
+@router.get("/api/admin/codex/subagents", dependencies=route_auth("native_admin"))
 async def get_codex_subagents_admin_endpoint(request: Request) -> dict[str, Any]:
     require_native_admin_control(request)
     return await get_codex_subagents_admin()
 
 
-@router.put("/api/admin/codex/subagents")
+@router.put("/api/admin/codex/subagents", dependencies=route_auth("native_admin", CODEX_GOALS_ADMIN_MAX_BODY_BYTES))
 async def put_codex_subagents_admin_endpoint(
     req: CodexSubagentsAdminRequest,
     request: Request,
@@ -49659,7 +49681,7 @@ async def accept_forced_server_restart(
     return public_server_restart_status(restart_status)
 
 
-@router.get("/api/admin/restart")
+@router.get("/api/admin/restart", dependencies=route_auth("restart"))
 async def server_restart_status_endpoint(request: Request) -> dict[str, Any]:
     require_server_restart_control(request)
     blocker_snapshot = await current_server_restart_blocker_snapshot()
@@ -49691,7 +49713,7 @@ def log_server_restart_denial(
     )
 
 
-@router.post("/api/admin/restart", status_code=202)
+@router.post("/api/admin/restart", status_code=202, dependencies=route_auth("restart"))
 async def restart_server_endpoint(
     body: ServerRestartRequest,
     request: Request,
@@ -54006,7 +54028,7 @@ async def list_session_jobs(session_id: str) -> dict[str, Any]:
     return {"jobs": jobs}
 
 
-@router.get("/api/agent/sessions/{session_id}/jobs")
+@router.get("/api/agent/sessions/{session_id}/jobs", dependencies=route_auth("agent_helper", 0))
 async def list_agent_session_jobs(request: Request, session_id: str) -> dict[str, Any]:
     async with session_lifecycle_lock(session_id):
         await authorize_provider_jobs_operation(
@@ -54051,7 +54073,7 @@ async def get_session_job_runs(
         raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
 
 
-@router.get("/api/agent/sessions/{session_id}/jobs/{job_id}/runs")
+@router.get("/api/agent/sessions/{session_id}/jobs/{job_id}/runs", dependencies=route_auth("agent_helper", 0))
 async def get_agent_session_job_runs(
     request: Request,
     session_id: str,
@@ -54117,7 +54139,7 @@ async def create_job(req: CreateJobRequest) -> dict[str, Any]:
     return {"job": public_job(job)}
 
 
-@router.post("/api/agent/sessions/{session_id}/jobs")
+@router.post("/api/agent/sessions/{session_id}/jobs", dependencies=route_auth("agent_helper", 512 * 1024))
 async def create_agent_session_job(
     request: Request,
     session_id: str,
@@ -54161,7 +54183,7 @@ async def update_job(job_id: str, req: UpdateJobRequest) -> dict[str, Any]:
     return {"job": public_job(job)}
 
 
-@router.patch("/api/agent/sessions/{session_id}/jobs/{job_id}")
+@router.patch("/api/agent/sessions/{session_id}/jobs/{job_id}", dependencies=route_auth("agent_helper", 512 * 1024))
 async def update_agent_session_job(
     request: Request,
     session_id: str,
@@ -54210,7 +54232,7 @@ async def delete_job(job_id: str) -> dict[str, Any]:
     return {"ok": True, "deleted": deleted}
 
 
-@router.delete("/api/agent/sessions/{session_id}/jobs/{job_id}")
+@router.delete("/api/agent/sessions/{session_id}/jobs/{job_id}", dependencies=route_auth("agent_helper", 0))
 async def delete_agent_session_job(
     request: Request,
     session_id: str,
@@ -54595,7 +54617,7 @@ def publication_response(
     }
 
 
-@router.post("/api/agent/sessions/{session_id}/artifacts")
+@router.post("/api/agent/sessions/{session_id}/artifacts", dependencies=route_auth("agent_helper", 16 * 1024 * 1024))
 async def publish_agent_artifacts(
     request: Request,
     session_id: str,
@@ -54698,7 +54720,7 @@ async def publish_agent_artifacts(
     return publication_response(session_id, publication_id, events)
 
 
-@router.post("/api/agent/sessions/{session_id}/emergency-alerts")
+@router.post("/api/agent/sessions/{session_id}/emergency-alerts", dependencies=route_auth("agent_helper", 8 * 1024))
 async def raise_agent_emergency_alert(
     request: Request,
     session_id: str,
@@ -54810,7 +54832,7 @@ async def raise_agent_emergency_alert(
         )
 
 
-@router.post("/api/agent/sessions/{session_id}/notifications")
+@router.post("/api/agent/sessions/{session_id}/notifications", dependencies=route_auth("agent_helper", 8 * 1024))
 async def raise_agent_notification(
     request: Request,
     session_id: str,
