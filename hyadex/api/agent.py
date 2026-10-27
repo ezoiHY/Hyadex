@@ -15,9 +15,9 @@ from hyadex.core.config import (
     NOTIFICATION_REQUESTS_PER_RUN,
     WEBSOCKET_SEND_TIMEOUT_SECONDS,
 )
-from hyadex.core.event_log import (
+from hyadex.core.event_log import find_agent_notification_event
+from hyadex.core.publications import (
     ArtifactPublicationError,
-    find_agent_notification_event,
     load_publication_events,
     recover_publication_events_from_tail,
     store_publication_events,

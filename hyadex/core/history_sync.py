@@ -38,11 +38,8 @@ from hyadex.core.config import (
     DEFAULT_BACKEND,
     MAX_LOCAL_TRANSCRIPT_SCAN_LINES,
 )
-from hyadex.core.event_log import (
-    append_durable_event_batch_sync,
-    ArtifactPublicationError,
-    read_events,
-)
+from hyadex.core.event_log import append_durable_event_batch_sync, read_events
+from hyadex.core.publications import ArtifactPublicationError
 from hyadex.core.event_seq import last_event_seq_from_file
 from hyadex.core.paths import events_path
 from hyadex.core.runs import RUNS

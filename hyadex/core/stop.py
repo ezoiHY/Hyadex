@@ -77,12 +77,12 @@ from hyadex.features.usage import join_task_despite_caller_cancellation
 from hyadex.providers.authority import NativeSteerHandoffError
 from hyadex.providers.claude.history import session_provider_id
 from hyadex.providers.claude.runtime import (
-    cancel_claude_interactions,
     detached_stop_in_progress,
     interrupt_claude_sdk_run_bounded,
     queued_claude_runtime_matches_active,
     stop_cleanup_in_progress,
 )
+from hyadex.providers.claude.interactions import cancel_claude_interactions
 from hyadex.providers.codex.runtime import queued_codex_runtime_matches_active
 from hyadex.providers.codex.interactions import cancel_codex_interactions
 from hyadex.providers.codex.managers import CODEX_NATIVE_ACTION_TASKS, release_codex_control_slot

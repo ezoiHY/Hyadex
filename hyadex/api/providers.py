@@ -16,16 +16,17 @@ from hyadex.providers.codex.controls import (
     _post_codex_compact_locked,
     _put_codex_goal_locked,
 )
-from hyadex.providers.claude.runtime import (
-    claude_runtime_snapshot,
-    claude_sdk_manager,
-    ClaudeGoalRequest,
+from hyadex.providers.claude.runtime import claude_runtime_snapshot, claude_sdk_manager
+from hyadex.providers.claude.interactions import (
     ClaudeInteractionResponseRequest,
-    refresh_claude_goal,
-    refresh_idle_claude_context_usage,
-    require_claude_goal_session,
     resolve_claude_interaction,
 )
+from hyadex.providers.claude.goals import (
+    ClaudeGoalRequest,
+    refresh_claude_goal,
+    require_claude_goal_session,
+)
+from hyadex.providers.claude.context_usage import refresh_idle_claude_context_usage
 from hyadex.providers.claude.sdk import ClaudeSDKSupervisorError
 from hyadex.providers.codex.runtime import codex_runtime_snapshot
 from hyadex.providers.codex.interactions import (

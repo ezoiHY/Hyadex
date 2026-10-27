@@ -65,13 +65,12 @@ from hyadex.core.config import (
     PROCESS_STREAM_LIMIT,
     RETIRED_TURN_PURPOSES,
 )
-from hyadex.core.event_log import (
+from hyadex.core.event_log import client_safe_event, reasoning_summary_stream_snapshot
+from hyadex.core.timeline_index import (
     _build_timeline_index_locked,
-    client_safe_event,
     evict_timeline_index_cache_locked,
     fork_internal_run_ids,
     is_fork_internal_event,
-    reasoning_summary_stream_snapshot,
     scheduled_job_occurrence_key,
     timeline_index_cached_entry,
 )
@@ -197,34 +196,44 @@ from hyadex.providers.authority import (
 )
 from hyadex.providers.claude.history import session_provider_id
 from hyadex.providers.claude.runtime import (
-    acknowledge_claude_background_reconciliation,
-    build_claude_cmd,
-    cancel_claude_interactions,
     claude_empty_turn_failure_message,
-    CLAUDE_GOAL_PENDING,
-    claude_provider_id_for_session,
     claude_result_error,
-    claude_run_has_pending_interaction,
     claude_runtime_snapshot,
     claude_sdk_manager,
-    claude_sdk_result_details,
     CLAUDE_STOP_FENCE_RETRY_DELAYS_SECONDS,
     CLAUDE_STOP_FENCE_RETRY_TASKS,
     claude_supports_no_session_persistence,
-    ClaudeGoalRequest,
     interrupt_claude_sdk_run_bounded,
     is_expected_claude_interruption_result,
     mark_claude_sdk_turn_ready_after_ack,
+    resolve_claude_resume_provider,
+    stop_cleanup_in_progress,
+    TurnRequest,
+)
+from hyadex.providers.claude.projection import (
+    claude_sdk_result_details,
     mark_provider_turn_ready,
-    persist_claude_background_task_receipts,
     project_claude_sdk_message,
+    tool_changed_paths,
+)
+from hyadex.providers.claude.interactions import (
+    cancel_claude_interactions,
+    claude_run_has_pending_interaction,
+)
+from hyadex.providers.claude.goals import (
+    CLAUDE_GOAL_PENDING,
+    ClaudeGoalRequest,
     refresh_claude_goal,
     require_claude_goal_session,
-    resolve_claude_resume_provider,
+)
+from hyadex.providers.claude.context_usage import (
+    claude_provider_id_for_session,
     sample_claude_context_usage,
-    stop_cleanup_in_progress,
-    tool_changed_paths,
-    TurnRequest,
+)
+from hyadex.providers.claude.catalog import build_claude_cmd
+from hyadex.providers.claude.background_state import (
+    acknowledge_claude_background_reconciliation,
+    persist_claude_background_task_receipts,
 )
 from hyadex.providers.claude.sdk import (
     ClaudeSDKQueryError,

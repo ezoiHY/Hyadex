@@ -81,11 +81,9 @@ from hyadex.core.config import (
     SERVER_VERSION,
     STATE_DIR,
 )
-from hyadex.core.event_log import (
-    host_pressure_snapshot,
-    is_native_goal_steer_event,
-    project_provider_history_event_for_egress,
-)
+from hyadex.core.event_log import project_provider_history_event_for_egress
+from hyadex.core.timeline_index import is_native_goal_steer_event
+from hyadex.core.host import host_pressure_snapshot
 from hyadex.core.paths import codex_manifest_path, existing_cwd, now_iso
 from hyadex.core.processes import terminate_process_tree
 from hyadex.core.queue import request_fields_set
@@ -191,18 +189,21 @@ from hyadex.providers.claude.history import (
     text_from_content,
 )
 from hyadex.providers.claude.runtime import (
-    claude_background_work_labels_from_events,
     claude_event_file_fingerprints,
-    CLAUDE_INTERACTION_HANDLER_TASKS,
-    claude_sdk_cli_path,
     claude_sdk_configuration_key,
     claude_sdk_manager,
     ensure_provider_manager_factory_admission,
+    resolve_claude_resume_provider,
+)
+from hyadex.providers.claude.interactions import (
+    CLAUDE_INTERACTION_HANDLER_TASKS,
     handle_claude_tool_permission,
+)
+from hyadex.providers.claude.catalog import claude_sdk_cli_path, runtime_command
+from hyadex.providers.claude.background_state import (
+    claude_background_work_labels_from_events,
     loaded_claude_background_session_state,
     PROVIDER_WORK_LABEL_LIMIT,
-    resolve_claude_resume_provider,
-    runtime_command,
 )
 from hyadex.providers.claude.sdk import (
     claude_background_tracking_hooks,

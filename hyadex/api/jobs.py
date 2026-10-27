@@ -19,10 +19,12 @@ from hyadex.core.sessions import session_lifecycle_lock
 from hyadex.features.group_runtime import GROUPS
 from hyadex.features.jobs import (
     append_provider_job_mutation_event,
-    authorize_provider_jobs_operation,
     get_session_job_runs,
     JOBS,
     list_session_jobs,
+)
+from hyadex.features.job_access import (
+    authorize_provider_jobs_operation,
     provider_public_job,
     provider_public_job_run,
     public_job,

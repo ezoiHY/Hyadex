@@ -38,7 +38,7 @@ from hyadex.core.config import (
     SERVER_VERSION,
     STATE_DIR,
 )
-from hyadex.core.event_log import host_pressure_snapshot
+from hyadex.core.host import host_pressure_snapshot
 from hyadex.core.http import (
     live_unsafe_http_mutation_ids_locked,
     request_exact_restart_header_authorized,
@@ -95,11 +95,8 @@ from hyadex.features.jobs import JOBS
 from hyadex.features.search import history_search_index_loop
 from hyadex.features.side_questions import CODEX_GOALS_RECONFIGURING
 from hyadex.features.terminal import scrub_tmux_global_secret_environment, TERMINAL_ATTACHMENTS
-from hyadex.providers.claude.runtime import (
-    CLAUDE_STOP_FENCE_RETRY_TASKS,
-    close_claude_sdk_manager,
-    PROVIDER_WORK_LABEL_LIMIT,
-)
+from hyadex.providers.claude.runtime import CLAUDE_STOP_FENCE_RETRY_TASKS, close_claude_sdk_manager
+from hyadex.providers.claude.background_state import PROVIDER_WORK_LABEL_LIMIT
 from hyadex.providers.codex.runtime import (
     active_provider_background_work_labels,
     provider_background_work_labels_from_snapshot,

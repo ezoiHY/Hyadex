@@ -41,10 +41,10 @@ from hyadex.core.config import (
     MAX_LOCAL_TRANSCRIPT_SCAN_LINES,
     SERVER_INSTANCE_ID,
 )
-from hyadex.core.event_log import (
+from hyadex.core.event_log import read_events
+from hyadex.core.timeline_index import (
     is_native_goal_steer_event,
     project_legacy_imported_provider_event,
-    read_events,
 )
 from hyadex.core.paths import code_diffs_dir, events_path, now_iso, safe_name
 from hyadex.core.runs import RUNS

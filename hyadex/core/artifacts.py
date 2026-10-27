@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from hyadex.core.event_log import (
+from hyadex.core.publications import (
     ArtifactPublicationError,
     load_publication_events,
     store_publication_events,

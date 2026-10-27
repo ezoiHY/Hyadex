@@ -92,13 +92,13 @@ from hyadex.providers.authority import (
 )
 from hyadex.providers.claude.history import session_provider_id
 from hyadex.providers.claude.runtime import (
-    claude_sdk_cli_path,
     claude_sdk_configuration_key,
     claude_sdk_manager,
     ensure_provider_manager_factory_admission,
-    handle_claude_tool_permission,
     resolve_claude_resume_provider,
 )
+from hyadex.providers.claude.interactions import handle_claude_tool_permission
+from hyadex.providers.claude.catalog import claude_sdk_cli_path
 from hyadex.providers.claude.sdk import (
     claude_background_tracking_hooks,
     CLAUDE_NON_DURABLE_SCHEDULER_TOOLS,

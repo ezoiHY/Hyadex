@@ -43,7 +43,7 @@ from hyadex.core.config import (
     STATE_DIR,
     TERMINAL_WEBSOCKET_PROTOCOL,
 )
-from hyadex.core.event_log import host_pressure_snapshot
+from hyadex.core.host import host_pressure_snapshot
 from hyadex.core.http import router
 from hyadex.core.paths import complete_working_directory_sync, existing_cwd
 from hyadex.core.queue_admission import queue_recovery_readiness
@@ -60,10 +60,8 @@ from hyadex.ops.lifecycle import (
     server_restart_capability,
     SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS,
 )
-from hyadex.providers.claude.runtime import (
-    claude_sdk_dependency_available,
-    read_claude_account_usage,
-)
+from hyadex.providers.claude.context_usage import claude_sdk_dependency_available
+from hyadex.providers.claude.catalog import read_claude_account_usage
 from hyadex.providers.codex.commands import (
     codex_app_server_manager,
     refresh_codex_app_server_binary,

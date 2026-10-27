@@ -15,9 +15,9 @@ from typing import Any
 import uuid
 
 from hyadex.core.config import hyadex_setting, MAX_EVENT_RESPONSE_LIMIT, STATE_DIR
-from hyadex.core.event_log import (
+from hyadex.core.event_log import client_safe_event
+from hyadex.core.timeline_index import (
     _build_timeline_index_locked,
-    client_safe_event,
     evict_timeline_index_cache_locked,
     fork_internal_run_ids,
     is_client_visible_event,
@@ -49,7 +49,7 @@ from hyadex.core.state import (
     TIMELINE_INDEX_TRACE_TYPES,
 )
 from hyadex.core.util import ensure_dirs
-from hyadex.features.jobs import (
+from hyadex.features.job_history import (
     add_semantic_job_event,
     new_semantic_job_state,
     semantic_job_summary_event,

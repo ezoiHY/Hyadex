@@ -69,27 +69,34 @@ from hyadex.features.files import capture_git_baseline, publish_turn_code_diff, 
 from hyadex.features.usage import join_task_despite_caller_cancellation
 from hyadex.providers.authority import agent_runner_env, NativeSteerHandoffError
 from hyadex.providers.claude.runtime import (
-    acknowledge_claude_background_reconciliation,
-    build_claude_cmd,
-    cancel_claude_interactions,
     claude_empty_turn_failure_message,
-    CLAUDE_GOAL_PENDING,
-    claude_provider_id_for_session,
     claude_result_error,
-    claude_run_has_pending_interaction,
     claude_sdk_manager,
-    claude_sdk_result_details,
     claude_supports_no_session_persistence,
     interrupt_claude_sdk_run_bounded,
     is_expected_claude_interruption_result,
     mark_claude_sdk_turn_ready_after_ack,
-    mark_provider_turn_ready,
-    persist_claude_background_task_receipts,
-    project_claude_sdk_message,
-    refresh_claude_goal,
     resolve_claude_resume_provider,
-    sample_claude_context_usage,
+)
+from hyadex.providers.claude.projection import (
+    claude_sdk_result_details,
+    mark_provider_turn_ready,
+    project_claude_sdk_message,
     tool_changed_paths,
+)
+from hyadex.providers.claude.interactions import (
+    cancel_claude_interactions,
+    claude_run_has_pending_interaction,
+)
+from hyadex.providers.claude.goals import CLAUDE_GOAL_PENDING, refresh_claude_goal
+from hyadex.providers.claude.context_usage import (
+    claude_provider_id_for_session,
+    sample_claude_context_usage,
+)
+from hyadex.providers.claude.catalog import build_claude_cmd
+from hyadex.providers.claude.background_state import (
+    acknowledge_claude_background_reconciliation,
+    persist_claude_background_task_receipts,
 )
 from hyadex.providers.claude.sdk import (
     ClaudeSDKQueryError,

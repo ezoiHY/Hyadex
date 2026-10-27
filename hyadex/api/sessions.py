@@ -24,7 +24,6 @@ from hyadex.core.config import (
     WEBSOCKET_SEND_TIMEOUT_SECONDS,
 )
 from hyadex.core.event_log import (
-    build_timeline_index,
     read_client_events_page,
     read_visible_events_after_page,
     read_visible_events_page,
@@ -32,6 +31,7 @@ from hyadex.core.event_log import (
     send_event_catchup,
     send_event_stream_status,
 )
+from hyadex.core.timeline_index import build_timeline_index
 from hyadex.core.http import router, websocket_authorized, websocket_endpoint_subprotocol
 from hyadex.core.paths import code_diffs_dir, events_path
 from hyadex.core.processes import terminate_process_tree
@@ -92,12 +92,14 @@ from hyadex.features.usage import (
 )
 from hyadex.providers.claude.history import session_provider_id
 from hyadex.providers.claude.runtime import (
-    cancel_claude_interactions,
     cancel_claude_stop_fence_retry,
-    CLAUDE_INTERACTION_HANDLER_TASKS,
     CLAUDE_STOP_FENCE_RETRY_TASKS,
     interrupt_claude_sdk_run_bounded,
     stop_cleanup_in_progress,
+)
+from hyadex.providers.claude.interactions import (
+    cancel_claude_interactions,
+    CLAUDE_INTERACTION_HANDLER_TASKS,
 )
 from hyadex.providers.codex.app_server import CodexAppServerError
 from hyadex.providers.codex.commands import (

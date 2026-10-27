@@ -99,11 +99,9 @@ from hyadex.providers.authority import (
     provider_capability_header,
     provider_capability_is_attached_to_live_run,
 )
-from hyadex.providers.claude.runtime import (
-    claude_background_work_labels_from_events,
-    claude_event_file_fingerprints,
-    claude_sdk_dependency_available,
-    loaded_claude_background_session_state,
+from hyadex.providers.claude.runtime import claude_event_file_fingerprints
+from hyadex.providers.claude.context_usage import claude_sdk_dependency_available
+from hyadex.providers.claude.catalog import (
     parse_claude_help_catalog,
     run_catalog_command,
     runtime_catalog_budget_expired,
@@ -113,6 +111,10 @@ from hyadex.providers.claude.runtime import (
     title_effort_label,
     title_model_label,
     unique_runtime_options,
+)
+from hyadex.providers.claude.background_state import (
+    claude_background_work_labels_from_events,
+    loaded_claude_background_session_state,
 )
 from hyadex.providers.instructions import HYADEX_CONTEXT_END_MARKER
 from hyadex.providers.runtime import assert_provider_user_message_unchanged, ProviderTurnPayload

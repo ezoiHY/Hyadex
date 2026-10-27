@@ -32,7 +32,8 @@ from hyadex.core.util import clean_assistant_text
 from hyadex.core.wiring import WIRING
 from hyadex.features.terminal import _update_session
 from hyadex.features.usage import HUB
-from hyadex.providers.claude.runtime import ClaudeGoalRequest, TurnRequest
+from hyadex.providers.claude.runtime import TurnRequest
+from hyadex.providers.claude.goals import ClaudeGoalRequest
 from hyadex.providers.codex.goals import CodexGoalRequest
 
 

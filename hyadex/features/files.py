@@ -38,11 +38,8 @@ from hyadex.core.config import (
     MAX_UPLOAD_BYTES,
     MAX_WORKSPACE_PATH_CHARS,
 )
-from hyadex.core.event_log import (
-    _snapshot_object_dir_is_owned,
-    ArtifactPublicationError,
-    legacy_session_event_file_ids,
-)
+from hyadex.core.event_log import _snapshot_object_dir_is_owned, legacy_session_event_file_ids
+from hyadex.core.publications import ArtifactPublicationError
 from hyadex.core.paths import code_diffs_dir, now_iso, safe_name
 from hyadex.core.runs import RUNS
 from hyadex.core.sessions import append_event

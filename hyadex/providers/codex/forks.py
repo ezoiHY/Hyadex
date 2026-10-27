@@ -12,10 +12,8 @@ from hyadex.core.config import (
     FORK_INTERNAL_PURPOSES,
     MAX_FORK_MEMORY_CHARS,
 )
-from hyadex.core.event_log import (
-    is_native_goal_steer_event,
-    project_provider_history_event_for_egress,
-)
+from hyadex.core.event_log import project_provider_history_event_for_egress
+from hyadex.core.timeline_index import is_native_goal_steer_event
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import write_abandoned_fork_thread_ids
 from hyadex.core.session_files import iter_session_events

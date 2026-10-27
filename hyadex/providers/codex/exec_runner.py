@@ -47,7 +47,7 @@ from hyadex.features.files import capture_git_baseline, publish_turn_code_diff, 
 from hyadex.features.usage import join_task_despite_caller_cancellation
 from hyadex.providers.authority import agent_runner_env
 from hyadex.providers.claude.history import session_provider_id
-from hyadex.providers.claude.runtime import mark_provider_turn_ready, tool_changed_paths
+from hyadex.providers.claude.projection import mark_provider_turn_ready, tool_changed_paths
 from hyadex.providers.codex.goals import build_codex_cmd, rollover_codex_provider_session
 from hyadex.providers.codex.history import find_codex_history
 from hyadex.providers.codex.notifications import (

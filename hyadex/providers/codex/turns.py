@@ -105,7 +105,7 @@ from hyadex.features.side_questions import codex_app_server_service_tier
 from hyadex.features.usage import HUB, join_task_despite_caller_cancellation
 from hyadex.providers.authority import agent_runner_env, NativeSteerHandoffError
 from hyadex.providers.claude.history import session_provider_id
-from hyadex.providers.claude.runtime import mark_provider_turn_ready, tool_changed_paths
+from hyadex.providers.claude.projection import mark_provider_turn_ready, tool_changed_paths
 from hyadex.providers.codex.app_server import (
     CodexAppServerDisconnected,
     CodexAppServerError,

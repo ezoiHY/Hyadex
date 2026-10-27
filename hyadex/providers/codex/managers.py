@@ -32,7 +32,7 @@ from hyadex.core.session_codex import (
     existing_codex_app_server_manager,
 )
 from hyadex.providers.claude.history import session_provider_id
-from hyadex.providers.claude.runtime import runtime_command
+from hyadex.providers.claude.catalog import runtime_command
 from hyadex.providers.codex.app_server import (
     CodexAppServerError,
     CodexAppServerManager,

@@ -13,7 +13,7 @@ from typing import Any, Iterator
 import uuid
 
 from hyadex.core.config import RETIRED_QUEUED_TURN_FIELDS
-from hyadex.core.event_log import is_native_goal_steer_event
+from hyadex.core.timeline_index import is_native_goal_steer_event
 from hyadex.core.paths import events_path, now_iso
 from hyadex.core.runs import RUNS
 from hyadex.core.server import SERVER
