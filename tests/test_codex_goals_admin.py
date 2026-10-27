@@ -18,12 +18,12 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
         self.previous_reconfiguring = agent_server.CODEX_GOALS_RECONFIGURING
         self.previous_manager = agent_server.CODEX_APP_SERVER_MANAGER
         self.previous_sessions = agent_server.STORE.sessions
-        self.previous_busy = agent_server.BUSY_SESSIONS
-        self.previous_active = agent_server.ACTIVE
-        self.previous_current = agent_server.CURRENT_TURNS
-        self.previous_maintenance = agent_server.SERVER_MAINTENANCE_SESSIONS
-        self.previous_queued = agent_server.QUEUED_TURNS
-        self.previous_run_now = agent_server.RUN_NOW_TURNS
+        self.previous_busy = agent_server.RUNS.busy
+        self.previous_active = agent_server.RUNS.active
+        self.previous_current = agent_server.RUNS.current_turns
+        self.previous_maintenance = agent_server.RUNS.maintenance
+        self.previous_queued = agent_server.RUNS.queued
+        self.previous_run_now = agent_server.RUNS.run_now
         self.previous_pending = agent_server.CODEX_PENDING_INTERACTIONS
         self.previous_actions = agent_server.CODEX_NATIVE_ACTION_TASKS
         self.previous_subagents = agent_server.CODEX_SUBAGENT_STATE
@@ -46,12 +46,12 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
                 },
             }
         }
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.ACTIVE = {}
-        agent_server.CURRENT_TURNS = {}
-        agent_server.SERVER_MAINTENANCE_SESSIONS = set()
-        agent_server.QUEUED_TURNS = {}
-        agent_server.RUN_NOW_TURNS = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.current_turns = {}
+        agent_server.RUNS.maintenance = set()
+        agent_server.RUNS.queued = {}
+        agent_server.RUNS.run_now = {}
         agent_server.CODEX_PENDING_INTERACTIONS = {}
         agent_server.CODEX_NATIVE_ACTION_TASKS = {}
         agent_server.CODEX_SUBAGENT_STATE = {}
@@ -63,12 +63,12 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
         agent_server.CODEX_GOALS_RECONFIGURING = self.previous_reconfiguring
         agent_server.CODEX_APP_SERVER_MANAGER = self.previous_manager
         agent_server.STORE.sessions = self.previous_sessions
-        agent_server.BUSY_SESSIONS = self.previous_busy
-        agent_server.ACTIVE = self.previous_active
-        agent_server.CURRENT_TURNS = self.previous_current
-        agent_server.SERVER_MAINTENANCE_SESSIONS = self.previous_maintenance
-        agent_server.QUEUED_TURNS = self.previous_queued
-        agent_server.RUN_NOW_TURNS = self.previous_run_now
+        agent_server.RUNS.busy = self.previous_busy
+        agent_server.RUNS.active = self.previous_active
+        agent_server.RUNS.current_turns = self.previous_current
+        agent_server.RUNS.maintenance = self.previous_maintenance
+        agent_server.RUNS.queued = self.previous_queued
+        agent_server.RUNS.run_now = self.previous_run_now
         agent_server.CODEX_PENDING_INTERACTIONS = self.previous_pending
         agent_server.CODEX_NATIVE_ACTION_TASKS = self.previous_actions
         agent_server.CODEX_SUBAGENT_STATE = self.previous_subagents

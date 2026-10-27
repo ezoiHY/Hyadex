@@ -13,6 +13,7 @@ import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
+from hyadex.runs import NamespaceRuns
 
 
 _SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -128,6 +129,7 @@ class NativeTurnProjectionTests(unittest.IsolatedAsyncioTestCase):
             await namespace["append_event"](session_id, "reasoning_text" if payload.get("phase") == "reasoning" else "reasoning_summary", payload)
             completed.add(("reasoning", payload["item_id"]) if payload.get("phase") == "reasoning" else payload["item_id"])
         namespace["persist_reasoning_summary"] = persist_summary
+        namespace["RUNS"] = NamespaceRuns(namespace)
         exec(_CODE, namespace)
         manager = SimpleNamespace(
             request=AsyncMock(), wait_for_notification_handler=AsyncMock(),

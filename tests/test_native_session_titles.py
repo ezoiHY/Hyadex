@@ -254,9 +254,9 @@ class NativeTitleOwnership(unittest.IsolatedAsyncioTestCase):
     async def test_late_provider_title_is_checked_again_when_chat_opens(self):
         with patch.object(server, "read_native_session_title", return_value="Late native title"), patch.object(
             server, "sync_provider_history", new_callable=AsyncMock, return_value={},
-        ), patch.object(server, "ACTIVE", {}), patch.object(server, "BUSY_SESSIONS", set()), patch.object(
-            server, "SERVER_MAINTENANCE_SESSIONS", set(),
-        ), patch.object(server, "SESSION_TURN_TASKS", {}), patch.object(server, "SESSION_LIFECYCLE_LOCKS", {}):
+        ), patch.object(server.RUNS, "active", {}), patch.object(server.RUNS, "busy", set()), patch.object(
+            server.RUNS, "maintenance", set(),
+        ), patch.object(server.RUNS, "turn_tasks", {}), patch.object(server, "SESSION_LIFECYCLE_LOCKS", {}):
             await server.run_provider_history_sync("title-chat")
         self.assertEqual(self.sess["title"], "Late native title")
 

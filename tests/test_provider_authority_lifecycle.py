@@ -18,10 +18,10 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.previous_sessions = agent_server.STORE.sessions
-        self.previous_current = agent_server.CURRENT_TURNS
-        self.previous_active = agent_server.ACTIVE
-        self.previous_busy = agent_server.BUSY_SESSIONS
-        self.previous_stopped = agent_server.STOPPED_RUNS
+        self.previous_current = agent_server.RUNS.current_turns
+        self.previous_active = agent_server.RUNS.active
+        self.previous_busy = agent_server.RUNS.busy
+        self.previous_stopped = agent_server.RUNS.stopped_runs
         self.previous_capabilities = agent_server.PROVIDER_AUTHORITIES
         self.previous_authority_root = agent_server.PROVIDER_AUTHORITY_ROOT
         self.previous_agent_token = agent_server.AGENT_TOKEN
@@ -40,20 +40,20 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "provider_jobs_access": "full",
             },
         }
-        agent_server.CURRENT_TURNS = {}
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.STOPPED_RUNS = set()
+        agent_server.RUNS.current_turns = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.stopped_runs = set()
         agent_server.PROVIDER_AUTHORITIES = {}
         agent_server.PROVIDER_AUTHORITY_ROOT = self.root / "authority"
         agent_server.AGENT_TOKEN = "test-agent-token"
 
     async def asyncTearDown(self) -> None:
         agent_server.STORE.sessions = self.previous_sessions
-        agent_server.CURRENT_TURNS = self.previous_current
-        agent_server.ACTIVE = self.previous_active
-        agent_server.BUSY_SESSIONS = self.previous_busy
-        agent_server.STOPPED_RUNS = self.previous_stopped
+        agent_server.RUNS.current_turns = self.previous_current
+        agent_server.RUNS.active = self.previous_active
+        agent_server.RUNS.busy = self.previous_busy
+        agent_server.RUNS.stopped_runs = self.previous_stopped
         agent_server.PROVIDER_AUTHORITIES = self.previous_capabilities
         agent_server.PROVIDER_AUTHORITY_ROOT = self.previous_authority_root
         agent_server.AGENT_TOKEN = self.previous_agent_token
@@ -152,10 +152,10 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
         predecessor_token = self.token_for_path(predecessor_path)
         transition_nonce = "1" * 32
         transition_ready = asyncio.Event()
-        agent_server.CURRENT_TURNS = {
+        agent_server.RUNS.current_turns = {
             "source": {"run_id": "run_old"},
         }
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "source": {
                 "run_id": "run_old",
                 "stop_requested": False,
@@ -166,7 +166,7 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "logical_transition_authority_open": False,
             },
         }
-        agent_server.BUSY_SESSIONS = {"source"}
+        agent_server.RUNS.busy = {"source"}
 
         predecessor = await agent_server.authorize_provider_action(
             self.provider_request(predecessor_token),
@@ -203,7 +203,7 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
             0o700,
         )
 
-        agent_server.ACTIVE["source"][
+        agent_server.RUNS.active["source"][
             "logical_transition_authority_open"
         ] = True
         await self.assert_denied(predecessor_token, action="jobs")
@@ -212,7 +212,7 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
         # still observe either projection in a deterministic test. The old
         # authority stays suspended while exact candidate Jobs remain usable.
         # Publish never opens before the durable release boundary.
-        agent_server.ACTIVE["source"]["run_id"] = "run_new"
+        agent_server.RUNS.active["source"]["run_id"] = "run_new"
         await self.assert_denied(predecessor_token, action="jobs")
         await self.assert_denied(predecessor_token, action="publish")
         await agent_server.authorize_provider_jobs_operation(
@@ -221,9 +221,9 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
             operation="read",
         )
         await self.assert_denied(candidate_token, action="publish")
-        agent_server.ACTIVE["source"]["run_id"] = "run_unrelated"
+        agent_server.RUNS.active["source"]["run_id"] = "run_unrelated"
         await self.assert_denied(candidate_token, action="jobs")
-        agent_server.ACTIVE["source"]["run_id"] = "run_old"
+        agent_server.RUNS.active["source"]["run_id"] = "run_old"
         candidate = await agent_server.authorize_provider_jobs_operation(
             self.provider_request(candidate_token),
             session_id="source",
@@ -249,17 +249,17 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await self.assert_denied(candidate_token, action="jobs")
         candidate_record["native_transition_nonce"] = transition_nonce
 
-        agent_server.ACTIVE["source"][
+        agent_server.RUNS.active["source"][
             "logical_transition_predecessor_run_id"
         ] = "run_wrong"
         await self.assert_denied(candidate_token, action="jobs")
-        agent_server.ACTIVE["source"][
+        agent_server.RUNS.active["source"][
             "logical_transition_predecessor_run_id"
         ] = "run_old"
 
-        agent_server.ACTIVE["source"]["stop_requested"] = True
+        agent_server.RUNS.active["source"]["stop_requested"] = True
         await self.assert_denied(candidate_token, action="jobs")
-        agent_server.ACTIVE["source"]["stop_requested"] = False
+        agent_server.RUNS.active["source"]["stop_requested"] = False
 
         transition_ready.set()
         await self.assert_denied(candidate_token, action="jobs")
@@ -273,7 +273,7 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
         # A proven preaccept rollback closes the candidate fence before the
         # predecessor is restored. Reopening the same exact fence suspends it
         # again until promotion or dual revocation.
-        agent_server.ACTIVE["source"][
+        agent_server.RUNS.active["source"][
             "logical_transition_authority_open"
         ] = False
         transition_ready.set()
@@ -283,7 +283,7 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
             operation="read",
         )
         transition_ready.clear()
-        agent_server.ACTIVE["source"][
+        agent_server.RUNS.active["source"][
             "logical_transition_authority_open"
         ] = True
         await self.assert_denied(predecessor_token, action="publish")
@@ -291,8 +291,8 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
         # In-memory promotion happens before the lifecycle batch is durable.
         # Keep the exact candidate on transition authority until the Event marks
         # that commit; CURRENT must not activate Publish early.
-        agent_server.CURRENT_TURNS["source"] = {"run_id": "run_new"}
-        agent_server.ACTIVE["source"]["run_id"] = "run_new"
+        agent_server.RUNS.current_turns["source"] = {"run_id": "run_new"}
+        agent_server.RUNS.active["source"]["run_id"] = "run_new"
         await agent_server.authorize_provider_jobs_operation(
             self.provider_request(candidate_token),
             session_id="source",
@@ -309,16 +309,16 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
             action="publish",
             session_id="source",
         )
-        agent_server.ACTIVE["source"] = {
+        agent_server.RUNS.active["source"] = {
             "run_id": "run_new",
             "stop_requested": False,
         }
-        agent_server.ACTIVE["source"]["stop_requested"] = True
+        agent_server.RUNS.active["source"]["stop_requested"] = True
         await self.assert_denied(candidate_token, action="jobs")
-        agent_server.ACTIVE["source"]["stop_requested"] = False
-        agent_server.STOPPED_RUNS.add("run_new")
+        agent_server.RUNS.active["source"]["stop_requested"] = False
+        agent_server.RUNS.stopped_runs.add("run_new")
         await self.assert_denied(candidate_token, action="publish")
-        agent_server.STOPPED_RUNS.discard("run_new")
+        agent_server.RUNS.stopped_runs.discard("run_new")
         await self.assert_denied(predecessor_token, action="jobs")
 
         # Long-lived provider turns deliberately remain valid past the advisory
@@ -459,7 +459,7 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
 
         authority_path, token = await self.issue("run_cancelled_revoke")
-        agent_server.CURRENT_TURNS = {
+        agent_server.RUNS.current_turns = {
             "source": {"run_id": "run_cancelled_revoke"},
         }
         await agent_server.PROVIDER_AUTHORITY_LOCK.acquire()
@@ -624,7 +624,7 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         token = self.token_for_path(authority_path)
         self.record_for_token(token)["expires_at"] = time.time() - 3600
-        agent_server.CURRENT_TURNS = {"source": {"run_id": "run_overnight"}}
+        agent_server.RUNS.current_turns = {"source": {"run_id": "run_overnight"}}
 
         authorized = await agent_server.authorize_provider_action(
             self.provider_request(token), action="jobs", session_id="source",
@@ -672,11 +672,11 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "provider_turn_id": "turn",
             "provider_turn_ready": True,
         }
-        agent_server.ACTIVE = {"source": active}
-        agent_server.CURRENT_TURNS = {
+        agent_server.RUNS.active = {"source": active}
+        agent_server.RUNS.current_turns = {
             "source": {"run_id": "run_goal", "codex_control_reservation_id": "reservation"},
         }
-        agent_server.BUSY_SESSIONS = {"source"}
+        agent_server.RUNS.busy = {"source"}
         matches = agent_server.codex_native_goal_owner_matches
         self.assertTrue(matches("source", "run_goal", "thread", "turn"))
         self.assertFalse(matches("source", "run_goal", "thread", "other-turn"))

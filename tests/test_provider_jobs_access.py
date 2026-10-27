@@ -17,7 +17,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.original_sessions = agent_server.STORE.sessions
-        self.original_current_turns = agent_server.CURRENT_TURNS
+        self.original_current_turns = agent_server.RUNS.current_turns
         self.original_authority_root = agent_server.PROVIDER_AUTHORITY_ROOT
         self.original_agent_token = agent_server.AGENT_TOKEN
         self.original_jobs = agent_server.JOBS.jobs
@@ -30,7 +30,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
                 "provider_jobs_access": "full",
             },
         }
-        agent_server.CURRENT_TURNS = {}
+        agent_server.RUNS.current_turns = {}
         agent_server.PROVIDER_AUTHORITY_ROOT = self.root / "authority"
         agent_server.PROVIDER_AUTHORITIES.clear()
         agent_server.AGENT_TOKEN = "test-admin-token"
@@ -40,7 +40,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         agent_server.PROVIDER_AUTHORITIES.clear()
         agent_server.STORE.sessions = self.original_sessions
-        agent_server.CURRENT_TURNS = self.original_current_turns
+        agent_server.RUNS.current_turns = self.original_current_turns
         agent_server.PROVIDER_AUTHORITY_ROOT = self.original_authority_root
         agent_server.AGENT_TOKEN = self.original_agent_token
         agent_server.JOBS.jobs = self.original_jobs
@@ -355,7 +355,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_policy_tightening_is_immediate_during_live_turn(self) -> None:
         token, _capability = await self.issue("full", "run_live")
-        agent_server.CURRENT_TURNS = {"source": {"run_id": "run_live"}}
+        agent_server.RUNS.current_turns = {"source": {"run_id": "run_live"}}
         request = self.provider_request(token)
 
         await agent_server.authorize_provider_jobs_operation(
@@ -414,7 +414,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_issue_time_read_only_ceiling_cannot_be_loosened_mid_turn(self) -> None:
         token, _capability = await self.issue("read_only", "run_read_live")
-        agent_server.CURRENT_TURNS = {
+        agent_server.RUNS.current_turns = {
             "source": {"run_id": "run_read_live"},
         }
         agent_server.STORE.sessions["source"]["provider_jobs_access"] = "full"
@@ -434,7 +434,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_policy_patch_serializes_with_live_agent_job_mutation(self) -> None:
         token, _capability = await self.issue("full", "run_policy_race")
-        agent_server.CURRENT_TURNS = {
+        agent_server.RUNS.current_turns = {
             "source": {"run_id": "run_policy_race"},
         }
         request = self.provider_request(token, method="POST")
@@ -546,7 +546,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
     async def test_agent_job_projections_hide_internal_chat_reference_ids(self) -> None:
         secret_target_id = "internal-target-session-secret"
         token, _capability = await self.issue("full", "run_projection")
-        agent_server.CURRENT_TURNS = {
+        agent_server.RUNS.current_turns = {
             "source": {"run_id": "run_projection"},
         }
         # Jobs saved before @Chat targets were retired still carry them.
@@ -631,7 +631,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         exchange_id = "exchange_private_scheduled_delivery"
         leg_id = "leg_private_scheduled_delivery"
         token, _capability = await self.issue("read_only", "run_history_projection")
-        agent_server.CURRENT_TURNS = {
+        agent_server.RUNS.current_turns = {
             "source": {"run_id": "run_history_projection"},
         }
         reference = {

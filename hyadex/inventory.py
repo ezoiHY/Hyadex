@@ -35,6 +35,7 @@ FILES = (
     'hyadex/providers/runtime.py',
     'hyadex/events.py',
     'hyadex/groups.py',
+    'hyadex/runs.py',
     'hyadex/autopilot.py',
     'hyadex/routes/__init__.py',
     'hyadex/routes/groups.py',

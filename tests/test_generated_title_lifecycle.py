@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 import agent_server as server
+from tests.runtime_state import patch_server
 
 REAL_AUTONOMOUS_ADMISSION = server.server_lifecycle_admission_blocker
 
@@ -374,7 +375,7 @@ print(json.dumps({{'type': 'result', 'subtype': 'success', 'result': 'Song About
             ('QUEUED_TURNS', {}), ('RUN_NOW_TURNS', {}), ('CLAUDE_SDK_MANAGER', None),
             ('CODEX_APP_SERVER_MANAGER', None),
         ):
-            self.enterContext(patch.object(server, target, value))
+            self.enterContext(patch_server(server, target, value))
         self.enterContext(patch.object(server, 'server_lifecycle_admission_blocker', REAL_AUTONOMOUS_ADMISSION))
         self.enterContext(patch.object(server, 'working_tmux_bin', return_value='/synthetic/tmux'))
         self.schedule()

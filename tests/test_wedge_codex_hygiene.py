@@ -118,7 +118,7 @@ class CompactionMirroringTests(unittest.IsolatedAsyncioTestCase):
             }
 
         with (
-            patch.object(agent_server, "ACTIVE", active),
+            patch.object(agent_server.RUNS, "active", active),
             patch.object(
                 agent_server,
                 "codex_session_id_for_thread",

@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 import side_questions as side
+from hyadex.runs import NamespaceRuns
 
 
 def event(kind, run="main", **kwargs):
@@ -793,6 +794,7 @@ class SideApprovalBridgeTests(unittest.IsolatedAsyncioTestCase):
             register_session_task=Mock(), update_codex_pending_session_metadata=AsyncMock(),
             append_event=append, decline_server_request=AsyncMock(return_value={"decision": "decline"}),
             _CODEX_CANCEL_INTERACTION_FUTURE=object())
+        scope["RUNS"] = NamespaceRuns(scope)
         exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(
             module="__future__", names=[ast.alias(name="annotations")], level=0), *selected], type_ignores=[])),
             str(source), "exec"), scope)
@@ -865,6 +867,7 @@ class ServerCallbackTests(unittest.IsolatedAsyncioTestCase):
             claude_sdk_manager=AsyncMock(return_value=self.manager),
             runner_env=lambda: {"HYADEX_CHAT_ID": "parent", "HOME": "/synthetic"})
         self.namespace["native_session_available"] = lambda sid: sid in self.namespace["STORE"].sessions
+        self.namespace["RUNS"] = NamespaceRuns(self.namespace)
         exec(self.code, self.namespace)
 
     async def test_codex_side_fork_carries_parent_permissions_and_scopes_approval_owner(self):

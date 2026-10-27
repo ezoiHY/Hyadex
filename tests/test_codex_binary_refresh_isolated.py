@@ -15,6 +15,7 @@ import weakref
 from fastapi import HTTPException
 from hyadex.providers.codex import CodexAppServerClient, CodexAppServerRequestError
 import codex_auth
+from hyadex.runs import NamespaceRuns
 
 
 class Manager:
@@ -127,6 +128,7 @@ class BinaryRefreshTests(unittest.IsolatedAsyncioTestCase):
             manager.client._loaded_threads.discard(thread)
             return True
         ns["evict_codex_app_server_thread"] = AsyncMock(side_effect=evict)
+        ns["RUNS"] = NamespaceRuns(ns)
         exec(self.lifecycle_code(), ns)
         self.real_schedule_drain = ns["schedule_codex_manager_drain"]
         ns["schedule_codex_manager_drain"] = Mock()

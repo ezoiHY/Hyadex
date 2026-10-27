@@ -336,7 +336,7 @@ class SessionFileOwnershipTests(unittest.IsolatedAsyncioTestCase):
             queued: dict[str, deque] = {}
             with patch.object(agent_server, "FILES_ROOT", root), patch.object(
                 agent_server.STORE, "sessions", sessions
-            ), patch.object(agent_server, "QUEUED_TURNS", queued):
+            ), patch.object(agent_server.RUNS, "queued", queued):
                 request = agent_server.TurnRequest(prompt="inspect", file_ids=["foreign"])
                 with self.assertRaises(HTTPException) as start_error:
                     await agent_server.start_turn("session-a", request)
@@ -355,7 +355,7 @@ class SessionFileOwnershipTests(unittest.IsolatedAsyncioTestCase):
             queued = {"session-a": deque([item])}
             with patch.object(agent_server, "FILES_ROOT", root), patch.object(
                 agent_server.STORE, "sessions", {"session-a": {"id": "session-a"}}
-            ), patch.object(agent_server, "QUEUED_TURNS", queued):
+            ), patch.object(agent_server.RUNS, "queued", queued):
                 with self.assertRaises(HTTPException) as raised:
                     await agent_server.update_queued_turn(
                         "session-a",

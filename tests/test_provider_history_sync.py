@@ -2294,17 +2294,17 @@ class ScheduleProviderHistorySyncTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(agent_server, "HISTORY_MAINTENANCE_STATE", {}))
         self.enterContext(patch.object(agent_server, "HISTORY_MAINTENANCE_TASKS", {}))
         self.previous_scheduled = set(agent_server.HISTORY_SYNC_SCHEDULED)
-        self.previous_busy = agent_server.BUSY_SESSIONS
-        self.previous_active = agent_server.ACTIVE
+        self.previous_busy = agent_server.RUNS.busy
+        self.previous_active = agent_server.RUNS.active
         agent_server.HISTORY_SYNC_SCHEDULED.clear()
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.ACTIVE = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.active = {}
 
     async def asyncTearDown(self) -> None:
         agent_server.HISTORY_SYNC_SCHEDULED.clear()
         agent_server.HISTORY_SYNC_SCHEDULED.update(self.previous_scheduled)
-        agent_server.BUSY_SESSIONS = self.previous_busy
-        agent_server.ACTIVE = self.previous_active
+        agent_server.RUNS.busy = self.previous_busy
+        agent_server.RUNS.active = self.previous_active
 
     def sess(self) -> dict:
         return {
@@ -2331,7 +2331,7 @@ class ScheduleProviderHistorySyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_busy_session_is_left_alone(self) -> None:
         # A live turn is already streaming provider output and still writing
         # its transcript.
-        agent_server.BUSY_SESSIONS = {"chat-open"}
+        agent_server.RUNS.busy = {"chat-open"}
         started = False
 
         async def fake_run(session_id):

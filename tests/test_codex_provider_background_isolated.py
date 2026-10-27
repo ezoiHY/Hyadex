@@ -9,6 +9,7 @@ import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
+from hyadex.runs import NamespaceRuns
 
 
 NAMES = {
@@ -57,6 +58,7 @@ class ProviderBackgroundTests(unittest.IsolatedAsyncioTestCase):
             "loaded_claude_background_session_state": lambda manager: ((), ()),
             "claude_event_file_fingerprints": lambda sessions: (),
         }
+        self.ns["RUNS"] = NamespaceRuns(self.ns)
         exec(CODE, self.ns)
 
     @staticmethod

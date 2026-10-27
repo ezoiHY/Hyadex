@@ -38,7 +38,7 @@ def load_routes(add_cleanup):
         "STORE": SimpleNamespace(sessions={"chat": {"backend": "claude"}}),
         "append_event": AsyncMock(),
         "CLAUDE_GOAL_PROJECTIONS": {}, "CLAUDE_GOAL_PATHS": {}, "CLAUDE_GOAL_LOCKS": {},
-        "CLAUDE_GOAL_PENDING": {}, "ACTIVE": {}, "ACTIVE_LOCK": asyncio.Lock(),
+        "CLAUDE_GOAL_PENDING": {},
         "ensure_session_not_deleting": lambda session_id: None,
         "start_turn": AsyncMock(return_value={"run_id": "new-run"}),
     }
@@ -53,6 +53,9 @@ def load_routes(add_cleanup):
     overrides = patch.dict(agent_server.__dict__, ns)
     overrides.start()
     add_cleanup(overrides.stop)
+    runs = patch.multiple(agent_server.RUNS, active={}, active_lock=asyncio.Lock())
+    runs.start()
+    add_cleanup(runs.stop)
     router = APIRouter()
     router.add_api_route("/api/sessions/{session_id}/claude/goal", agent_server.put_claude_goal, methods=["PUT"])
     router.add_api_route("/api/sessions/{session_id}/claude/goal", agent_server.delete_claude_goal, methods=["DELETE"])
@@ -100,7 +103,7 @@ class ClaudeGoalRouteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_starting_status_belongs_to_admitted_run_only(self):
         async def accepted(*args, **kwargs):
-            self.ns["ACTIVE"]["chat"] = {"run_id": "accepted-run"}
+            self.ns["RUNS"].active["chat"] = {"run_id": "accepted-run"}
             return {"run_id": "accepted-run"}
         self.ns["start_turn"].side_effect = accepted
         response = await self.client.put("/api/sessions/chat/claude/goal", json={"condition": "Reply DONE"})
@@ -126,7 +129,7 @@ class ClaudeGoalRouteTests(unittest.IsolatedAsyncioTestCase):
             self.ns["append_event"].assert_awaited_once_with("chat", "claude_goal_changed", {})
 
     async def test_live_clear_targets_exact_active_sdk_run_without_new_turn(self):
-        self.ns["ACTIVE"]["chat"] = {"transport": "agent-sdk", "run_id": "exact-active-run"}
+        self.ns["RUNS"].active["chat"] = {"transport": "agent-sdk", "run_id": "exact-active-run"}
         response = await self.client.delete("/api/sessions/chat/claude/goal")
         self.assertEqual(response.status_code, 200, response.text)
         manager = self.ns["claude_sdk_manager"].return_value

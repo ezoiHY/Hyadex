@@ -2122,7 +2122,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "fork_codex_thread",
             new_callable=AsyncMock,
         ) as fork_codex_thread:
-            agent_server.BUSY_SESSIONS.add(parent_id)
+            agent_server.RUNS.busy.add(parent_id)
             try:
                 with self.assertRaises(agent_server.HTTPException) as raised:
                     await agent_server.fork_session(
@@ -2130,7 +2130,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                         agent_server.ForkSessionRequest(),
                     )
             finally:
-                agent_server.BUSY_SESSIONS.discard(parent_id)
+                agent_server.RUNS.busy.discard(parent_id)
 
         self.assertEqual(raised.exception.status_code, 410)
         fork_codex_thread.assert_not_awaited()

@@ -389,18 +389,18 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
             {session_id: {"id": session_id, "backend": "codex"}},
         ))
         stack.enter_context(patch.object(
-            agent_server,
-            "BUSY_SESSIONS",
+            agent_server.RUNS,
+            "busy",
             {session_id} if active else set(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
-            "CURRENT_TURNS",
+            agent_server.RUNS,
+            "current_turns",
             {session_id: {"run_id": run_id}} if active else {},
         ))
         stack.enter_context(patch.object(
-            agent_server,
-            "ACTIVE",
+            agent_server.RUNS,
+            "active",
             {
                 session_id: {
                     "run_id": run_id,
@@ -409,12 +409,12 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
                 }
             } if active else {},
         ))
-        stack.enter_context(patch.object(agent_server, "STOPPED_RUNS", set()))
+        stack.enter_context(patch.object(agent_server.RUNS, "stopped_runs", set()))
         stack.enter_context(patch.object(agent_server, "DELETING_SESSIONS", set()))
         stack.enter_context(patch.object(agent_server, "DELETED_SESSION_TOMBSTONES", set()))
         stack.enter_context(patch.object(
-            agent_server,
-            "RUN_METADATA",
+            agent_server.RUNS,
+            "run_metadata",
             {
                 run_id: {
                     "purpose": "scheduled_job",
@@ -451,9 +451,9 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
                     request_model,
                 )
                 source.unlink()
-                agent_server.BUSY_SESSIONS.clear()
-                agent_server.CURRENT_TURNS.clear()
-                agent_server.ACTIVE.clear()
+                agent_server.RUNS.busy.clear()
+                agent_server.RUNS.current_turns.clear()
+                agent_server.RUNS.active.clear()
                 second = await agent_server.publish_agent_artifacts(
                     request_for(retry=True),
                     "sess",
@@ -496,9 +496,9 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
                     "pub_tail_recovery",
                 ).unlink()
                 source.unlink()
-                agent_server.BUSY_SESSIONS.clear()
-                agent_server.CURRENT_TURNS.clear()
-                agent_server.ACTIVE.clear()
+                agent_server.RUNS.busy.clear()
+                agent_server.RUNS.current_turns.clear()
+                agent_server.RUNS.active.clear()
 
                 recovered = await agent_server.publish_agent_artifacts(
                     request_for(retry=True),

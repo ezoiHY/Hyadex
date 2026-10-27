@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, Mock
 
 from hyadex.providers.codex import CodexAppServerError, CodexAppServerProtocolError, CodexAppServerRequestError
 from tests.test_goal_followup_admission_isolated import AdmissionHTTPException, saved_route_snapshots
+from hyadex.runs import NamespaceRuns
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -125,6 +126,7 @@ class NativeGoalSteerTests(unittest.IsolatedAsyncioTestCase):
             "finish_codex_control_terminal_publication": AsyncMock(),
             "release_codex_interactive_control_lease": Mock(), "logger": SimpleNamespace(warning=Mock()),
         }
+        self.ns["RUNS"] = NamespaceRuns(self.ns)
         exec(CODE, self.ns)
         self.subscription = Subscription()
         self.manager = SimpleNamespace(generation=1, request=AsyncMock(), wait_for_notification_handler=AsyncMock())

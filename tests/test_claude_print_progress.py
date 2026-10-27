@@ -67,11 +67,11 @@ class ClaudePrintProgressTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with tempfile.TemporaryDirectory() as cwd, patch.object(
-            agent_server,
-            "STOPPED_RUNS",
+            agent_server.RUNS,
+            "stopped_runs",
             {run_id} if stopped else set(),
         ), patch.dict(
-            agent_server.RUN_METADATA,
+            agent_server.RUNS.run_metadata,
             {run_id: metadata},
             clear=True,
         ), patch.multiple(

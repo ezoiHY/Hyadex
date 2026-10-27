@@ -33,12 +33,12 @@ class QueueFenceTests(unittest.IsolatedAsyncioTestCase):
         stop_operation = asyncio.ensure_future(never)
         try:
             with patch.object(
-                agent_server,
-                "EXPLICIT_STOP_OPERATIONS",
+                agent_server.RUNS,
+                "explicit_stops",
                 {"chat": stop_operation},
             ), patch.object(
-                agent_server,
-                "QUEUED_TURNS",
+                agent_server.RUNS,
+                "queued",
                 {"chat": agent_server.deque([{"queued_id": "q1", "_durable": True}])},
             ), patch.object(agent_server, "QUEUE_FENCE_LOGGED_AT", {}), \
                  patch.object(
@@ -73,7 +73,7 @@ class QueueFenceTests(unittest.IsolatedAsyncioTestCase):
             agent_server,
             "server_lifecycle_admission_blocker",
             return_value=agent_server.MANAGED_SERVER_RESTART_ACTIVE_DETAIL,
-        ), patch.object(agent_server, "EXPLICIT_STOP_OPERATIONS", {}):
+        ), patch.object(agent_server.RUNS, "explicit_stops", {}):
             self.assertEqual(
                 agent_server.queue_promotion_fence("chat"),
                 "server_restart",
@@ -82,7 +82,7 @@ class QueueFenceTests(unittest.IsolatedAsyncioTestCase):
             agent_server,
             "server_lifecycle_admission_blocker",
             return_value=agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
-        ), patch.object(agent_server, "EXPLICIT_STOP_OPERATIONS", {}):
+        ), patch.object(agent_server.RUNS, "explicit_stops", {}):
             self.assertEqual(
                 agent_server.queue_promotion_fence("chat"),
                 "server_lifecycle",
@@ -91,23 +91,23 @@ class QueueFenceTests(unittest.IsolatedAsyncioTestCase):
             agent_server,
             "server_lifecycle_admission_blocker",
             return_value=None,
-        ), patch.object(agent_server, "EXPLICIT_STOP_OPERATIONS", {}):
+        ), patch.object(agent_server.RUNS, "explicit_stops", {}):
             self.assertIsNone(agent_server.queue_promotion_fence("chat"))
 
     async def test_routine_idle_reconcile_logs_at_debug_only(self):
         with patch.object(
-            agent_server,
-            "QUEUED_TURNS",
+            agent_server.RUNS,
+            "queued",
             {"chat": agent_server.deque([{"queued_id": "q1", "_durable": True}])},
-        ), patch.object(agent_server, "EXPLICIT_STOP_OPERATIONS", {}), \
-             patch.object(agent_server, "RUN_NOW_REQUESTS", {}), \
-             patch.object(agent_server, "QUEUE_START_TASKS", {}), \
-             patch.object(agent_server, "STEERING_WAIT_TASKS", {}), \
-             patch.object(agent_server, "STEERING_SESSIONS", set()), \
-             patch.object(agent_server, "RUN_NOW_TURNS", {}), \
-             patch.object(agent_server, "ACTIVE", {}), \
-             patch.object(agent_server, "BUSY_SESSIONS", set()), \
-             patch.object(agent_server, "CURRENT_TURNS", {}), \
+        ), patch.object(agent_server.RUNS, "explicit_stops", {}), \
+             patch.object(agent_server.RUNS, "run_now_requests", {}), \
+             patch.object(agent_server.RUNS, "queue_start_tasks", {}), \
+             patch.object(agent_server.RUNS, "steering_waits", {}), \
+             patch.object(agent_server.RUNS, "steering", set()), \
+             patch.object(agent_server.RUNS, "run_now", {}), \
+             patch.object(agent_server.RUNS, "active", {}), \
+             patch.object(agent_server.RUNS, "busy", set()), \
+             patch.object(agent_server.RUNS, "current_turns", {}), \
              patch.object(
                  agent_server,
                  "server_lifecycle_admission_blocker",
@@ -245,10 +245,10 @@ class ExplicitStopDeadlineTests(unittest.IsolatedAsyncioTestCase):
             events.append((event_type, payload))
 
         with patch.object(agent_server, "stop_turn", new=hung_stop), \
-             patch.object(agent_server, "EXPLICIT_STOP_OPERATIONS", {}) as fences, \
+             patch.object(agent_server.RUNS, "explicit_stops", {}) as fences, \
              patch.object(agent_server, "EXPLICIT_STOP_OPERATION_TIMEOUT_SECONDS", 1.0), \
-             patch.object(agent_server, "DETACHED_STOP_TASKS", set()) as detached, \
-             patch.object(agent_server, "DETACHED_STOP_TASKS_BY_SESSION", {}), \
+             patch.object(agent_server.RUNS, "detached_stop_tasks", set()) as detached, \
+             patch.object(agent_server.RUNS, "detached_stop_tasks_by_session", {}), \
              patch.object(agent_server, "SESSION_LIFECYCLE_LOCKS", {}), \
              patch.object(agent_server, "append_event", new=record_event), \
              patch.object(agent_server, "schedule_next_queued_turn") as schedule, \
@@ -317,7 +317,7 @@ class ExplicitStopDeadlineTests(unittest.IsolatedAsyncioTestCase):
             return {"ok": True, "stopped": True}
 
         with patch.object(agent_server, "stop_turn", new=quick_stop), \
-             patch.object(agent_server, "EXPLICIT_STOP_OPERATIONS", {}) as fences, \
+             patch.object(agent_server.RUNS, "explicit_stops", {}) as fences, \
              patch.object(agent_server, "SESSION_LIFECYCLE_LOCKS", {}), \
              patch.object(
                  agent_server,
@@ -369,7 +369,7 @@ class RestartDenialLoggingTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), \
-                 patch.object(agent_server, "BUSY_SESSIONS", {"chat"}), \
+                 patch.object(agent_server.RUNS, "busy", {"chat"}), \
                  self.assertLogs(agent_server.logger, level="WARNING") as logs:
                 with self.assertRaises(HTTPException) as raised:
                     await agent_server.restart_server_endpoint(
@@ -388,7 +388,7 @@ class RestartDenialLoggingTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), \
-                 patch.object(agent_server, "SERVER_MAINTENANCE_SESSIONS", {"chat"}):
+                 patch.object(agent_server.RUNS, "maintenance", {"chat"}):
                 snapshot = agent_server.server_restart_blocker_snapshot_locked()
         self.assertTrue(snapshot["has_safety_blockers"])
         self.assertTrue(snapshot["force_restart_available"])

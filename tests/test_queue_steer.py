@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 
 import agent_server
+from tests.runtime_state import patch_server_multiple
 from agent_server import (
     build_turn_provider_prompt,
     claude_result_error,
@@ -228,7 +229,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
         request = agent_server.TurnRequest(prompt="New message")
         session = {"id": "chat-1", "backend": "codex"}
         with patch.object(agent_server.STORE, "sessions", {"chat-1": session}), \
-             patch.object(agent_server, "QUEUED_TURNS", queued), \
+             patch.object(agent_server.RUNS, "queued", queued), \
              patch.object(agent_server, "append_durable_event", new_callable=AsyncMock, side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 await agent_server.enqueue_turn("chat-1", request, session)
@@ -246,8 +247,8 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
 
         with patch.object(agent_server.STORE, "sessions", {"chat-1": session}), \
-             patch.object(agent_server, "QUEUED_TURNS", queued), \
-             patch.object(agent_server, "BUSY_SESSIONS", {"chat-1"}), \
+             patch.object(agent_server.RUNS, "queued", queued), \
+             patch.object(agent_server.RUNS, "busy", {"chat-1"}), \
              patch.object(agent_server, "append_durable_event", side_effect=blocked_append), \
              patch.object(agent_server, "schedule_next_queued_turn") as schedule:
             admission = asyncio.create_task(
@@ -270,8 +271,8 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
         request = agent_server.TurnRequest(prompt="New message")
         session = {"id": "chat-1", "backend": "codex"}
         with patch.object(agent_server.STORE, "sessions", {"chat-1": session}), \
-             patch.object(agent_server, "QUEUED_TURNS", queued), \
-             patch.object(agent_server, "BUSY_SESSIONS", {"chat-1"}), \
+             patch.object(agent_server.RUNS, "queued", queued), \
+             patch.object(agent_server.RUNS, "busy", {"chat-1"}), \
              patch.object(agent_server, "append_durable_event", new_callable=AsyncMock, return_value={}), \
              patch.object(agent_server, "schedule_next_queued_turn") as schedule:
             await agent_server.enqueue_turn("chat-1", request, session)
@@ -284,8 +285,8 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
         request = agent_server.TurnRequest(prompt="Keep this even if I disconnect")
         session = {"id": "chat-1", "backend": "codex"}
         with patch.object(agent_server.STORE, "sessions", {"chat-1": session}), \
-             patch.object(agent_server, "QUEUED_TURNS", queued), \
-             patch.object(agent_server, "BUSY_SESSIONS", {"chat-1"}), \
+             patch.object(agent_server.RUNS, "queued", queued), \
+             patch.object(agent_server.RUNS, "busy", {"chat-1"}), \
              patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None), \
              patch.object(
                  agent_server,
@@ -293,7 +294,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                  new_callable=AsyncMock,
                  return_value={"type": "turn_queued"},
              ), \
-             patch.object(agent_server, "ACTIVE_LOCK", CancelledOnEnterLock()), \
+             patch.object(agent_server.RUNS, "active_lock", CancelledOnEnterLock()), \
              patch.object(agent_server, "schedule_next_queued_turn") as schedule:
             with self.assertRaises(asyncio.CancelledError):
                 await agent_server.enqueue_turn("chat-1", request, session)
@@ -305,10 +306,10 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pre_spawn_force_send_defers_without_cancelling_the_original_turn(self) -> None:
         stop_requests: set[str] = set()
-        with patch.object(agent_server, "ACTIVE", {}), \
-                patch.object(agent_server, "BUSY_SESSIONS", {"chat-1"}), \
-                patch.object(agent_server, "STOP_REQUESTS", stop_requests), \
-                patch.object(agent_server, "STOPPED_RUNS", set()):
+        with patch.object(agent_server.RUNS, "active", {}), \
+                patch.object(agent_server.RUNS, "busy", {"chat-1"}), \
+                patch.object(agent_server.RUNS, "stop_requests", stop_requests), \
+                patch.object(agent_server.RUNS, "stopped_runs", set()):
             result = await agent_server.stop_turn(
                 "chat-1",
                 emit_event=False,
@@ -331,10 +332,10 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
         append_durable_event = AsyncMock(return_value={})
         with patch.object(agent_server.STORE, "sessions", {
                 "chat-1": {"id": "chat-1", "backend": "claude"},
-            }), patch.object(agent_server, "ACTIVE", {}), \
-                patch.object(agent_server, "BUSY_SESSIONS", set()), \
-                patch.object(agent_server, "QUEUED_TURNS", queued), \
-                patch.object(agent_server, "RUN_NOW_TURNS", {}), \
+            }), patch.object(agent_server.RUNS, "active", {}), \
+                patch.object(agent_server.RUNS, "busy", set()), \
+                patch.object(agent_server.RUNS, "queued", queued), \
+                patch.object(agent_server.RUNS, "run_now", {}), \
                 patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
                 patch.object(agent_server, "append_durable_event", append_durable_event), \
                 patch.object(agent_server, "cancel_codex_interactions", AsyncMock()), \
@@ -383,7 +384,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                     "session_id": "thread-root",
                 },
             }),
-            patch.multiple(
+            patch_server_multiple(
                 agent_server,
                 ACTIVE={},
                 BUSY_SESSIONS=set(),
@@ -476,7 +477,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(agent_server.STORE, "sessions", {"chat-1": session}),
             patch.object(agent_server.STORE, "mark_read", mark_read),
-            patch.multiple(
+            patch_server_multiple(
                 agent_server,
                 ACTIVE={},
                 BUSY_SESSIONS=set(),
@@ -560,7 +561,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
         session = {"id": "chat-1", "backend": agent_server.BACKEND_CODEX}
         with (
             patch.object(agent_server.STORE, "sessions", {"chat-1": session}),
-            patch.multiple(
+            patch_server_multiple(
                 agent_server,
                 ACTIVE={},
                 BUSY_SESSIONS=set(),
@@ -611,7 +612,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
         finish_cleanup = asyncio.Event()
         operation = asyncio.create_task(finish_cleanup.wait())
         try:
-            with patch.multiple(
+            with patch_server_multiple(
                 agent_server,
                 ACTIVE={},
                 BUSY_SESSIONS=set(),
@@ -679,7 +680,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
 
         append_durable_event = AsyncMock(return_value={})
         with patch.object(agent_server.STORE, "sessions", sessions), \
-                patch.multiple(
+                patch_server_multiple(
                     agent_server,
                     ACTIVE={},
                     BUSY_SESSIONS=busy,
@@ -790,7 +791,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
         quarantine = AsyncMock(return_value=True)
         append_event = AsyncMock(return_value={})
         with patch.object(agent_server.STORE, "sessions", sessions), \
-                patch.multiple(
+                patch_server_multiple(
                     agent_server,
                     ACTIVE=active,
                     BUSY_SESSIONS=busy,
@@ -900,8 +901,8 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         original_sessions = agent_server.STORE.sessions
-        original_queue = agent_server.QUEUED_TURNS
-        original_run_now = agent_server.RUN_NOW_TURNS
+        original_queue = agent_server.RUNS.queued
+        original_run_now = agent_server.RUNS.run_now
         promoted = {
             "queued_id": "queued-promoted",
             "prompt": "Already handed off",
@@ -913,8 +914,8 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
             agent_server.STORE.sessions = {
                 "chat-edit": {"id": "chat-edit", "backend": "codex"}
             }
-            agent_server.QUEUED_TURNS = {"chat-edit": deque()}
-            agent_server.RUN_NOW_TURNS = {"chat-edit": promoted}
+            agent_server.RUNS.queued = {"chat-edit": deque()}
+            agent_server.RUNS.run_now = {"chat-edit": promoted}
             with patch.object(
                 agent_server, "server_lifecycle_admission_blocker", return_value=None
             ):
@@ -948,15 +949,15 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
                         "queued_turn_already_promoted",
                     )
 
-            self.assertIs(agent_server.RUN_NOW_TURNS["chat-edit"], promoted)
+            self.assertIs(agent_server.RUNS.run_now["chat-edit"], promoted)
         finally:
             agent_server.STORE.sessions = original_sessions
-            agent_server.QUEUED_TURNS = original_queue
-            agent_server.RUN_NOW_TURNS = original_run_now
+            agent_server.RUNS.queued = original_queue
+            agent_server.RUNS.run_now = original_run_now
 
     async def test_edit_rejects_legacy_hidden_display_reference(self) -> None:
         original_sessions = agent_server.STORE.sessions
-        original_queue = agent_server.QUEUED_TURNS
+        original_queue = agent_server.RUNS.queued
         item = {
             "queued_id": "queued-hidden-display-edit",
             "prompt": "Tell @@SONIC now",
@@ -990,7 +991,7 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
             agent_server.STORE.sessions = {
                 "chat-edit": {"id": "chat-edit", "backend": "codex"}
             }
-            agent_server.QUEUED_TURNS = {"chat-edit": deque([item])}
+            agent_server.RUNS.queued = {"chat-edit": deque([item])}
             with patch.object(
                 agent_server, "server_lifecycle_admission_blocker", return_value=None
             ):
@@ -1003,13 +1004,13 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(item, original_item)
         finally:
             agent_server.STORE.sessions = original_sessions
-            agent_server.QUEUED_TURNS = original_queue
+            agent_server.RUNS.queued = original_queue
 
 
 
     async def test_edit_updates_visible_prompt_lineage_and_recovery(self) -> None:
         original_sessions = agent_server.STORE.sessions
-        original_queue = agent_server.QUEUED_TURNS
+        original_queue = agent_server.RUNS.queued
         item = {
             "queued_id": "queued-edit",
             "prompt": "Old raw prompt",
@@ -1040,7 +1041,7 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
             agent_server.STORE.sessions = {
                 "chat-edit": {"id": "chat-edit", "title": "Edit", "backend": "codex"}
             }
-            agent_server.QUEUED_TURNS = {"chat-edit": deque([item])}
+            agent_server.RUNS.queued = {"chat-edit": deque([item])}
             with (
                 patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
                 patch.object(agent_server, "append_durable_event", append),
@@ -1096,11 +1097,11 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
             )
         finally:
             agent_server.STORE.sessions = original_sessions
-            agent_server.QUEUED_TURNS = original_queue
+            agent_server.RUNS.queued = original_queue
 
     async def test_edit_keeps_selection_for_same_token_and_clears_changed_token(self) -> None:
         original_sessions = agent_server.STORE.sessions
-        original_queue = agent_server.QUEUED_TURNS
+        original_queue = agent_server.RUNS.queued
         selection = {
             "id": "pcmd_" + "a" * 32,
             "revision": "pcmdrev_" + "b" * 32,
@@ -1129,7 +1130,7 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
                     "backend": "codex",
                 }
             }
-            agent_server.QUEUED_TURNS = {"chat-edit": deque([item])}
+            agent_server.RUNS.queued = {"chat-edit": deque([item])}
             with (
                 patch.object(
                     agent_server,
@@ -1164,7 +1165,7 @@ class QueuedTurnEditTests(unittest.IsolatedAsyncioTestCase):
             )
         finally:
             agent_server.STORE.sessions = original_sessions
-            agent_server.QUEUED_TURNS = original_queue
+            agent_server.RUNS.queued = original_queue
 
 
 class ProviderTurnTaskRecoveryTests(unittest.IsolatedAsyncioTestCase):
@@ -1187,11 +1188,11 @@ class ProviderTurnTaskRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 active = {"chat-1": replacement}
                 busy = {"chat-1"}
                 current = {"chat-1": {"run_id": "run-new"}}
-                with patch.object(agent_server, "ACTIVE", active), \
-                        patch.object(agent_server, "BUSY_SESSIONS", busy), \
-                        patch.object(agent_server, "CURRENT_TURNS", current), \
-                        patch.object(agent_server, "STOP_REQUESTS", set()), \
-                        patch.object(agent_server, "STOPPED_RUNS", {"run-old"}):
+                with patch.object(agent_server.RUNS, "active", active), \
+                        patch.object(agent_server.RUNS, "busy", busy), \
+                        patch.object(agent_server.RUNS, "current_turns", current), \
+                        patch.object(agent_server.RUNS, "stop_requests", set()), \
+                        patch.object(agent_server.RUNS, "stopped_runs", {"run-old"}):
                     bound, stop_requested = await agent_server.bind_active_turn(
                         "chat-1",
                         "run-old",
@@ -1219,9 +1220,9 @@ class ProviderTurnTaskRecoveryTests(unittest.IsolatedAsyncioTestCase):
         current = {"chat-1": {"run_id": "run-new"}}
         save_provider = AsyncMock()
         append_event = AsyncMock()
-        with patch.object(agent_server, "ACTIVE", active), \
-                patch.object(agent_server, "BUSY_SESSIONS", busy), \
-                patch.object(agent_server, "CURRENT_TURNS", current), \
+        with patch.object(agent_server.RUNS, "active", active), \
+                patch.object(agent_server.RUNS, "busy", busy), \
+                patch.object(agent_server.RUNS, "current_turns", current), \
                 patch.object(
                     agent_server.STORE,
                     "save_provider_session",
@@ -1247,11 +1248,11 @@ class ProviderTurnTaskRecoveryTests(unittest.IsolatedAsyncioTestCase):
         lock_states: list[bool] = []
 
         async def observe_broadcast(*_args: object) -> None:
-            lock_states.append(agent_server.ACTIVE_LOCK.locked())
+            lock_states.append(agent_server.RUNS.active_lock.locked())
 
-        with patch.object(agent_server, "ACTIVE", active), \
-                patch.object(agent_server, "BUSY_SESSIONS", busy), \
-                patch.object(agent_server, "CURRENT_TURNS", current), \
+        with patch.object(agent_server.RUNS, "active", active), \
+                patch.object(agent_server.RUNS, "busy", busy), \
+                patch.object(agent_server.RUNS, "current_turns", current), \
                 patch.object(
                     agent_server.STORE,
                     "save_provider_session",
@@ -1291,14 +1292,14 @@ class ProviderTurnTaskRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         append_event = AsyncMock(return_value={})
         with patch.object(agent_server.STORE, "sessions", sessions), \
-                patch.object(agent_server, "ACTIVE", active), \
-                patch.object(agent_server, "BUSY_SESSIONS", busy), \
-                patch.object(agent_server, "CURRENT_TURNS", current), \
-                patch.object(agent_server, "STOP_REQUESTS", set()), \
-                patch.object(agent_server, "STOPPED_RUNS", {"run-old"}), \
-                patch.object(agent_server, "RUN_METADATA", metadata), \
-                patch.object(agent_server, "RUN_NOW_TURNS", {}), \
-                patch.object(agent_server, "STEERING_SESSIONS", set()), \
+                patch.object(agent_server.RUNS, "active", active), \
+                patch.object(agent_server.RUNS, "busy", busy), \
+                patch.object(agent_server.RUNS, "current_turns", current), \
+                patch.object(agent_server.RUNS, "stop_requests", set()), \
+                patch.object(agent_server.RUNS, "stopped_runs", {"run-old"}), \
+                patch.object(agent_server.RUNS, "run_metadata", metadata), \
+                patch.object(agent_server.RUNS, "run_now", {}), \
+                patch.object(agent_server.RUNS, "steering", set()), \
                 patch.object(agent_server, "append_event", append_event), \
                 patch.object(agent_server, "schedule_next_queued_turn") as schedule:
             task = asyncio.create_task(agent_server.supervise_provider_turn_task(
@@ -1352,7 +1353,7 @@ class ProviderTurnTaskRecoveryTests(unittest.IsolatedAsyncioTestCase):
             return {"run_id": "run-human", "queued": False}
 
         with patch.object(agent_server.STORE, "sessions", sessions), \
-                patch.multiple(
+                patch_server_multiple(
                     agent_server,
                     ACTIVE=active,
                     BUSY_SESSIONS=busy,
@@ -1431,14 +1432,14 @@ class ProviderTurnTaskRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         append_event = AsyncMock(return_value={})
         with patch.object(agent_server.STORE, "sessions", sessions), \
-                patch.object(agent_server, "ACTIVE", active), \
-                patch.object(agent_server, "BUSY_SESSIONS", busy), \
-                patch.object(agent_server, "CURRENT_TURNS", current), \
-                patch.object(agent_server, "STOP_REQUESTS", set()), \
-                patch.object(agent_server, "STOPPED_RUNS", set()), \
-                patch.object(agent_server, "RUN_METADATA", {}), \
-                patch.object(agent_server, "RUN_NOW_TURNS", {}), \
-                patch.object(agent_server, "STEERING_SESSIONS", set()), \
+                patch.object(agent_server.RUNS, "active", active), \
+                patch.object(agent_server.RUNS, "busy", busy), \
+                patch.object(agent_server.RUNS, "current_turns", current), \
+                patch.object(agent_server.RUNS, "stop_requests", set()), \
+                patch.object(agent_server.RUNS, "stopped_runs", set()), \
+                patch.object(agent_server.RUNS, "run_metadata", {}), \
+                patch.object(agent_server.RUNS, "run_now", {}), \
+                patch.object(agent_server.RUNS, "steering", set()), \
                 patch.object(agent_server, "append_event", append_event), \
                 patch.object(agent_server, "schedule_next_queued_turn") as schedule:
             with self.assertRaisesRegex(RuntimeError, "runner cleanup failed"):
@@ -1473,14 +1474,14 @@ class ProviderTurnTaskRecoveryTests(unittest.IsolatedAsyncioTestCase):
             raise asyncio.CancelledError
 
         with patch.object(agent_server.STORE, "sessions", sessions), \
-                patch.object(agent_server, "ACTIVE", active), \
-                patch.object(agent_server, "BUSY_SESSIONS", busy), \
-                patch.object(agent_server, "CURRENT_TURNS", current), \
-                patch.object(agent_server, "STOP_REQUESTS", set()), \
-                patch.object(agent_server, "STOPPED_RUNS", {"run-old"}), \
-                patch.object(agent_server, "RUN_METADATA", {}), \
-                patch.object(agent_server, "RUN_NOW_TURNS", {}), \
-                patch.object(agent_server, "STEERING_SESSIONS", set()), \
+                patch.object(agent_server.RUNS, "active", active), \
+                patch.object(agent_server.RUNS, "busy", busy), \
+                patch.object(agent_server.RUNS, "current_turns", current), \
+                patch.object(agent_server.RUNS, "stop_requests", set()), \
+                patch.object(agent_server.RUNS, "stopped_runs", {"run-old"}), \
+                patch.object(agent_server.RUNS, "run_metadata", {}), \
+                patch.object(agent_server.RUNS, "run_now", {}), \
+                patch.object(agent_server.RUNS, "steering", set()), \
                 patch.object(agent_server, "append_event", AsyncMock(return_value={})), \
                 patch.object(agent_server, "schedule_next_queued_turn") as schedule:
             task = asyncio.create_task(agent_server.supervise_provider_turn_task(
@@ -1501,20 +1502,20 @@ class ProviderTurnTaskRecoveryTests(unittest.IsolatedAsyncioTestCase):
 class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.previous_sessions = agent_server.STORE.sessions
-        self.previous_queued = agent_server.QUEUED_TURNS
-        self.previous_run_now = agent_server.RUN_NOW_TURNS
-        self.previous_steering = agent_server.STEERING_SESSIONS
-        self.previous_steering_wait_tasks = agent_server.STEERING_WAIT_TASKS
-        self.previous_run_now_requests = agent_server.RUN_NOW_REQUESTS
+        self.previous_queued = agent_server.RUNS.queued
+        self.previous_run_now = agent_server.RUNS.run_now
+        self.previous_steering = agent_server.RUNS.steering
+        self.previous_steering_wait_tasks = agent_server.RUNS.steering_waits
+        self.previous_run_now_requests = agent_server.RUNS.run_now_requests
         self.previous_run_now_completed = agent_server.RUN_NOW_COMPLETED_RESULTS
-        self.previous_current = agent_server.CURRENT_TURNS
-        self.previous_active = agent_server.ACTIVE
-        self.previous_busy = agent_server.BUSY_SESSIONS
-        self.previous_queue_start_tasks = agent_server.QUEUE_START_TASKS
+        self.previous_current = agent_server.RUNS.current_turns
+        self.previous_active = agent_server.RUNS.active
+        self.previous_busy = agent_server.RUNS.busy
+        self.previous_queue_start_tasks = agent_server.RUNS.queue_start_tasks
         agent_server.STORE.sessions = {
             "chat-1": {"id": "chat-1", "title": "Chat", "backend": "codex"},
         }
-        agent_server.QUEUED_TURNS = {
+        agent_server.RUNS.queued = {
             "chat-1": deque([{
                 "queued_id": "queued-steer",
                 "prompt": "Change course now.",
@@ -1522,15 +1523,15 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 "backend": "codex",
             }]),
         }
-        agent_server.RUN_NOW_TURNS = {}
-        agent_server.STEERING_SESSIONS = set()
-        agent_server.STEERING_WAIT_TASKS = {}
-        agent_server.RUN_NOW_REQUESTS = {}
+        agent_server.RUNS.run_now = {}
+        agent_server.RUNS.steering = set()
+        agent_server.RUNS.steering_waits = {}
+        agent_server.RUNS.run_now_requests = {}
         agent_server.RUN_NOW_COMPLETED_RESULTS = OrderedDict()
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.QUEUE_START_TASKS = {}
-        agent_server.CURRENT_TURNS = {
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.queue_start_tasks = {}
+        agent_server.RUNS.current_turns = {
             "chat-1": {
                 "run_id": "run-original",
                 "prompt": "Finish the original investigation.",
@@ -1542,7 +1543,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         live_waiters = [
             owner[2]
-            for owner in agent_server.STEERING_WAIT_TASKS.values()
+            for owner in agent_server.RUNS.steering_waits.values()
             if not owner[2].done()
         ]
         for task in live_waiters:
@@ -1550,22 +1551,22 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         if live_waiters:
             await asyncio.gather(*live_waiters, return_exceptions=True)
         agent_server.STORE.sessions = self.previous_sessions
-        agent_server.QUEUED_TURNS = self.previous_queued
-        agent_server.RUN_NOW_TURNS = self.previous_run_now
-        agent_server.STEERING_SESSIONS = self.previous_steering
-        agent_server.STEERING_WAIT_TASKS = self.previous_steering_wait_tasks
-        agent_server.RUN_NOW_REQUESTS = self.previous_run_now_requests
+        agent_server.RUNS.queued = self.previous_queued
+        agent_server.RUNS.run_now = self.previous_run_now
+        agent_server.RUNS.steering = self.previous_steering
+        agent_server.RUNS.steering_waits = self.previous_steering_wait_tasks
+        agent_server.RUNS.run_now_requests = self.previous_run_now_requests
         agent_server.RUN_NOW_COMPLETED_RESULTS = self.previous_run_now_completed
-        agent_server.CURRENT_TURNS = self.previous_current
-        agent_server.ACTIVE = self.previous_active
-        agent_server.BUSY_SESSIONS = self.previous_busy
-        agent_server.QUEUE_START_TASKS = self.previous_queue_start_tasks
+        agent_server.RUNS.current_turns = self.previous_current
+        agent_server.RUNS.active = self.previous_active
+        agent_server.RUNS.busy = self.previous_busy
+        agent_server.RUNS.queue_start_tasks = self.previous_queue_start_tasks
 
     async def test_idle_orphaned_steering_fence_self_heals_before_force_send(
         self,
     ) -> None:
-        agent_server.CURRENT_TURNS.clear()
-        agent_server.STEERING_SESSIONS.add("chat-1")
+        agent_server.RUNS.current_turns.clear()
+        agent_server.RUNS.steering.add("chat-1")
 
         with patch.object(
             agent_server,
@@ -1579,14 +1580,14 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(result["ok"])
-        self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering)
         handoff.assert_awaited_once()
 
     async def test_idle_reconciliation_keeps_live_owner_but_prunes_done_owner(
         self,
     ) -> None:
-        agent_server.CURRENT_TURNS.clear()
-        agent_server.STEERING_SESSIONS.add("chat-1")
+        agent_server.RUNS.current_turns.clear()
+        agent_server.RUNS.steering.add("chat-1")
         release = asyncio.Event()
 
         async def live_operation() -> dict[str, object]:
@@ -1596,7 +1597,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         live_task = asyncio.create_task(live_operation())
         setattr(live_task, "_hyadex_force_send_queued_id", "queued-old")
         setattr(live_task, "_hyadex_force_send_started_at", time.monotonic())
-        agent_server.RUN_NOW_REQUESTS["chat-1"] = ("queued-old", live_task)
+        agent_server.RUNS.run_now_requests["chat-1"] = ("queued-old", live_task)
         try:
             repaired = await agent_server.reconcile_idle_queue_session(
                 "chat-1",
@@ -1604,7 +1605,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 reason="test_live_owner",
             )
             self.assertFalse(repaired)
-            self.assertIn("chat-1", agent_server.STEERING_SESSIONS)
+            self.assertIn("chat-1", agent_server.RUNS.steering)
 
             release.set()
             await live_task
@@ -1619,15 +1620,15 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(live_task, return_exceptions=True)
 
         self.assertTrue(repaired)
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_REQUESTS)
-        self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now_requests)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering)
 
     async def test_idle_reconciliation_expires_stale_owner_and_restores_fenced_row(
         self,
     ) -> None:
-        agent_server.CURRENT_TURNS.clear()
-        agent_server.QUEUED_TURNS.clear()
-        agent_server.STEERING_SESSIONS.add("chat-1")
+        agent_server.RUNS.current_turns.clear()
+        agent_server.RUNS.queued.clear()
+        agent_server.RUNS.steering.add("chat-1")
 
         async def stuck_operation() -> dict[str, object]:
             await asyncio.Event().wait()
@@ -1644,7 +1645,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             "_hyadex_force_send_queued_id",
             "queued-steer",
         )
-        agent_server.RUN_NOW_REQUESTS["chat-1"] = (
+        agent_server.RUNS.run_now_requests["chat-1"] = (
             "queued-steer",
             stale_task,
         )
@@ -1677,9 +1678,9 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(repaired)
         self.assertTrue(stale_task.cancelled())
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_REQUESTS)
-        self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
-        restored = agent_server.QUEUED_TURNS["chat-1"][0]
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now_requests)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering)
+        restored = agent_server.RUNS.queued["chat-1"][0]
         self.assertIs(restored, fenced)
         self.assertTrue(restored["_paused_after_stop"])
         self.assertTrue(restored["_native_delivery_fenced"])
@@ -1688,9 +1689,9 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
     async def test_ownerless_transitioning_promotion_is_released_when_idle(
         self,
     ) -> None:
-        agent_server.CURRENT_TURNS.clear()
-        agent_server.QUEUED_TURNS.clear()
-        agent_server.RUN_NOW_TURNS["chat-1"] = {
+        agent_server.RUNS.current_turns.clear()
+        agent_server.RUNS.queued.clear()
+        agent_server.RUNS.run_now["chat-1"] = {
             "queued_id": "queued-steer",
             "prompt": "Change course now.",
             "file_ids": [],
@@ -1698,7 +1699,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             "_paused_after_stop": False,
             "_update_transitioning": True,
         }
-        agent_server.STEERING_SESSIONS.add("chat-1")
+        agent_server.RUNS.steering.add("chat-1")
 
         with patch.object(
             agent_server,
@@ -1711,19 +1712,19 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(repaired)
-        self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering)
         self.assertNotIn(
             "_update_transitioning",
-            agent_server.RUN_NOW_TURNS["chat-1"],
+            agent_server.RUNS.run_now["chat-1"],
         )
         schedule_next.assert_called_once_with("chat-1")
 
     async def test_stale_owner_restores_unfenced_row_for_normal_delivery(
         self,
     ) -> None:
-        agent_server.CURRENT_TURNS.clear()
-        agent_server.QUEUED_TURNS.clear()
-        agent_server.STEERING_SESSIONS.add("chat-1")
+        agent_server.RUNS.current_turns.clear()
+        agent_server.RUNS.queued.clear()
+        agent_server.RUNS.steering.add("chat-1")
 
         async def stuck_operation() -> dict[str, object]:
             await asyncio.Event().wait()
@@ -1735,7 +1736,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             "_hyadex_force_send_started_at",
             time.monotonic() - 60,
         )
-        agent_server.RUN_NOW_REQUESTS["chat-1"] = (
+        agent_server.RUNS.run_now_requests["chat-1"] = (
             "queued-steer",
             stale_task,
         )
@@ -1767,11 +1768,11 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(repaired)
         self.assertTrue(stale_task.cancelled())
-        self.assertIs(agent_server.QUEUED_TURNS["chat-1"][0], recovered)
+        self.assertIs(agent_server.RUNS.queued["chat-1"][0], recovered)
         schedule_next.assert_called_once_with("chat-1")
 
     async def test_delivery_fenced_row_cannot_be_force_sent_again(self) -> None:
-        fenced = agent_server.QUEUED_TURNS["chat-1"][0]
+        fenced = agent_server.RUNS.queued["chat-1"][0]
         fenced["_paused_after_stop"] = True
         fenced["_native_delivery_fenced"] = True
 
@@ -1784,14 +1785,14 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         detail = raised.exception.detail
         self.assertEqual(detail["guard"], "delivery_uncertain")
         self.assertFalse(detail["retryable"])
-        self.assertIs(agent_server.QUEUED_TURNS["chat-1"][0], fenced)
-        self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_REQUESTS)
+        self.assertIs(agent_server.RUNS.queued["chat-1"][0], fenced)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering)
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now_requests)
 
     async def test_native_provider_handoff_deadline_only_expires_before_accept(
         self,
     ) -> None:
-        selected = agent_server.QUEUED_TURNS["chat-1"][0]
+        selected = agent_server.RUNS.queued["chat-1"][0]
 
         async def exercise_pre_accept() -> agent_server.NativeSteerHandoffError:
             provider_queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(
@@ -1866,10 +1867,10 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancelled_steering_waiter_always_releases_its_exact_fence(
         self,
     ) -> None:
-        agent_server.CURRENT_TURNS.clear()
-        agent_server.QUEUED_TURNS.clear()
-        agent_server.BUSY_SESSIONS.add("chat-1")
-        agent_server.STEERING_SESSIONS.add("chat-1")
+        agent_server.RUNS.current_turns.clear()
+        agent_server.RUNS.queued.clear()
+        agent_server.RUNS.busy.add("chat-1")
+        agent_server.RUNS.steering.add("chat-1")
         waiter = agent_server.schedule_steered_turn_slot_waiter(
             "chat-1",
             "queued-steer",
@@ -1877,12 +1878,12 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
 
         waiter.cancel()
-        agent_server.BUSY_SESSIONS.discard("chat-1")
+        agent_server.RUNS.busy.discard("chat-1")
         await asyncio.gather(waiter, return_exceptions=True)
         await asyncio.sleep(0)
 
-        self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
-        self.assertNotIn("chat-1", agent_server.STEERING_WAIT_TASKS)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering_waits)
 
     async def test_duplicate_force_send_requests_join_one_handoff(self) -> None:
         started = asyncio.Event()
@@ -1915,7 +1916,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             first_result, second_result = await asyncio.gather(first, second)
 
         self.assertEqual(first_result, second_result)
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_REQUESTS)
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now_requests)
 
     async def test_retry_after_dropped_completed_response_reuses_result(self) -> None:
         started = asyncio.Event()
@@ -1951,7 +1952,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             release.set()
             await completed.wait()
             for _ in range(100):
-                if "chat-1" not in agent_server.RUN_NOW_REQUESTS:
+                if "chat-1" not in agent_server.RUNS.run_now_requests:
                     break
                 await asyncio.sleep(0)
             retried = await run_queued_turn_now("chat-1", "queued-steer")
@@ -2004,10 +2005,10 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["remaining"], 1)
         self.assertIn("kept for normal queue delivery", result["message"])
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-steer"],
         )
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_REQUESTS)
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now_requests)
         self.assertFalse(agent_server.RUN_NOW_COMPLETED_RESULTS)
 
     async def test_safe_native_prefence_rejection_durably_requeues_in_order(
@@ -2039,7 +2040,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             "backend": "codex",
             "_durable": True,
         }
-        agent_server.QUEUED_TURNS["chat-1"] = deque([before, after])
+        agent_server.RUNS.queued["chat-1"] = deque([before, after])
         append_batch = AsyncMock(return_value=[])
 
         with patch.object(
@@ -2057,7 +2058,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             public = await agent_server.queued_turns_snapshot("chat-1")
 
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-before", "queued-steer", "queued-after"],
         )
         self.assertNotIn("_native_delivery_fenced", selected)
@@ -2092,7 +2093,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             "_paused_after_stop": True,
             "_native_delivery_fenced": True,
         }
-        agent_server.QUEUED_TURNS.pop("chat-1", None)
+        agent_server.RUNS.queued.pop("chat-1", None)
 
         with patch.object(
             agent_server,
@@ -2114,7 +2115,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(raised.exception.safe_to_requeue)
         self.assertFalse(raised.exception.delivery_uncertain)
-        self.assertIs(agent_server.QUEUED_TURNS["chat-1"][0], selected)
+        self.assertIs(agent_server.RUNS.queued["chat-1"][0], selected)
         self.assertTrue(selected["_paused_after_stop"])
         self.assertTrue(selected["_native_delivery_fenced"])
         self.assertTrue(public[0]["paused"])
@@ -2285,10 +2286,10 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
     async def test_stop_after_promotion_holds_run_now_and_clears_cached_success(
         self,
     ) -> None:
-        promoted = agent_server.QUEUED_TURNS.pop("chat-1")[0]
+        promoted = agent_server.RUNS.queued.pop("chat-1")[0]
         promoted["_durable"] = True
         promoted["_paused_after_stop"] = False
-        agent_server.RUN_NOW_TURNS["chat-1"] = promoted
+        agent_server.RUNS.run_now["chat-1"] = promoted
         agent_server.RUN_NOW_COMPLETED_RESULTS[("chat-1", "queued-steer")] = {
             "expires_at": time.monotonic() + 30,
             "result": {"ok": True, "queued_id": "queued-steer"},
@@ -2310,9 +2311,9 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             await agent_server.start_next_queued_turn("chat-1")
 
         self.assertEqual(paused, 1)
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_TURNS)
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now)
         self.assertTrue(
-            agent_server.QUEUED_TURNS["chat-1"][0]["_paused_after_stop"]
+            agent_server.RUNS.queued["chat-1"][0]["_paused_after_stop"]
         )
         self.assertNotIn(
             ("chat-1", "queued-steer"),
@@ -2323,11 +2324,11 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
     async def test_stop_demotes_promotion_before_scheduler_or_snapshot_can_resume(
         self,
     ) -> None:
-        promoted = agent_server.QUEUED_TURNS["chat-1"].popleft()
+        promoted = agent_server.RUNS.queued["chat-1"].popleft()
         promoted["_durable"] = True
         successor = {**promoted, "queued_id": "queued-next", "prompt": "Next request"}
-        agent_server.QUEUED_TURNS["chat-1"].append(successor)
-        agent_server.RUN_NOW_TURNS["chat-1"] = promoted
+        agent_server.RUNS.queued["chat-1"].append(successor)
+        agent_server.RUNS.run_now["chat-1"] = promoted
         agent_server.RUN_NOW_COMPLETED_RESULTS[("chat-1", "queued-steer")] = {
             "expires_at": time.monotonic() + 30,
             "result": {"ok": True, "queued_id": "queued-steer"},
@@ -2355,7 +2356,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             # fence prevents the ordinary queue scheduler from running.
             self.assertEqual([row["queued_id"] for row in rows], ["queued-steer", "queued-next"])
             self.assertTrue(all(row["paused"] and not row["promoted"] for row in rows))
-            self.assertNotIn("chat-1", agent_server.RUN_NOW_TURNS)
+            self.assertNotIn("chat-1", agent_server.RUNS.run_now)
             self.assertNotIn(("chat-1", "queued-steer"), agent_server.RUN_NOW_COMPLETED_RESULTS)
             agent_server.reject_promoted_queue_mutation("chat-1", "queued-steer")
             await agent_server.start_next_queued_turn("chat-1")
@@ -2364,16 +2365,16 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_stop_pause_write_demotes_and_holds_without_replaying(
         self,
     ) -> None:
-        promoted = agent_server.QUEUED_TURNS.pop("chat-1")[0]
+        promoted = agent_server.RUNS.queued.pop("chat-1")[0]
         promoted["_durable"] = True
-        agent_server.RUN_NOW_TURNS["chat-1"] = promoted
+        agent_server.RUNS.run_now["chat-1"] = promoted
         with patch.object(agent_server, "append_durable_event", side_effect=OSError("fixture storage failure")), \
                 patch.object(agent_server, "_start_turn_locked", new_callable=AsyncMock) as start:
             self.assertEqual(await agent_server.pause_queued_turns_after_explicit_stop("chat-1"), 1)
             rows = await agent_server.queued_turns_snapshot("chat-1")
             self.assertFalse(rows[0]["promoted"])
             self.assertTrue(rows[0]["paused"])
-            self.assertFalse(agent_server.QUEUED_TURNS["chat-1"][0]["_durable"])
+            self.assertFalse(agent_server.RUNS.queued["chat-1"][0]["_durable"])
             await agent_server.start_next_queued_turn("chat-1")
             start.assert_not_awaited()
 
@@ -2385,9 +2386,9 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             _queued_id: str,
             **_kwargs: object,
         ) -> dict[str, object]:
-            promoted = agent_server.QUEUED_TURNS.pop("chat-1")[0]
+            promoted = agent_server.RUNS.queued.pop("chat-1")[0]
             promoted["_paused_after_stop"] = True
-            agent_server.RUN_NOW_TURNS["chat-1"] = promoted
+            agent_server.RUNS.run_now["chat-1"] = promoted
             return {"ok": True, "queued_id": "queued-steer"}
 
         with patch.object(
@@ -2421,7 +2422,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(stop_turn.await_args.kwargs["cascade_codex_subagents"])
         self.assertFalse(stop_turn.await_args.kwargs["cascade_claude_subagents"])
         self.assertFalse(stop_turn.await_args.kwargs["hard_terminalize_on_timeout"])
-        promoted = agent_server.RUN_NOW_TURNS["chat-1"]
+        promoted = agent_server.RUNS.run_now["chat-1"]
         self.assertFalse(result["replays_interrupted_message"])
         self.assertEqual(promoted["prompt"], "Change course now.")
         self.assertEqual(
@@ -2441,7 +2442,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(event_payload["replays_interrupted_message"])
 
     async def test_background_recovery_preserves_messages_queued_after_startup(self) -> None:
-        agent_server.QUEUED_TURNS["chat-1"] = deque([{
+        agent_server.RUNS.queued["chat-1"] = deque([{
             "queued_id": "queued-new",
             "prompt": "Queued while recovery was scanning.",
             "file_ids": [],
@@ -2461,7 +2462,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rebuilt, 1)
         self.assertEqual(scheduled, 1)
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-restored", "queued-new"],
         )
         schedule.assert_called_once_with("chat-1")
@@ -2476,7 +2477,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 "_paused_after_stop": True,
             }],
         }
-        agent_server.QUEUED_TURNS.clear()
+        agent_server.RUNS.queued.clear()
 
         with patch.object(agent_server, "scan_queued_turns_from_events", return_value=recovered), \
              patch.object(agent_server, "schedule_next_queued_turn") as schedule:
@@ -2484,21 +2485,21 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual((rebuilt, scheduled), (1, 0))
         self.assertEqual(
-            agent_server.QUEUED_TURNS["chat-1"][0]["queued_id"],
+            agent_server.RUNS.queued["chat-1"][0]["queued_id"],
             "queued-paused",
         )
         schedule.assert_not_called()
 
     async def test_scheduler_does_not_pop_stopped_queue_without_run_now(self) -> None:
-        agent_server.QUEUED_TURNS["chat-1"][0]["_paused_after_stop"] = True
+        agent_server.RUNS.queued["chat-1"][0]["_paused_after_stop"] = True
         with patch.object(agent_server, "_start_turn_locked", new_callable=AsyncMock) as start:
             await agent_server.start_next_queued_turn("chat-1")
 
-        self.assertEqual(len(agent_server.QUEUED_TURNS["chat-1"]), 1)
+        self.assertEqual(len(agent_server.RUNS.queued["chat-1"]), 1)
         start.assert_not_awaited()
 
     async def test_busy_turn_rejects_invalid_backend_before_queueing(self) -> None:
-        agent_server.BUSY_SESSIONS = {"chat-1"}
+        agent_server.RUNS.busy = {"chat-1"}
         enqueue = AsyncMock()
         with patch.object(agent_server, "enqueue_turn", enqueue):
             with self.assertRaises(HTTPException) as raised:
@@ -2515,7 +2516,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         enqueue.assert_not_awaited()
 
     async def test_permanent_promotion_rejection_durably_unqueues_user_turn(self) -> None:
-        agent_server.CURRENT_TURNS.clear()
+        agent_server.RUNS.current_turns.clear()
         durable = AsyncMock(return_value={})
         with (
             patch.object(
@@ -2530,7 +2531,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 "chat-1",
                 admission_backend="codex",
             )
-        self.assertNotIn("chat-1", agent_server.QUEUED_TURNS)
+        self.assertNotIn("chat-1", agent_server.RUNS.queued)
         self.assertTrue(any(
             call.args[1] == "turn_unqueued"
             and call.args[2]["queued_id"] == "queued-steer"
@@ -2538,7 +2539,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         ))
 
     async def test_terminally_discarded_head_immediately_promotes_next_row(self) -> None:
-        agent_server.CURRENT_TURNS.clear()
+        agent_server.RUNS.current_turns.clear()
         invalid = {
             "queued_id": "queued-invalid-head",
             "prompt": "Invalid saved reference",
@@ -2555,7 +2556,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             "chat_references": [],
             "team_references": [],
         }
-        agent_server.QUEUED_TURNS["chat-1"] = deque([invalid, valid])
+        agent_server.RUNS.queued["chat-1"] = deque([invalid, valid])
         second_started = asyncio.Event()
 
         async def start_second(
@@ -2585,16 +2586,16 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             await agent_server.start_next_queued_turn("chat-1")
             await asyncio.wait_for(second_started.wait(), timeout=1)
             for _ in range(20):
-                owner = agent_server.QUEUE_START_TASKS.get("chat-1")
+                owner = agent_server.RUNS.queue_start_tasks.get("chat-1")
                 if owner is None or owner.done():
                     break
                 await asyncio.sleep(0)
 
         start.assert_awaited_once()
-        self.assertNotIn("chat-1", agent_server.QUEUED_TURNS)
+        self.assertNotIn("chat-1", agent_server.RUNS.queued)
 
     async def test_ambiguous_promotion_failure_requeues_user_turn(self) -> None:
-        agent_server.CURRENT_TURNS.clear()
+        agent_server.RUNS.current_turns.clear()
         schedule = patch.object(agent_server, "schedule_queued_turn_retry")
         with (
             patch.object(
@@ -2610,14 +2611,14 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 admission_backend="codex",
             )
         self.assertEqual(
-            agent_server.QUEUED_TURNS["chat-1"][0]["queued_id"],
+            agent_server.RUNS.queued["chat-1"][0]["queued_id"],
             "queued-steer",
         )
         self.assertEqual(event.await_args.args[1], "turn_deferred")
         retry.assert_called_once_with("chat-1")
 
     async def test_scheduler_terminally_discards_stale_team_reference(self) -> None:
-        agent_server.CURRENT_TURNS.clear()
+        agent_server.RUNS.current_turns.clear()
         stale = {
             "queued_id": "queued-stale-team-reference",
             "prompt": "This prompt no longer names a team recipient.",
@@ -2637,7 +2638,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 }
             ],
         }
-        agent_server.QUEUED_TURNS["chat-1"] = deque([stale])
+        agent_server.RUNS.queued["chat-1"] = deque([stale])
         discard = AsyncMock()
 
         with (
@@ -2663,10 +2664,10 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             stale,
             "saved routing target configuration is invalid or no longer supported",
         )
-        self.assertNotIn("chat-1", agent_server.QUEUED_TURNS)
+        self.assertNotIn("chat-1", agent_server.RUNS.queued)
 
     async def test_stale_provider_selection_is_unqueued_and_next_fifo_item_runs(self) -> None:
-        agent_server.CURRENT_TURNS.clear()
+        agent_server.RUNS.current_turns.clear()
         stale = {
             "queued_id": "queued-stale-provider-command",
             "prompt": "/review staged files",
@@ -2683,7 +2684,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             "file_ids": [],
             "backend": "codex",
         }
-        agent_server.QUEUED_TURNS["chat-1"] = deque([stale, successor])
+        agent_server.RUNS.queued["chat-1"] = deque([stale, successor])
         start = AsyncMock(side_effect=[
             agent_server.ProviderCommandSelectionInvalid(
                 "the provider command list changed; choose the command again"
@@ -2720,7 +2721,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start.await_count, 2)
         self.assertIsNotNone(start.await_args_list[0].args[1].skill_selection)
         self.assertIsNone(start.await_args_list[1].args[1].skill_selection)
-        self.assertNotIn("chat-1", agent_server.QUEUED_TURNS)
+        self.assertNotIn("chat-1", agent_server.RUNS.queued)
         unqueued = [
             call
             for call in durable.await_args_list
@@ -2738,7 +2739,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         ))
 
     async def test_unavailable_provider_selection_cannot_pin_fifo(self) -> None:
-        agent_server.CURRENT_TURNS.clear()
+        agent_server.RUNS.current_turns.clear()
         unavailable = {
             "queued_id": "queued-unavailable-provider-command",
             "prompt": "/review staged files",
@@ -2755,7 +2756,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             "file_ids": [],
             "backend": "codex",
         }
-        agent_server.QUEUED_TURNS["chat-1"] = deque([
+        agent_server.RUNS.queued["chat-1"] = deque([
             unavailable,
             successor,
         ])
@@ -2794,7 +2795,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start.await_count, 2)
         self.assertIsNotNone(start.await_args_list[0].args[1].skill_selection)
         self.assertIsNone(start.await_args_list[1].args[1].skill_selection)
-        self.assertNotIn("chat-1", agent_server.QUEUED_TURNS)
+        self.assertNotIn("chat-1", agent_server.RUNS.queued)
         unqueued = [
             call
             for call in durable.await_args_list
@@ -2807,7 +2808,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_scheduler_discards_routed_turn_with_hidden_display_prompt(self) -> None:
-        agent_server.CURRENT_TURNS.clear()
+        agent_server.RUNS.current_turns.clear()
         hidden = {
             "queued_id": "queued-hidden-display-reference",
             "prompt": "Tell @@SONIC now",
@@ -2828,7 +2829,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 }
             ],
         }
-        agent_server.QUEUED_TURNS["chat-1"] = deque([hidden])
+        agent_server.RUNS.queued["chat-1"] = deque([hidden])
         discard = AsyncMock()
         with (
             patch.object(agent_server, "terminally_discard_queued_turn", discard),
@@ -2848,7 +2849,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_scheduler_does_not_retry_a_permanently_changed_team_target(self) -> None:
-        agent_server.CURRENT_TURNS.clear()
+        agent_server.RUNS.current_turns.clear()
         item = {
             "queued_id": "queued-renamed-team-target",
             "prompt": "Tell @@SONIC now",
@@ -2868,7 +2869,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 }
             ],
         }
-        agent_server.QUEUED_TURNS["chat-1"] = deque([item])
+        agent_server.RUNS.queued["chat-1"] = deque([item])
         discard = AsyncMock()
         with (
             patch.object(agent_server, "terminally_discard_queued_turn", discard),
@@ -2903,7 +2904,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             result = await run_queued_turn_now("chat-1", "queued-steer")
             await asyncio.sleep(0)
 
-        promoted = agent_server.RUN_NOW_TURNS["chat-1"]
+        promoted = agent_server.RUNS.run_now["chat-1"]
         self.assertFalse(result["replays_interrupted_message"])
         self.assertEqual(promoted["prompt"], "Change course now.")
 
@@ -2916,7 +2917,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 return_value={"stopped": False, "deferred": True},
         ) as stop_turn, \
                 patch.object(agent_server, "append_event", append_event), \
-                patch.object(agent_server, "BUSY_SESSIONS", {"chat-1"}), \
+                patch.object(agent_server.RUNS, "busy", {"chat-1"}), \
                 patch.object(agent_server, "schedule_next_queued_turn") as schedule_next:
             result = await run_queued_turn_now("chat-1", "queued-steer")
 
@@ -2925,10 +2926,10 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["interrupted"])
         self.assertTrue(stop_turn.await_args.kwargs["require_provider_turn_ready"])
         self.assertFalse(stop_turn.await_args.kwargs["hard_terminalize_on_timeout"])
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_TURNS)
-        self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering)
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-steer"],
         )
         self.assertEqual(append_event.await_args.args[1], "turn_deferred")
@@ -2943,7 +2944,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 return_value={"stopped": False, "deferred": True},
         ), \
                 patch.object(agent_server, "append_event", append_event), \
-                patch.object(agent_server, "BUSY_SESSIONS", {"chat-1"}):
+                patch.object(agent_server.RUNS, "busy", {"chat-1"}):
             first = await run_queued_turn_now("chat-1", "queued-steer")
             second = await run_queued_turn_now("chat-1", "queued-steer")
 
@@ -2951,16 +2952,16 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(second["deferred"])
         self.assertEqual(append_event.await_count, 1)
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-steer"],
         )
 
     async def test_pending_stop_restores_queue_without_starting_promotion(self) -> None:
-        selected = agent_server.QUEUED_TURNS["chat-1"][0]
+        selected = agent_server.RUNS.queued["chat-1"][0]
         earlier = {"queued_id": "earlier", "prompt": "Earlier", "backend": "codex"}
         later = {"queued_id": "later", "prompt": "Later", "backend": "codex"}
-        agent_server.QUEUED_TURNS["chat-1"] = deque([earlier, selected, later])
-        agent_server.BUSY_SESSIONS.add("chat-1")
+        agent_server.RUNS.queued["chat-1"] = deque([earlier, selected, later])
+        agent_server.RUNS.busy.add("chat-1")
         with (
             patch.object(agent_server, "stop_turn", AsyncMock(return_value={
                 "stopped": False, "pending": True,
@@ -2974,19 +2975,19 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["deferred"])
         self.assertFalse(result["interrupted"])
         self.assertIn("Stop is still finishing", result["message"])
-        self.assertEqual(list(agent_server.QUEUED_TURNS["chat-1"]), [earlier, selected, later])
+        self.assertEqual(list(agent_server.RUNS.queued["chat-1"]), [earlier, selected, later])
         self.assertNotIn("_update_transitioning", selected)
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_TURNS)
-        self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering)
         self.assertEqual(event.await_args.args[1], "turn_deferred")
         durable.assert_not_awaited()
         waiter.assert_not_called()
 
     async def test_claude_send_now_uses_bounded_stop_for_exact_run(self) -> None:
         agent_server.STORE.sessions["chat-1"]["backend"] = "claude"
-        agent_server.QUEUED_TURNS["chat-1"][0]["backend"] = "claude"
-        agent_server.CURRENT_TURNS["chat-1"]["backend"] = "claude"
-        agent_server.ACTIVE["chat-1"] = {
+        agent_server.RUNS.queued["chat-1"][0]["backend"] = "claude"
+        agent_server.RUNS.current_turns["chat-1"]["backend"] = "claude"
+        agent_server.RUNS.active["chat-1"] = {
             "run_id": "run-original", "backend": "claude",
             "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
             "provider_turn_ready": True,
@@ -3004,12 +3005,12 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         waiter.assert_called_once_with("chat-1", "queued-steer")
 
     async def test_claude_replaced_stop_owner_leaves_selection_queued(self) -> None:
-        agent_server.ACTIVE["chat-1"] = {
+        agent_server.RUNS.active["chat-1"] = {
             "run_id": "run-original", "backend": "claude",
             "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
             "provider_turn_ready": True,
         }
-        agent_server.BUSY_SESSIONS.add("chat-1")
+        agent_server.RUNS.busy.add("chat-1")
         with (
             patch.object(agent_server, "stop_turn", AsyncMock(return_value={
                 "stopped": False, "pending": False, "superseded": True,
@@ -3021,8 +3022,8 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             result = await run_queued_turn_now("chat-1", "queued-steer")
         self.assertTrue(result["deferred"])
         self.assertFalse(result["interrupted"])
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_TURNS)
-        self.assertEqual(agent_server.QUEUED_TURNS["chat-1"][0]["queued_id"], "queued-steer")
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now)
+        self.assertEqual(agent_server.RUNS.queued["chat-1"][0]["queued_id"], "queued-steer")
         durable.assert_not_awaited()
         waiter.assert_not_called()
 
@@ -3048,14 +3049,14 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(append_event.await_count, 1)
         self.assertEqual(append_event.await_args.args[1], "turn_deferred")
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-steer"],
         )
 
     async def test_repeated_cancelled_promotion_restores_item_before_owner_clears(
         self,
     ) -> None:
-        selected = agent_server.QUEUED_TURNS["chat-1"][0]
+        selected = agent_server.RUNS.queued["chat-1"][0]
         start_entered = asyncio.Event()
         requeue_entered = asyncio.Event()
         join_entered = asyncio.Event()
@@ -3075,7 +3076,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             requeue_entered.set()
             await original_requeue(session_id, item)
             owner_at_restore.append(
-                agent_server.QUEUE_START_TASKS.get(session_id)
+                agent_server.RUNS.queue_start_tasks.get(session_id)
             )
 
         async def tracked_join(task: asyncio.Task[object]) -> object:
@@ -3095,7 +3096,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 "join_task_despite_caller_cancellation",
                 tracked_join,
             ),
-            patch.object(agent_server, "QUEUE_LOCK", queue_lock),
+            patch.object(agent_server.RUNS, "queue_lock", queue_lock),
         ):
             promotion = asyncio.create_task(
                 agent_server.start_next_queued_turn("chat-1")
@@ -3111,9 +3112,9 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0)
 
                 self.assertFalse(promotion.done())
-                self.assertNotIn("chat-1", agent_server.QUEUED_TURNS)
+                self.assertNotIn("chat-1", agent_server.RUNS.queued)
                 self.assertIs(
-                    agent_server.QUEUE_START_TASKS.get("chat-1"),
+                    agent_server.RUNS.queue_start_tasks.get("chat-1"),
                     promotion,
                 )
             finally:
@@ -3123,19 +3124,19 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 await promotion
 
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-steer"],
         )
-        self.assertIs(agent_server.QUEUED_TURNS["chat-1"][0], selected)
+        self.assertIs(agent_server.RUNS.queued["chat-1"][0], selected)
         self.assertEqual(owner_at_restore, [promotion])
         await asyncio.sleep(0)
-        self.assertNotIn("chat-1", agent_server.QUEUE_START_TASKS)
+        self.assertNotIn("chat-1", agent_server.RUNS.queue_start_tasks)
 
     async def test_terminal_session_queue_items_are_never_requeued(self) -> None:
         cases = ("tombstoned", "deleting", "deleting_race", "not_found")
         for case in cases:
             with self.subTest(case=case):
-                agent_server.QUEUED_TURNS["chat-1"] = deque(
+                agent_server.RUNS.queued["chat-1"] = deque(
                     [
                         {
                             "queued_id": "queued-terminal",
@@ -3201,12 +3202,12 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
 
                     if case in {"deleting", "deleting_race"}:
                         self.assertEqual(
-                            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+                            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
                             ["queued-terminal"],
                         )
                         requeue.assert_awaited_once()
                     else:
-                        self.assertNotIn("chat-1", agent_server.QUEUED_TURNS)
+                        self.assertNotIn("chat-1", agent_server.RUNS.queued)
                         requeue.assert_not_awaited()
                     retry.assert_not_awaited()
                     append_event.assert_not_awaited()
@@ -3219,7 +3220,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                     agent_server.DELETED_SESSION_TOMBSTONES.discard("chat-1")
 
     async def test_later_steer_runs_first_then_keeps_other_messages_in_original_order(self) -> None:
-        agent_server.QUEUED_TURNS["chat-1"] = deque([
+        agent_server.RUNS.queued["chat-1"] = deque([
             {
                 "queued_id": "queued-first",
                 "prompt": "First queued message.",
@@ -3255,9 +3256,9 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
 
         self.assertEqual(result["superseded_queued_ids"], [])
-        self.assertEqual(agent_server.RUN_NOW_TURNS["chat-1"]["queued_id"], "queued-steer")
+        self.assertEqual(agent_server.RUNS.run_now["chat-1"]["queued_id"], "queued-steer")
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-first", "queued-later"],
         )
         event_types = [
@@ -3269,7 +3270,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run_now_payload["remaining"], 2)
         self.assertEqual(run_now_payload["superseded_queued_ids"], [])
 
-        agent_server.STEERING_SESSIONS.discard("chat-1")
+        agent_server.RUNS.steering.discard("chat-1")
         with patch.object(agent_server, "_start_turn_locked", new_callable=AsyncMock) as start_turn:
             await start_next_queued_turn("chat-1")
             await start_next_queued_turn("chat-1")
@@ -3281,7 +3282,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_later_steer_preserves_user_and_internal_work_in_original_order(self) -> None:
-        agent_server.QUEUED_TURNS["chat-1"] = deque([
+        agent_server.RUNS.queued["chat-1"] = deque([
             {
                 "queued_id": "queued-first",
                 "prompt": "Stale first message.",
@@ -3313,12 +3314,12 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
 
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-first", "queued-digest"],
         )
 
     async def test_second_steer_cannot_overwrite_the_first_handoff(self) -> None:
-        agent_server.RUN_NOW_TURNS["chat-1"] = {
+        agent_server.RUNS.run_now["chat-1"] = {
             "queued_id": "already-steering",
             "prompt": "First steer",
         }
@@ -3330,8 +3331,8 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         # The newly admitted request is the observer, not the stale owner.
         self.assertIsNone(detail["owner"]["operation_id"])
         self.assertIsNone(detail["owner"]["age_seconds"])
-        self.assertEqual(agent_server.RUN_NOW_TURNS["chat-1"]["queued_id"], "already-steering")
-        self.assertEqual(len(agent_server.QUEUED_TURNS["chat-1"]), 1)
+        self.assertEqual(agent_server.RUNS.run_now["chat-1"]["queued_id"], "already-steering")
+        self.assertEqual(len(agent_server.RUNS.queued["chat-1"]), 1)
 
     async def test_handoff_barrier_keeps_the_promoted_turn_reserved(self) -> None:
         lineage = [
@@ -3347,15 +3348,15 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             "backend": "codex",
             "steering_lineage": lineage,
         }
-        agent_server.RUN_NOW_TURNS["chat-1"] = promoted
-        agent_server.STEERING_SESSIONS.add("chat-1")
+        agent_server.RUNS.run_now["chat-1"] = promoted
+        agent_server.RUNS.steering.add("chat-1")
 
         with patch.object(agent_server, "_start_turn_locked", new_callable=AsyncMock) as start_turn:
             await start_next_queued_turn("chat-1")
             start_turn.assert_not_awaited()
-            self.assertIs(agent_server.RUN_NOW_TURNS["chat-1"], promoted)
+            self.assertIs(agent_server.RUNS.run_now["chat-1"], promoted)
 
-            agent_server.STEERING_SESSIONS.discard("chat-1")
+            agent_server.RUNS.steering.discard("chat-1")
             await start_next_queued_turn("chat-1")
 
         start_turn.assert_awaited_once()
@@ -3364,7 +3365,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.display_prompt, promoted["display_prompt"])
         self.assertEqual(start_turn.await_args.kwargs["display_file_ids"], [])
         self.assertEqual(start_turn.await_args.kwargs["steering_lineage"], lineage)
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_TURNS)
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now)
 
     def test_recovered_legacy_run_now_turn_restores_raw_lineage(self) -> None:
         item = queued_turn_from_event(
@@ -3439,11 +3440,11 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 rebuilt = rebuild_queued_turns_from_events()
 
         self.assertEqual(rebuilt, 1)
-        self.assertEqual(agent_server.QUEUED_TURNS["chat-1"][0]["prompt"], "")
-        self.assertEqual(agent_server.QUEUED_TURNS["chat-1"][0]["file_ids"], ["image-only"])
+        self.assertEqual(agent_server.RUNS.queued["chat-1"][0]["prompt"], "")
+        self.assertEqual(agent_server.RUNS.queued["chat-1"][0]["file_ids"], ["image-only"])
 
     def test_recovery_rebuilds_durable_queue_hold_after_explicit_stop(self) -> None:
-        agent_server.QUEUED_TURNS.pop("chat-1", None)
+        agent_server.RUNS.queued.pop("chat-1", None)
         events = [
             {
                 "seq": 1,
@@ -3471,13 +3472,13 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 rebuilt = rebuild_queued_turns_from_events()
 
         self.assertEqual(rebuilt, 1)
-        item = agent_server.QUEUED_TURNS["chat-1"][0]
+        item = agent_server.RUNS.queued["chat-1"][0]
         self.assertTrue(item["_durable"])
         self.assertTrue(item["_paused_after_stop"])
         self.assertEqual(agent_server.restart_blocking_queued_turn_count_locked(), 0)
 
     def test_recovery_holds_native_delivery_fence_without_replaying(self) -> None:
-        agent_server.QUEUED_TURNS.pop("chat-1", None)
+        agent_server.RUNS.queued.pop("chat-1", None)
         events = [
             {
                 "seq": 1,
@@ -3515,7 +3516,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 rebuilt = rebuild_queued_turns_from_events()
 
         self.assertEqual(rebuilt, 1)
-        item = agent_server.QUEUED_TURNS["chat-1"][0]
+        item = agent_server.RUNS.queued["chat-1"][0]
         self.assertTrue(item["_paused_after_stop"])
         self.assertTrue(item["_native_delivery_fenced"])
         self.assertEqual(item["prompt"], "Steer exactly once.")
@@ -3525,7 +3526,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
     async def test_recovery_replays_safe_rejection_compensation_as_runnable_in_order(
         self,
     ) -> None:
-        agent_server.QUEUED_TURNS.pop("chat-1", None)
+        agent_server.RUNS.queued.pop("chat-1", None)
         events = [
             {
                 "seq": 1,
@@ -3603,10 +3604,10 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(rebuilt, 3)
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-before", "queued-native", "queued-after"],
         )
-        restored = agent_server.QUEUED_TURNS["chat-1"][1]
+        restored = agent_server.RUNS.queued["chat-1"][1]
         self.assertFalse(restored["_paused_after_stop"])
         self.assertNotIn("_native_delivery_fenced", restored)
         public = await agent_server.queued_turns_snapshot("chat-1")
@@ -3624,12 +3625,12 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             [call.args[1].prompt for call in start.await_args_list],
             ["Before", "Retry normally", "After"],
         )
-        self.assertNotIn("chat-1", agent_server.QUEUED_TURNS)
+        self.assertNotIn("chat-1", agent_server.RUNS.queued)
 
     def test_recovery_standard_compensation_releases_prefence_stop_hold(
         self,
     ) -> None:
-        agent_server.QUEUED_TURNS.pop("chat-1", None)
+        agent_server.RUNS.queued.pop("chat-1", None)
         events = [
             {
                 "seq": 1,
@@ -3675,7 +3676,7 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 rebuilt = rebuild_queued_turns_from_events()
 
         self.assertEqual(rebuilt, 1)
-        restored = agent_server.QUEUED_TURNS["chat-1"][0]
+        restored = agent_server.RUNS.queued["chat-1"][0]
         self.assertFalse(restored["_paused_after_stop"])
         self.assertNotIn("_native_delivery_fenced", restored)
 
@@ -3727,12 +3728,12 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(rebuilt, 2)
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-first", "queued-later"],
         )
 
     def test_recovery_honors_legacy_run_now_supersession_records(self) -> None:
-        agent_server.QUEUED_TURNS.pop("chat-1", None)
+        agent_server.RUNS.queued.pop("chat-1", None)
         events = [
             {
                 "seq": 1,
@@ -3772,25 +3773,25 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 rebuilt = rebuild_queued_turns_from_events()
 
         self.assertEqual(rebuilt, 0)
-        self.assertNotIn("chat-1", agent_server.QUEUED_TURNS)
+        self.assertNotIn("chat-1", agent_server.RUNS.queued)
 
     def test_finished_runner_schedules_owner_fenced_queue_reconciliation(self) -> None:
-        agent_server.RUN_NOW_TURNS["chat-1"] = {
+        agent_server.RUNS.run_now["chat-1"] = {
             "queued_id": "queued-steer",
             "prompt": "Run this next.",
         }
 
         self.assertTrue(should_schedule_queue_after_finish("chat-1", stopped=True))
         self.assertTrue(should_schedule_queue_after_finish("chat-1", stopped=False))
-        agent_server.RUN_NOW_TURNS.clear()
-        agent_server.STEERING_SESSIONS.add("chat-1")
+        agent_server.RUNS.run_now.clear()
+        agent_server.RUNS.steering.add("chat-1")
         self.assertTrue(should_schedule_queue_after_finish("chat-1", stopped=False))
-        agent_server.STEERING_SESSIONS.clear()
+        agent_server.RUNS.steering.clear()
         self.assertTrue(should_schedule_queue_after_finish("chat-1", stopped=False))
         self.assertTrue(should_schedule_queue_after_finish("chat-1", stopped=True))
 
     async def test_append_failure_restores_selected_message_in_original_order(self) -> None:
-        agent_server.QUEUED_TURNS["chat-1"] = deque([
+        agent_server.RUNS.queued["chat-1"] = deque([
             {
                 "queued_id": "queued-first",
                 "prompt": "Do not lose this message.",
@@ -3825,19 +3826,19 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 await run_queued_turn_now("chat-1", "queued-steer")
 
         self.assertEqual(
-            [item["queued_id"] for item in agent_server.QUEUED_TURNS["chat-1"]],
+            [item["queued_id"] for item in agent_server.RUNS.queued["chat-1"]],
             ["queued-first", "queued-internal", "queued-second", "queued-steer"],
         )
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_TURNS)
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now)
         self.assertNotIn(
             "_update_transitioning",
-            agent_server.QUEUED_TURNS["chat-1"][-1],
+            agent_server.RUNS.queued["chat-1"][-1],
         )
-        self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering)
         schedule_next.assert_called_once_with("chat-1")
 
     async def test_precommit_cancellation_restores_force_send_without_leaking_markers(self) -> None:
-        selected = agent_server.QUEUED_TURNS["chat-1"][0]
+        selected = agent_server.RUNS.queued["chat-1"][0]
         selected["_paused_after_stop"] = True
         write_started = asyncio.Event()
 
@@ -3870,18 +3871,18 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
 
-        restored = agent_server.QUEUED_TURNS["chat-1"][0]
+        restored = agent_server.RUNS.queued["chat-1"][0]
         self.assertEqual(restored["queued_id"], "queued-steer")
         self.assertTrue(restored["_paused_after_stop"])
         self.assertNotIn("_update_transitioning", restored)
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_TURNS)
-        self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering)
         schedule_next.assert_called_once_with("chat-1")
 
     async def test_repeated_precommit_cancellation_cannot_cancel_force_send_rollback(
         self,
     ) -> None:
-        selected = agent_server.QUEUED_TURNS["chat-1"][0]
+        selected = agent_server.RUNS.queued["chat-1"][0]
         selected["_durable"] = True
         selected["_paused_after_stop"] = True
         write_started = asyncio.Event()
@@ -3904,8 +3905,8 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
             agent_server,
             "schedule_next_queued_turn",
         ) as schedule_next, patch.object(
-            agent_server,
-            "QUEUE_LOCK",
+            agent_server.RUNS,
+            "queue_lock",
             asyncio.Lock(),
         ):
             task = asyncio.create_task(
@@ -3915,11 +3916,11 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             await asyncio.wait_for(write_started.wait(), 0.5)
-            await agent_server.QUEUE_LOCK.acquire()
+            await agent_server.RUNS.queue_lock.acquire()
             try:
                 task.cancel()
                 for _ in range(100):
-                    waiters = getattr(agent_server.QUEUE_LOCK, "_waiters", ())
+                    waiters = getattr(agent_server.RUNS.queue_lock, "_waiters", ())
                     if waiters and any(not waiter.done() for waiter in waiters):
                         break
                     await asyncio.sleep(0)
@@ -3929,22 +3930,22 @@ class RunQueuedTurnNowTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0)
                 self.assertFalse(task.done())
                 self.assertTrue(
-                    agent_server.RUN_NOW_TURNS["chat-1"][
+                    agent_server.RUNS.run_now["chat-1"][
                         "_update_transitioning"
                     ]
                 )
             finally:
-                agent_server.QUEUE_LOCK.release()
+                agent_server.RUNS.queue_lock.release()
             with self.assertRaises(asyncio.CancelledError):
                 await task
 
-        restored = agent_server.QUEUED_TURNS["chat-1"][0]
+        restored = agent_server.RUNS.queued["chat-1"][0]
         self.assertIs(restored, selected)
         self.assertTrue(restored["_durable"])
         self.assertTrue(restored["_paused_after_stop"])
         self.assertNotIn("_update_transitioning", restored)
-        self.assertNotIn("chat-1", agent_server.RUN_NOW_TURNS)
-        self.assertNotIn("chat-1", agent_server.STEERING_SESSIONS)
+        self.assertNotIn("chat-1", agent_server.RUNS.run_now)
+        self.assertNotIn("chat-1", agent_server.RUNS.steering)
         self.assertEqual(agent_server.restart_blocking_queued_turn_count_locked(), 0)
         schedule_next.assert_called_once_with("chat-1")
 
@@ -4028,7 +4029,7 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         original_sessions = agent_server.STORE.sessions
-        original_queue = agent_server.QUEUED_TURNS
+        original_queue = agent_server.RUNS.queued
         original_recovery = agent_server.QUEUE_RECOVERY_TASK
         release_recovery = asyncio.Event()
         recovery_started = asyncio.Event()
@@ -4043,8 +4044,8 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
         async def delayed_recovery() -> tuple[int, int]:
             recovery_started.set()
             await release_recovery.wait()
-            async with agent_server.QUEUE_LOCK:
-                agent_server.QUEUED_TURNS["chat-recovery"] = deque([old])
+            async with agent_server.RUNS.queue_lock:
+                agent_server.RUNS.queued["chat-recovery"] = deque([old])
             return 1, 1
 
         recovery = asyncio.create_task(delayed_recovery())
@@ -4055,7 +4056,7 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
                     "backend": "codex",
                 }
             }
-            agent_server.QUEUED_TURNS = {}
+            agent_server.RUNS.queued = {}
             agent_server.QUEUE_RECOVERY_TASK = recovery
             await recovery_started.wait()
             request = agent_server.TurnRequest(prompt="New prompt")
@@ -4067,7 +4068,7 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(agent_server.TransientAdmissionWait) as raised:
                     await agent_server.start_turn("chat-recovery", request)
             self.assertEqual(raised.exception.status_code, 503)
-            self.assertNotIn("chat-recovery", agent_server.QUEUED_TURNS)
+            self.assertNotIn("chat-recovery", agent_server.RUNS.queued)
 
             release_recovery.set()
             await recovery
@@ -4085,14 +4086,14 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
 
             prompts = [
                 item["prompt"]
-                for item in agent_server.QUEUED_TURNS["chat-recovery"]
+                for item in agent_server.RUNS.queued["chat-recovery"]
             ]
             self.assertEqual(prompts, ["Older durable prompt", "New prompt"])
         finally:
             release_recovery.set()
             await asyncio.gather(recovery, return_exceptions=True)
             agent_server.STORE.sessions = original_sessions
-            agent_server.QUEUED_TURNS = original_queue
+            agent_server.RUNS.queued = original_queue
             agent_server.QUEUE_RECOVERY_TASK = original_recovery
 
     async def test_failed_recovery_keeps_internal_start_admission_fail_closed(

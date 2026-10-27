@@ -154,7 +154,7 @@ class LegacyQueueRowTests(unittest.IsolatedAsyncioTestCase):
         durable = AsyncMock(return_value={})
         queued: dict[str, deque] = {}
         with patch.object(server.STORE, "sessions", {"chat": {"id": "chat", "backend": "codex"}}), \
-                patch.object(server, "QUEUED_TURNS", queued), \
+                patch.object(server.RUNS, "queued", queued), \
                 patch.object(server, "scan_queued_turns_from_events",
                              return_value={"chat": [delivery, routed, digest, user]}), \
                 patch.object(server, "append_durable_event", durable), \
@@ -177,7 +177,7 @@ class LegacyQueueRowTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_discard_write_still_never_restores_the_row(self):
         queued: dict[str, deque] = {}
         with patch.object(server.STORE, "sessions", {"chat": {"id": "chat", "backend": "codex"}}), \
-                patch.object(server, "QUEUED_TURNS", queued), \
+                patch.object(server.RUNS, "queued", queued), \
                 patch.object(server, "scan_queued_turns_from_events",
                              return_value={"chat": [legacy_delivery_row()]}), \
                 patch.object(server, "append_durable_event", AsyncMock(side_effect=OSError("disk"))), \
@@ -193,9 +193,9 @@ class LegacyQueueRowTests(unittest.IsolatedAsyncioTestCase):
             {"queued_id": "queued-mailbox", "prompt": "wake", "purpose": "chat_mailbox_wake"},
         ):
             with self.subTest(row=row["queued_id"]), \
-                    patch.object(server, "QUEUED_TURNS", {"chat": deque([row])}), \
-                    patch.object(server, "RUN_NOW_TURNS", {}), \
-                    patch.object(server, "CURRENT_TURNS", {}), \
+                    patch.object(server.RUNS, "queued", {"chat": deque([row])}), \
+                    patch.object(server.RUNS, "run_now", {}), \
+                    patch.object(server.RUNS, "current_turns", {}), \
                     patch.object(server.STORE, "sessions", {"chat": {"id": "chat"}}), \
                     patch.object(server, "terminally_discard_queued_turn", AsyncMock()) as discard, \
                     patch.object(server, "_start_turn_locked", AsyncMock()) as start:
@@ -223,9 +223,9 @@ class LegacyQueueRowTests(unittest.IsolatedAsyncioTestCase):
             append_event = AsyncMock()
             with self.subTest(failure=type(failure).__name__), \
                     patch.object(server.STORE, "sessions", {"chat": {"id": "chat", "backend": "codex"}}), \
-                    patch.object(server, "QUEUED_TURNS", queue), \
-                    patch.object(server, "RUN_NOW_TURNS", {}), \
-                    patch.object(server, "STEERING_SESSIONS", set()), \
+                    patch.object(server.RUNS, "queued", queue), \
+                    patch.object(server.RUNS, "run_now", {}), \
+                    patch.object(server.RUNS, "steering", set()), \
                     patch.object(server, "DELETING_SESSIONS", set()), \
                     patch.object(server, "DELETED_SESSION_TOMBSTONES", set()), \
                     patch.object(server, "_start_turn_locked", AsyncMock(side_effect=failure)), \

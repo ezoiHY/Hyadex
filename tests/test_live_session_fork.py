@@ -70,7 +70,7 @@ class CompletedPrefixForkTests(unittest.IsolatedAsyncioTestCase):
     async def test_running_endpoint_passes_frozen_prefix_without_touching_active_run(self):
         parent = {"id": "parent", "backend": "claude", "latest_event_seq": 6}
         active = {"parent": {"run_id": "live", "sentinel": object()}}
-        with patch.object(server.STORE, "sessions", {"parent": parent}), patch.object(server, "ACTIVE", active), patch.object(
+        with patch.object(server.STORE, "sessions", {"parent": parent}), patch.object(server.RUNS, "active", active), patch.object(
             server, "iter_session_events", return_value=iter(self.events()),
         ), patch.object(server, "_fork_session_locked", new_callable=AsyncMock, return_value={"ok": True}) as fork:
             self.assertEqual(await server.fork_session("parent", server.ForkSessionRequest()), {"ok": True})
@@ -137,7 +137,7 @@ class CompletedPrefixForkTests(unittest.IsolatedAsyncioTestCase):
             sessions["child"] = child
             return child
 
-        with patch.object(server.STORE, "sessions", sessions), patch.object(server, "ACTIVE", active), patch.object(
+        with patch.object(server.STORE, "sessions", sessions), patch.object(server.RUNS, "active", active), patch.object(
             server, "iter_session_events", return_value=iter(completed + self.events()[3:]),
         ), patch.object(server, "validated_claude_fork_provider_id", return_value="claude-parent"), patch.object(
             server, "claude_resume_file_for_cwd", return_value=Mock(is_file=Mock(return_value=True)),
@@ -172,7 +172,7 @@ class CompletedPrefixForkTests(unittest.IsolatedAsyncioTestCase):
             {"seq": 10, "type": "turn_started", "run_id": "live"},
         ]
         active = {"parent": {"run_id": "live", "provider_turn_id": "live-turn"}}
-        with patch.object(server.STORE, "sessions", {"parent": parent}), patch.object(server, "ACTIVE", active), patch.object(
+        with patch.object(server.STORE, "sessions", {"parent": parent}), patch.object(server.RUNS, "active", active), patch.object(
             server, "iter_session_events", return_value=iter(events),
         ), patch.object(server, "fork_codex_thread", new_callable=AsyncMock, side_effect=RuntimeError("provider reached")) as fork, patch.object(
             server.STORE, "create", new_callable=AsyncMock,

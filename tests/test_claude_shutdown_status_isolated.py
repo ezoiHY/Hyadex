@@ -7,6 +7,8 @@ from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+
+from hyadex.runs import NamespaceRuns
 from unittest.mock import AsyncMock, Mock
 
 from hyadex.providers.claude import ClaudeSDKSupervisorClosed
@@ -85,6 +87,7 @@ if late_shutdown:
     ):
         namespace[name] = AsyncMock()
     namespace["release_turn_slot"] = AsyncMock(return_value=True)
+    namespace["RUNS"] = NamespaceRuns(namespace)
     exec(compile(module, str(SOURCE), "exec"), namespace)
     return namespace
 

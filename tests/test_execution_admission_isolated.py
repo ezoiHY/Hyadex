@@ -13,6 +13,7 @@ import uuid
 
 from execution_control import ExecutionControlError
 from execution_maintenance import ExecutionMaintenance
+from hyadex.runs import NamespaceRuns
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -57,6 +58,7 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
             "provider_background_work_labels_from_snapshot": lambda _: [],
             "managed_server_restart_blocks_work": lambda: False,
         }
+        self.ns["RUNS"] = NamespaceRuns(self.ns)
         exec(CODE, self.ns)
 
     async def acquire(self):

@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
 import local_session_ownership
 from tests import test_codex_subagent_config_isolated as config_fixture
+from hyadex.runs import NamespaceRuns
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
 FUNCTIONS = {"retired_session_runtime_message", "preview_session_runtime_update", "session_backend_locked", "public_session", "title_runtime_key",
@@ -99,9 +100,11 @@ def make_namespace(root: Path):
         "codex_app_server_service_tier": lambda value: value,
         "codex_thread_instructions": lambda *args: "synthetic instructions", "codex_goals_cli_args": lambda: [],
         "CODEX_BIN": "unused-codex"}
+    ns["RUNS"] = NamespaceRuns(ns)
     exec(config_fixture.code, ns)
     # Hyadex's enabled-backend gate is covered in test_hyadex_server.
     ns.setdefault("require_enabled_backend", lambda backend: backend)
+    ns["RUNS"] = NamespaceRuns(ns)
     exec(CODE, ns)
     for name in MODELS:
         ns[name].model_rebuild(_types_namespace=ns)

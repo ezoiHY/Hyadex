@@ -475,8 +475,8 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.previous_index = agent_server.CODEX_SUBAGENT_SESSION_INDEX
         self.previous_states = agent_server.CODEX_SUBAGENT_STATE
         self.previous_thread_index = agent_server.CODEX_THREAD_SESSION_INDEX
-        self.previous_busy = agent_server.BUSY_SESSIONS
-        self.previous_active = agent_server.ACTIVE
+        self.previous_busy = agent_server.RUNS.busy
+        self.previous_active = agent_server.RUNS.active
         self.session = {
             "id": "chat",
             "backend": agent_server.BACKEND_CODEX,
@@ -487,8 +487,8 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
         agent_server.CODEX_SUBAGENT_SESSION_INDEX = {}
         agent_server.CODEX_SUBAGENT_STATE = {}
         agent_server.CODEX_THREAD_SESSION_INDEX = {"parent-thread": "chat"}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.ACTIVE = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.active = {}
         self.sequence = 0
         self.events: list[tuple[str, str, dict[str, object]]] = []
 
@@ -497,8 +497,8 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
         agent_server.CODEX_SUBAGENT_SESSION_INDEX = self.previous_index
         agent_server.CODEX_SUBAGENT_STATE = self.previous_states
         agent_server.CODEX_THREAD_SESSION_INDEX = self.previous_thread_index
-        agent_server.BUSY_SESSIONS = self.previous_busy
-        agent_server.ACTIVE = self.previous_active
+        agent_server.RUNS.busy = self.previous_busy
+        agent_server.RUNS.active = self.previous_active
 
     async def append(
         self,
@@ -627,7 +627,7 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(payload["run_id"])
 
     async def test_active_parent_keeps_attributing_child_transitions(self) -> None:
-        agent_server.BUSY_SESSIONS = {"chat"}
+        agent_server.RUNS.busy = {"chat"}
         agent_server.CODEX_SUBAGENT_SESSION_INDEX["child-a"] = "chat"
         agent_server.CODEX_SUBAGENT_STATE["child-a"] = {
             "session_id": "chat",

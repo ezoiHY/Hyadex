@@ -16,6 +16,7 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import agent_server as server
+from tests.runtime_state import patch_server_multiple
 from codex_history_repair import CodexNativeHistoryRepairCache, CodexNativeHistoryProofUnavailable
 
 
@@ -34,7 +35,7 @@ class HistoryResponsivenessTests(unittest.IsolatedAsyncioTestCase):
         self.sess = {"id": self.sid, "backend": "codex", "codex_thread_id": self.pid}
         self.enterContext(patch.object(server.STORE, "sessions", {self.sid: self.sess}))
         self.enterContext(patch.object(server.STORE, "save", AsyncMock()))
-        self.enterContext(patch.multiple(server,
+        self.enterContext(patch_server_multiple(server,
             events_path=lambda _: self.events, CODEX_SESSIONS_ROOT=self.root,
             CODEX_ROLLOUT_PATH_CACHE={}, CODEX_ROLLOUT_PATH_MISSES={},
             HISTORY_SYNC_SCHEDULED=set(), HISTORY_MAINTENANCE_STATE={}, HISTORY_MAINTENANCE_TASKS={},
@@ -70,11 +71,11 @@ class HistoryResponsivenessTests(unittest.IsolatedAsyncioTestCase):
         source = server.provider_history_source_stamp(self.sess)
         changes = [lambda: self.events.write_text('{}\n'),
                    lambda: self.sess.update(codex_thread_id=str(uuid.uuid4())),
-                   lambda: server.BUSY_SESSIONS.add(self.sid)]
+                   lambda: server.RUNS.busy.add(self.sid)]
         for change in changes:
             self.events.write_text("")
             self.sess["codex_thread_id"] = self.pid
-            server.BUSY_SESSIONS.clear()
+            server.RUNS.busy.clear()
             stamp = server.history_file_stamp(self.events)
             before = dict(self.sess)
             change()

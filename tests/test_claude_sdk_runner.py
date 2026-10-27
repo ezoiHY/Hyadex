@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 import agent_server
+from tests.runtime_state import patch_server, patch_server_multiple
 from hyadex.providers.claude import ClaudeSDKQueryError, ClaudeSDKUnavailable
 
 
@@ -522,25 +523,25 @@ async def wait_forever(*_args: object, **_kwargs: object) -> None:
 class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.previous_sessions = agent_server.STORE.sessions
-        self.previous_active = agent_server.ACTIVE
-        self.previous_busy = agent_server.BUSY_SESSIONS
-        self.previous_current = agent_server.CURRENT_TURNS
-        self.previous_stop_requests = agent_server.STOP_REQUESTS
-        self.previous_stopped_runs = agent_server.STOPPED_RUNS
-        self.previous_turn_tasks = agent_server.SESSION_TURN_TASKS
+        self.previous_active = agent_server.RUNS.active
+        self.previous_busy = agent_server.RUNS.busy
+        self.previous_current = agent_server.RUNS.current_turns
+        self.previous_stop_requests = agent_server.RUNS.stop_requests
+        self.previous_stopped_runs = agent_server.RUNS.stopped_runs
+        self.previous_turn_tasks = agent_server.RUNS.turn_tasks
         self.previous_manager = agent_server.CLAUDE_SDK_MANAGER
-        self.previous_run_metadata = agent_server.RUN_METADATA
-        self.previous_queue = agent_server.QUEUED_TURNS
-        self.previous_run_now = agent_server.RUN_NOW_TURNS
-        self.previous_run_now_requests = agent_server.RUN_NOW_REQUESTS
+        self.previous_run_metadata = agent_server.RUNS.run_metadata
+        self.previous_queue = agent_server.RUNS.queued
+        self.previous_run_now = agent_server.RUNS.run_now
+        self.previous_run_now_requests = agent_server.RUNS.run_now_requests
         self.previous_run_now_completed = agent_server.RUN_NOW_COMPLETED_RESULTS
-        self.previous_steering = agent_server.STEERING_SESSIONS
+        self.previous_steering = agent_server.RUNS.steering
         self.previous_pending_interactions = agent_server.CLAUDE_PENDING_INTERACTIONS
         self.previous_interaction_tasks = agent_server.CLAUDE_INTERACTION_HANDLER_TASKS
         self.previous_lifecycle_locks = agent_server.SESSION_LIFECYCLE_LOCKS
         self.previous_deleting = agent_server.DELETING_SESSIONS
         self.previous_deleted = agent_server.DELETED_SESSION_TOMBSTONES
-        self.previous_maintenance = agent_server.SERVER_MAINTENANCE_SESSIONS
+        self.previous_maintenance = agent_server.RUNS.maintenance
         self.previous_stop_fences = agent_server.CLAUDE_STOP_FENCE_SESSIONS
         self.previous_stop_fence_retries = agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS
         self.previous_stop_fence_locks = agent_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS
@@ -560,9 +561,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "provider_jobs_access": "full",
         }
         agent_server.STORE.sessions = {"chat-claude": self.session}
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = {"chat-claude"}
-        agent_server.CURRENT_TURNS = {
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = {"chat-claude"}
+        agent_server.RUNS.current_turns = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "prompt": "Prompt",
@@ -570,22 +571,22 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 "backend": agent_server.BACKEND_CLAUDE,
             }
         }
-        agent_server.STOP_REQUESTS = set()
-        agent_server.STOPPED_RUNS = set()
-        agent_server.SESSION_TURN_TASKS = {}
+        agent_server.RUNS.stop_requests = set()
+        agent_server.RUNS.stopped_runs = set()
+        agent_server.RUNS.turn_tasks = {}
         agent_server.CLAUDE_SDK_MANAGER = None
-        agent_server.RUN_METADATA = {}
-        agent_server.QUEUED_TURNS = {}
-        agent_server.RUN_NOW_TURNS = {}
-        agent_server.RUN_NOW_REQUESTS = {}
+        agent_server.RUNS.run_metadata = {}
+        agent_server.RUNS.queued = {}
+        agent_server.RUNS.run_now = {}
+        agent_server.RUNS.run_now_requests = {}
         agent_server.RUN_NOW_COMPLETED_RESULTS = OrderedDict()
-        agent_server.STEERING_SESSIONS = set()
+        agent_server.RUNS.steering = set()
         agent_server.CLAUDE_PENDING_INTERACTIONS = {}
         agent_server.CLAUDE_INTERACTION_HANDLER_TASKS = {}
         agent_server.SESSION_LIFECYCLE_LOCKS = {}
         agent_server.DELETING_SESSIONS = set()
         agent_server.DELETED_SESSION_TOMBSTONES = set()
-        agent_server.SERVER_MAINTENANCE_SESSIONS = set()
+        agent_server.RUNS.maintenance = set()
         agent_server.CLAUDE_STOP_FENCE_SESSIONS = set()
         agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS = {}
         agent_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS = {}
@@ -611,13 +612,13 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         self.durable_batch_patcher.stop()
         self.durable_event_patcher.stop()
-        for tasks in agent_server.SESSION_TURN_TASKS.values():
+        for tasks in agent_server.RUNS.turn_tasks.values():
             for task in tasks:
                 if not task.done():
                     task.cancel()
         pending = [
             task
-            for tasks in agent_server.SESSION_TURN_TASKS.values()
+            for tasks in agent_server.RUNS.turn_tasks.values()
             for task in tasks
             if not task.done()
         ]
@@ -640,25 +641,25 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 return_exceptions=True,
             )
         agent_server.STORE.sessions = self.previous_sessions
-        agent_server.ACTIVE = self.previous_active
-        agent_server.BUSY_SESSIONS = self.previous_busy
-        agent_server.CURRENT_TURNS = self.previous_current
-        agent_server.STOP_REQUESTS = self.previous_stop_requests
-        agent_server.STOPPED_RUNS = self.previous_stopped_runs
-        agent_server.SESSION_TURN_TASKS = self.previous_turn_tasks
+        agent_server.RUNS.active = self.previous_active
+        agent_server.RUNS.busy = self.previous_busy
+        agent_server.RUNS.current_turns = self.previous_current
+        agent_server.RUNS.stop_requests = self.previous_stop_requests
+        agent_server.RUNS.stopped_runs = self.previous_stopped_runs
+        agent_server.RUNS.turn_tasks = self.previous_turn_tasks
         agent_server.CLAUDE_SDK_MANAGER = self.previous_manager
-        agent_server.RUN_METADATA = self.previous_run_metadata
-        agent_server.QUEUED_TURNS = self.previous_queue
-        agent_server.RUN_NOW_TURNS = self.previous_run_now
-        agent_server.RUN_NOW_REQUESTS = self.previous_run_now_requests
+        agent_server.RUNS.run_metadata = self.previous_run_metadata
+        agent_server.RUNS.queued = self.previous_queue
+        agent_server.RUNS.run_now = self.previous_run_now
+        agent_server.RUNS.run_now_requests = self.previous_run_now_requests
         agent_server.RUN_NOW_COMPLETED_RESULTS = self.previous_run_now_completed
-        agent_server.STEERING_SESSIONS = self.previous_steering
+        agent_server.RUNS.steering = self.previous_steering
         agent_server.CLAUDE_PENDING_INTERACTIONS = self.previous_pending_interactions
         agent_server.CLAUDE_INTERACTION_HANDLER_TASKS = self.previous_interaction_tasks
         agent_server.SESSION_LIFECYCLE_LOCKS = self.previous_lifecycle_locks
         agent_server.DELETING_SESSIONS = self.previous_deleting
         agent_server.DELETED_SESSION_TOMBSTONES = self.previous_deleted
-        agent_server.SERVER_MAINTENANCE_SESSIONS = self.previous_maintenance
+        agent_server.RUNS.maintenance = self.previous_maintenance
         agent_server.CLAUDE_STOP_FENCE_SESSIONS = self.previous_stop_fences
         agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS = self.previous_stop_fence_retries
         agent_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS = self.previous_stop_fence_locks
@@ -805,7 +806,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 ("CLAUDE_SDK_IDLE_WARN_SECONDS", idle_warn),
                 ("CLAUDE_SDK_IDLE_TIMEOUT_SECONDS", idle_timeout),
             ):
-                stack.enter_context(patch.object(agent_server, name, value))
+                stack.enter_context(patch_server(agent_server, name, value))
             stack.enter_context(patch.object(
                 agent_server,
                 "resolve_claude_resume_provider",
@@ -1215,7 +1216,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "categories": {"ignored": "not persisted"},
         }, 9)
         self.session["claude_session_id"] = "provider-usage"
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -1275,7 +1276,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         manager.get_context_usage = cold_answer
         self.session["claude_session_id"] = "provider-cold"
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-cold",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -1310,9 +1311,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         }, 12)
         self.session["claude_session_id"] = "provider-manual"
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.CURRENT_TURNS = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.current_turns = {}
         broadcast = AsyncMock()
         with patch.object(
             agent_server,
@@ -1374,8 +1375,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "claude_context_usage_snapshot": stale_snapshot,
         })
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {}
-        agent_server.CURRENT_TURNS = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.current_turns = {}
         with patch.object(
             agent_server,
             "CLAUDE_TRANSPORT",
@@ -1385,7 +1386,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "claude_sdk_dependency_available",
             return_value=True,
         ):
-            agent_server.BUSY_SESSIONS = {"chat-claude"}
+            agent_server.RUNS.busy = {"chat-claude"}
             with self.assertRaises(agent_server.HTTPException) as busy:
                 await agent_server.post_claude_context_usage_refresh(
                     "chat-claude"
@@ -1393,7 +1394,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(busy.exception.status_code, 409)
             self.assertEqual(manager.context_usage_calls, [])
 
-            agent_server.BUSY_SESSIONS = set()
+            agent_server.RUNS.busy = set()
             manager.loaded = False
             with self.assertRaises(agent_server.HTTPException) as unloaded:
                 await agent_server.post_claude_context_usage_refresh(
@@ -1408,9 +1409,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeClaudeManager()
         self.session["claude_session_id"] = "provider-manual"
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.CURRENT_TURNS = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.current_turns = {}
         newer_snapshot = {
             "provider_session_id": "provider-manual",
             "context_tokens": 77_000,
@@ -1470,9 +1471,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "claude_context_usage_snapshot": stale_snapshot,
         })
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.CURRENT_TURNS = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.current_turns = {}
         with patch.object(
             agent_server,
             "CLAUDE_TRANSPORT",
@@ -1526,9 +1527,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "claude_context_usage_snapshot": stale_snapshot,
         })
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.CURRENT_TURNS = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.current_turns = {}
         with patch.object(
             agent_server,
             "CLAUDE_TRANSPORT",
@@ -1600,9 +1601,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.session["claude_session_id"] = "provider-manual"
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.CURRENT_TURNS = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.current_turns = {}
 
         with patch.object(
             agent_server,
@@ -1677,7 +1678,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "model": "claude",
         }, 3)
         self.session["claude_session_id"] = "current-provider"
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -1692,7 +1693,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "stale-provider",
             manager,
         ))
-        agent_server.ACTIVE["chat-claude"]["stop_requested"] = True
+        agent_server.RUNS.active["chat-claude"]["stop_requested"] = True
         self.assertFalse(await agent_server.sample_claude_context_usage(
             "chat-claude",
             "run-claude",
@@ -1722,7 +1723,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -1778,7 +1779,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -1846,7 +1847,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -1874,7 +1875,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             await asyncio.wait_for(sampling_started.wait(), 0.2)
-            agent_server.ACTIVE["chat-claude"]["stop_requested"] = True
+            agent_server.RUNS.active["chat-claude"]["stop_requested"] = True
             release_sampling.set()
             self.assertFalse(await asyncio.wait_for(sampling, 0.2))
 
@@ -1887,7 +1888,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_context_usage_rpc_and_invalid_results_clear_current_snapshot(self) -> None:
         self.session["claude_session_id"] = "provider-usage"
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -1969,7 +1970,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": old_snapshot,
             "claude_context_usage_snapshot": old_snapshot,
         })
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -2009,7 +2010,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     "context_usage_snapshot": newer_snapshot,
                     "claude_context_usage_snapshot": newer_snapshot,
                 })
-            agent_server.ACTIVE["chat-claude"]["stop_requested"] = True
+            agent_server.RUNS.active["chat-claude"]["stop_requested"] = True
             release_sampling.set()
             self.assertFalse(await asyncio.wait_for(sampling, 0.2))
 
@@ -2512,7 +2513,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -2617,7 +2618,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_permission_mode_change_is_saved_for_next_turn_while_active(self) -> None:
         self.session["claude_permission_mode"] = "default"
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -2650,7 +2651,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             agent_server.active_claude_permission_mode(
                 "chat-claude",
-                agent_server.ACTIVE["chat-claude"],
+                agent_server.RUNS.active["chat-claude"],
             ),
             "default",
         )
@@ -2771,11 +2772,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "_durable": True,
         }
         self.session["active_run"] = {"run_id": "run-claude"}
-        agent_server.CURRENT_TURNS["chat-claude"]["purpose"] = "scheduled_job"
-        agent_server.RUN_METADATA = {
+        agent_server.RUNS.current_turns["chat-claude"]["purpose"] = "scheduled_job"
+        agent_server.RUNS.run_metadata = {
             "run-claude": {"purpose": "scheduled_job"},
         }
-        agent_server.QUEUED_TURNS = {
+        agent_server.RUNS.queued = {
             "chat-claude": deque([human_turn]),
         }
         queue_start_tasks: dict[str, asyncio.Task[object]] = {}
@@ -2798,14 +2799,14 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             **kwargs: object,
         ) -> dict[str, object]:
             launch_calls.append((session_id, request, kwargs))
-            async with agent_server.ACTIVE_LOCK:
-                agent_server.ACTIVE[session_id] = {
+            async with agent_server.RUNS.active_lock:
+                agent_server.RUNS.active[session_id] = {
                     "run_id": "run-human",
                     "backend": agent_server.BACKEND_CLAUDE,
                     "transport": agent_server.CLAUDE_TRANSPORT_PRINT,
                 }
-                agent_server.BUSY_SESSIONS.add(session_id)
-                agent_server.CURRENT_TURNS[session_id] = {
+                agent_server.RUNS.busy.add(session_id)
+                agent_server.RUNS.current_turns[session_id] = {
                     "run_id": "run-human",
                     "backend": agent_server.BACKEND_CLAUDE,
                 }
@@ -2817,7 +2818,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         append_event = AsyncMock(return_value={})
         append_finished = AsyncMock(return_value={})
         quarantine = AsyncMock(return_value=True)
-        with patch.multiple(
+        with patch_server_multiple(
             agent_server,
             QUEUE_START_TASKS=queue_start_tasks,
             STOP_CONFIRM_TIMEOUT_SECONDS=0.01,
@@ -2859,7 +2860,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     ),
                 )
             )
-            agent_server.SESSION_TURN_TASKS = {
+            agent_server.RUNS.turn_tasks = {
                 "chat-claude": {provider_task},
             }
             promotion_task: asyncio.Task[object] | None = None
@@ -2886,12 +2887,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(result["hard_stop"])
                 self.assertEqual(len(launch_calls), 1)
                 self.assertEqual(
-                    agent_server.ACTIVE["chat-claude"]["run_id"],
+                    agent_server.RUNS.active["chat-claude"]["run_id"],
                     "run-human",
                 )
-                self.assertIn("chat-claude", agent_server.BUSY_SESSIONS)
+                self.assertIn("chat-claude", agent_server.RUNS.busy)
                 self.assertEqual(
-                    agent_server.CURRENT_TURNS["chat-claude"]["run_id"],
+                    agent_server.RUNS.current_turns["chat-claude"]["run_id"],
                     "run-human",
                 )
                 terminal_calls = [
@@ -2936,11 +2937,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "claude_session_id": "provider-old",
             "claude_session_cwd": self.cwd,
         })
-        agent_server.CURRENT_TURNS["chat-claude"]["purpose"] = "scheduled_job"
-        agent_server.RUN_METADATA = {
+        agent_server.RUNS.current_turns["chat-claude"]["purpose"] = "scheduled_job"
+        agent_server.RUNS.run_metadata = {
             "run-claude": {"purpose": "scheduled_job"},
         }
-        agent_server.QUEUED_TURNS = {
+        agent_server.RUNS.queued = {
             "chat-claude": deque([human_turn]),
         }
         queue_start_tasks: dict[str, asyncio.Task[object]] = {}
@@ -2979,15 +2980,15 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     "future": new_permission,
                     "responded": False,
                 }
-            async with agent_server.ACTIVE_LOCK:
-                agent_server.ACTIVE[session_id] = {
+            async with agent_server.RUNS.active_lock:
+                agent_server.RUNS.active[session_id] = {
                     "run_id": "run-human",
                     "backend": agent_server.BACKEND_CLAUDE,
                     "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
                     "claude_sdk_owner_token": "owner-new",
                 }
-                agent_server.BUSY_SESSIONS.add(session_id)
-                agent_server.CURRENT_TURNS[session_id] = {
+                agent_server.RUNS.busy.add(session_id)
+                agent_server.RUNS.current_turns[session_id] = {
                     "run_id": "run-human",
                     "backend": agent_server.BACKEND_CLAUDE,
                 }
@@ -3003,7 +3004,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         append_event = AsyncMock(return_value={})
         append_finished = AsyncMock(return_value={})
         save_provider = AsyncMock(wraps=agent_server.STORE.save_provider_session)
-        with patch.multiple(
+        with patch_server_multiple(
             agent_server,
             QUEUE_START_TASKS=queue_start_tasks,
             STOP_CONFIRM_TIMEOUT_SECONDS=0.01,
@@ -3047,13 +3048,13 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     ),
                 )
             )
-            agent_server.SESSION_TURN_TASKS = {
+            agent_server.RUNS.turn_tasks = {
                 "chat-claude": {provider_task},
             }
             promotion_task: asyncio.Task[object] | None = None
             try:
                 for _ in range(100):
-                    active = agent_server.ACTIVE.get("chat-claude") or {}
+                    active = agent_server.RUNS.active.get("chat-claude") or {}
                     if active.get("claude_sdk_run") is handle:
                         break
                     await asyncio.sleep(0)
@@ -3086,12 +3087,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(new_permission.done())
                 self.assertEqual(self.session["claude_session_id"], "provider-new")
                 self.assertEqual(
-                    agent_server.ACTIVE["chat-claude"]["run_id"],
+                    agent_server.RUNS.active["chat-claude"]["run_id"],
                     "run-human",
                 )
-                self.assertIn("chat-claude", agent_server.BUSY_SESSIONS)
+                self.assertIn("chat-claude", agent_server.RUNS.busy)
                 self.assertEqual(
-                    agent_server.CURRENT_TURNS["chat-claude"]["run_id"],
+                    agent_server.RUNS.current_turns["chat-claude"]["run_id"],
                     "run-human",
                 )
                 save_provider.assert_not_awaited()
@@ -3124,7 +3125,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager.active_run_id = "run-claude"
         runner = asyncio.create_task(wait_forever())
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "proc": None,
                 "run_id": "run-claude",
@@ -3136,7 +3137,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 "stop_requested": False,
             }
         }
-        agent_server.SESSION_TURN_TASKS = {"chat-claude": {runner}}
+        agent_server.RUNS.turn_tasks = {"chat-claude": {runner}}
 
         with patch.object(
             agent_server,
@@ -3166,9 +3167,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_idle_stop_retires_only_chat_with_background_subagents(self) -> None:
         manager = FakeClaudeManager()
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.CURRENT_TURNS = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.current_turns = {}
         snapshot = {
             "active_count": 1,
             "subagents": [{
@@ -3213,8 +3214,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeClaudeManager()
         manager.is_loaded = Mock(side_effect=RuntimeError("ownership unavailable"))
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
 
         result = await agent_server.stop_idle_claude_background_subagents(
             "chat-claude",
@@ -3232,9 +3233,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             side_effect=[RuntimeError("ownership unavailable"), False]
         )
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.CURRENT_TURNS = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.current_turns = {}
         snapshot = {
             "active_count": 1,
             "subagents": [{
@@ -3285,9 +3286,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         schedule.assert_called_once_with("chat-claude")
 
     async def test_initial_claude_stop_attempt_error_still_arms_retry(self) -> None:
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.CURRENT_TURNS = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.current_turns = {}
 
         with patch.object(
             agent_server,
@@ -3319,16 +3320,16 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn(
             "chat-claude",
-            agent_server.SERVER_MAINTENANCE_SESSIONS,
+            agent_server.RUNS.maintenance,
         )
         schedule.assert_called_once_with("chat-claude")
 
     async def test_failed_claude_stop_fence_retries_and_releases_admission(self) -> None:
         manager = FakeClaudeManager()
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.CURRENT_TURNS = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.current_turns = {}
         snapshot = {
             "active_count": 1,
             "subagents": [{
@@ -3380,7 +3381,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(
             "chat-claude",
-            agent_server.SERVER_MAINTENANCE_SESSIONS,
+            agent_server.RUNS.maintenance,
         )
         self.assertNotIn(
             "chat-claude",
@@ -3390,10 +3391,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         schedule.assert_called_once_with("chat-claude")
 
     async def test_claude_stop_fence_retry_survives_unexpected_attempt_error(self) -> None:
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
         agent_server.CLAUDE_STOP_FENCE_SESSIONS.add("chat-claude")
-        agent_server.SERVER_MAINTENANCE_SESSIONS.add("chat-claude")
+        agent_server.RUNS.maintenance.add("chat-claude")
         attempt = AsyncMock(side_effect=[
             RuntimeError("unexpected persistence error"),
             {"fence_committed": True},
@@ -3420,7 +3421,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(
             "chat-claude",
-            agent_server.SERVER_MAINTENANCE_SESSIONS,
+            agent_server.RUNS.maintenance,
         )
         schedule.assert_called_once_with("chat-claude")
 
@@ -3481,11 +3482,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "backend": agent_server.BACKEND_CLAUDE,
             "_durable": True,
         }
-        agent_server.QUEUED_TURNS = {
+        agent_server.RUNS.queued = {
             "chat-claude": deque([human_turn]),
         }
-        agent_server.CURRENT_TURNS["chat-claude"]["purpose"] = "scheduled_job"
-        agent_server.RUN_METADATA = {
+        agent_server.RUNS.current_turns["chat-claude"]["purpose"] = "scheduled_job"
+        agent_server.RUNS.run_metadata = {
             "run-claude": {"purpose": "scheduled_job"},
         }
         queue_start_tasks: dict[str, asyncio.Task[object]] = {}
@@ -3508,7 +3509,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         append_event = AsyncMock(return_value={})
         evict = AsyncMock(return_value=True)
         cancel_interactions = AsyncMock()
-        with patch.multiple(
+        with patch_server_multiple(
             agent_server,
             QUEUE_START_TASKS=queue_start_tasks,
             resolve_claude_resume_provider=Mock(return_value=(None, None)),
@@ -3543,10 +3544,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNotNone(promotion_task)
                 await asyncio.sleep(0)
 
-                self.assertNotIn("chat-claude", agent_server.ACTIVE)
-                self.assertNotIn("chat-claude", agent_server.BUSY_SESSIONS)
-                self.assertNotIn("chat-claude", agent_server.CURRENT_TURNS)
-                self.assertNotIn("chat-claude", agent_server.QUEUED_TURNS)
+                self.assertNotIn("chat-claude", agent_server.RUNS.active)
+                self.assertNotIn("chat-claude", agent_server.RUNS.busy)
+                self.assertNotIn("chat-claude", agent_server.RUNS.current_turns)
+                self.assertNotIn("chat-claude", agent_server.RUNS.queued)
                 self.assertEqual(len(launch_calls), 1)
                 launched_session, launched_request, launched_kwargs = launch_calls[0]
                 self.assertEqual(launched_session, "chat-claude")
@@ -3694,7 +3695,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             ))
             self.assertEqual(interaction["turn_id"], "run-claude")
             self.assertTrue(
-                agent_server.ACTIVE["chat-claude"]["claude_permissions_open"]
+                agent_server.RUNS.active["chat-claude"]["claude_permissions_open"]
             )
             await agent_server.resolve_claude_interaction(
                 "chat-claude",
@@ -3726,7 +3727,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         )
         agent_server.CLAUDE_SDK_MANAGER = manager
         predecessor_run_id = "run_claude"
-        agent_server.CURRENT_TURNS["chat-claude"]["run_id"] = predecessor_run_id
+        agent_server.RUNS.current_turns["chat-claude"]["run_id"] = predecessor_run_id
         predecessor_path = await agent_server.issue_provider_authority(
             "chat-claude",
             predecessor_run_id,
@@ -3754,7 +3755,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     bool(candidate_path_value)
                     and Path(candidate_path_value).is_file(),
                     str(
-                        agent_server.CURRENT_TURNS.get("chat-claude", {}).get(
+                        agent_server.RUNS.current_turns.get("chat-claude", {}).get(
                             "run_id"
                         )
                         or ""
@@ -3937,12 +3938,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.ACTIVE.get("chat-claude") or {}
+                active = agent_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
             steer_future = asyncio.get_running_loop().create_future()
-            await agent_server.ACTIVE["chat-claude"]["native_steer_queue"].put({
+            await agent_server.RUNS.active["chat-claude"]["native_steer_queue"].put({
                 "selected": {
                     "queued_id": "queued-next",
                     "prompt": "Steer",
@@ -3977,7 +3978,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             candidate_run_id = str(interaction["turn_id"])
             self.assertNotEqual(candidate_run_id, predecessor_run_id)
             self.assertEqual(
-                agent_server.ACTIVE["chat-claude"][
+                agent_server.RUNS.active["chat-claude"][
                     "claude_permission_run_id"
                 ],
                 candidate_run_id,
@@ -4048,7 +4049,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             third_handle,
         ])
         original_run_id = "run_claude"
-        agent_server.CURRENT_TURNS["chat-claude"]["run_id"] = original_run_id
+        agent_server.RUNS.current_turns["chat-claude"]["run_id"] = original_run_id
         original_path = await agent_server.issue_provider_authority(
             "chat-claude",
             original_run_id,
@@ -4204,11 +4205,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.ACTIVE.get("chat-claude") or {}
+                active = agent_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
-            native_queue = agent_server.ACTIVE["chat-claude"][
+            native_queue = agent_server.RUNS.active["chat-claude"][
                 "native_steer_queue"
             ]
 
@@ -4680,7 +4681,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.ACTIVE.get("chat-claude") or {}
+                active = agent_server.RUNS.active.get("chat-claude") or {}
                 if active.get("claude_sdk_run") is handle:
                     break
                 await asyncio.sleep(0)
@@ -5294,11 +5295,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.ACTIVE.get("chat-claude") or {}
+                active = agent_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
-            native_queue = agent_server.ACTIVE["chat-claude"][
+            native_queue = agent_server.RUNS.active["chat-claude"][
                 "native_steer_queue"
             ]
             steer_future = asyncio.get_running_loop().create_future()
@@ -5324,24 +5325,24 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             })
             steer_result = await asyncio.wait_for(steer_future, 0.5)
             self.assertIs(
-                agent_server.ACTIVE["chat-claude"]["claude_sdk_run"],
+                agent_server.RUNS.active["chat-claude"]["claude_sdk_run"],
                 second,
             )
             self.assertFalse(
-                agent_server.ACTIVE["chat-claude"]["provider_turn_ready"]
+                agent_server.RUNS.active["chat-claude"]["provider_turn_ready"]
             )
             self.assertTrue(
-                agent_server.ACTIVE["chat-claude"]["provider_starting"]
+                agent_server.RUNS.active["chat-claude"]["provider_starting"]
             )
             second.acknowledge()
             for _ in range(100):
-                if agent_server.ACTIVE["chat-claude"].get(
+                if agent_server.RUNS.active["chat-claude"].get(
                     "provider_turn_ready"
                 ):
                     break
                 await asyncio.sleep(0)
             self.assertTrue(
-                agent_server.ACTIVE["chat-claude"]["provider_turn_ready"]
+                agent_server.RUNS.active["chat-claude"]["provider_turn_ready"]
             )
             await second.messages.put({
                 "type": "result",
@@ -5460,12 +5461,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.ACTIVE.get("chat-claude") or {}
+                active = agent_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
             steer_future = asyncio.get_running_loop().create_future()
-            await agent_server.ACTIVE["chat-claude"][
+            await agent_server.RUNS.active["chat-claude"][
                 "native_steer_queue"
             ].put({
                 "selected": {
@@ -5716,12 +5717,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.ACTIVE.get("chat-claude") or {}
+                active = agent_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
             steer_future = asyncio.get_running_loop().create_future()
-            await agent_server.ACTIVE["chat-claude"]["native_steer_queue"].put({
+            await agent_server.RUNS.active["chat-claude"]["native_steer_queue"].put({
                 "selected": {
                     "queued_id": "queued-next",
                     "prompt": "Steer",
@@ -5765,7 +5766,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         first = FakeClaudeRun()
         manager = SafeFailingCandidateStartManager([first])
         predecessor_run_id = "run_claude"
-        agent_server.CURRENT_TURNS["chat-claude"]["run_id"] = predecessor_run_id
+        agent_server.RUNS.current_turns["chat-claude"]["run_id"] = predecessor_run_id
         predecessor_path = await agent_server.issue_provider_authority(
             "chat-claude",
             predecessor_run_id,
@@ -5774,7 +5775,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         predecessor_token = json.loads(
             predecessor_path.read_text(encoding="utf-8")
         )["provider_capability"]
-        agent_server.QUEUED_TURNS["chat-claude"] = deque([{
+        agent_server.RUNS.queued["chat-claude"] = deque([{
             "queued_id": "queued-safe-rejection",
             "prompt": "Steer",
             "file_ids": [],
@@ -5902,7 +5903,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             ))
             try:
                 for _ in range(100):
-                    active = agent_server.ACTIVE.get("chat-claude") or {}
+                    active = agent_server.RUNS.active.get("chat-claude") or {}
                     if active.get("native_steer_queue") is not None:
                         break
                     await asyncio.sleep(0)
@@ -5948,7 +5949,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     authorized["source_run_id"],
                     predecessor_run_id,
                 )
-                restored = agent_server.QUEUED_TURNS["chat-claude"][0]
+                restored = agent_server.RUNS.queued["chat-claude"][0]
                 self.assertFalse(restored["_paused_after_stop"])
                 self.assertNotIn("_native_delivery_fenced", restored)
                 public = await agent_server.queued_turns_snapshot("chat-claude")
@@ -5991,7 +5992,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = BlockingCandidateStartManager([first])
         collect_manifest = AsyncMock()
         predecessor_run_id = "run_claude"
-        agent_server.CURRENT_TURNS["chat-claude"]["run_id"] = predecessor_run_id
+        agent_server.RUNS.current_turns["chat-claude"]["run_id"] = predecessor_run_id
         predecessor_path = await agent_server.issue_provider_authority(
             "chat-claude",
             predecessor_run_id,
@@ -6001,7 +6002,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         revoke_observations: list[tuple[str, bool]] = []
 
         async def record_ordered_revoke(run_id: str) -> None:
-            active = agent_server.ACTIVE.get("chat-claude") or {}
+            active = agent_server.RUNS.active.get("chat-claude") or {}
             transition_ready = active.get("logical_transition_ready")
             revoke_observations.append((
                 run_id,
@@ -6093,12 +6094,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.ACTIVE.get("chat-claude") or {}
+                active = agent_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
             steer_future = asyncio.get_running_loop().create_future()
-            await agent_server.ACTIVE["chat-claude"]["native_steer_queue"].put({
+            await agent_server.RUNS.active["chat-claude"]["native_steer_queue"].put({
                 "selected": {
                     "queued_id": "queued-next",
                     "prompt": "Steer",
@@ -6171,7 +6172,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             nonlocal steer_future
             loop = asyncio.get_running_loop()
             steer_future = loop.create_future()
-            active = agent_server.ACTIVE["chat-claude"]
+            active = agent_server.RUNS.active["chat-claude"]
             active["native_steer_queue"].put_nowait({
                 "selected": {
                     "queued_id": "queued-race",
@@ -6315,10 +6316,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "_durable": True,
             "_paused_after_stop": True,
         }
-        agent_server.QUEUED_TURNS = {
+        agent_server.RUNS.queued = {
             "chat-claude": deque([selected]),
         }
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -6331,8 +6332,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         def finish_during_selection(*_args: object) -> bool:
             # Reproduce the provider terminalizing after Force Send snapshots
             # ACTIVE but before it delivers into the native queue.
-            agent_server.ACTIVE["chat-claude"]["provider_turn_ready"] = False
-            agent_server.ACTIVE["chat-claude"]["native_steer_queue"] = None
+            agent_server.RUNS.active["chat-claude"]["provider_turn_ready"] = False
+            agent_server.RUNS.active["chat-claude"]["native_steer_queue"] = None
             return True
 
         with patch.object(
@@ -6353,7 +6354,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [
                 item.get("queued_id")
-                for item in agent_server.QUEUED_TURNS["chat-claude"]
+                for item in agent_server.RUNS.queued["chat-claude"]
             ],
             ["queued-race"],
         )
@@ -6368,8 +6369,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(public[0]["paused"])
         self.assertTrue(native_queue.empty())
 
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS.discard("chat-claude")
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy.discard("chat-claude")
         start = AsyncMock(return_value={"run_id": "run-retry"})
         with patch.object(agent_server, "_start_turn_locked", start):
             await agent_server._start_next_queued_turn_locked(
@@ -6465,12 +6466,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.ACTIVE.get("chat-claude") or {}
+                active = agent_server.RUNS.active.get("chat-claude") or {}
                 if active.get("claude_sdk_run") is handle:
                     break
                 await asyncio.sleep(0)
 
-            active = agent_server.ACTIVE["chat-claude"]
+            active = agent_server.RUNS.active["chat-claude"]
             self.assertIs(active["claude_sdk_run"], handle)
             self.assertFalse(active["provider_turn_ready"])
             self.assertTrue(active["provider_starting"])
@@ -6484,7 +6485,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     agent_server.CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY
                 ],
             }
-            agent_server.QUEUED_TURNS = {
+            agent_server.RUNS.queued = {
                 "chat-claude": deque([selected]),
             }
             deferred = await agent_server._run_queued_turn_now_once(
@@ -6498,28 +6499,28 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 [
                     item.get("queued_id")
-                    for item in agent_server.QUEUED_TURNS["chat-claude"]
+                    for item in agent_server.RUNS.queued["chat-claude"]
                 ],
                 ["queued-pre-ack"],
             )
             self.assertTrue(
-                agent_server.ACTIVE["chat-claude"][
+                agent_server.RUNS.active["chat-claude"][
                     "native_steer_queue"
                 ].empty()
             )
 
             handle.acknowledge()
             for _ in range(100):
-                if agent_server.ACTIVE["chat-claude"].get(
+                if agent_server.RUNS.active["chat-claude"].get(
                     "provider_turn_ready"
                 ):
                     break
                 await asyncio.sleep(0)
             self.assertTrue(
-                agent_server.ACTIVE["chat-claude"]["provider_turn_ready"]
+                agent_server.RUNS.active["chat-claude"]["provider_turn_ready"]
             )
             self.assertFalse(
-                agent_server.ACTIVE["chat-claude"]["provider_starting"]
+                agent_server.RUNS.active["chat-claude"]["provider_starting"]
             )
 
             await handle.messages.put({
@@ -6539,7 +6540,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -6597,8 +6598,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         stop_operation = asyncio.create_task(wait_forever())
         try:
             with patch.object(
-                agent_server,
-                "EXPLICIT_STOP_OPERATIONS",
+                agent_server.RUNS,
+                "explicit_stops",
                 {"chat-claude": stop_operation},
             ), patch.object(agent_server, "SESSION_LIFECYCLE_LOCKS", {}):
                 with self.assertRaises(HTTPException) as raised:
@@ -6616,7 +6617,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeClaudeManager(handle)
         manager.active_run_id = "run-claude"
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -6631,7 +6632,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         }
         turn_task = asyncio.create_task(wait_forever())
         agent_server.register_session_task(
-            agent_server.SESSION_TURN_TASKS,
+            agent_server.RUNS.turn_tasks,
             "chat-claude",
             turn_task,
         )
@@ -6722,8 +6723,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     "CODEX_SESSION_CLEANUP_TIMEOUT_SECONDS",
                     0.01,
                 ), patch.object(
-                    agent_server,
-                    "RUN_NOW_REQUESTS",
+                    agent_server.RUNS,
+                    "run_now_requests",
                     run_now_requests,
                 ), patch.object(
                     agent_server,
@@ -6798,7 +6799,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "backend": agent_server.BACKEND_CLAUDE,
@@ -6835,8 +6836,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             interaction_id = next(iter(
                 agent_server.CLAUDE_PENDING_INTERACTIONS
             ))
-            async with agent_server.ACTIVE_LOCK:
-                active = agent_server.ACTIVE["chat-claude"]
+            async with agent_server.RUNS.active_lock:
+                active = agent_server.RUNS.active["chat-claude"]
                 active["stop_requested"] = True
                 active["claude_permissions_open"] = False
             await agent_server.resolve_claude_interaction(
@@ -6858,7 +6859,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.session["claude_permission_mode"] = "default"
         for mode in ("bypassPermissions", "dontAsk"):
             with self.subTest(mode=mode):
-                agent_server.ACTIVE = {"chat-claude": {
+                agent_server.RUNS.active = {"chat-claude": {
                     "run_id": "run-claude",
                     "backend": agent_server.BACKEND_CLAUDE,
                     "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
@@ -6894,7 +6895,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
         agent_server.CLAUDE_SDK_MANAGER = manager
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "claude_permission_mode": "default",

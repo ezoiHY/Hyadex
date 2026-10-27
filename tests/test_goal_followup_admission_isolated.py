@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
+from hyadex.runs import NamespaceRuns
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -89,6 +90,7 @@ def load_admission():
             "cross_chat_exchange_id", "cross_chat_exchange_leg_id",
         ),
     }
+    namespace["RUNS"] = NamespaceRuns(namespace)
     exec(compile(module, str(SOURCE), "exec"), namespace)
     return namespace
 
@@ -100,6 +102,7 @@ class GoalFollowupAdmissionTests(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         self.ns = dict(self.source_namespace)
+        self.ns["RUNS"] = NamespaceRuns(self.ns)
         # Extracted functions retain their defining globals. Re-execution into
         # this test's namespace keeps concurrent/previous cases fully isolated.
         for name in FUNCTIONS:

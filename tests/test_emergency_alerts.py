@@ -76,7 +76,7 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
             "PROVIDER_AUTHORITY_LOCK",
             asyncio.Lock(),
         ))
-        self.stack.enter_context(patch.object(agent_server, "STOPPED_RUNS", set()))
+        self.stack.enter_context(patch.object(agent_server.RUNS, "stopped_runs", set()))
         self.stack.enter_context(patch.object(agent_server.HUB, "broadcast", AsyncMock()))
 
         self.base_source = {
@@ -101,13 +101,13 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
         ))
         self.stack.enter_context(patch.object(agent_server.STORE, "_lock", asyncio.Lock()))
         self.stack.enter_context(patch.object(
-            agent_server,
-            "CURRENT_TURNS",
+            agent_server.RUNS,
+            "current_turns",
             {"source": {"run_id": "run_active"}},
         ))
         self.stack.enter_context(patch.object(
-            agent_server,
-            "ACTIVE",
+            agent_server.RUNS,
+            "active",
             {
                 "source": {
                     "run_id": "run_active",
@@ -115,7 +115,7 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
                 }
             },
         ))
-        self.stack.enter_context(patch.object(agent_server, "BUSY_SESSIONS", {"source"}))
+        self.stack.enter_context(patch.object(agent_server.RUNS, "busy", {"source"}))
         agent_server.ensure_dirs("source")
         agent_server.ensure_dirs("other")
         await agent_server.STORE.save()
@@ -384,8 +384,8 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
             "Production state is at immediate risk.",
         )
 
-        agent_server.CURRENT_TURNS["source"] = {"run_id": "run_replacement"}
-        agent_server.ACTIVE["source"] = {
+        agent_server.RUNS.current_turns["source"] = {"run_id": "run_replacement"}
+        agent_server.RUNS.active["source"] = {
             "run_id": "run_replacement",
             "stop_requested": False,
         }
@@ -402,12 +402,12 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(replacement["duplicate"])
         self.assertNotEqual(replacement["alert"]["id"], first["alert"]["id"])
 
-        agent_server.CURRENT_TURNS["other"] = {"run_id": "run_other"}
-        agent_server.ACTIVE["other"] = {
+        agent_server.RUNS.current_turns["other"] = {"run_id": "run_other"}
+        agent_server.RUNS.active["other"] = {
             "run_id": "run_other",
             "stop_requested": False,
         }
-        agent_server.BUSY_SESSIONS.add("other")
+        agent_server.RUNS.busy.add("other")
         _other_path, other_token = await self.issue_authority(
             "other",
             "run_other",
@@ -848,8 +848,8 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["acknowledged"], index == 1)
         self.assertEqual(result["session"]["unacknowledged_emergency_count"], 1)
         self.assertEqual(result["session"]["emergency_alert"]["id"], newer["alert"]["id"])
-        self.assertEqual(agent_server.ACTIVE["source"], {"run_id": "run_active", "stop_requested": False})
-        self.assertIn("source", agent_server.BUSY_SESSIONS)
+        self.assertEqual(agent_server.RUNS.active["source"], {"run_id": "run_active", "stop_requested": False})
+        self.assertIn("source", agent_server.RUNS.busy)
         self.assertEqual(agent_server.STORE.sessions["other"], self.other)
         events = self.event_records()
         self.assertEqual(sum(event["type"] == "emergency_alert_raised" for event in events), 3)
@@ -877,8 +877,8 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["acknowledged_count"], 1)
         self.assertEqual(result["session"]["emergency_alert"]["id"], newer["alert"]["id"])
         self.assertEqual(result["session"]["unacknowledged_emergency_count"], 1)
-        self.assertFalse(agent_server.ACTIVE["source"]["stop_requested"])
-        self.assertIn("source", agent_server.BUSY_SESSIONS)
+        self.assertFalse(agent_server.RUNS.active["source"]["stop_requested"])
+        self.assertIn("source", agent_server.RUNS.busy)
         self.assertEqual(agent_server.STORE.sessions["other"], self.other)
         before = self.event_records()
         repeated = await agent_server.acknowledge_session_emergency("source", request)

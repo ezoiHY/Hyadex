@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import agent_server
+from tests.runtime_state import patch_server_multiple
 
 
 class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
@@ -23,7 +24,7 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.scope.enter_context(patch.object(agent_server.STORE, "sessions", {
             self.session_id: {"id": self.session_id, "backend": "codex"},
         }))
-        self.scope.enter_context(patch.multiple(
+        self.scope.enter_context(patch_server_multiple(
             agent_server,
             QUEUED_TURNS={}, RUN_NOW_TURNS={}, ACTIVE={}, CURRENT_TURNS={},
             BUSY_SESSIONS=set(), STEERING_SESSIONS=set(), STEERING_WAIT_TASKS={},
@@ -90,8 +91,8 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         owner = asyncio.create_task(abandoned_owner())
         owner._hyadex_force_send_started_at = time.monotonic() - 1000
-        agent_server.RUN_NOW_REQUESTS[self.session_id] = (self.queued_id, owner)
-        agent_server.STEERING_SESSIONS.add(self.session_id)
+        agent_server.RUNS.run_now_requests[self.session_id] = (self.queued_id, owner)
+        agent_server.RUNS.steering.add(self.session_id)
         try:
             repaired = await agent_server.reconcile_idle_queue_session(
                 self.session_id, schedule=True, reason="health_poll",
@@ -132,7 +133,7 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
             cases.append(events)
         for index, events in enumerate(cases):
             with self.subTest(case=index):
-                agent_server.QUEUED_TURNS.clear()
+                agent_server.RUNS.queued.clear()
                 self.launch.reset_mock()
                 self.write_events(events)
                 recovery = await agent_server.recover_queued_turns_after_start()

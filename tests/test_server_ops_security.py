@@ -547,8 +547,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 }
             },
         ), patch.object(
-            agent_server,
-            "ACTIVE",
+            agent_server.RUNS,
+            "active",
             {
                 session_id: {
                     "run_id": run_id,
@@ -558,12 +558,12 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 }
             },
         ), patch.object(
-            agent_server,
-            "BUSY_SESSIONS",
+            agent_server.RUNS,
+            "busy",
             {session_id},
         ), patch.object(
-            agent_server,
-            "ACTIVE_LOCK",
+            agent_server.RUNS,
+            "active_lock",
             asyncio.Lock(),
         ):
             response = await agent_server.codex_provider_mcp(request)
@@ -627,8 +627,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                     }
                 },
             ), patch.object(
-                agent_server,
-                "ACTIVE",
+                agent_server.RUNS,
+                "active",
                 {
                     session_id: {
                         "run_id": run_id,
@@ -641,12 +641,12 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                     }
                 },
             ), patch.object(
-                agent_server,
-                "CURRENT_TURNS",
+                agent_server.RUNS,
+                "current_turns",
                 {session_id: {"run_id": run_id}},
             ), patch.object(
-                agent_server,
-                "BUSY_SESSIONS",
+                agent_server.RUNS,
+                "busy",
                 {session_id},
             ), patch.object(
                 agent_server,
@@ -657,8 +657,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 "DELETED_SESSION_TOMBSTONES",
                 set(),
             ), patch.object(
-                agent_server,
-                "ACTIVE_LOCK",
+                agent_server.RUNS,
+                "active_lock",
                 asyncio.Lock(),
             ), patch.object(
                 agent_server,
@@ -694,7 +694,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 agent_server.STORE.sessions[session_id][
                     "codex_thread_id"
                 ] = "parked-chat-thread"
-                agent_server.ACTIVE[session_id][
+                agent_server.RUNS.active[session_id][
                     "standalone_provider_context"
                 ] = True
                 standalone_payload = json.loads(json.dumps(payload))
@@ -1009,12 +1009,12 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             "sessions",
             sessions,
         ), patch.object(
-            agent_server,
-            "ACTIVE",
+            agent_server.RUNS,
+            "active",
             active,
         ), patch.object(
-            agent_server,
-            "BUSY_SESSIONS",
+            agent_server.RUNS,
+            "busy",
             busy,
         ), patch.object(
             agent_server,
@@ -1025,8 +1025,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             "DELETED_SESSION_TOMBSTONES",
             set(),
         ), patch.object(
-            agent_server,
-            "ACTIVE_LOCK",
+            agent_server.RUNS,
+            "active_lock",
             asyncio.Lock(),
         ), patch.object(
             agent_server,
@@ -1585,8 +1585,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                  "sessions",
                  {"claude-chat": {"backend": agent_server.BACKEND_CLAUDE}},
              ), \
-             patch.object(agent_server, "BUSY_SESSIONS", set()), \
-             patch.object(agent_server, "SERVER_MAINTENANCE_SESSIONS", set()), \
+             patch.object(agent_server.RUNS, "busy", set()), \
+             patch.object(agent_server.RUNS, "maintenance", set()), \
              patch.object(
                  agent_server,
                  "build_claude_subagent_snapshot",
@@ -1617,8 +1617,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                  "sessions",
                  {"claude-chat": {"backend": agent_server.BACKEND_CLAUDE}},
              ), \
-             patch.object(agent_server, "BUSY_SESSIONS", set()), \
-             patch.object(agent_server, "SERVER_MAINTENANCE_SESSIONS", set()), \
+             patch.object(agent_server.RUNS, "busy", set()), \
+             patch.object(agent_server.RUNS, "maintenance", set()), \
              patch.object(
                  agent_server,
                  "build_claude_subagent_snapshot",
@@ -1660,8 +1660,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                      "sessions",
                      {"claude-chat": {"backend": agent_server.BACKEND_CLAUDE}},
                  ), \
-                 patch.object(agent_server, "BUSY_SESSIONS", set()), \
-                 patch.object(agent_server, "SERVER_MAINTENANCE_SESSIONS", set()), \
+                 patch.object(agent_server.RUNS, "busy", set()), \
+                 patch.object(agent_server.RUNS, "maintenance", set()), \
                  patch.object(agent_server, "events_path", return_value=event_file), \
                  patch.object(
                      agent_server,
@@ -1707,10 +1707,10 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager), \
              patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
              patch.object(agent_server.STORE, "sessions", {}), \
-             patch.object(agent_server, "BUSY_SESSIONS", set()), \
-             patch.object(agent_server, "SERVER_MAINTENANCE_SESSIONS", set()), \
-             patch.object(agent_server, "ACTIVE", {}), \
-             patch.object(agent_server, "CURRENT_TURNS", {}), \
+             patch.object(agent_server.RUNS, "busy", set()), \
+             patch.object(agent_server.RUNS, "maintenance", set()), \
+             patch.object(agent_server.RUNS, "active", {}), \
+             patch.object(agent_server.RUNS, "current_turns", {}), \
              patch.object(agent_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
              patch.object(agent_server, "CODEX_PENDING_INTERACTIONS", {}), \
              patch.object(
@@ -1763,10 +1763,10 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager), \
              patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
              patch.object(agent_server.STORE, "sessions", {}), \
-             patch.object(agent_server, "BUSY_SESSIONS", set()), \
-             patch.object(agent_server, "SERVER_MAINTENANCE_SESSIONS", set()), \
-             patch.object(agent_server, "ACTIVE", {}), \
-             patch.object(agent_server, "CURRENT_TURNS", {}), \
+             patch.object(agent_server.RUNS, "busy", set()), \
+             patch.object(agent_server.RUNS, "maintenance", set()), \
+             patch.object(agent_server.RUNS, "active", {}), \
+             patch.object(agent_server.RUNS, "current_turns", {}), \
              patch.object(agent_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
              patch.object(agent_server, "CODEX_PENDING_INTERACTIONS", {}), \
              patch.object(agent_server, "CODEX_SUBAGENT_STATE", {
@@ -1817,10 +1817,10 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager), \
              patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
              patch.object(agent_server.STORE, "sessions", {}), \
-             patch.object(agent_server, "BUSY_SESSIONS", set()), \
-             patch.object(agent_server, "SERVER_MAINTENANCE_SESSIONS", set()), \
-             patch.object(agent_server, "ACTIVE", {}), \
-             patch.object(agent_server, "CURRENT_TURNS", {}), \
+             patch.object(agent_server.RUNS, "busy", set()), \
+             patch.object(agent_server.RUNS, "maintenance", set()), \
+             patch.object(agent_server.RUNS, "active", {}), \
+             patch.object(agent_server.RUNS, "current_turns", {}), \
              patch.object(agent_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
              patch.object(agent_server, "CODEX_PENDING_INTERACTIONS", {}), \
              patch.object(agent_server, "CODEX_SUBAGENT_STATE", states), \
@@ -1865,10 +1865,10 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager), \
              patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
              patch.object(agent_server.STORE, "sessions", {}), \
-             patch.object(agent_server, "BUSY_SESSIONS", set()), \
-             patch.object(agent_server, "SERVER_MAINTENANCE_SESSIONS", set()), \
-             patch.object(agent_server, "ACTIVE", {}), \
-             patch.object(agent_server, "CURRENT_TURNS", {}), \
+             patch.object(agent_server.RUNS, "busy", set()), \
+             patch.object(agent_server.RUNS, "maintenance", set()), \
+             patch.object(agent_server.RUNS, "active", {}), \
+             patch.object(agent_server.RUNS, "current_turns", {}), \
              patch.object(agent_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
              patch.object(agent_server, "CODEX_PENDING_INTERACTIONS", {}), \
              patch.object(agent_server, "CODEX_SUBAGENT_STATE", {
@@ -1907,10 +1907,10 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager), \
              patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
              patch.object(agent_server.STORE, "sessions", {}), \
-             patch.object(agent_server, "BUSY_SESSIONS", set()), \
-             patch.object(agent_server, "SERVER_MAINTENANCE_SESSIONS", set()), \
-             patch.object(agent_server, "ACTIVE", {}), \
-             patch.object(agent_server, "CURRENT_TURNS", {}), \
+             patch.object(agent_server.RUNS, "busy", set()), \
+             patch.object(agent_server.RUNS, "maintenance", set()), \
+             patch.object(agent_server.RUNS, "active", {}), \
+             patch.object(agent_server.RUNS, "current_turns", {}), \
              patch.object(agent_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
              patch.object(agent_server, "CODEX_PENDING_INTERACTIONS", {}), \
              patch.object(agent_server, "CODEX_SUBAGENT_STATE", {
@@ -1970,8 +1970,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
              patch.object(agent_server, "active_codex_work_labels", return_value=[]), \
              patch.object(agent_server, "CLAUDE_SDK_MANAGER", manager), \
              patch.object(agent_server.STORE, "sessions", sessions), \
-             patch.object(agent_server, "BUSY_SESSIONS", set()), \
-             patch.object(agent_server, "SERVER_MAINTENANCE_SESSIONS", set()), \
+             patch.object(agent_server.RUNS, "busy", set()), \
+             patch.object(agent_server.RUNS, "maintenance", set()), \
              patch.object(
                  agent_server,
                  "events_path",

@@ -136,18 +136,18 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         events = AsyncMock()
         with (
             patch.object(
-                agent_server,
-                "ACTIVE",
+                agent_server.RUNS,
+                "active",
                 {"sess_parent": {"run_id": "run_chat"}},
             ),
             patch.object(
-                agent_server,
-                "BUSY_SESSIONS",
+                agent_server.RUNS,
+                "busy",
                 {"sess_parent"},
             ),
             patch.object(
-                agent_server,
-                "CURRENT_TURNS",
+                agent_server.RUNS,
+                "current_turns",
                 {"sess_parent": {"run_id": "run_chat"}},
             ),
             patch.object(
@@ -324,22 +324,22 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
                 "save",
                 AsyncMock(),
             ))
-            stack.enter_context(patch.object(agent_server, "BUSY_SESSIONS", busy))
+            stack.enter_context(patch.object(agent_server.RUNS, "busy", busy))
             stack.enter_context(patch.object(
-                agent_server,
-                "SERVER_MAINTENANCE_SESSIONS",
+                agent_server.RUNS,
+                "maintenance",
                 set(),
             ))
-            stack.enter_context(patch.object(agent_server, "CURRENT_TURNS", current))
-            stack.enter_context(patch.object(agent_server, "QUEUED_TURNS", {}))
+            stack.enter_context(patch.object(agent_server.RUNS, "current_turns", current))
+            stack.enter_context(patch.object(agent_server.RUNS, "queued", {}))
             stack.enter_context(patch.object(
-                agent_server,
-                "SESSION_TURN_TASKS",
+                agent_server.RUNS,
+                "turn_tasks",
                 tasks,
             ))
             stack.enter_context(patch.object(
-                agent_server,
-                "RUN_METADATA",
+                agent_server.RUNS,
+                "run_metadata",
                 run_metadata,
             ))
             stack.enter_context(patch.object(

@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, Mock
 
 from hyadex.providers.codex import CodexAppServerClient, CodexAppServerTurn, CodexAppServerTimeout
 from tests import test_goal_followup_lifecycle_isolated as ordinary_fixture
+from hyadex.runs import NamespaceRuns
 
 NAMES = {"codex_collaboration_states", "codex_collaboration_thread_ids",
          "codex_child_status_from_thread", "normalize_subagent_status",
@@ -83,6 +84,7 @@ class CodexChildContinuationTests(unittest.IsolatedAsyncioTestCase):
             "codex_turn_matches_client_user_message": lambda value, run: value.get("clientUserMessageId") == run,
         })
         self.ns["SUBAGENT_SNAPSHOT_TEXT_LIMIT"] = 200
+        self.ns["RUNS"] = NamespaceRuns(self.ns)
         exec(PROJECTION_CODE, self.ns)
         self.ns["stop_turn"] = AsyncMock(side_effect=AssertionError("unexpected stop call"))
         runner = asyncio.create_task(self.ns["run_codex_app_server"](
@@ -665,6 +667,7 @@ class CodexChildContinuationTests(unittest.IsolatedAsyncioTestCase):
         class AdmissionChecked(Exception):
             pass
         namespace = dict(self.ns)
+        namespace["RUNS"] = NamespaceRuns(namespace)
         exec(PROJECTION_CODE, namespace)
         namespace.update({
             "SESSION_TURN_TASKS": {}, "CODEX_NATIVE_ACTION_TASKS": {},
@@ -694,6 +697,7 @@ class CodexChildContinuationTests(unittest.IsolatedAsyncioTestCase):
             pass
 
         namespace = dict(self.ns)
+        namespace["RUNS"] = NamespaceRuns(namespace)
         exec(PROJECTION_CODE, namespace)
         namespace.update({
             "SESSION_TURN_TASKS": {}, "CODEX_NATIVE_ACTION_TASKS": {},

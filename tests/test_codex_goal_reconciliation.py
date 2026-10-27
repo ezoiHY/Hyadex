@@ -50,15 +50,15 @@ class GoalManager:
 class CodexGoalReconciliationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.previous_sessions = agent_server.STORE.sessions
-        self.previous_active = agent_server.ACTIVE
-        self.previous_busy = agent_server.BUSY_SESSIONS
+        self.previous_active = agent_server.RUNS.active
+        self.previous_busy = agent_server.RUNS.busy
         self.previous_manager = agent_server.CODEX_APP_SERVER_MANAGER
         self.previous_index = agent_server.CODEX_THREAD_SESSION_INDEX
         self.previous_sync = agent_server.CODEX_GOAL_SYNC_GENERATIONS
         self.previous_quarantine = agent_server.CODEX_QUARANTINED_GOAL_THREADS
         agent_server.STORE.sessions = {}
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
         agent_server.CODEX_APP_SERVER_MANAGER = None
         agent_server.CODEX_THREAD_SESSION_INDEX = {}
         agent_server.CODEX_GOAL_SYNC_GENERATIONS = {}
@@ -66,8 +66,8 @@ class CodexGoalReconciliationTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         agent_server.STORE.sessions = self.previous_sessions
-        agent_server.ACTIVE = self.previous_active
-        agent_server.BUSY_SESSIONS = self.previous_busy
+        agent_server.RUNS.active = self.previous_active
+        agent_server.RUNS.busy = self.previous_busy
         agent_server.CODEX_APP_SERVER_MANAGER = self.previous_manager
         agent_server.CODEX_THREAD_SESSION_INDEX = self.previous_index
         agent_server.CODEX_GOAL_SYNC_GENERATIONS = self.previous_sync
@@ -229,8 +229,8 @@ class CodexGoalReconciliationTests(unittest.IsolatedAsyncioTestCase):
             "thread-old", status="paused"
         )
         self.assertEqual(session["codex_goal"]["status"], "paused")
-        self.assertNotIn("chat", agent_server.ACTIVE)
-        self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
+        self.assertNotIn("chat", agent_server.RUNS.active)
+        self.assertNotIn("chat", agent_server.RUNS.busy)
 
     async def test_stale_thread_does_not_block_goal_clear(self) -> None:
         session = self.session(
@@ -316,7 +316,7 @@ class CodexGoalReconciliationTests(unittest.IsolatedAsyncioTestCase):
         turn = Mock()
         turn.turn_id = "turn-live"
         turn.interrupt = AsyncMock()
-        agent_server.ACTIVE["chat"] = {
+        agent_server.RUNS.active["chat"] = {
             "run_id": "run-live",
             "backend": agent_server.BACKEND_CODEX,
             "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
@@ -325,7 +325,7 @@ class CodexGoalReconciliationTests(unittest.IsolatedAsyncioTestCase):
             "provider_turn_ready": True,
             "codex_app_server_turn": turn,
         }
-        agent_server.BUSY_SESSIONS.add("chat")
+        agent_server.RUNS.busy.add("chat")
         manager = GoalManager(session["codex_goal"])
         manager.get_thread_goal = AsyncMock(
             side_effect=RuntimeError("goal get unavailable")
@@ -343,8 +343,8 @@ class CodexGoalReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["pending"])
         self.assertTrue(result["goal_fenced"])
         turn.interrupt.assert_awaited_once()
-        self.assertNotIn("chat", agent_server.ACTIVE)
-        self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
+        self.assertNotIn("chat", agent_server.RUNS.active)
+        self.assertNotIn("chat", agent_server.RUNS.busy)
         self.assertIsNone(session["codex_thread_id"])
         self.assertEqual(session["codex_goal"]["status"], "paused")
 
@@ -367,8 +367,8 @@ class CodexGoalReconciliationTests(unittest.IsolatedAsyncioTestCase):
             "_codex_goal_reconciliation_required",
             store.sessions["chat"],
         )
-        self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
-        self.assertNotIn("chat", agent_server.ACTIVE)
+        self.assertNotIn("chat", agent_server.RUNS.busy)
+        self.assertNotIn("chat", agent_server.RUNS.active)
 
 
 if __name__ == "__main__":

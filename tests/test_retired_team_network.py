@@ -39,14 +39,14 @@ class RetiredTeamNetworkTests(unittest.IsolatedAsyncioTestCase):
         ):
             item = {"queued_id": "old-queue", "prompt": "private body", "backend": "codex", **metadata}
             with self.subTest(metadata=metadata), \
-                 patch.object(server, "QUEUED_TURNS", {"chat": deque([item])}), \
-                 patch.object(server, "CURRENT_TURNS", {}), \
+                 patch.object(server.RUNS, "queued", {"chat": deque([item])}), \
+                 patch.object(server.RUNS, "current_turns", {}), \
                  patch.object(server, "terminally_discard_queued_turn", AsyncMock()) as discard, \
                  patch.object(server, "_start_turn_locked", AsyncMock()) as start:
                 await server._start_next_queued_turn_locked("chat", admission_backend="codex")
                 discard.assert_awaited_once()
                 start.assert_not_awaited()
-                self.assertNotIn("chat", server.QUEUED_TURNS)
+                self.assertNotIn("chat", server.RUNS.queued)
 
     async def test_saved_team_job_is_paused_including_group_jobs(self):
         for group_id in (None, "legacy-group"):

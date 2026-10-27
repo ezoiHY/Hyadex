@@ -466,7 +466,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                 events = AsyncMock()
                 metadata = AsyncMock()
                 with (
-                    patch.object(agent_server, "ACTIVE", {"chat": active}),
+                    patch.object(agent_server.RUNS, "active", {"chat": active}),
                     patch.object(agent_server, "codex_request_is_interactive", return_value=True),
                     patch.object(agent_server, "append_event", events),
                     patch.object(agent_server, "update_codex_pending_session_metadata", metadata),
@@ -488,7 +488,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                 agent_server.STORE.sessions["chat"]["codex_approval_policy"] = "never"
                 events = AsyncMock()
                 with (
-                    patch.object(agent_server, "ACTIVE", {"chat": {
+                    patch.object(agent_server.RUNS, "active", {"chat": {
                         "provider_thread_id": "thread", "codex_approval_policy": policy,
                     }}),
                     patch.object(agent_server, "codex_request_is_interactive", return_value=True),
@@ -521,7 +521,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                 events = AsyncMock()
                 metadata = AsyncMock()
                 with (
-                    patch.object(agent_server, "ACTIVE", {"chat": {
+                    patch.object(agent_server.RUNS, "active", {"chat": {
                         "provider_thread_id": "thread", "codex_approval_policy": parent_policy,
                     }}),
                     patch.object(agent_server, "append_event", events),
@@ -859,7 +859,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "Codex is waiting for approval.",
         )
         with (
-            patch.object(agent_server, "ACTIVE", {}),
+            patch.object(agent_server.RUNS, "active", {}),
             patch.object(
                 agent_server,
                 "append_event",
@@ -917,7 +917,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         append_event = AsyncMock()
         broadcast = AsyncMock()
         with (
-            patch.object(agent_server, "ACTIVE", active),
+            patch.object(agent_server.RUNS, "active", active),
             patch.object(
                 agent_server,
                 "codex_session_id_for_thread",
@@ -1049,7 +1049,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             }
         }
         with (
-            patch.object(agent_server, "ACTIVE", active),
+            patch.object(agent_server.RUNS, "active", active),
             patch.object(
                 agent_server,
                 "codex_session_id_for_thread",
@@ -1159,7 +1159,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(agent_server.STORE, "save", save),
             patch.object(agent_server.HUB, "broadcast", broadcast),
-            patch.object(agent_server, "ACTIVE", active),
+            patch.object(agent_server.RUNS, "active", active),
             patch.object(
                 agent_server,
                 "codex_session_id_for_thread",
@@ -1204,7 +1204,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "codex_compaction_token_usage_before": {"context_tokens": 1200},
         }}
         recorded = AsyncMock(return_value={})
-        with patch.object(agent_server, "ACTIVE", active), \
+        with patch.object(agent_server.RUNS, "active", active), \
                 patch.object(agent_server, "codex_session_id_for_thread", return_value="chat"), \
                 patch.object(agent_server, "append_event", recorded), \
                 patch.object(agent_server.STORE, "save", AsyncMock()):
@@ -1265,7 +1265,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with (
-            patch.object(agent_server, "ACTIVE", active),
+            patch.object(agent_server.RUNS, "active", active),
             patch.object(
                 agent_server,
                 "codex_session_id_for_thread",
@@ -1370,7 +1370,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with (
-            patch.object(agent_server, "ACTIVE", active),
+            patch.object(agent_server.RUNS, "active", active),
             patch.object(
                 agent_server,
                 "codex_session_id_for_thread",
@@ -1433,7 +1433,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with (
-            patch.object(agent_server, "ACTIVE", active),
+            patch.object(agent_server.RUNS, "active", active),
             patch.object(
                 agent_server,
                 "codex_session_id_for_thread",
@@ -1659,15 +1659,15 @@ class GatedNativeSubscription:
 class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.previous_sessions = agent_server.STORE.sessions
-        self.previous_active = agent_server.ACTIVE
-        self.previous_busy = agent_server.BUSY_SESSIONS
-        self.previous_current = agent_server.CURRENT_TURNS
+        self.previous_active = agent_server.RUNS.active
+        self.previous_busy = agent_server.RUNS.busy
+        self.previous_current = agent_server.RUNS.current_turns
         self.previous_tasks = agent_server.CODEX_NATIVE_ACTION_TASKS
         self.previous_terminal_fences = (
             agent_server.CODEX_CONTROL_TERMINAL_FENCES
         )
         self.previous_maintenance = (
-            agent_server.SERVER_MAINTENANCE_SESSIONS
+            agent_server.RUNS.maintenance
         )
         self.previous_pins = agent_server.CODEX_APP_SERVER_PINNED_THREADS
         self.previous_pin_counts = (
@@ -1679,7 +1679,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.previous_interactive_counts = (
             agent_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS
         )
-        self.previous_turn_tasks = agent_server.SESSION_TURN_TASKS
+        self.previous_turn_tasks = agent_server.RUNS.turn_tasks
         self.previous_interaction_tasks = (
             agent_server.CODEX_INTERACTION_HANDLER_TASKS
         )
@@ -1690,7 +1690,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "codex_thread_id": "thread",
             }
         }
-        agent_server.ACTIVE = {
+        agent_server.RUNS.active = {
             "chat": {
                 "run_id": "operation",
                 "provider_thread_id": "thread",
@@ -1700,8 +1700,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "codex_control_reservation_id": "control-operation",
             }
         }
-        agent_server.BUSY_SESSIONS = {"chat"}
-        agent_server.CURRENT_TURNS = {
+        agent_server.RUNS.busy = {"chat"}
+        agent_server.RUNS.current_turns = {
             "chat": {
                 "run_id": None,
                 "backend": agent_server.BACKEND_CODEX,
@@ -1711,25 +1711,25 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         }
         agent_server.CODEX_NATIVE_ACTION_TASKS = {}
         agent_server.CODEX_CONTROL_TERMINAL_FENCES = {}
-        agent_server.SERVER_MAINTENANCE_SESSIONS = set()
+        agent_server.RUNS.maintenance = set()
         agent_server.CODEX_APP_SERVER_PINNED_THREADS = set()
         agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS = {}
         agent_server.CODEX_INTERACTIVE_CONTROL_THREADS = set()
         agent_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS = {}
-        agent_server.SESSION_TURN_TASKS = {}
+        agent_server.RUNS.turn_tasks = {}
         agent_server.CODEX_INTERACTION_HANDLER_TASKS = {}
 
     async def asyncTearDown(self) -> None:
         await agent_server.cancel_codex_native_actions()
         agent_server.STORE.sessions = self.previous_sessions
-        agent_server.ACTIVE = self.previous_active
-        agent_server.BUSY_SESSIONS = self.previous_busy
-        agent_server.CURRENT_TURNS = self.previous_current
+        agent_server.RUNS.active = self.previous_active
+        agent_server.RUNS.busy = self.previous_busy
+        agent_server.RUNS.current_turns = self.previous_current
         agent_server.CODEX_NATIVE_ACTION_TASKS = self.previous_tasks
         agent_server.CODEX_CONTROL_TERMINAL_FENCES = (
             self.previous_terminal_fences
         )
-        agent_server.SERVER_MAINTENANCE_SESSIONS = (
+        agent_server.RUNS.maintenance = (
             self.previous_maintenance
         )
         agent_server.CODEX_APP_SERVER_PINNED_THREADS = self.previous_pins
@@ -1742,13 +1742,13 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         agent_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS = (
             self.previous_interactive_counts
         )
-        agent_server.SESSION_TURN_TASKS = self.previous_turn_tasks
+        agent_server.RUNS.turn_tasks = self.previous_turn_tasks
         agent_server.CODEX_INTERACTION_HANDLER_TASKS = (
             self.previous_interaction_tasks
         )
 
     async def test_compaction_captures_turn_and_waits_for_turn_completed(self) -> None:
-        agent_server.ACTIVE["chat"].update(
+        agent_server.RUNS.active["chat"].update(
             {
                 "codex_native_operation_kind": "compaction",
                 "codex_compaction_in_progress": True,
@@ -1828,10 +1828,10 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await subscription.waiting.wait()
             self.assertFalse(task.done())
             self.assertEqual(
-                agent_server.ACTIVE["chat"]["provider_turn_id"],
+                agent_server.RUNS.active["chat"]["provider_turn_id"],
                 "turn-compact",
             )
-            self.assertTrue(agent_server.ACTIVE["chat"]["provider_turn_ready"])
+            self.assertTrue(agent_server.RUNS.active["chat"]["provider_turn_ready"])
             release_thread.assert_not_awaited()
 
             subscription.release.set()
@@ -1867,7 +1867,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_sparse_late_replayed_compaction_completion_does_not_persist_twice(
         self,
     ) -> None:
-        agent_server.ACTIVE["chat"].update(
+        agent_server.RUNS.active["chat"].update(
             {
                 "codex_native_operation_kind": "compaction",
                 "codex_compaction_in_progress": True,
@@ -1939,7 +1939,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(released)
             self.assertNotIn(
                 session_id,
-                agent_server.SERVER_MAINTENANCE_SESSIONS,
+                agent_server.RUNS.maintenance,
             )
 
         manager = AsyncMock()
@@ -1963,7 +1963,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "control-operation",
                 subscription,
             )
-            self.assertNotIn("chat", agent_server.ACTIVE)
+            self.assertNotIn("chat", agent_server.RUNS.active)
 
             manual_completions = [
                 payload
@@ -1976,7 +1976,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             # Replaying either lifecycle edge after ACTIVE was released must
             # not leave an orphan start or a second automatic completion.
             # Either provider identity is sufficient when the other is sparse.
-            agent_server.ACTIVE["chat"] = {
+            agent_server.RUNS.active["chat"] = {
                 "run_id": "next-run",
                 "provider_thread_id": "thread",
                 "provider_turn_id": "turn-next",
@@ -1993,13 +1993,13 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             })
             self.assertNotIn(
                 "codex_compaction_in_progress",
-                agent_server.ACTIVE["chat"],
+                agent_server.RUNS.active["chat"],
             )
             self.assertNotIn(
                 "codex_compaction_item_id",
-                agent_server.ACTIVE["chat"],
+                agent_server.RUNS.active["chat"],
             )
-            agent_server.ACTIVE.pop("chat")
+            agent_server.RUNS.active.pop("chat")
             await agent_server.project_codex_notification({
                 "method": "item/started",
                 "params": {
@@ -2058,7 +2058,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_pending_stop_interrupts_when_compaction_turn_id_arrives(
         self,
     ) -> None:
-        agent_server.ACTIVE["chat"]["stop_requested"] = True
+        agent_server.RUNS.active["chat"]["stop_requested"] = True
         subscription = GatedNativeSubscription(
             [
                 {
@@ -2146,7 +2146,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         append = AsyncMock(return_value={})
         record_usage = AsyncMock()
         schedule = Mock()
-        agent_server.STOPPED_RUNS.add("operation")
+        agent_server.RUNS.stopped_runs.add("operation")
         with (
             patch.object(agent_server, "append_event", append),
             patch.object(
@@ -2190,12 +2190,12 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 expected_reservation_id="control-operation",
             )
             self.assertTrue(released)
-            agent_server.BUSY_SESSIONS.add("chat")
-            agent_server.CURRENT_TURNS["chat"] = {
+            agent_server.RUNS.busy.add("chat")
+            agent_server.RUNS.current_turns["chat"] = {
                 "run_id": "run-replacement",
                 "backend": agent_server.BACKEND_CODEX,
             }
-            agent_server.ACTIVE["chat"] = {
+            agent_server.RUNS.active["chat"] = {
                 "run_id": "run-replacement",
                 "backend": agent_server.BACKEND_CODEX,
                 "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
@@ -2212,17 +2212,17 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         record_usage.assert_not_awaited()
         schedule.assert_not_called()
         self.assertEqual(
-            agent_server.ACTIVE["chat"]["run_id"],
+            agent_server.RUNS.active["chat"]["run_id"],
             "run-replacement",
         )
         self.assertEqual(
-            agent_server.CURRENT_TURNS["chat"]["run_id"],
+            agent_server.RUNS.current_turns["chat"]["run_id"],
             "run-replacement",
         )
-        self.assertIn("chat", agent_server.BUSY_SESSIONS)
-        self.assertNotIn("chat", agent_server.SERVER_MAINTENANCE_SESSIONS)
+        self.assertIn("chat", agent_server.RUNS.busy)
+        self.assertNotIn("chat", agent_server.RUNS.maintenance)
         self.assertNotIn("chat", agent_server.CODEX_CONTROL_TERMINAL_FENCES)
-        self.assertNotIn("operation", agent_server.STOPPED_RUNS)
+        self.assertNotIn("operation", agent_server.RUNS.stopped_runs)
 
     async def test_native_terminal_fence_releases_before_delayed_unpin(self) -> None:
         subscription = GatedNativeSubscription(
@@ -2282,7 +2282,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(unpin_started.wait(), timeout=1)
             self.assertNotIn(
                 "chat",
-                agent_server.SERVER_MAINTENANCE_SESSIONS,
+                agent_server.RUNS.maintenance,
             )
             self.assertNotIn(
                 "chat",
@@ -2290,12 +2290,12 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             )
             schedule.assert_called_once_with("chat")
 
-            agent_server.BUSY_SESSIONS.add("chat")
-            agent_server.CURRENT_TURNS["chat"] = {
+            agent_server.RUNS.busy.add("chat")
+            agent_server.RUNS.current_turns["chat"] = {
                 "run_id": "run-replacement",
                 "backend": agent_server.BACKEND_CODEX,
             }
-            agent_server.ACTIVE["chat"] = {
+            agent_server.RUNS.active["chat"] = {
                 "run_id": "run-replacement",
                 "backend": agent_server.BACKEND_CODEX,
                 "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
@@ -2305,14 +2305,14 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await old_consumer
 
         self.assertEqual(
-            agent_server.ACTIVE["chat"]["run_id"],
+            agent_server.RUNS.active["chat"]["run_id"],
             "run-replacement",
         )
         self.assertEqual(
-            agent_server.CURRENT_TURNS["chat"]["run_id"],
+            agent_server.RUNS.current_turns["chat"]["run_id"],
             "run-replacement",
         )
-        self.assertIn("chat", agent_server.BUSY_SESSIONS)
+        self.assertIn("chat", agent_server.RUNS.busy)
 
     async def test_native_terminal_publication_fence_blocks_replacement_admission(
         self,
@@ -2374,10 +2374,10 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             await asyncio.wait_for(terminal_append_started.wait(), timeout=1)
-            self.assertNotIn("chat", agent_server.ACTIVE)
-            self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
-            self.assertNotIn("chat", agent_server.CURRENT_TURNS)
-            self.assertIn("chat", agent_server.SERVER_MAINTENANCE_SESSIONS)
+            self.assertNotIn("chat", agent_server.RUNS.active)
+            self.assertNotIn("chat", agent_server.RUNS.busy)
+            self.assertNotIn("chat", agent_server.RUNS.current_turns)
+            self.assertIn("chat", agent_server.RUNS.maintenance)
             self.assertEqual(
                 agent_server.CODEX_CONTROL_TERMINAL_FENCES.get("chat"),
                 "control-operation",
@@ -2395,7 +2395,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             finish_terminal_append.set()
             await old_consumer
 
-        self.assertNotIn("chat", agent_server.SERVER_MAINTENANCE_SESSIONS)
+        self.assertNotIn("chat", agent_server.RUNS.maintenance)
         self.assertNotIn("chat", agent_server.CODEX_CONTROL_TERMINAL_FENCES)
         schedule.assert_called_once_with("chat")
 
@@ -2409,7 +2409,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "codex_goal_time_budget_seconds": 10,
             }
         )
-        agent_server.ACTIVE["chat"]["run_id"] = "run-budget"
+        agent_server.RUNS.active["chat"]["run_id"] = "run-budget"
         manager = AsyncMock()
         manager.set_thread_goal = AsyncMock(
             return_value={
@@ -2436,7 +2436,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 10,
             )
         turn.interrupt.assert_awaited_once()
-        self.assertTrue(agent_server.ACTIVE["chat"]["stop_requested"])
+        self.assertTrue(agent_server.RUNS.active["chat"]["stop_requested"])
         self.assertTrue(
             agent_server.STORE.sessions["chat"][
                 "codex_goal_time_budget_exhausted"
@@ -2444,7 +2444,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_native_tasks_can_be_cancelled_by_session(self) -> None:
-        agent_server.ACTIVE.pop("chat", None)
+        agent_server.RUNS.active.pop("chat", None)
         first = asyncio.create_task(asyncio.Event().wait())
         second = asyncio.create_task(asyncio.Event().wait())
         agent_server.register_codex_native_action("chat", "first", first)
@@ -2477,7 +2477,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raised.exception.status_code, 409)
             self.assertFalse(task.done())
             self.assertTrue(
-                agent_server.ACTIVE["chat"]["stop_requested"]
+                agent_server.RUNS.active["chat"]["stop_requested"]
             )
         finally:
             task.cancel()
@@ -2523,7 +2523,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "objective": "Finish the active task",
             "status": "active",
         }
-        agent_server.ACTIVE["chat"].update({
+        agent_server.RUNS.active["chat"].update({
             "backend": agent_server.BACKEND_CODEX,
             "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
             "provider_thread_id": "thread",
@@ -2539,7 +2539,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(thread_id, "thread")
             self.assertIn(
                 "chat",
-                agent_server.SERVER_MAINTENANCE_SESSIONS,
+                agent_server.RUNS.maintenance,
             )
             return True
 
@@ -2578,8 +2578,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(
             agent_server.STORE.sessions["chat"]["codex_goal"],
         )
-        self.assertIn("chat", agent_server.BUSY_SESSIONS)
-        self.assertIn("chat", agent_server.ACTIVE)
+        self.assertIn("chat", agent_server.RUNS.busy)
+        self.assertIn("chat", agent_server.RUNS.active)
         self.assertIn(
             "thread",
             agent_server.CODEX_APP_SERVER_PINNED_THREADS,
@@ -2594,7 +2594,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(
             "chat",
-            agent_server.SERVER_MAINTENANCE_SESSIONS,
+            agent_server.RUNS.maintenance,
         )
 
     async def test_active_native_operation_allows_goal_clear_on_loaded_thread(
@@ -2604,7 +2604,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "objective": "Stop this goal",
             "status": "active",
         }
-        agent_server.ACTIVE["chat"].update({
+        agent_server.RUNS.active["chat"].update({
             "backend": agent_server.BACKEND_CODEX,
             "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
             "provider_thread_id": "thread",
@@ -2651,7 +2651,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "status": "active",
             "timeUsedSeconds": 31,
         }
-        agent_server.ACTIVE["chat"].update({
+        agent_server.RUNS.active["chat"].update({
             "backend": agent_server.BACKEND_CODEX,
             "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
             "provider_thread_id": "thread",
@@ -2697,7 +2697,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             status="paused",
         )
         ensure_thread.assert_not_awaited()
-        self.assertIn("chat", agent_server.BUSY_SESSIONS)
+        self.assertIn("chat", agent_server.RUNS.busy)
         self.assertIn(
             "thread",
             agent_server.CODEX_APP_SERVER_PINNED_THREADS,
@@ -2740,7 +2740,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         task = asyncio.create_task(finalize_after_close())
         agent_server.register_session_task(
-            agent_server.SESSION_TURN_TASKS,
+            agent_server.RUNS.turn_tasks,
             "chat",
             task,
         )
@@ -2799,13 +2799,13 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         release = asyncio.Event()
         task = asyncio.create_task(release.wait())
         agent_server.register_session_task(
-            agent_server.SESSION_TURN_TASKS,
+            agent_server.RUNS.turn_tasks,
             "chat",
             task,
         )
         self.assertFalse(
             await agent_server.wait_for_session_tasks(
-                agent_server.SESSION_TURN_TASKS,
+                agent_server.RUNS.turn_tasks,
                 "chat",
                 timeout=0.01,
             )
@@ -2814,7 +2814,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await task
         self.assertTrue(
             await agent_server.wait_for_session_tasks(
-                agent_server.SESSION_TURN_TASKS,
+                agent_server.RUNS.turn_tasks,
                 "chat",
                 timeout=0.01,
             )
@@ -2840,7 +2840,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             interrupted.set()
 
         native_turn.interrupt = AsyncMock(side_effect=interrupt)
-        agent_server.ACTIVE["chat"] = {
+        agent_server.RUNS.active["chat"] = {
             "run_id": "run",
             "backend": agent_server.BACKEND_CODEX,
             "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
@@ -2869,7 +2869,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         manager.set_thread_goal = AsyncMock(side_effect=pause_goal)
         turn_task = asyncio.create_task(interrupted.wait())
         agent_server.register_session_task(
-            agent_server.SESSION_TURN_TASKS,
+            agent_server.RUNS.turn_tasks,
             "chat",
             turn_task,
         )
@@ -2923,7 +2923,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         agent_server.STORE.sessions["chat"]["codex_goal"] = active_goal
         native_turn = Mock(turn_id="turn")
         native_turn.interrupt = AsyncMock()
-        agent_server.ACTIVE["chat"] = {
+        agent_server.RUNS.active["chat"] = {
             "run_id": "run",
             "backend": agent_server.BACKEND_CODEX,
             "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
@@ -2976,7 +2976,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         task = asyncio.create_task(finish_during_delete())
         agent_server.register_session_task(
-            agent_server.SESSION_TURN_TASKS,
+            agent_server.RUNS.turn_tasks,
             "chat",
             task,
         )
@@ -3205,7 +3205,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         turn_task = asyncio.create_task(bind_before_turn_finishes())
         agent_server.register_session_task(
-            agent_server.SESSION_TURN_TASKS,
+            agent_server.RUNS.turn_tasks,
             "chat",
             turn_task,
         )
@@ -3278,7 +3278,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_delete_timeout_preserves_session_for_retry(self) -> None:
         task = asyncio.create_task(asyncio.Event().wait())
         agent_server.register_session_task(
-            agent_server.SESSION_TURN_TASKS,
+            agent_server.RUNS.turn_tasks,
             "chat",
             task,
         )
@@ -3288,7 +3288,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 _session_id: str,
                 **_kwargs: object,
             ) -> bool:
-                return registry is not agent_server.SESSION_TURN_TASKS
+                return registry is not agent_server.RUNS.turn_tasks
 
             with (
                 patch.object(

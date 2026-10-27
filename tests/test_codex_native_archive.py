@@ -25,7 +25,7 @@ class NativeArchive(unittest.IsolatedAsyncioTestCase):
     async def test_current_run_uses_normal_local_archive_not_provider_deletion(self):
         session = {"id": "chat", "backend": "codex", "session_id": "thread-native"}
         with patch.object(server.STORE, "sessions", {"chat": session}), \
-                patch.object(server, "ACTIVE", {"chat": {"run_id": "run"}}), \
+                patch.object(server.RUNS, "active", {"chat": {"run_id": "run"}}), \
                 patch.object(server, "DELETING_SESSIONS", set()), \
                 patch.object(server, "_update_session", new_callable=AsyncMock) as archive:
             await server.archive_rejected_codex_session("chat", "thread-native", "run")
@@ -40,7 +40,7 @@ class NativeArchive(unittest.IsolatedAsyncioTestCase):
     async def test_owner_is_rechecked_inside_lifecycle_lock_before_local_mutation(self):
         session = {"id": "chat", "backend": "codex", "session_id": "thread-new"}
         with patch.object(server.STORE, "sessions", {"chat": session}), \
-                patch.object(server, "ACTIVE", {"chat": {"run_id": "new-run"}}), \
+                patch.object(server.RUNS, "active", {"chat": {"run_id": "new-run"}}), \
                 patch.object(server, "public_session", side_effect=lambda row: dict(row)), \
                 patch.object(server.STORE, "update", new_callable=AsyncMock) as update:
             result = await server._update_session("chat", server.UpdateSessionRequest(archived=True),

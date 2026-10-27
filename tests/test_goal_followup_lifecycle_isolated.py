@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, Mock
 from hyadex.providers.codex import CodexAppServerDisconnected
 from tests.test_goal_followup_admission_isolated import AdmissionHTTPException, saved_route_snapshots
 from tests import test_goal_native_steer_isolated as native_goal_fixture
+from hyadex.runs import NamespaceRuns
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -97,6 +98,7 @@ class GoalFollowupLifecycleTests(unittest.IsolatedAsyncioTestCase):
         # Reuse the existing isolated native-consumer globals and actual
         # send/commit/fence/requeue helpers, never its production-import suite.
         native_goal_fixture.NativeGoalSteerTests.setUp(self)
+        self.ns["RUNS"] = NamespaceRuns(self.ns)
         exec(CODE, self.ns)
         temporary = tempfile.TemporaryDirectory(prefix="goal-followup-lifecycle-")
         self.addCleanup(temporary.cleanup)

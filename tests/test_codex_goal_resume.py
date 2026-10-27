@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 
 import agent_server
+from tests.runtime_state import patch_server
 
 
 class GoalSubscription:
@@ -70,7 +71,7 @@ class GoalResumeManager:
         self.interrupt_observations.append({
             "params": dict(params),
             "goal_status": self.goal["status"],
-            "busy": "chat" in agent_server.BUSY_SESSIONS,
+            "busy": "chat" in agent_server.RUNS.busy,
         })
         if self.complete_on_interrupt:
             await self.publish({
@@ -84,9 +85,9 @@ class GoalResumeManager:
 
     async def _set_goal(self, thread_id: str, **values: object) -> object:
         if values.get("status") == "active":
-            active = agent_server.ACTIVE.get("chat")
+            active = agent_server.RUNS.active.get("chat")
             self.resume_observations.append({
-                "busy": "chat" in agent_server.BUSY_SESSIONS,
+                "busy": "chat" in agent_server.RUNS.busy,
                 "owner": dict(active) if active else None,
                 "subscribed": any(not item.closed for item in self.subscriptions),
             })
@@ -229,7 +230,7 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
             "record_codex_token_usage": AsyncMock(),
         }
         for name, value in replacements.items():
-            self.stack.enter_context(patch.object(agent_server, name, value))
+            self.stack.enter_context(patch_server(agent_server, name, value))
         self.stack.enter_context(
             patch.object(agent_server.HUB, "broadcast", AsyncMock())
         )
@@ -284,25 +285,25 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observed["owner"]["provider_thread_id"], "thread-goal")
         self.assertTrue(observed["owner"]["codex_native_operation"])
         self.assertTrue(observed["owner"]["codex_control_reservation_id"])
-        self.assertIn("chat", agent_server.BUSY_SESSIONS)
+        self.assertIn("chat", agent_server.RUNS.busy)
         self.assertEqual(len(agent_server.CODEX_NATIVE_ACTION_TASKS), 1)
 
     async def test_duplicate_resume_keeps_existing_native_consumer_and_owner(
         self,
     ) -> None:
         await self.resume()
-        owner = agent_server.ACTIVE["chat"]
+        owner = agent_server.RUNS.active["chat"]
         tasks = dict(agent_server.CODEX_NATIVE_ACTION_TASKS)
         self.manager.emit_start = False
 
         result = await self.resume()
 
         self.assertEqual(result["goal"]["status"], "active")
-        self.assertIs(agent_server.ACTIVE["chat"], owner)
+        self.assertIs(agent_server.RUNS.active["chat"], owner)
         self.assertEqual(agent_server.CODEX_NATIVE_ACTION_TASKS, tasks)
         self.assertEqual(len(self.manager.subscriptions), 1)
-        self.assertIn("chat", agent_server.BUSY_SESSIONS)
-        self.assertNotIn("chat", agent_server.SERVER_MAINTENANCE_SESSIONS)
+        self.assertIn("chat", agent_server.RUNS.busy)
+        self.assertNotIn("chat", agent_server.RUNS.maintenance)
         self.manager.request.assert_not_awaited()
 
     async def test_active_goal_mutation_keeps_ordinary_running_turn_owner(
@@ -318,20 +319,20 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
             "provider_turn_ready": True,
         }
         current = {"run_id": "existing-run", "backend": agent_server.BACKEND_CODEX}
-        agent_server.ACTIVE["chat"] = owner
-        agent_server.CURRENT_TURNS["chat"] = current
-        agent_server.BUSY_SESSIONS.add("chat")
+        agent_server.RUNS.active["chat"] = owner
+        agent_server.RUNS.current_turns["chat"] = current
+        agent_server.RUNS.busy.add("chat")
         self.manager.emit_start = False
 
         await self.resume()
 
-        self.assertIs(agent_server.ACTIVE["chat"], owner)
-        self.assertIs(agent_server.CURRENT_TURNS["chat"], current)
+        self.assertIs(agent_server.RUNS.active["chat"], owner)
+        self.assertIs(agent_server.RUNS.current_turns["chat"], current)
         self.assertEqual(owner["run_id"], "existing-run")
         self.assertEqual(owner["provider_turn_id"], "existing-turn")
         self.assertEqual(agent_server.CODEX_NATIVE_ACTION_TASKS, {})
         self.assertEqual(self.manager.subscriptions, [])
-        self.assertIn("chat", agent_server.BUSY_SESSIONS)
+        self.assertIn("chat", agent_server.RUNS.busy)
         self.manager.request.assert_not_awaited()
 
     async def test_exhausted_time_budget_rejects_before_native_activation(
@@ -348,9 +349,9 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("time", str(raised.exception.detail).lower())
                 self.manager.set_thread_goal.assert_not_awaited()
                 self.manager.request.assert_not_awaited()
-                self.assertNotIn("chat", agent_server.ACTIVE)
-                self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
-                self.assertNotIn("chat", agent_server.SERVER_MAINTENANCE_SESSIONS)
+                self.assertNotIn("chat", agent_server.RUNS.active)
+                self.assertNotIn("chat", agent_server.RUNS.busy)
+                self.assertNotIn("chat", agent_server.RUNS.maintenance)
 
     async def test_failed_goal_rpc_releases_idle_reservation(self) -> None:
         self.manager.goal_error = RuntimeError("goal control unavailable")
@@ -360,10 +361,10 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreaterEqual(raised.exception.status_code, 500)
         self.assertIn("goal control unavailable", str(raised.exception.detail))
-        self.assertNotIn("chat", agent_server.ACTIVE)
-        self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
-        self.assertNotIn("chat", agent_server.CURRENT_TURNS)
-        self.assertNotIn("chat", agent_server.SERVER_MAINTENANCE_SESSIONS)
+        self.assertNotIn("chat", agent_server.RUNS.active)
+        self.assertNotIn("chat", agent_server.RUNS.busy)
+        self.assertNotIn("chat", agent_server.RUNS.current_turns)
+        self.assertNotIn("chat", agent_server.RUNS.maintenance)
         self.assertEqual(agent_server.CODEX_NATIVE_ACTION_TASKS, {})
         self.assertTrue(all(item.closed for item in self.manager.subscriptions))
         self.assertEqual(agent_server.CODEX_INTERACTIVE_CONTROL_THREADS, set())
@@ -396,10 +397,10 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(assistant_events[0]["purpose"], "codex_goal_resume")
         self.assertEqual(len([kind for kind, _ in self.events if kind == "turn_finished"]), 1)
         self.assertFalse(any(kind == "user_message" for kind, _ in self.events))
-        self.assertNotIn("chat", agent_server.ACTIVE)
-        self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
-        self.assertNotIn("chat", agent_server.CURRENT_TURNS)
-        self.assertNotIn("chat", agent_server.SERVER_MAINTENANCE_SESSIONS)
+        self.assertNotIn("chat", agent_server.RUNS.active)
+        self.assertNotIn("chat", agent_server.RUNS.busy)
+        self.assertNotIn("chat", agent_server.RUNS.current_turns)
+        self.assertNotIn("chat", agent_server.RUNS.maintenance)
         self.assertTrue(self.manager.subscriptions[0].closed)
         agent_server.schedule_next_queued_turn.assert_called_once_with("chat")
 
@@ -407,7 +408,7 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         await self.resume()
-        owner = agent_server.ACTIVE["chat"]
+        owner = agent_server.RUNS.active["chat"]
         task = next(iter(agent_server.CODEX_NATIVE_ACTION_TASKS.values()))
         await self.manager.publish({
             "method": "turn/completed",
@@ -420,8 +421,8 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
         # notification. Exercise a real gap before the native follow-up turn.
         await self.wait_for_subscription_reads(3)
         self.assertFalse(task.done())
-        self.assertIs(agent_server.ACTIVE["chat"], owner)
-        self.assertIn("chat", agent_server.BUSY_SESSIONS)
+        self.assertIs(agent_server.RUNS.active["chat"], owner)
+        self.assertIn("chat", agent_server.RUNS.busy)
         self.assertFalse(self.manager.subscriptions[0].closed)
         self.assertFalse(any(kind == "turn_finished" for kind, _ in self.events))
 
@@ -439,7 +440,7 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
 
         await self.complete_goal("turn-follow-up")
         await asyncio.wait_for(asyncio.shield(task), timeout=2)
-        self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
+        self.assertNotIn("chat", agent_server.RUNS.busy)
         self.assertEqual(len([kind for kind, _ in self.events if kind == "turn_finished"]), 1)
 
     async def test_archived_chat_cannot_activate_native_goal(self) -> None:
@@ -452,8 +453,8 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("archived", str(raised.exception.detail))
         self.manager.set_thread_goal.assert_not_awaited()
         agent_server.codex_app_server_manager.assert_not_awaited()
-        self.assertEqual(agent_server.ACTIVE, {})
-        self.assertEqual(agent_server.BUSY_SESSIONS, set())
+        self.assertEqual(agent_server.RUNS.active, {})
+        self.assertEqual(agent_server.RUNS.busy, set())
 
     async def test_prior_queued_work_cannot_be_overtaken_by_goal_resume(self) -> None:
         gates = [
@@ -463,17 +464,17 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
             ("QUEUE_START_TASKS", {"chat": Mock(done=Mock(return_value=False))}),
         ]
         for name, pending in gates:
-            with self.subTest(gate=name), patch.object(agent_server, name, pending):
+            with self.subTest(gate=name), patch_server(agent_server, name, pending):
                 with self.assertRaises(HTTPException) as raised:
                     await self.resume()
 
                 self.assertEqual(raised.exception.status_code, 409)
                 self.assertIn("queued", str(raised.exception.detail))
                 self.manager.set_thread_goal.assert_not_awaited()
-                self.assertEqual(agent_server.ACTIVE, {})
-                self.assertEqual(agent_server.BUSY_SESSIONS, set())
-                self.assertEqual(agent_server.CURRENT_TURNS, {})
-                self.assertEqual(agent_server.SERVER_MAINTENANCE_SESSIONS, set())
+                self.assertEqual(agent_server.RUNS.active, {})
+                self.assertEqual(agent_server.RUNS.busy, set())
+                self.assertEqual(agent_server.RUNS.current_turns, {})
+                self.assertEqual(agent_server.RUNS.maintenance, set())
 
     async def test_launch_blocker_releases_reservation_before_native_activation(
         self,
@@ -487,10 +488,10 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("provider host is unavailable", str(raised.exception.detail))
         agent_server.turn_start_blocker.assert_awaited_once_with(ignore_session_id="chat")
         self.manager.set_thread_goal.assert_not_awaited()
-        self.assertEqual(agent_server.ACTIVE, {})
-        self.assertEqual(agent_server.BUSY_SESSIONS, set())
-        self.assertEqual(agent_server.CURRENT_TURNS, {})
-        self.assertEqual(agent_server.SERVER_MAINTENANCE_SESSIONS, set())
+        self.assertEqual(agent_server.RUNS.active, {})
+        self.assertEqual(agent_server.RUNS.busy, set())
+        self.assertEqual(agent_server.RUNS.current_turns, {})
+        self.assertEqual(agent_server.RUNS.maintenance, set())
 
     async def test_stop_pauses_goal_before_interrupting_resumed_native_turn(
         self,
@@ -523,8 +524,8 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.interrupt_observations[0]["params"], {
             "threadId": "thread-goal", "turnId": "turn-resumed",
         })
-        self.assertNotIn("chat", agent_server.ACTIVE)
-        self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
+        self.assertNotIn("chat", agent_server.RUNS.active)
+        self.assertNotIn("chat", agent_server.RUNS.busy)
         self.assertTrue(self.manager.subscriptions[0].closed)
 
     async def test_goal_rpc_failure_after_native_start_pauses_and_interrupts(
@@ -545,9 +546,9 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
             "goal_status": "paused",
             "busy": True,
         })
-        self.assertEqual(agent_server.ACTIVE, {})
-        self.assertEqual(agent_server.BUSY_SESSIONS, set())
-        self.assertEqual(agent_server.CURRENT_TURNS, {})
+        self.assertEqual(agent_server.RUNS.active, {})
+        self.assertEqual(agent_server.RUNS.busy, set())
+        self.assertEqual(agent_server.RUNS.current_turns, {})
         self.assertEqual(agent_server.CODEX_NATIVE_ACTION_TASKS, {})
         self.assertTrue(self.manager.subscriptions[0].closed)
 
@@ -572,8 +573,8 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
         self.manager.request.assert_awaited_once()
         agent_server.quarantine_codex_goal_thread.assert_not_awaited()
         self.assertEqual(self.manager.interrupt_observations[0]["goal_status"], "budgetLimited")
-        self.assertNotIn("chat", agent_server.ACTIVE)
-        self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
+        self.assertNotIn("chat", agent_server.RUNS.active)
+        self.assertNotIn("chat", agent_server.RUNS.busy)
         self.assertTrue(self.manager.subscriptions[0].closed)
 
     async def verify_native_terminal_before_stale_goal_response(self, status: str) -> None:
@@ -589,8 +590,8 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
             data["text"] for kind, data in self.events if kind == "assistant_text"
         ], ["Output before the goal response."])
         self.assertEqual(len([kind for kind, _ in self.events if kind == "turn_finished"]), 1)
-        self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
-        self.assertNotIn("chat", agent_server.ACTIVE)
+        self.assertNotIn("chat", agent_server.RUNS.busy)
+        self.assertNotIn("chat", agent_server.RUNS.active)
         self.assertTrue(self.manager.subscriptions[0].closed)
         self.manager.request.assert_not_awaited()
 
@@ -620,9 +621,9 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
             "goal_status": "paused",
             "busy": True,
         })
-        self.assertEqual(agent_server.ACTIVE, {})
-        self.assertEqual(agent_server.BUSY_SESSIONS, set())
-        self.assertEqual(agent_server.CURRENT_TURNS, {})
+        self.assertEqual(agent_server.RUNS.active, {})
+        self.assertEqual(agent_server.RUNS.busy, set())
+        self.assertEqual(agent_server.RUNS.current_turns, {})
         self.assertEqual(agent_server.CODEX_NATIVE_ACTION_TASKS, {})
         self.assertTrue(self.manager.subscriptions[0].closed)
 
@@ -645,7 +646,7 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(*consumers, return_exceptions=True)
 
         async def wait_for_cleanup() -> None:
-            while "chat" in agent_server.BUSY_SESSIONS:
+            while "chat" in agent_server.RUNS.busy:
                 await asyncio.sleep(0)
 
         await asyncio.wait_for(wait_for_cleanup(), timeout=1)
@@ -654,8 +655,8 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session["codex_goal"]["status"], "paused")
         self.assertTrue(self.manager.interrupt_observations)
         self.assertEqual(self.manager.interrupt_observations[0]["goal_status"], "paused")
-        self.assertEqual(agent_server.ACTIVE, {})
-        self.assertEqual(agent_server.CURRENT_TURNS, {})
+        self.assertEqual(agent_server.RUNS.active, {})
+        self.assertEqual(agent_server.RUNS.current_turns, {})
         self.assertTrue(self.manager.subscriptions[0].closed)
 
     async def test_pause_persistence_failure_cannot_strand_cancelled_consumer(
@@ -679,7 +680,7 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.manager.goal["status"], "paused")
         self.assertTrue(self.manager.interrupt_observations)
         self.assertEqual(self.manager.interrupt_observations[0]["goal_status"], "paused")
-        self.assertNotIn("chat", agent_server.ACTIVE)
-        self.assertNotIn("chat", agent_server.BUSY_SESSIONS)
-        self.assertNotIn("chat", agent_server.CURRENT_TURNS)
+        self.assertNotIn("chat", agent_server.RUNS.active)
+        self.assertNotIn("chat", agent_server.RUNS.busy)
+        self.assertNotIn("chat", agent_server.RUNS.current_turns)
         self.assertTrue(self.manager.subscriptions[0].closed)

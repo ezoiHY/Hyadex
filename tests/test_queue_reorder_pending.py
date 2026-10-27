@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, Mock
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
+from hyadex.runs import NamespaceRuns
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -35,6 +36,7 @@ def load_queue_reorder():
     module = ast.fix_missing_locations(ast.Module(body=[future, *selected], type_ignores=[]))
     namespace = {"Any": Any, "BaseModel": BaseModel, "Field": Field,
                  "HTTPException": HTTPException, "asyncio": asyncio, "deque": deque}
+    namespace["RUNS"] = NamespaceRuns(namespace)
     exec(compile(module, str(SOURCE), "exec"), namespace)
     return namespace
 

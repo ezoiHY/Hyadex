@@ -19,22 +19,22 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             "cwd": "/tmp",
         }
         self.previous_sessions = agent_server.STORE.sessions
-        self.previous_active = agent_server.ACTIVE
-        self.previous_busy = agent_server.BUSY_SESSIONS
-        self.previous_current = agent_server.CURRENT_TURNS
-        self.previous_tasks = agent_server.SESSION_TURN_TASKS
+        self.previous_active = agent_server.RUNS.active
+        self.previous_busy = agent_server.RUNS.busy
+        self.previous_current = agent_server.RUNS.current_turns
+        self.previous_tasks = agent_server.RUNS.turn_tasks
         self.previous_lifecycle_locks = agent_server.SESSION_LIFECYCLE_LOCKS
         agent_server.STORE.sessions = {self.session_id: self.session}
-        agent_server.ACTIVE = {}
-        agent_server.BUSY_SESSIONS = set()
-        agent_server.CURRENT_TURNS = {}
-        agent_server.SESSION_TURN_TASKS = {}
+        agent_server.RUNS.active = {}
+        agent_server.RUNS.busy = set()
+        agent_server.RUNS.current_turns = {}
+        agent_server.RUNS.turn_tasks = {}
         agent_server.SESSION_LIFECYCLE_LOCKS = {}
 
     async def asyncTearDown(self) -> None:
         pending = [
             task
-            for tasks in agent_server.SESSION_TURN_TASKS.values()
+            for tasks in agent_server.RUNS.turn_tasks.values()
             for task in tasks
             if not task.done()
         ]
@@ -43,10 +43,10 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         agent_server.STORE.sessions = self.previous_sessions
-        agent_server.ACTIVE = self.previous_active
-        agent_server.BUSY_SESSIONS = self.previous_busy
-        agent_server.CURRENT_TURNS = self.previous_current
-        agent_server.SESSION_TURN_TASKS = self.previous_tasks
+        agent_server.RUNS.active = self.previous_active
+        agent_server.RUNS.busy = self.previous_busy
+        agent_server.RUNS.current_turns = self.previous_current
+        agent_server.RUNS.turn_tasks = self.previous_tasks
         agent_server.SESSION_LIFECYCLE_LOCKS = self.previous_lifecycle_locks
 
     def provider_runtime_env_patch(self):
@@ -61,8 +61,8 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_busy_first_turn_rejects_backend_change_without_provider_id(
         self,
     ) -> None:
-        agent_server.BUSY_SESSIONS.add(self.session_id)
-        agent_server.CURRENT_TURNS[self.session_id] = {
+        agent_server.RUNS.busy.add(self.session_id)
+        agent_server.RUNS.current_turns[self.session_id] = {
             "run_id": None,
             "backend": agent_server.BACKEND_CLAUDE,
         }
@@ -84,7 +84,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_active_record_rejects_change_even_without_busy_reservation(
         self,
     ) -> None:
-        agent_server.ACTIVE[self.session_id] = {
+        agent_server.RUNS.active[self.session_id] = {
             "run_id": "run-active",
             "backend": agent_server.BACKEND_CLAUDE,
         }
@@ -106,7 +106,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         provider_start = asyncio.create_task(wait_forever())
-        agent_server.SESSION_TURN_TASKS = {
+        agent_server.RUNS.turn_tasks = {
             self.session_id: {provider_start},
         }
         update = AsyncMock(return_value=self.session)
@@ -125,7 +125,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_noop_backend_updates_remain_allowed_while_starting(self) -> None:
         provider_start = asyncio.create_task(wait_forever())
-        agent_server.SESSION_TURN_TASKS = {
+        agent_server.RUNS.turn_tasks = {
             self.session_id: {provider_start},
         }
         update = AsyncMock(return_value=self.session)
@@ -147,7 +147,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_completed_registry_entries_do_not_block_a_change(self) -> None:
         completed = asyncio.create_task(asyncio.sleep(0))
         await completed
-        agent_server.SESSION_TURN_TASKS = {
+        agent_server.RUNS.turn_tasks = {
             self.session_id: {completed},
         }
         changed = {**self.session, "backend": agent_server.BACKEND_CODEX}
@@ -206,12 +206,12 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             for _attempt in range(20):
-                if agent_server.SESSION_TURN_TASKS.get(self.session_id):
+                if agent_server.RUNS.turn_tasks.get(self.session_id):
                     break
                 await asyncio.sleep(0)
             self.assertIn(
                 turn_task,
-                agent_server.SESSION_TURN_TASKS.get(self.session_id, set()),
+                agent_server.RUNS.turn_tasks.get(self.session_id, set()),
             )
 
             allow_update.set()
@@ -222,9 +222,9 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(update_response["session"]["backend"], "codex")
         self.assertEqual(raised.exception.status_code, 409)
         self.assertIn("backend changed", str(raised.exception.detail))
-        self.assertNotIn(self.session_id, agent_server.BUSY_SESSIONS)
-        self.assertNotIn(self.session_id, agent_server.CURRENT_TURNS)
-        self.assertNotIn(self.session_id, agent_server.SESSION_TURN_TASKS)
+        self.assertNotIn(self.session_id, agent_server.RUNS.busy)
+        self.assertNotIn(self.session_id, agent_server.RUNS.current_turns)
+        self.assertNotIn(self.session_id, agent_server.RUNS.turn_tasks)
 
     async def test_durable_first_turn_lock_blocks_backend_without_provider_id(
         self,
@@ -351,9 +351,9 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
                 run.assert_not_called()
                 append.assert_not_awaited()
                 mark.assert_not_awaited()
-                self.assertNotIn(self.session_id, agent_server.BUSY_SESSIONS)
-                self.assertNotIn(self.session_id, agent_server.CURRENT_TURNS)
-                self.assertNotIn(self.session_id, agent_server.SESSION_TURN_TASKS)
+                self.assertNotIn(self.session_id, agent_server.RUNS.busy)
+                self.assertNotIn(self.session_id, agent_server.RUNS.current_turns)
+                self.assertNotIn(self.session_id, agent_server.RUNS.turn_tasks)
 
     async def test_2048_mib_send_reaches_provider_admission(self) -> None:
         self.session["title"] = "Existing chat"
@@ -464,7 +464,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 provider_release.set()
                 await asyncio.gather(
-                    *list(agent_server.SESSION_TURN_TASKS.get(self.session_id, set())),
+                    *list(agent_server.RUNS.turn_tasks.get(self.session_id, set())),
                     return_exceptions=True,
                 )
 
@@ -479,7 +479,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             await provider_release.wait()
 
         with (
-            patch.object(agent_server, "RUN_METADATA", run_metadata),
+            patch.object(agent_server.RUNS, "run_metadata", run_metadata),
             patch.object(
                 agent_server.STORE,
                 "mark_backend_started",
@@ -542,9 +542,9 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             )
             try:
                 run_id = result["run_id"]
-                self.assertIn(self.session_id, agent_server.BUSY_SESSIONS)
+                self.assertIn(self.session_id, agent_server.RUNS.busy)
                 self.assertEqual(
-                    agent_server.CURRENT_TURNS[self.session_id]["run_id"],
+                    agent_server.RUNS.current_turns[self.session_id]["run_id"],
                     run_id,
                 )
                 self.assertIn(run_id, run_metadata)
@@ -552,7 +552,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 provider_release.set()
                 await asyncio.gather(
-                    *list(agent_server.SESSION_TURN_TASKS.get(self.session_id, set())),
+                    *list(agent_server.RUNS.turn_tasks.get(self.session_id, set())),
                     return_exceptions=True,
                 )
 
@@ -567,18 +567,18 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
 
         async def revoke_and_replace(run_id: str) -> None:
             revoked_run_ids.append(run_id)
-            async with agent_server.ACTIVE_LOCK:
-                agent_server.CURRENT_TURNS[self.session_id] = {
+            async with agent_server.RUNS.active_lock:
+                agent_server.RUNS.current_turns[self.session_id] = {
                     "run_id": "run-replacement",
                     "_server_restart_admission_id": "replacement-admission",
                 }
-                agent_server.ACTIVE[self.session_id] = {
+                agent_server.RUNS.active[self.session_id] = {
                     "run_id": "run-replacement",
                 }
-                agent_server.BUSY_SESSIONS.add(self.session_id)
+                agent_server.RUNS.busy.add(self.session_id)
 
         with (
-            patch.object(agent_server, "RUN_METADATA", run_metadata),
+            patch.object(agent_server.RUNS, "run_metadata", run_metadata),
             patch.object(
                 agent_server.STORE,
                 "mark_backend_started",
@@ -645,14 +645,14 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             {"purpose": "replacement"},
         )
         self.assertEqual(
-            agent_server.CURRENT_TURNS[self.session_id]["run_id"],
+            agent_server.RUNS.current_turns[self.session_id]["run_id"],
             "run-replacement",
         )
         self.assertEqual(
-            agent_server.ACTIVE[self.session_id]["run_id"],
+            agent_server.RUNS.active[self.session_id]["run_id"],
             "run-replacement",
         )
-        self.assertIn(self.session_id, agent_server.BUSY_SESSIONS)
+        self.assertIn(self.session_id, agent_server.RUNS.busy)
 
     async def test_cancel_during_precommit_failure_cleanup_does_not_strand_slot(
         self,
@@ -669,7 +669,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             await release_revoke.wait()
 
         with (
-            patch.object(agent_server, "RUN_METADATA", run_metadata),
+            patch.object(agent_server.RUNS, "run_metadata", run_metadata),
             patch.object(
                 agent_server.STORE,
                 "mark_backend_started",
@@ -737,11 +737,11 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
                 start.cancel()
                 await asyncio.sleep(0)
                 self.assertFalse(start.done())
-                self.assertIn(self.session_id, agent_server.BUSY_SESSIONS)
+                self.assertIn(self.session_id, agent_server.RUNS.busy)
                 start.cancel()
                 await asyncio.sleep(0)
                 self.assertFalse(start.done())
-                self.assertIn(self.session_id, agent_server.BUSY_SESSIONS)
+                self.assertIn(self.session_id, agent_server.RUNS.busy)
 
                 release_revoke.set()
                 with self.assertRaises(asyncio.CancelledError):
@@ -752,8 +752,8 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
                     start.cancel()
                     await asyncio.gather(start, return_exceptions=True)
 
-        self.assertNotIn(self.session_id, agent_server.BUSY_SESSIONS)
-        self.assertNotIn(self.session_id, agent_server.CURRENT_TURNS)
+        self.assertNotIn(self.session_id, agent_server.RUNS.busy)
+        self.assertNotIn(self.session_id, agent_server.RUNS.current_turns)
         self.assertEqual(run_metadata, {})
 
     async def test_precommit_cleanup_failure_still_releases_owned_slot(
@@ -768,7 +768,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             raise OSError("capability revoke failed")
 
         with (
-            patch.object(agent_server, "RUN_METADATA", run_metadata),
+            patch.object(agent_server.RUNS, "run_metadata", run_metadata),
             patch.object(
                 agent_server.STORE,
                 "mark_backend_started",
@@ -829,8 +829,8 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertIsInstance(raised.exception.__cause__, RuntimeError)
-        self.assertNotIn(self.session_id, agent_server.BUSY_SESSIONS)
-        self.assertNotIn(self.session_id, agent_server.CURRENT_TURNS)
+        self.assertNotIn(self.session_id, agent_server.RUNS.busy)
+        self.assertNotIn(self.session_id, agent_server.RUNS.current_turns)
         self.assertEqual(run_metadata, {})
 
 

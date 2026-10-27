@@ -6,6 +6,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from hyadex.runs import NamespaceRuns
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -49,6 +50,7 @@ def load_admission(env=None):
         "SERVER_MAINTENANCE_SESSIONS": set(), "CLAUDE_STOP_FENCE_SESSIONS": set(),
         "stop_cleanup_in_progress": lambda _: False,
     }
+    ns["RUNS"] = NamespaceRuns(ns)
     exec(ADMISSION_CODE, ns)
     return ns
 

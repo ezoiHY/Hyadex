@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, Mock
 import uuid
 
 from tests.test_claude_shutdown_status_isolated import load_probe
+from hyadex.runs import NamespaceRuns
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -50,6 +51,7 @@ def storage_source():
               refresh_native_session_title=AsyncMock(),
               schedule_generated_session_title=Mock(),
               concise_error_message=str)
+    ns["RUNS"] = NamespaceRuns(ns)
     exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), "<isolated-storage>", "exec"), ns)
     return ns
 

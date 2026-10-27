@@ -15,6 +15,7 @@ from fastapi import BackgroundTasks, HTTPException, Request
 from fastapi.responses import Response
 
 import agent_server
+from tests.runtime_state import patch_server
 
 
 TOKEN = "restart_test_token_abcdefghijklmnopqrstuvwxyz"
@@ -146,10 +147,10 @@ def restart_environment(root: Path):
             "MANAGED_SERVER_SERVICE_KIND_CACHE",
             None,
         ))
-        stack.enter_context(patch.object(agent_server, "BUSY_SESSIONS", set()))
+        stack.enter_context(patch.object(agent_server.RUNS, "busy", set()))
         stack.enter_context(patch.object(
-            agent_server,
-            "SERVER_MAINTENANCE_SESSIONS",
+            agent_server.RUNS,
+            "maintenance",
             set(),
         ))
         stack.enter_context(patch.object(agent_server, "DELETING_SESSIONS", set()))
@@ -158,8 +159,8 @@ def restart_environment(root: Path):
             "CODEX_GOALS_RECONFIGURING",
             False,
         ))
-        stack.enter_context(patch.object(agent_server, "QUEUED_TURNS", {}))
-        stack.enter_context(patch.object(agent_server, "RUN_NOW_TURNS", {}))
+        stack.enter_context(patch.object(agent_server.RUNS, "queued", {}))
+        stack.enter_context(patch.object(agent_server.RUNS, "run_now", {}))
         stack.enter_context(patch.object(
             agent_server,
             "provider_background_work_labels_from_snapshot",
@@ -783,7 +784,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), \
-                 patch.object(agent_server, "BUSY_SESSIONS", {"private-chat-id"}), \
+                 patch.object(agent_server.RUNS, "busy", {"private-chat-id"}), \
                  patch.object(
                      agent_server,
                      "provider_background_work_labels_from_snapshot",
@@ -1065,7 +1066,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temporary)
             queued = deque([{"queued_id": "kept", "_durable": True}])
             with restart_environment(root), \
-                 patch.object(agent_server, "QUEUED_TURNS", {"chat": queued}):
+                 patch.object(agent_server.RUNS, "queued", {"chat": queued}):
                 body = restart_body()
                 tasks = BackgroundTasks()
                 status = await agent_server.restart_server_endpoint(
@@ -1335,7 +1336,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 root = Path(temporary)
                 with restart_environment(root), ExitStack() as stack:
                     for name, value in changes.items():
-                        stack.enter_context(patch.object(agent_server, name, value))
+                        stack.enter_context(patch_server(agent_server, name, value))
                     with self.assertRaises(HTTPException) as raised:
                         await agent_server.restart_server_endpoint(
                             restart_body(),
@@ -1365,7 +1366,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), \
-                 patch.object(agent_server, "BUSY_SESSIONS", {"chat"}), \
+                 patch.object(agent_server.RUNS, "busy", {"chat"}), \
                  patch.object(
                      agent_server,
                      "active_provider_background_work_labels",
@@ -1383,28 +1384,28 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                agent_server.BUSY_SESSIONS.add("private-chat-id")
-                agent_server.CURRENT_TURNS["private-chat-id"] = {
+                agent_server.RUNS.busy.add("private-chat-id")
+                agent_server.RUNS.current_turns["private-chat-id"] = {
                     "run_id": "private-run-a",
                     "_server_restart_admission_id": "private-admission-a",
                 }
                 first_run = agent_server.server_restart_blocker_snapshot_locked()
 
-                agent_server.CURRENT_TURNS["private-chat-id"]["run_id"] = (
+                agent_server.RUNS.current_turns["private-chat-id"]["run_id"] = (
                     "private-run-b"
                 )
                 replacement_run = (
                     agent_server.server_restart_blocker_snapshot_locked()
                 )
 
-                agent_server.CURRENT_TURNS["private-chat-id"] = {
+                agent_server.RUNS.current_turns["private-chat-id"] = {
                     "run_id": None,
                     "_server_restart_admission_id": "private-admission-b",
                 }
                 first_prebind = (
                     agent_server.server_restart_blocker_snapshot_locked()
                 )
-                agent_server.CURRENT_TURNS["private-chat-id"] = {
+                agent_server.RUNS.current_turns["private-chat-id"] = {
                     "run_id": None,
                     "_server_restart_admission_id": "private-admission-c",
                 }
@@ -1412,14 +1413,14 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                     agent_server.server_restart_blocker_snapshot_locked()
                 )
 
-                agent_server.CURRENT_TURNS["private-chat-id"] = {
+                agent_server.RUNS.current_turns["private-chat-id"] = {
                     "run_id": None,
                     "codex_control_reservation_id": "private-control-a",
                 }
                 first_control = (
                     agent_server.server_restart_blocker_snapshot_locked()
                 )
-                agent_server.CURRENT_TURNS["private-chat-id"] = {
+                agent_server.RUNS.current_turns["private-chat-id"] = {
                     "run_id": None,
                     "codex_control_reservation_id": "private-control-b",
                 }
@@ -1500,7 +1501,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 root = Path(temporary)
                 with restart_environment(root) as forced_signal, ExitStack() as stack:
                     for name, value in changes.items():
-                        stack.enter_context(patch.object(agent_server, name, value))
+                        stack.enter_context(patch_server(agent_server, name, value))
                     with self.assertRaises(HTTPException) as raised:
                         await agent_server.restart_server_endpoint(
                             restart_body(),
@@ -1533,9 +1534,9 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             ])
             run_now = {"queued_id": "unsafe-2", "_update_transitioning": True}
             with restart_environment(root) as forced_signal, \
-                 patch.object(agent_server, "BUSY_SESSIONS", {"chat-1", "chat-2"}), \
-                 patch.object(agent_server, "QUEUED_TURNS", {"chat-1": queued}), \
-                 patch.object(agent_server, "RUN_NOW_TURNS", {"chat-5": run_now}), \
+                 patch.object(agent_server.RUNS, "busy", {"chat-1", "chat-2"}), \
+                 patch.object(agent_server.RUNS, "queued", {"chat-1": queued}), \
+                 patch.object(agent_server.RUNS, "run_now", {"chat-5": run_now}), \
                  patch.object(
                      agent_server,
                      "provider_background_work_labels_from_snapshot",
@@ -1600,7 +1601,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                     force=True,
                     blocker_revision=confirmed["revision"],
                 )
-                agent_server.BUSY_SESSIONS.add("newly-started-chat")
+                agent_server.RUNS.busy.add("newly-started-chat")
                 status = await agent_server.restart_server_endpoint(
                     body,
                     http_request(method="POST"),
@@ -1658,8 +1659,8 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             # Contending the module-level locks would bind them to this test's
             # event loop; use fresh instances so other test loops stay clean.
             with restart_environment(root) as forced_signal, \
-                 patch.object(agent_server, "ACTIVE_LOCK", asyncio.Lock()), \
-                 patch.object(agent_server, "QUEUE_LOCK", asyncio.Lock()), \
+                 patch.object(agent_server.RUNS, "active_lock", asyncio.Lock()), \
+                 patch.object(agent_server.RUNS, "queue_lock", asyncio.Lock()), \
                  patch.object(
                      agent_server,
                      "UNSAFE_HTTP_MUTATION_ADMISSION_LOCK",
@@ -1680,7 +1681,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                      "SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS",
                      0.05,
                  ):
-                await agent_server.ACTIVE_LOCK.acquire()
+                await agent_server.RUNS.active_lock.acquire()
                 await agent_server.SERVER_LIFECYCLE_OPERATION_LOCK.acquire()
                 try:
                     status = await asyncio.wait_for(
@@ -1696,7 +1697,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                         timeout=5,
                     )
                 finally:
-                    agent_server.ACTIVE_LOCK.release()
+                    agent_server.RUNS.active_lock.release()
                     agent_server.SERVER_LIFECYCLE_OPERATION_LOCK.release()
                 forced_signal.assert_called_once_with(status["request_id"])
 

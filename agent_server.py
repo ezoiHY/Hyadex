@@ -161,6 +161,7 @@ from hyadex import autopilot
 from hyadex.routes.autopilot import create_autopilot_router
 from hyadex import groups as group_chat
 from hyadex.events import EventBus
+from hyadex.runs import RunState
 from hyadex.routes.groups import create_group_router
 import side_questions
 import title_generation
@@ -3840,7 +3841,7 @@ def effective_codex_approval_policy(sess: dict[str, Any]) -> str:
 
 def active_codex_approval_policy(session_id: str, thread_id: str) -> str:
     """Use the current native turn's policy, not next-turn settings edits."""
-    active = ACTIVE.get(session_id) or {}
+    active = RUNS.active.get(session_id) or {}
     captured = str(active.get("codex_approval_policy") or "")
     if (
         str(active.get("provider_thread_id") or "") == thread_id
@@ -7785,15 +7786,10 @@ async def broadcast_committed_emergency_removal(session_id: str) -> None:
         await join_task_despite_caller_cancellation(task)
 
 
-ACTIVE: dict[str, dict[str, Any]] = {}
-BUSY_SESSIONS: set[str] = set()
+RUNS = RunState()
 # Chats with a provider-transcript catch-up already queued or running, so a
 # burst of opens cannot start overlapping syncs of the same chat.
 HISTORY_SYNC_SCHEDULED: set[str] = set()
-# Short provider-maintenance requests (for example, loading a selected Codex
-# thread) participate in update admission without impersonating a user turn in
-# runtime/status responses.
-SERVER_MAINTENANCE_SESSIONS: set[str] = set()
 # A failed durable Claude Stop fence keeps the per-chat maintenance exclusion
 # owned until a later explicit Stop can complete the audit marker. This blocks
 # managed restart admission without pretending the evicted process is alive.
@@ -7806,24 +7802,6 @@ CLAUDE_STOP_FENCE_RETRY_DELAYS_SECONDS = (5.0, 15.0, 30.0, 60.0)
 CLAUDE_STOP_FENCE_ATTEMPT_LOCKS: dict[str, asyncio.Lock] = {}
 CLAUDE_STOP_FENCE_ATTEMPT_TASKS: dict[str, set[asyncio.Task[Any]]] = {}
 SERVER_SHUTTING_DOWN = False
-CURRENT_TURNS: dict[str, dict[str, Any]] = {}
-STOP_REQUESTS: set[str] = set()
-STOPPED_RUNS: set[str] = set()
-# Explicit Stop owns only the short admission edge under the session lifecycle
-# lock.  The provider/subagent teardown can then continue without making
-# unrelated per-chat reads or durable queue admissions wait behind it.  The
-# operation task remains a separate admission fence until teardown finishes,
-# so a replacement turn cannot bind while cleanup for the old owner is still
-# running.
-EXPLICIT_STOP_OPERATIONS: dict[str, asyncio.Task[dict[str, Any]]] = {}
-# The inner provider teardown can outlive the bounded explicit Stop operation.
-# Keep that child keyed by session so Delete cannot remove durable state while
-# the old owner can still append events or mutate lifecycle bookkeeping.
-DETACHED_STOP_TASKS: set[asyncio.Task[Any]] = set()
-DETACHED_STOP_TASKS_BY_SESSION: dict[str, set[asyncio.Task[Any]]] = {}
-ACTIVE_LOCK = asyncio.Lock()
-QUEUED_TURNS: dict[str, deque[dict[str, Any]]] = {}
-RUN_NOW_TURNS: dict[str, dict[str, Any]] = {}
 # Startup rebuilds durable queue rows from append-only chat timelines. While
 # this task is present, every queue/start admission must wait for the same
 # generation (or fail retryably) so a new prompt cannot leapfrog an older row
@@ -7833,21 +7811,6 @@ QUEUE_RECOVERY_TASK: asyncio.Task[tuple[int, int]] | None = None
 QUEUE_RECOVERY_READY: set[str] = set()
 QUEUE_CHECKPOINT_DIRTY: set[str] = set()
 QUEUE_RECOVERY_ADMISSION_WAIT_SECONDS = 2.0
-STEERING_SESSIONS: set[str] = set()
-# A non-native Force Send keeps the steering fence while the interrupted
-# provider releases BUSY. Track that short-lived owner explicitly so a
-# cancelled waiter cannot leave an immortal, ownerless queue barrier.
-STEERING_WAIT_TASKS: dict[
-    str,
-    tuple[str, float, asyncio.Task[Any]],
-] = {}
-# One queue promotion owner per chat. Without this fence, two scheduled
-# drain tasks can pop A then B before either reserves the provider slot, and
-# whichever reaches the lifecycle lock first can run B ahead of A.
-QUEUE_START_TASKS: dict[str, asyncio.Task[Any]] = {}
-QUEUE_LOCK = asyncio.Lock()
-RUN_NOW_REQUESTS: dict[str, tuple[str, asyncio.Task[dict[str, Any]]]] = {}
-RUN_NOW_REQUEST_LOCK = asyncio.Lock()
 RUN_NOW_PROVIDER_HANDOFF_TIMEOUT_SECONDS = max(
     5.0,
     float(
@@ -7887,7 +7850,6 @@ RUN_NOW_COMPLETED_RESULTS: OrderedDict[
     tuple[str, str],
     dict[str, Any],
 ] = OrderedDict()
-RUN_METADATA: dict[str, dict[str, Any]] = {}
 CODEX_APP_SERVER_MANAGER: CodexAppServerManager | None = None
 CODEX_APP_SERVER_MANAGER_LOCK = asyncio.Lock()
 CODEX_RETIRED_APP_SERVER_MANAGERS: list[CodexAppServerManager] = []
@@ -7980,7 +7942,6 @@ CODEX_NATIVE_ACTION_TASKS: dict[tuple[str, str], asyncio.Task[Any]] = {}
 # Exact reservation owner for a native-control terminal row that has released
 # BUSY but still blocks new admission until publication cleanup completes.
 CODEX_CONTROL_TERMINAL_FENCES: dict[str, str] = {}
-SESSION_TURN_TASKS: dict[str, set[asyncio.Task[Any]]] = {}
 CODEX_INTERACTION_HANDLER_TASKS: dict[str, set[asyncio.Task[Any]]] = {}
 CLAUDE_INTERACTION_HANDLER_TASKS: dict[str, set[asyncio.Task[Any]]] = {}
 SESSION_LIFECYCLE_LOCKS: dict[str, asyncio.Lock] = {}
@@ -8077,7 +8038,7 @@ def session_lifecycle_lock(session_id: str) -> asyncio.Lock:
 def explicit_stop_in_progress(session_id: str) -> bool:
     """Return whether explicit Stop still owns turn-admission cleanup."""
 
-    operation = EXPLICIT_STOP_OPERATIONS.get(session_id)
+    operation = RUNS.explicit_stops.get(session_id)
     return operation is not None and not operation.done()
 
 
@@ -8086,7 +8047,7 @@ def detached_stop_in_progress(session_id: str) -> bool:
 
     return any(
         not task.done()
-        for task in DETACHED_STOP_TASKS_BY_SESSION.get(session_id, ())
+        for task in RUNS.detached_stop_tasks_by_session.get(session_id, ())
     )
 
 
@@ -8143,7 +8104,7 @@ def log_queue_promotion_fence(session_id: str, fence: str, reason: str) -> None:
         session_id,
         fence,
         reason,
-        len(QUEUED_TURNS.get(session_id) or ()),
+        len(RUNS.queued.get(session_id) or ()),
     )
 
 
@@ -8152,12 +8113,12 @@ def explicit_stop_session_ids() -> set[str]:
 
     outer = {
         session_id
-        for session_id, operation in EXPLICIT_STOP_OPERATIONS.items()
+        for session_id, operation in RUNS.explicit_stops.items()
         if not operation.done()
     }
     inner = {
         session_id
-        for session_id, tasks in DETACHED_STOP_TASKS_BY_SESSION.items()
+        for session_id, tasks in RUNS.detached_stop_tasks_by_session.items()
         if any(not task.done() for task in tasks)
     }
     return outer | inner
@@ -8289,7 +8250,7 @@ TERMINAL_INPUT_WRITE_TIMEOUT_SECONDS = 5.0
 
 
 def run_event_metadata(run_id: str) -> dict[str, Any]:
-    metadata = RUN_METADATA.get(run_id) or {}
+    metadata = RUNS.run_metadata.get(run_id) or {}
     return {key: value for key, value in metadata.items() if value is not None}
 
 
@@ -8911,7 +8872,7 @@ async def enqueue_turn(
     queued_id = f"queued_{uuid.uuid4().hex[:16]}"
     item: dict[str, Any]
     display_prompt = req.display_prompt if req.display_prompt is not None else req.prompt
-    async with QUEUE_LOCK:
+    async with RUNS.queue_lock:
         # Recheck lifecycle admission under the durable queue write lock.
         lifecycle_blocker = server_lifecycle_admission_blocker()
         if lifecycle_blocker:
@@ -8937,7 +8898,7 @@ async def enqueue_turn(
             # durable event exists.
             "_durable": False,
         }
-        queue = QUEUED_TURNS.setdefault(session_id, deque())
+        queue = RUNS.queued.setdefault(session_id, deque())
         queue.append(item)
         position = len(queue)
         try:
@@ -8967,21 +8928,21 @@ async def enqueue_turn(
         except BaseException:
             # A provisional row is safe to remove. Roll back only this exact
             # object so concurrent additions keep their original order.
-            queue = QUEUED_TURNS.get(session_id)
+            queue = RUNS.queued.get(session_id)
             if queue is not None:
                 kept = deque(candidate for candidate in queue if candidate is not item)
                 if kept:
-                    QUEUED_TURNS[session_id] = kept
+                    RUNS.queued[session_id] = kept
                 else:
-                    QUEUED_TURNS.pop(session_id, None)
+                    RUNS.queued.pop(session_id, None)
             raise
         # The fsynced turn_queued event is the authoritative ownership
         # boundary. Publish that fact without another await so cancellation
         # can never turn a recoverable row into a disk-only "orphan".
         item["_durable"] = True
     try:
-        async with ACTIVE_LOCK:
-            still_busy = session_id in BUSY_SESSIONS
+        async with RUNS.active_lock:
+            still_busy = session_id in RUNS.busy
     except asyncio.CancelledError:
         # The message already exists in the durable timeline. Keep the live
         # row and let normal promotion settle it instead of waiting for an
@@ -9005,12 +8966,12 @@ async def unqueue_turn(session_id: str, queued_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="session not found")
 
     removed: dict[str, Any] | None = None
-    async with QUEUE_LOCK:
+    async with RUNS.queue_lock:
         lifecycle_blocker = server_lifecycle_admission_blocker()
         if lifecycle_blocker:
             raise HTTPException(status_code=503, detail=lifecycle_blocker)
         reject_promoted_queue_mutation(session_id, queued_id)
-        queue = QUEUED_TURNS.get(session_id)
+        queue = RUNS.queued.get(session_id)
         if queue:
             original_items = list(queue)
             removed_index = next(
@@ -9029,10 +8990,10 @@ async def unqueue_turn(session_id: str, queued_id: str) -> dict[str, Any]:
                 if index != removed_index
             )
             if kept:
-                QUEUED_TURNS[session_id] = kept
+                RUNS.queued[session_id] = kept
                 remaining = len(kept)
             else:
-                QUEUED_TURNS.pop(session_id, None)
+                RUNS.queued.pop(session_id, None)
                 remaining = 0
         else:
             remaining = 0
@@ -9049,7 +9010,7 @@ async def unqueue_turn(session_id: str, queued_id: str) -> dict[str, Any]:
                 "purpose": removed.get("purpose"),
             })
         except BaseException:
-            QUEUED_TURNS[session_id] = deque(original_items)
+            RUNS.queued[session_id] = deque(original_items)
             raise
     return {
         "ok": True,
@@ -9420,12 +9381,12 @@ def provider_capability_is_attached_to_live_run(
     immediately; ordinary queued, stale, or neighboring run IDs never match.
     """
 
-    active = ACTIVE.get(source_session_id) or {}
+    active = RUNS.active.get(source_session_id) or {}
     transition_ready = active.get("logical_transition_ready")
     predecessor_run_id = str(
         active.get("logical_transition_predecessor_run_id") or ""
     )
-    current = CURRENT_TURNS.get(source_session_id) or {}
+    current = RUNS.current_turns.get(source_session_id) or {}
     current_run_id = str(current.get("run_id") or "")
     active_run_id = str(active.get("run_id") or "")
     candidate_run_id = str(
@@ -9463,9 +9424,9 @@ def provider_capability_is_attached_to_live_run(
     )
     if candidate_transition_pending:
         return bool(
-            source_session_id in BUSY_SESSIONS
+            source_session_id in RUNS.busy
             and allow_native_transition
-            and source_run_id not in STOPPED_RUNS
+            and source_run_id not in RUNS.stopped_runs
             and not active.get("stop_requested")
             and active.get("logical_transition_authority_open") is True
             and native_transition_nonce
@@ -9478,13 +9439,13 @@ def provider_capability_is_attached_to_live_run(
             and current_run_id in {predecessor_run_id, candidate_run_id}
         )
     if current_run_id == source_run_id:
-        if source_run_id in STOPPED_RUNS:
+        if source_run_id in RUNS.stopped_runs:
             return False
         if active_run_id == source_run_id and active.get("stop_requested"):
             return False
         return not predecessor_suspended
     return bool(
-        source_session_id in BUSY_SESSIONS
+        source_session_id in RUNS.busy
         and allow_native_transition
         and not active.get("stop_requested")
         and isinstance(transition_ready, asyncio.Event)
@@ -9619,8 +9580,8 @@ def provider_tool_active_matches(
 ) -> tuple[bool, asyncio.Event | None]:
     """Check the no-await portion of the exact live provider ownership fence."""
 
-    active = ACTIVE.get(session_id) or {}
-    current = CURRENT_TURNS.get(session_id) or {}
+    active = RUNS.active.get(session_id) or {}
+    current = RUNS.current_turns.get(session_id) or {}
     ready = active.get("provider_tools_ready")
     expected_transport = (
         CODEX_TRANSPORT_APP_SERVER
@@ -9628,12 +9589,12 @@ def provider_tool_active_matches(
         else CLAUDE_TRANSPORT_AGENT_SDK
     )
     matches = bool(
-        session_id in BUSY_SESSIONS
+        session_id in RUNS.busy
         and session_id not in DELETING_SESSIONS
         and session_id not in DELETED_SESSION_TOMBSTONES
         and session_id in STORE.sessions
         and run_id
-        and run_id not in STOPPED_RUNS
+        and run_id not in RUNS.stopped_runs
         and str(active.get("run_id") or "") == run_id
         and str(current.get("run_id") or "") == run_id
         and active.get("backend") == backend
@@ -9671,8 +9632,8 @@ def codex_native_goal_owner_matches(session_id: str, run_id: str, thread_id: str
     Native goal continuation runs without an app-server active-turn record, so
     provider tool calls are matched against the reserved native operation.
     """
-    active = ACTIVE.get(session_id) or {}
-    current = CURRENT_TURNS.get(session_id) or {}
+    active = RUNS.active.get(session_id) or {}
+    current = RUNS.current_turns.get(session_id) or {}
     reservation = str(active.get("codex_control_reservation_id") or "")
     goal = (STORE.sessions.get(session_id) or {}).get("codex_goal") or {}
     return bool(
@@ -9700,7 +9661,7 @@ async def provider_tool_capability_snapshot(
 ) -> tuple[Path, dict[str, str]]:
     """Resolve exactly one capability between two exact ACTIVE checks."""
 
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         matches, ready = provider_tool_active_matches(
             session_id,
             run_id,
@@ -9736,7 +9697,7 @@ async def provider_tool_capability_snapshot(
     else:
         raise ProviderToolError("provider tool backend is unsupported")
 
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         matches, _ready = provider_tool_active_matches(
             session_id,
             run_id,
@@ -9767,7 +9728,7 @@ async def provider_tool_capability_snapshot(
             capability.get("provider_runtime_env")
         )
 
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         matches, _ready = provider_tool_active_matches(
             session_id,
             run_id,
@@ -10381,9 +10342,9 @@ def public_queued_turn(
 
 async def queued_turns_snapshot(session_id: str) -> list[dict[str, Any]]:
     await wait_for_queue_recovery_admission(session_id)
-    async with QUEUE_LOCK:
-        queue = list(QUEUED_TURNS.get(session_id) or [])
-        run_now = RUN_NOW_TURNS.get(session_id)
+    async with RUNS.queue_lock:
+        queue = list(RUNS.queued.get(session_id) or [])
+        run_now = RUNS.run_now.get(session_id)
     items: list[tuple[dict[str, Any], bool]] = []
     if run_now is not None:
         items.append((run_now, True))
@@ -10403,7 +10364,7 @@ async def queued_turns_snapshot(session_id: str) -> list[dict[str, Any]]:
 def reject_promoted_queue_mutation(session_id: str, queued_id: str) -> None:
     """Return a truthful stable contract for a row already handed to a turn."""
 
-    promoted = RUN_NOW_TURNS.get(session_id)
+    promoted = RUNS.run_now.get(session_id)
     if promoted is None or str(promoted.get("queued_id") or "") != queued_id:
         return
     raise HTTPException(
@@ -10433,12 +10394,12 @@ async def update_queued_turn(session_id: str, queued_id: str, req: UpdateQueuedT
     update_fields_set = request_fields_set(req)
 
     updated: dict[str, Any] | None = None
-    async with QUEUE_LOCK:
+    async with RUNS.queue_lock:
         lifecycle_blocker = server_lifecycle_admission_blocker()
         if lifecycle_blocker:
             raise HTTPException(status_code=503, detail=lifecycle_blocker)
         reject_promoted_queue_mutation(session_id, queued_id)
-        queue = QUEUED_TURNS.get(session_id)
+        queue = RUNS.queued.get(session_id)
         if queue:
             for idx, item in enumerate(queue):
                 if item.get("queued_id") == queued_id:
@@ -10534,12 +10495,12 @@ async def move_queued_turn(session_id: str, queued_id: str, req: MoveQueuedTurnR
 
     moved: dict[str, Any] | None = None
     positions: list[dict[str, Any]] = []
-    async with QUEUE_LOCK:
+    async with RUNS.queue_lock:
         lifecycle_blocker = server_lifecycle_admission_blocker()
         if lifecycle_blocker:
             raise HTTPException(status_code=503, detail=lifecycle_blocker)
         reject_promoted_queue_mutation(session_id, queued_id)
-        queue = QUEUED_TURNS.get(session_id)
+        queue = RUNS.queued.get(session_id)
         if queue:
             original_items = list(queue)
             items = list(original_items)
@@ -10566,11 +10527,11 @@ async def move_queued_turn(session_id: str, queued_id: str, req: MoveQueuedTurnR
                             detail="Update the app to arrange queued deliveries safely",
                         )
                     items[idx], items[new_idx] = items[new_idx], items[idx]
-                    QUEUED_TURNS[session_id] = deque(items)
+                    RUNS.queued[session_id] = deque(items)
                     moved = dict(items[new_idx])
                 else:
                     moved = dict(items[idx])
-                positions = queue_positions(QUEUED_TURNS[session_id])
+                positions = queue_positions(RUNS.queued[session_id])
         if moved is None:
             raise HTTPException(status_code=404, detail="queued turn not found")
         try:
@@ -10580,7 +10541,7 @@ async def move_queued_turn(session_id: str, queued_id: str, req: MoveQueuedTurnR
                 "positions": positions,
             })
         except BaseException:
-            QUEUED_TURNS[session_id] = deque(original_items)
+            RUNS.queued[session_id] = deque(original_items)
             raise
     return {"ok": True, "queued_id": queued_id, "positions": positions}
 
@@ -10709,12 +10670,12 @@ def force_send_conflict_detail(
         owner.get("age_seconds"),
         owner.get("phase"),
         owner.get("done"),
-        session_id in STEERING_SESSIONS,
-        str((RUN_NOW_TURNS.get(session_id) or {}).get("queued_id") or "")
+        session_id in RUNS.steering,
+        str((RUNS.run_now.get(session_id) or {}).get("queued_id") or "")
         or None,
-        session_id in ACTIVE,
-        session_id in CURRENT_TURNS,
-        session_id in BUSY_SESSIONS,
+        session_id in RUNS.active,
+        session_id in RUNS.current_turns,
+        session_id in RUNS.busy,
     )
     return {
         "code": "force_send_blocked",
@@ -10730,9 +10691,9 @@ def force_send_conflict_detail(
             "phase": owner.get("phase"),
         },
         "state": {
-            "active": session_id in ACTIVE,
-            "current": session_id in CURRENT_TURNS,
-            "busy": session_id in BUSY_SESSIONS,
+            "active": session_id in RUNS.active,
+            "current": session_id in RUNS.current_turns,
+            "busy": session_id in RUNS.busy,
         },
     }
 
@@ -10782,14 +10743,14 @@ async def restore_missing_durable_force_send_row(
         str(item.get("queued_id") or "")
         for item in durable_items
     ]
-    async with QUEUE_LOCK:
-        promoted = RUN_NOW_TURNS.get(session_id)
+    async with RUNS.queue_lock:
+        promoted = RUNS.run_now.get(session_id)
         if (
             promoted is not None
             and str(promoted.get("queued_id") or "") == queued_id
         ):
             return False
-        items = list(QUEUED_TURNS.get(session_id) or ())
+        items = list(RUNS.queued.get(session_id) or ())
         if any(
             str(item.get("queued_id") or "") == queued_id
             for item in items
@@ -10823,7 +10784,7 @@ async def restore_missing_durable_force_send_row(
         else:
             insert_at = min(durable_index, len(items))
         items.insert(insert_at, selected)
-        QUEUED_TURNS[session_id] = deque(items)
+        RUNS.queued[session_id] = deque(items)
     return True
 
 
@@ -10854,22 +10815,18 @@ async def reconcile_idle_queue_session(
     should_schedule = False
     cancelled_waiter: asyncio.Task[Any] | None = None
     expired_request: tuple[str, asyncio.Task[dict[str, Any]]] | None = None
-    async with RUN_NOW_REQUEST_LOCK:
-        request_entry = RUN_NOW_REQUESTS.get(session_id)
+    async with RUNS.run_now_request_lock:
+        request_entry = RUNS.run_now_requests.get(session_id)
         if request_entry is not None and request_entry[1].done():
-            RUN_NOW_REQUESTS.pop(session_id, None)
+            RUNS.run_now_requests.pop(session_id, None)
             recovered_guards.append("completed_run_now_request")
             request_entry = None
         if request_entry is not None:
             request_queued_id, request_task = request_entry
             owner = force_send_task_owner(request_task)
             age_seconds = owner.get("age_seconds")
-            async with ACTIVE_LOCK:
-                request_session_idle = (
-                    session_id not in ACTIVE
-                    and session_id not in BUSY_SESSIONS
-                    and session_id not in CURRENT_TURNS
-                )
+            async with RUNS.active_lock:
+                request_session_idle = not RUNS.holds_turn(session_id)
             if (
                 request_task is asyncio.current_task()
                 or not request_session_idle
@@ -10907,10 +10864,10 @@ async def reconcile_idle_queue_session(
             )
             return False
         await asyncio.gather(expired_task, return_exceptions=True)
-        async with RUN_NOW_REQUEST_LOCK:
-            current = RUN_NOW_REQUESTS.get(session_id)
+        async with RUNS.run_now_request_lock:
+            current = RUNS.run_now_requests.get(session_id)
             if current is not None and current[1] is expired_task:
-                RUN_NOW_REQUESTS.pop(session_id, None)
+                RUNS.run_now_requests.pop(session_id, None)
         recovered_guards.append("expired_idle_run_now_request")
         if await restore_missing_durable_force_send_row(
             session_id,
@@ -10918,24 +10875,20 @@ async def reconcile_idle_queue_session(
         ):
             recovered_guards.append("restored_durable_queue_row")
 
-    async with RUN_NOW_REQUEST_LOCK:
-        request_entry = RUN_NOW_REQUESTS.get(session_id)
+    async with RUNS.run_now_request_lock:
+        request_entry = RUNS.run_now_requests.get(session_id)
         if request_entry is not None:
             return bool(recovered_guards)
 
-        async with ACTIVE_LOCK:
-            idle = (
-                session_id not in ACTIVE
-                and session_id not in BUSY_SESSIONS
-                and session_id not in CURRENT_TURNS
-            )
+        async with RUNS.active_lock:
+            idle = not RUNS.holds_turn(session_id)
         if not idle:
             return False
 
-        async with QUEUE_LOCK:
-            promotion_owner = QUEUE_START_TASKS.get(session_id)
+        async with RUNS.queue_lock:
+            promotion_owner = RUNS.queue_start_tasks.get(session_id)
             if promotion_owner is not None and promotion_owner.done():
-                QUEUE_START_TASKS.pop(session_id, None)
+                RUNS.queue_start_tasks.pop(session_id, None)
                 recovered_guards.append("completed_queue_start_owner")
                 promotion_owner = None
             if (
@@ -10944,11 +10897,11 @@ async def reconcile_idle_queue_session(
             ):
                 return False
 
-            waiter_entry = STEERING_WAIT_TASKS.get(session_id)
+            waiter_entry = RUNS.steering_waits.get(session_id)
             if waiter_entry is not None:
                 _waiter_queued_id, waiter_started_at, waiter_task = waiter_entry
                 if waiter_task.done():
-                    STEERING_WAIT_TASKS.pop(session_id, None)
+                    RUNS.steering_waits.pop(session_id, None)
                     recovered_guards.append("completed_steering_waiter")
                 elif (
                     time.monotonic() - waiter_started_at
@@ -10957,17 +10910,17 @@ async def reconcile_idle_queue_session(
                     # An idle provider has no slot left for this waiter to
                     # observe. Cancel only the exact aged owner; its fenced
                     # cleanup cannot target a replacement generation.
-                    STEERING_WAIT_TASKS.pop(session_id, None)
+                    RUNS.steering_waits.pop(session_id, None)
                     cancelled_waiter = waiter_task
                     recovered_guards.append("expired_steering_waiter")
                 else:
                     return False
 
-            if session_id in STEERING_SESSIONS:
-                STEERING_SESSIONS.discard(session_id)
+            if session_id in RUNS.steering:
+                RUNS.steering.discard(session_id)
                 recovered_guards.append("ownerless_steering_fence")
 
-            promoted = RUN_NOW_TURNS.get(session_id)
+            promoted = RUNS.run_now.get(session_id)
             if promoted is not None:
                 if promoted.get("_update_transitioning") is True:
                     # No request owner remains, so no coroutine can commit or
@@ -10987,7 +10940,7 @@ async def reconcile_idle_queue_session(
                     and promoted.get("_paused_after_stop") is not True
                 )
             else:
-                head = next(iter(QUEUED_TURNS.get(session_id) or ()), None)
+                head = next(iter(RUNS.queued.get(session_id) or ()), None)
                 should_schedule = bool(
                     head
                     and head.get("_durable") is not False
@@ -11007,9 +10960,9 @@ async def reconcile_idle_queue_session(
             reason,
             ",".join(recovered_guards) or "none",
             bool(schedule and should_schedule),
-            str((RUN_NOW_TURNS.get(session_id) or {}).get("queued_id") or "")
+            str((RUNS.run_now.get(session_id) or {}).get("queued_id") or "")
             or None,
-            len(QUEUED_TURNS.get(session_id) or ()),
+            len(RUNS.queued.get(session_id) or ()),
         )
     if schedule and should_schedule:
         schedule_next_queued_turn(session_id)
@@ -11020,11 +10973,11 @@ async def reconcile_idle_queued_turns(*, reason: str) -> int:
     """Reconcile every chat with volatile or durable queued state."""
 
     session_ids = {
-        *QUEUED_TURNS.keys(),
-        *RUN_NOW_TURNS.keys(),
-        *STEERING_SESSIONS,
-        *STEERING_WAIT_TASKS.keys(),
-        *RUN_NOW_REQUESTS.keys(),
+        *RUNS.queued.keys(),
+        *RUNS.run_now.keys(),
+        *RUNS.steering,
+        *RUNS.steering_waits.keys(),
+        *RUNS.run_now_requests.keys(),
     }
     repaired = 0
     for session_id in sorted(str(value) for value in session_ids):
@@ -11048,7 +11001,7 @@ async def run_queued_turn_now(session_id: str, queued_id: str) -> dict[str, Any]
         reason="force_send_admission",
     )
     cached: dict[str, Any] | None = None
-    async with RUN_NOW_REQUEST_LOCK:
+    async with RUNS.run_now_request_lock:
         # Delete reserves the tombstone before acquiring this same lock. A
         # request that was waiting behind deletion must not register a new
         # control task after deletion captured the previous owner.
@@ -11061,7 +11014,7 @@ async def run_queued_turn_now(session_id: str, queued_id: str) -> dict[str, Any]
         cached = RUN_NOW_COMPLETED_RESULTS.get(cache_key)
         if cached is not None:
             RUN_NOW_COMPLETED_RESULTS.move_to_end(cache_key)
-        existing = RUN_NOW_REQUESTS.get(session_id)
+        existing = RUNS.run_now_requests.get(session_id)
         if cached is not None:
             task = None
         elif existing is not None:
@@ -11097,7 +11050,7 @@ async def run_queued_turn_now(session_id: str, queued_id: str) -> dict[str, Any]
                 time.monotonic(),
             )
             setattr(task, "_hyadex_force_send_phase", "admission")
-            RUN_NOW_REQUESTS[session_id] = (queued_id, task)
+            RUNS.run_now_requests[session_id] = (queued_id, task)
 
     if cached is not None:
         error = cached.get("error")
@@ -11126,8 +11079,8 @@ async def deferred_force_send_outcome(
     error: NativeSteerHandoffError,
 ) -> dict[str, Any]:
     """Describe a retry-safe handoff race without turning it into HTTP 500."""
-    async with QUEUE_LOCK:
-        remaining = len(QUEUED_TURNS.get(session_id) or ())
+    async with RUNS.queue_lock:
+        remaining = len(RUNS.queued.get(session_id) or ())
     reason = concise_error_message(error)
     return {
         "ok": False,
@@ -11357,8 +11310,8 @@ async def requeue_native_steer_after_safe_rejection(
     """
 
     rollback_error: BaseException | None = None
-    async with QUEUE_LOCK:
-        items = list(QUEUED_TURNS.get(session_id) or [])
+    async with RUNS.queue_lock:
+        items = list(RUNS.queued.get(session_id) or [])
         successor_index = (
             next(
                 (
@@ -11442,7 +11395,7 @@ async def requeue_native_steer_after_safe_rejection(
             selected.pop("_native_delivery_fenced", None)
             selected.pop("_native_delivery_fence_lock", None)
         selected.pop("_native_delivery_queue_position", None)
-        QUEUED_TURNS[session_id] = deque(items)
+        RUNS.queued[session_id] = deque(items)
 
     if rollback_error is not None:
         if isinstance(
@@ -11520,7 +11473,7 @@ async def _run_queued_turn_now_and_release(
         owner_task = asyncio.current_task()
 
         async def settle_force_send_request() -> None:
-            async with RUN_NOW_REQUEST_LOCK:
+            async with RUNS.run_now_request_lock:
                 paused_after_stop = False
                 if (
                     result is not None
@@ -11531,9 +11484,9 @@ async def _run_queued_turn_now_and_release(
                     # handoff returned but before this completion cache is written.
                     # Validate under the same lock order used by Stop so a later
                     # Run Now can never receive stale success for a held message.
-                    async with QUEUE_LOCK:
-                        candidates = list(QUEUED_TURNS.get(session_id) or ())
-                        promoted = RUN_NOW_TURNS.get(session_id)
+                    async with RUNS.queue_lock:
+                        candidates = list(RUNS.queued.get(session_id) or ())
+                        promoted = RUNS.run_now.get(session_id)
                         if promoted is not None:
                             candidates.append(promoted)
                         paused_after_stop = any(
@@ -11564,9 +11517,9 @@ async def _run_queued_turn_now_and_release(
                     RUN_NOW_COMPLETED_RESULTS.move_to_end(cache_key)
                     while len(RUN_NOW_COMPLETED_RESULTS) > RUN_NOW_COMPLETED_MAX:
                         RUN_NOW_COMPLETED_RESULTS.popitem(last=False)
-                current = RUN_NOW_REQUESTS.get(session_id)
+                current = RUNS.run_now_requests.get(session_id)
                 if current is not None and current[1] is owner_task:
-                    RUN_NOW_REQUESTS.pop(session_id, None)
+                    RUNS.run_now_requests.pop(session_id, None)
 
         settlement = asyncio.create_task(settle_force_send_request())
         try:
@@ -11618,9 +11571,9 @@ async def _run_queued_turn_now_once(
             detail="Stop is still finishing for this chat; retry Force Send shortly",
         )
 
-    async with ACTIVE_LOCK:
-        active_turn = dict(ACTIVE.get(session_id) or {})
-        interrupted_turn = dict(CURRENT_TURNS.get(session_id) or {})
+    async with RUNS.active_lock:
+        active_turn = dict(RUNS.active.get(session_id) or {})
+        interrupted_turn = dict(RUNS.current_turns.get(session_id) or {})
 
     selected: dict[str, Any] | None = None
     selected_index: int | None = None
@@ -11644,13 +11597,13 @@ async def _run_queued_turn_now_once(
         STORE.sessions[session_id].get("backend") or DEFAULT_BACKEND
     )
     remaining: int
-    async with QUEUE_LOCK:
+    async with RUNS.queue_lock:
         lifecycle_blocker = server_lifecycle_admission_blocker()
         if lifecycle_blocker:
             raise HTTPException(status_code=503, detail=lifecycle_blocker)
-        promoted_owner = RUN_NOW_TURNS.get(session_id)
-        if session_id in STEERING_SESSIONS or promoted_owner is not None:
-            waiter_entry = STEERING_WAIT_TASKS.get(session_id)
+        promoted_owner = RUNS.run_now.get(session_id)
+        if session_id in RUNS.steering or promoted_owner is not None:
+            waiter_entry = RUNS.steering_waits.get(session_id)
             guard = (
                 "run_now_promotion"
                 if promoted_owner is not None
@@ -11680,7 +11633,7 @@ async def _run_queued_turn_now_once(
                     ),
                 ),
             )
-        queue = QUEUED_TURNS.get(session_id)
+        queue = RUNS.queued.get(session_id)
         if queue:
             items = list(queue)
             selected_index = next(
@@ -11751,8 +11704,8 @@ async def _run_queued_turn_now_once(
                 # acquisition. There is no await before the decision below.
                 # Once observed, goal protection must not turn into Stop
                 # fallback merely because the goal cache changes meanwhile.
-                active_turn = dict(ACTIVE.get(session_id) or {})
-                interrupted_turn = dict(CURRENT_TURNS.get(session_id) or {})
+                active_turn = dict(RUNS.active.get(session_id) or {})
+                interrupted_turn = dict(RUNS.current_turns.get(session_id) or {})
                 goal_followup = goal_followup or codex_goal_followup_requires_native(
                     STORE.sessions[session_id], active_turn, interrupted_turn,
                 )
@@ -11856,22 +11809,22 @@ async def _run_queued_turn_now_once(
                     if idx != selected_index
                 )
                 if kept:
-                    QUEUED_TURNS[session_id] = kept
+                    RUNS.queued[session_id] = kept
                     remaining = len(kept)
                 else:
-                    QUEUED_TURNS.pop(session_id, None)
+                    RUNS.queued.pop(session_id, None)
                     remaining = 0
             else:
                 remaining = len(items)
         else:
             remaining = 0
         if selected is not None:
-            STEERING_SESSIONS.add(session_id)
+            RUNS.steering.add(session_id)
             if not native_steer:
                 # The original queue event is durable, but its promotion is
                 # not restart-safe until turn_queue_run_now is persisted.
                 selected["_update_transitioning"] = True
-                RUN_NOW_TURNS[session_id] = selected
+                RUNS.run_now[session_id] = selected
 
     if selected is None:
         raise HTTPException(status_code=404, detail="queued turn not found")
@@ -11910,8 +11863,8 @@ async def _run_queued_turn_now_once(
             # Commit delivery against the live ACTIVE record. The provider can
             # become terminal after the initial eligibility snapshot; putting
             # into that now-detached queue would strand this Future forever.
-            async with ACTIVE_LOCK:
-                current = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                current = RUNS.active.get(session_id)
                 if (
                     not current
                     or not (
@@ -11990,10 +11943,10 @@ async def _run_queued_turn_now_once(
             raise
         finally:
             async def release_native_steering_fence() -> None:
-                async with QUEUE_LOCK:
-                    STEERING_SESSIONS.discard(session_id)
-                async with ACTIVE_LOCK:
-                    still_busy = session_id in BUSY_SESSIONS
+                async with RUNS.queue_lock:
+                    RUNS.steering.discard(session_id)
+                async with RUNS.active_lock:
+                    still_busy = session_id in RUNS.busy
                 if not still_busy:
                     schedule_next_queued_turn(session_id)
 
@@ -12042,13 +11995,13 @@ async def _run_queued_turn_now_once(
             already_notified = bool(selected.get("_turn_deferred_notified"))
             selected["_turn_deferred_notified"] = True
             selected.pop("_update_transitioning", None)
-            async with QUEUE_LOCK:
-                RUN_NOW_TURNS.pop(session_id, None)
-                STEERING_SESSIONS.discard(session_id)
-                queue_items = list(QUEUED_TURNS.get(session_id) or [])
+            async with RUNS.queue_lock:
+                RUNS.run_now.pop(session_id, None)
+                RUNS.steering.discard(session_id)
+                queue_items = list(RUNS.queued.get(session_id) or [])
                 insert_at = max(0, min(int(selected_index or 0), len(queue_items)))
                 queue_items.insert(insert_at, selected)
-                QUEUED_TURNS[session_id] = deque(queue_items)
+                RUNS.queued[session_id] = deque(queue_items)
                 remaining = len(queue_items)
             if stop_result.get("pending"):
                 message = (
@@ -12071,8 +12024,8 @@ async def _run_queued_turn_now_once(
                     "message": message,
                     "remaining": remaining,
                 })
-            async with ACTIVE_LOCK:
-                still_busy = session_id in BUSY_SESSIONS
+            async with RUNS.active_lock:
+                still_busy = session_id in RUNS.busy
             if not still_busy:
                 schedule_next_queued_turn(session_id)
             return {
@@ -12086,10 +12039,10 @@ async def _run_queued_turn_now_once(
                 "superseded_queued_ids": [],
             }
         prepared = prepare_steered_turn(selected, interrupted_turn if interrupted else None)
-        async with QUEUE_LOCK:
-            current = RUN_NOW_TURNS.get(session_id)
+        async with RUNS.queue_lock:
+            current = RUNS.run_now.get(session_id)
             if current and current.get("queued_id") == queued_id:
-                RUN_NOW_TURNS[session_id] = prepared
+                RUNS.run_now[session_id] = prepared
 
         display_prompt = str(prepared.get("display_prompt") or prepared.get("steering_prompt") or selected.get("prompt") or "")
         if owner_task is not None:
@@ -12142,14 +12095,14 @@ async def _run_queued_turn_now_once(
         }
     except BaseException:
         async def restore_uncommitted_promotion() -> None:
-            async with QUEUE_LOCK:
+            async with RUNS.queue_lock:
                 if not promotion_committed:
-                    current = RUN_NOW_TURNS.get(session_id)
+                    current = RUNS.run_now.get(session_id)
                     if current is not None and current.get("queued_id") == queued_id:
-                        RUN_NOW_TURNS.pop(session_id, None)
+                        RUNS.run_now.pop(session_id, None)
                     selected.pop("_update_transitioning", None)
                     selected["_paused_after_stop"] = selected_was_paused
-                    items = list(QUEUED_TURNS.get(session_id) or ())
+                    items = list(RUNS.queued.get(session_id) or ())
                     if not any(
                         item.get("queued_id") == queued_id
                         for item in items
@@ -12185,8 +12138,8 @@ async def _run_queued_turn_now_once(
                         else:
                             insert_at = min(int(selected_index or 0), len(items))
                         items.insert(insert_at, selected)
-                        QUEUED_TURNS[session_id] = deque(items)
-                STEERING_SESSIONS.discard(session_id)
+                        RUNS.queued[session_id] = deque(items)
+                RUNS.steering.discard(session_id)
             schedule_next_queued_turn(session_id)
 
         # Force Send temporarily turns a durable queue row into a restart-
@@ -12204,8 +12157,8 @@ async def _run_queued_turn_now_once(
 
 
 async def requeue_turn_front(session_id: str, item: dict[str, Any]) -> None:
-    async with QUEUE_LOCK:
-        queue = QUEUED_TURNS.setdefault(session_id, deque())
+    async with RUNS.queue_lock:
+        queue = RUNS.queued.setdefault(session_id, deque())
         queue.appendleft(item)
 
 
@@ -12219,10 +12172,10 @@ async def pause_queued_turns_after_explicit_stop(session_id: str) -> int:
 
     # Match Force Send completion's lock order. This makes pausing the promoted
     # item and invalidating its short-lived idempotency result one transition.
-    async with RUN_NOW_REQUEST_LOCK:
-        async with QUEUE_LOCK:
-            items = list(QUEUED_TURNS.get(session_id) or ())
-            run_now = RUN_NOW_TURNS.get(session_id)
+    async with RUNS.run_now_request_lock:
+        async with RUNS.queue_lock:
+            items = list(RUNS.queued.get(session_id) or ())
+            run_now = RUNS.run_now.get(session_id)
             if run_now is not None:
                 items.insert(0, run_now)
             queued_ids = [
@@ -12257,8 +12210,8 @@ async def pause_queued_turns_after_explicit_stop(session_id: str) -> int:
                 # Stop has withdrawn this promotion before provider admission.
                 # Return it to the held queue in the same transition: the Stop
                 # fence may prevent the scheduler from doing so for some time.
-                RUN_NOW_TURNS.pop(session_id, None)
-                queue = QUEUED_TURNS.setdefault(session_id, deque())
+                RUNS.run_now.pop(session_id, None)
+                queue = RUNS.queued.setdefault(session_id, deque())
                 if not any(
                     str(candidate.get("queued_id") or "") == str(run_now.get("queued_id") or "")
                     for candidate in queue
@@ -12345,7 +12298,7 @@ async def terminally_discard_queued_turn(
                 "queued_id": item.get("queued_id"),
                 "message": f"queued turn discarded: {reason}",
             })
-    promotion_owner = QUEUE_START_TASKS.get(session_id)
+    promotion_owner = RUNS.queue_start_tasks.get(session_id)
     current_task = asyncio.current_task()
     if current_task is not None and promotion_owner is current_task:
         # The current promotion task cannot start its successor until its
@@ -12404,26 +12357,26 @@ async def wait_for_steered_turn_slot(session_id: str) -> None:
 
     async def release_waiter_fence() -> None:
         owns_fence = False
-        async with QUEUE_LOCK:
-            owner = STEERING_WAIT_TASKS.get(session_id)
+        async with RUNS.queue_lock:
+            owner = RUNS.steering_waits.get(session_id)
             owns_fence = bool(
                 waiter_task is not None
                 and owner is not None
                 and owner[2] is waiter_task
             )
             if owns_fence:
-                STEERING_SESSIONS.discard(session_id)
+                RUNS.steering.discard(session_id)
         if not owns_fence:
             return
-        async with ACTIVE_LOCK:
-            idle = session_id not in BUSY_SESSIONS
+        async with RUNS.active_lock:
+            idle = session_id not in RUNS.busy
         if idle:
             await start_next_queued_turn(session_id)
 
     try:
         while True:
-            async with ACTIVE_LOCK:
-                busy = session_id in BUSY_SESSIONS
+            async with RUNS.active_lock:
+                busy = session_id in RUNS.busy
             if not busy:
                 break
             await asyncio.sleep(0.05)
@@ -12463,18 +12416,18 @@ def schedule_steered_turn_slot_waiter(
         "_hyadex_force_send_phase",
         "waiting_for_provider_slot",
     )
-    previous = STEERING_WAIT_TASKS.get(session_id)
+    previous = RUNS.steering_waits.get(session_id)
     if previous is not None and not previous[2].done():
         # Admission should make this impossible. Preserve the newer exact
         # owner and retire the older waiter rather than leaving two callbacks
         # able to clear the same session-wide flag.
         previous[2].cancel()
-    STEERING_WAIT_TASKS[session_id] = (queued_id, started_at, task)
+    RUNS.steering_waits[session_id] = (queued_id, started_at, task)
 
     def release_owner(completed: asyncio.Task[Any]) -> None:
-        current = STEERING_WAIT_TASKS.get(session_id)
+        current = RUNS.steering_waits.get(session_id)
         if current is not None and current[2] is completed:
-            STEERING_WAIT_TASKS.pop(session_id, None)
+            RUNS.steering_waits.pop(session_id, None)
 
     task.add_done_callback(release_owner)
     return task
@@ -12498,16 +12451,16 @@ async def start_next_queued_turn(session_id: str) -> None:
             "_hyadex_continue_queue_after_discard",
             False,
         )
-    async with QUEUE_LOCK:
-        owner = QUEUE_START_TASKS.get(session_id)
+    async with RUNS.queue_lock:
+        owner = RUNS.queue_start_tasks.get(session_id)
         if owner is not None and owner is not promotion_task and not owner.done():
             return
         if promotion_task is not None:
-            QUEUE_START_TASKS[session_id] = promotion_task
+            RUNS.queue_start_tasks[session_id] = promotion_task
 
             def release_queue_start_owner(completed: asyncio.Task[Any]) -> None:
-                if QUEUE_START_TASKS.get(session_id) is completed:
-                    QUEUE_START_TASKS.pop(session_id, None)
+                if RUNS.queue_start_tasks.get(session_id) is completed:
+                    RUNS.queue_start_tasks.pop(session_id, None)
 
             promotion_task.add_done_callback(release_queue_start_owner)
 
@@ -12521,7 +12474,7 @@ async def start_next_queued_turn(session_id: str) -> None:
     )
     if promotion_task is not None:
         register_session_task(
-            SESSION_TURN_TASKS,
+            RUNS.turn_tasks,
             session_id,
             promotion_task,
         )
@@ -12536,11 +12489,11 @@ async def start_next_queued_turn(session_id: str) -> None:
             )
     finally:
         if promotion_task is not None:
-            tasks = SESSION_TURN_TASKS.get(session_id)
+            tasks = RUNS.turn_tasks.get(session_id)
             if tasks is not None:
                 tasks.discard(promotion_task)
                 if not tasks:
-                    SESSION_TURN_TASKS.pop(session_id, None)
+                    RUNS.turn_tasks.pop(session_id, None)
             continue_after_discard = bool(getattr(
                 promotion_task,
                 "_hyadex_continue_queue_after_discard",
@@ -12556,9 +12509,9 @@ async def start_next_queued_turn(session_id: str) -> None:
                 # has been released. Relinquish this exact promotion owner now
                 # so a caller that directly awaits start_next_queued_turn does
                 # not make its otherwise-valid successor look concurrent.
-                async with QUEUE_LOCK:
-                    if QUEUE_START_TASKS.get(session_id) is promotion_task:
-                        QUEUE_START_TASKS.pop(session_id, None)
+                async with RUNS.queue_lock:
+                    if RUNS.queue_start_tasks.get(session_id) is promotion_task:
+                        RUNS.queue_start_tasks.pop(session_id, None)
                 schedule_next_queued_turn(session_id)
 
 
@@ -12574,10 +12527,10 @@ async def _start_next_queued_turn_locked(
     if stop_cleanup_in_progress(session_id):
         log_queue_promotion_fence(session_id, "explicit_stop", "queue_start")
         return
-    async with QUEUE_LOCK:
-        if session_id in STEERING_SESSIONS:
+    async with RUNS.queue_lock:
+        if session_id in RUNS.steering:
             return
-        item = RUN_NOW_TURNS.get(session_id)
+        item = RUNS.run_now.get(session_id)
         if item is not None and (
             item.get("_durable") is False
             or item.get("_paused_after_stop") is True
@@ -12586,8 +12539,8 @@ async def _start_next_queued_turn_locked(
                 # An explicit Stop that lands after promotion wins. Return the
                 # user message to the visible queue, preserving its hold until
                 # a new Run Now request explicitly releases it.
-                RUN_NOW_TURNS.pop(session_id, None)
-                queue = QUEUED_TURNS.setdefault(session_id, deque())
+                RUNS.run_now.pop(session_id, None)
+                queue = RUNS.queued.setdefault(session_id, deque())
                 queued_id = str(item.get("queued_id") or "")
                 if not any(
                     str(candidate.get("queued_id") or "") == queued_id
@@ -12595,9 +12548,9 @@ async def _start_next_queued_turn_locked(
                 ):
                     queue.appendleft(item)
             return
-        item = RUN_NOW_TURNS.pop(session_id, None)
+        item = RUNS.run_now.pop(session_id, None)
         if item is None:
-            queue = QUEUED_TURNS.get(session_id)
+            queue = RUNS.queued.get(session_id)
             if queue and (
                 queue[0].get("_durable") is False
                 or queue[0].get("_paused_after_stop") is True
@@ -12605,7 +12558,7 @@ async def _start_next_queued_turn_locked(
                 return
             item = queue.popleft() if queue else None
             if queue is not None and not queue:
-                QUEUED_TURNS.pop(session_id, None)
+                RUNS.queued.pop(session_id, None)
     if not item:
         return
     if (
@@ -13066,7 +13019,7 @@ def scan_queued_turns_from_events(
 def rebuild_queued_turns_from_events() -> int:
     recovered = scan_queued_turns_from_events()
     for session_id, items in recovered.items():
-        QUEUED_TURNS[session_id] = deque(items)
+        RUNS.queued[session_id] = deque(items)
     return sum(len(items) for items in recovered.values())
 
 
@@ -13113,9 +13066,9 @@ async def _recover_queued_turns_for_sessions(session_items) -> tuple[int, int]:
     recovered = await asyncio.to_thread(scan_queued_turns_from_events, session_items)
     scheduled_session_ids: list[str] = []
     rebuilt = 0
-    async with QUEUE_LOCK:
+    async with RUNS.queue_lock:
         for session_id, recovered_items in recovered.items():
-            existing_items = list(QUEUED_TURNS.get(session_id) or ())
+            existing_items = list(RUNS.queued.get(session_id) or ())
             existing_ids = {
                 str(item.get("queued_id") or "")
                 for item in existing_items
@@ -13149,9 +13102,9 @@ async def _recover_queued_turns_for_sessions(session_items) -> tuple[int, int]:
                 restored.append(item)
             if not restored:
                 continue
-            QUEUED_TURNS[session_id] = deque([*restored, *existing_items])
+            RUNS.queued[session_id] = deque([*restored, *existing_items])
             rebuilt += len(restored)
-            if not QUEUED_TURNS[session_id][0].get("_paused_after_stop"):
+            if not RUNS.queued[session_id][0].get("_paused_after_stop"):
                 scheduled_session_ids.append(session_id)
     for session_id in scheduled_session_ids:
         schedule_next_queued_turn(session_id)
@@ -15518,8 +15471,8 @@ def jsonable_active_run(session_id: str, active: dict[str, Any]) -> dict[str, An
 
 
 async def active_run_summaries() -> list[dict[str, Any]]:
-    async with ACTIVE_LOCK:
-        return [jsonable_active_run(session_id, active) for session_id, active in ACTIVE.items()]
+    async with RUNS.active_lock:
+        return [jsonable_active_run(session_id, active) for session_id, active in RUNS.active.items()]
 
 
 def trim_process_args(row: dict[str, Any], max_chars: int = 500) -> dict[str, Any]:
@@ -15578,8 +15531,8 @@ async def append_active_stdout(session_id: str, text: str) -> None:
     line = text.rstrip("\r\n")
     if len(line) > LIVE_STDOUT_MAX_LINE_CHARS:
         line = line[:LIVE_STDOUT_MAX_LINE_CHARS] + "\n... stdout line truncated ..."
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         if not active:
             return
         tail = active.get("stdout_tail")
@@ -15935,10 +15888,10 @@ async def release_turn_slot(
     so fallback finalizers cannot emit or schedule twice.
     """
 
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         if expected_run_id is not None or expected_admission_id is not None:
-            active = ACTIVE.get(session_id)
-            current_turn = CURRENT_TURNS.get(session_id)
+            active = RUNS.active.get(session_id)
+            current_turn = RUNS.current_turns.get(session_id)
             active_run_id = (
                 str(active.get("run_id") or "") if isinstance(active, dict) else ""
             )
@@ -15968,10 +15921,10 @@ async def release_turn_slot(
                 conflicting_owner = bool(active_run_id)
             if not owns_slot or conflicting_owner:
                 return False
-        ACTIVE.pop(session_id, None)
-        BUSY_SESSIONS.discard(session_id)
-        CURRENT_TURNS.pop(session_id, None)
-        STOP_REQUESTS.discard(session_id)
+        RUNS.active.pop(session_id, None)
+        RUNS.busy.discard(session_id)
+        RUNS.current_turns.pop(session_id, None)
+        RUNS.stop_requests.discard(session_id)
         return True
 
 
@@ -15988,44 +15941,44 @@ async def bind_active_turn(
     that successor from the delayed startup path.
     """
 
-    async with ACTIVE_LOCK:
-        current_turn = CURRENT_TURNS.get(session_id)
+    async with RUNS.active_lock:
+        current_turn = RUNS.current_turns.get(session_id)
         current_run_id = (
             str(current_turn.get("run_id") or "")
             if isinstance(current_turn, dict)
             else ""
         )
-        active = ACTIVE.get(session_id)
+        active = RUNS.active.get(session_id)
         active_run_id = (
             str(active.get("run_id") or "")
             if isinstance(active, dict)
             else ""
         )
         if (
-            session_id not in BUSY_SESSIONS
+            session_id not in RUNS.busy
             or current_run_id != run_id
             or active_run_id not in {"", run_id}
         ):
             return False, False
         stop_requested = (
-            session_id in STOP_REQUESTS or run_id in STOPPED_RUNS
+            session_id in RUNS.stop_requests or run_id in RUNS.stopped_runs
         )
         if stop_requested:
-            STOP_REQUESTS.discard(session_id)
-            STOPPED_RUNS.add(run_id)
+            RUNS.stop_requests.discard(session_id)
+            RUNS.stopped_runs.add(run_id)
         record["stop_requested"] = stop_requested
-        ACTIVE[session_id] = record
+        RUNS.active[session_id] = record
         return True, stop_requested
 
 
 async def turn_slot_is_owned(session_id: str, run_id: str) -> bool:
     """Return whether ``run_id`` still owns this chat's admitted turn slot."""
 
-    async with ACTIVE_LOCK:
-        if session_id not in BUSY_SESSIONS:
+    async with RUNS.active_lock:
+        if session_id not in RUNS.busy:
             return False
-        active = ACTIVE.get(session_id)
-        current_turn = CURRENT_TURNS.get(session_id)
+        active = RUNS.active.get(session_id)
+        current_turn = RUNS.current_turns.get(session_id)
         active_run_id = (
             str(active.get("run_id") or "")
             if isinstance(active, dict)
@@ -16059,8 +16012,8 @@ async def bind_codex_control_reservation(
     """
 
     expected = str(reservation_id or "").strip()
-    async with ACTIVE_LOCK:
-        current = CURRENT_TURNS.get(session_id)
+    async with RUNS.active_lock:
+        current = RUNS.current_turns.get(session_id)
         current_reservation = (
             str(current.get("codex_control_reservation_id") or "")
             if isinstance(current, dict)
@@ -16068,19 +16021,19 @@ async def bind_codex_control_reservation(
         )
         owns_reservation = bool(
             expected
-            and session_id in BUSY_SESSIONS
+            and session_id in RUNS.busy
             and isinstance(current, dict)
             and current.get("purpose") == "codex_native_control"
             and current_reservation == expected
-            and session_id not in ACTIVE
+            and session_id not in RUNS.active
         )
         if not owns_reservation:
             return False, False
-        stop_requested = session_id in STOP_REQUESTS
+        stop_requested = session_id in RUNS.stop_requests
         if stop_requested:
             return False, True
         record["codex_control_reservation_id"] = expected
-        ACTIVE[session_id] = record
+        RUNS.active[session_id] = record
         return True, False
 
 
@@ -16107,8 +16060,8 @@ async def reconcile_provider_task_exit(
         expected_run_id=run_id,
     )
     if not released:
-        RUN_METADATA.pop(run_id, None)
-        STOPPED_RUNS.discard(run_id)
+        RUNS.run_metadata.pop(run_id, None)
+        RUNS.stopped_runs.discard(run_id)
         return False
     try:
         if terminal_missing:
@@ -16134,8 +16087,8 @@ async def reconcile_provider_task_exit(
                     concise_error_message(exc),
                 )
     finally:
-        RUN_METADATA.pop(run_id, None)
-        STOPPED_RUNS.discard(run_id)
+        RUNS.run_metadata.pop(run_id, None)
+        RUNS.stopped_runs.discard(run_id)
         if should_schedule_queue_after_finish(session_id, stopped=True):
             schedule_next_queued_turn(session_id)
     return True
@@ -16185,8 +16138,8 @@ async def finalize_owned_turn_finished(
         if released:
             await append_turn_finished_event(session_id, payload)
     finally:
-        RUN_METADATA.pop(run_id, None)
-        STOPPED_RUNS.discard(run_id)
+        RUNS.run_metadata.pop(run_id, None)
+        RUNS.stopped_runs.discard(run_id)
         if released and drain_queue:
             schedule_next_queued_turn(session_id)
     return released
@@ -16204,14 +16157,14 @@ async def clear_active_process(
     must not erase the successor's ACTIVE record.
     """
 
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         if (
             not isinstance(active, dict)
             or str(active.get("run_id") or "") != expected_run_id
         ):
             return False
-        ACTIVE.pop(session_id, None)
+        RUNS.active.pop(session_id, None)
         return True
 
 
@@ -16223,8 +16176,8 @@ async def mark_provider_turn_ready(
     """Mark that the provider accepted this turn before it can be interrupted."""
     if not provider_session_id:
         return
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         if not active or str(active.get("run_id") or "") != run_id:
             return
         active["provider_turn_ready"] = True
@@ -16260,8 +16213,8 @@ async def mark_claude_sdk_turn_ready_after_ack(
             concise_error_message(exc),
         )
         return False
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         if (
             not active
             or str(active.get("run_id") or "") != run_id
@@ -17366,8 +17319,8 @@ async def reconcile_codex_subagents(
 async def codex_session_has_active_run(session_id: str) -> bool:
     """Whether the chat currently holds a turn slot or an ACTIVE run record."""
 
-    async with ACTIVE_LOCK:
-        return session_id in BUSY_SESSIONS or bool(ACTIVE.get(session_id))
+    async with RUNS.active_lock:
+        return session_id in RUNS.busy or bool(RUNS.active.get(session_id))
 
 
 CODEX_SUBAGENT_FINALIZE_TIMEOUT_SECONDS = float(
@@ -22551,9 +22504,9 @@ async def append_turn_finished_event(session_id: str, payload: dict[str, Any]) -
         run_id = str(payload.get("run_id") or "")
         if run_id:
             async def cleanup_unrecorded_terminal() -> None:
-                async with ACTIVE_LOCK:
+                async with RUNS.active_lock:
                     owners = {str((record or {}).get("run_id") or "") for record in
-                              (ACTIVE.get(session_id), CURRENT_TURNS.get(session_id))}
+                              (RUNS.active.get(session_id), RUNS.current_turns.get(session_id))}
                     session = STORE.sessions.get(session_id)
                     cached = session.get("active_run") if isinstance(session, dict) else None
                     if (owners <= {"", run_id} and isinstance(cached, dict)
@@ -25921,9 +25874,9 @@ async def history_commit_guard(sess, cursor, timeline_stamp, source_stamp, enabl
         current = STORE.sessions.get(session_id)
         if (not current or session_id in DELETING_SESSIONS
                 or session_id in DELETED_SESSION_TOMBSTONES
-                or session_id in BUSY_SESSIONS or ACTIVE.get(session_id) is not None
-                or session_id in SERVER_MAINTENANCE_SESSIONS
-                or any(not task.done() for task in SESSION_TURN_TASKS.get(session_id, ()))
+                or session_id in RUNS.busy or RUNS.active.get(session_id) is not None
+                or session_id in RUNS.maintenance
+                or any(not task.done() for task in RUNS.turn_tasks.get(session_id, ()))
                 or current.get("backend") != sess.get("backend")
                 or session_provider_id(current) != session_provider_id(sess)
                 or normalized_history_sync_cursor(current) != cursor
@@ -26258,8 +26211,8 @@ async def run_provider_history_sync(session_id: str) -> None:
             sess = STORE.sessions.get(session_id)
             if (not sess or session_id in DELETING_SESSIONS
                     or session_id in DELETED_SESSION_TOMBSTONES
-                    or session_id in BUSY_SESSIONS or ACTIVE.get(session_id) is not None
-                    or session_id in SERVER_MAINTENANCE_SESSIONS):
+                    or session_id in RUNS.busy or RUNS.active.get(session_id) is not None
+                    or session_id in RUNS.maintenance):
                 return
             key = history_maintenance_key(sess)
             state.update(status="running", reason=None)
@@ -26309,7 +26262,7 @@ def schedule_provider_history_sync(sess: dict[str, Any]) -> None:
     session_id = str(sess.get("id") or "")
     if not session_id or session_id in HISTORY_SYNC_SCHEDULED or not session_provider_id(sess):
         return
-    if session_id in BUSY_SESSIONS or ACTIVE.get(session_id) is not None:
+    if session_id in RUNS.busy or RUNS.active.get(session_id) is not None:
         return
     state = history_maintenance_state(session_id)
     if state.get("key") == history_maintenance_key(sess) and (
@@ -27938,7 +27891,7 @@ async def scheduled_job_blocker(
     manual: bool = False,
     group: bool = False,
 ) -> str | None:
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         lifecycle_blocker = server_lifecycle_admission_blocker()
         if lifecycle_blocker:
             return lifecycle_blocker
@@ -27951,7 +27904,7 @@ async def scheduled_job_blocker(
             ).strip().lower()
             if CODEX_GOALS_RECONFIGURING and backend == BACKEND_CODEX:
                 return "wait for Codex goals configuration to finish"
-            if session_id in SERVER_MAINTENANCE_SESSIONS:
+            if session_id in RUNS.maintenance:
                 return (
                     "wait for Claude Stop recovery to finish"
                     if session_id in CLAUDE_STOP_FENCE_SESSIONS
@@ -27959,9 +27912,9 @@ async def scheduled_job_blocker(
                 )
             if stop_cleanup_in_progress(session_id):
                 return "chat is finishing an explicit Stop"
-            if session_id in BUSY_SESSIONS:
+            if session_id in RUNS.busy:
                 return "chat already has a running turn"
-        active_count = len(BUSY_SESSIONS)
+        active_count = len(RUNS.busy)
 
     global_blocker = await turn_start_blocker()
     if global_blocker:
@@ -27985,11 +27938,11 @@ async def scheduled_job_blocker(
 
 
 async def turn_start_blocker(*, ignore_session_id: str | None = None) -> str | None:
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         lifecycle_blocker = server_lifecycle_admission_blocker()
         if lifecycle_blocker:
             return lifecycle_blocker
-        active_count = len(BUSY_SESSIONS - ({ignore_session_id} if ignore_session_id else set()))
+        active_count = len(RUNS.busy - ({ignore_session_id} if ignore_session_id else set()))
 
     if MAX_ACTIVE_AGENT_RUNS > 0 and active_count >= MAX_ACTIVE_AGENT_RUNS:
         return f"server already has {active_count} active agent run(s)"
@@ -28129,7 +28082,7 @@ def codex_request_is_interactive(session_id: str, thread_id: str) -> bool:
         return False
     if thread_id in CODEX_INTERACTIVE_CONTROL_THREADS:
         return True
-    active = ACTIVE.get(session_id)
+    active = RUNS.active.get(session_id)
     return bool(
         active
         and str(active.get("provider_thread_id") or "") == thread_id
@@ -28494,16 +28447,16 @@ async def refresh_idle_claude_context_usage(session_id: str) -> bool:
                 ),
             )
 
-        async with ACTIVE_LOCK:
+        async with RUNS.active_lock:
             provider_starting = any(
                 not task.done()
-                for task in tuple(SESSION_TURN_TASKS.get(session_id) or ())
+                for task in tuple(RUNS.turn_tasks.get(session_id) or ())
             )
             if (
-                session_id in BUSY_SESSIONS
-                or session_id in SERVER_MAINTENANCE_SESSIONS
-                or ACTIVE.get(session_id) is not None
-                or CURRENT_TURNS.get(session_id) is not None
+                session_id in RUNS.busy
+                or session_id in RUNS.maintenance
+                or RUNS.active.get(session_id) is not None
+                or RUNS.current_turns.get(session_id) is not None
                 or provider_starting
             ):
                 raise HTTPException(
@@ -28666,8 +28619,8 @@ async def record_claude_context_usage(
             or session_id in DELETED_SESSION_TOMBSTONES
         ):
             return False
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             if (
                 not active
                 or str(active.get("run_id") or "") != run_id
@@ -28724,8 +28677,8 @@ async def invalidate_failed_claude_context_usage_sample(
             or session_id in DELETED_SESSION_TOMBSTONES
         ):
             return False
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             if (
                 not active
                 or str(active.get("run_id") or "") != run_id
@@ -28767,8 +28720,8 @@ async def sample_claude_context_usage(
 ) -> bool:
     if not provider_session_id:
         return False
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         if (
             not active
             or str(active.get("run_id") or "") != run_id
@@ -29105,8 +29058,8 @@ async def codex_notification_run_id(
     thread_id: str,
     turn_id: str | None,
 ) -> str | None:
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         if not active:
             return None
         if (
@@ -29842,8 +29795,8 @@ async def handle_claude_tool_permission(
     pending: dict[str, Any] | None = None
     try:
         async with session_lifecycle_lock(session_id):
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 permission_run_id = str(
                     (active or {}).get("claude_permission_run_id") or ""
                 )
@@ -30017,8 +29970,8 @@ async def handle_claude_tool_permission(
         # supervisor replacement after the card was rendered. Revalidate the
         # exact owner/run immediately before returning an allow decision so a
         # late click cannot authorize work on a fenced provider generation.
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             manager = CLAUDE_SDK_MANAGER
             still_owned = bool(
                 active
@@ -30334,9 +30287,9 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
             cleanup_gap = bool(getattr(handle, "_closed", False) and current_handle is None)
             return bool(
                 incoming_turn_id and incoming_turn_id not in getattr(handle, "_completed_turn_ids", set())
-                and ACTIVE.get(session_id) is stopping_owner
-                and (CURRENT_TURNS.get(session_id) or {}).get("run_id") == stopping_owner.get("run_id")
-                and session_id in BUSY_SESSIONS and stopping_owner.get("stop_requested")
+                and RUNS.active.get(session_id) is stopping_owner
+                and (RUNS.current_turns.get(session_id) or {}).get("run_id") == stopping_owner.get("run_id")
+                and session_id in RUNS.busy and stopping_owner.get("stop_requested")
                 and existing_codex_app_server_manager_for_thread(thread_id) is manager
                 and type(getattr(handle, "transport_generation", None)) is int
                 and handle.transport_generation > 0
@@ -30344,8 +30297,8 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
                 and (exact_live_turn or cleanup_gap)
             )
 
-        async with ACTIVE_LOCK:
-            stopping_owner = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            stopping_owner = RUNS.active.get(session_id)
             manager = existing_codex_app_server_manager_for_thread(thread_id)
             handle = (stopping_owner or {}).get("codex_app_server_turn")
             if (
@@ -30354,8 +30307,8 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
                 and isinstance(stopping_owner.get("codex_child_continuation_stop"), asyncio.Event)
                 and handle is not None and manager is not None
                 and getattr(handle, "transport_generation", None) == getattr(manager, "generation", None)
-                and (CURRENT_TURNS.get(session_id) or {}).get("run_id") == stopping_owner.get("run_id")
-                and session_id in BUSY_SESSIONS
+                and (RUNS.current_turns.get(session_id) or {}).get("run_id") == stopping_owner.get("run_id")
+                and session_id in RUNS.busy
             ):
                 stopped_continuation = True
                 if stopped_continuation_still_current() and (
@@ -30374,8 +30327,8 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
                         before_send=stopped_continuation_still_current,
                     )
                 except Exception:
-                    async with ACTIVE_LOCK:
-                        if ACTIVE.get(session_id) is stopping_owner and stopping_owner.get("provider_turn_id") == stopped_continuation_turn:
+                    async with RUNS.active_lock:
+                        if RUNS.active.get(session_id) is stopping_owner and stopping_owner.get("provider_turn_id") == stopped_continuation_turn:
                             stopping_owner["native_interrupt_sent"] = False
                     logger.warning("could not interrupt stopped Codex child continuation session=%s turn=%s", session_id, stopped_continuation_turn)
             return
@@ -30456,8 +30409,8 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
         # Goal activation can publish a native turn before its RPC returns.
         # Bind that turn to the explicit resume reservation immediately so
         # Stop and failed-RPC cleanup can interrupt it before the consumer runs.
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             if (
                 active
                 and active.get("codex_native_operation_kind") == "goal_resume"
@@ -30669,8 +30622,8 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
         )
         if snapshot is None:
             return
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             if (
                 active
                 and active.get("codex_compaction_in_progress")
@@ -30699,8 +30652,8 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
         )
         if completed_turn.get("status") in {"failed", "interrupted"}:
             failed_compaction = None
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 if (
                     active and not active.get("codex_native_operation")
                     and active.get("codex_compaction_in_progress")
@@ -30783,8 +30736,8 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
             explicit_native_compaction = False
             terminal_replay = False
             run_id = ""
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 if active and (
                     not active.get("provider_thread_id")
                     or str(active.get("provider_thread_id")) == thread_id
@@ -30854,8 +30807,8 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
                     },
                 )
             return
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             explicit_native_compaction = bool(
                 active
                 and active.get("codex_native_operation")
@@ -31136,12 +31089,12 @@ async def refresh_codex_app_server_login(*, source: str = "manager_lookup") -> b
 def codex_manager_session_busy(manager: CodexAppServerManager, session_id: str, *, ignore_task=None, ignore_maintenance=False) -> bool:
     session = STORE.sessions.get(session_id) or {}
     return bool(
-        session_id in BUSY_SESSIONS or ACTIVE.get(session_id) is not None
-        or (not ignore_maintenance and session_id in SERVER_MAINTENANCE_SESSIONS)
+        session_id in RUNS.busy or RUNS.active.get(session_id) is not None
+        or (not ignore_maintenance and session_id in RUNS.maintenance)
         or codex_manager_has_callers(manager, session_id, ignore_task=ignore_task)
         or codex_manager_has_callbacks(manager, session_id)
         or any(task is not ignore_task and not task.done()
-            for registry in (SESSION_TURN_TASKS, CODEX_NATIVE_ACTION_TASKS, CODEX_INTERACTION_HANDLER_TASKS)
+            for registry in (RUNS.turn_tasks, CODEX_NATIVE_ACTION_TASKS, CODEX_INTERACTION_HANDLER_TASKS)
             for task in registry.get(session_id, ()))
         or any(item.get("session_id") == session_id for item in CODEX_PENDING_INTERACTIONS.values())
         or session_id in SIDE_QUESTIONS.active_session_ids()
@@ -31175,7 +31128,7 @@ async def release_idle_codex_manager_session(manager: CodexAppServerManager, ses
     if blocked():
         return retained("owned_work")
     deadline = time.monotonic() + 8.0
-    SERVER_MAINTENANCE_SESSIONS.add(session_id)
+    RUNS.maintenance.add(session_id)
     try:
         threads = [thread for thread in tuple(manager.client._loaded_threads)
                    if codex_session_id_for_thread(thread) == session_id]
@@ -31220,7 +31173,7 @@ async def release_idle_codex_manager_session(manager: CodexAppServerManager, ses
     except Exception:
         return retained("metadata_or_unload_failed")
     finally:
-        SERVER_MAINTENANCE_SESSIONS.discard(session_id)
+        RUNS.maintenance.discard(session_id)
 
 
 async def prepare_codex_login_turn(session: dict[str, Any]) -> None:
@@ -31234,7 +31187,7 @@ async def prepare_codex_login_turn(session: dict[str, Any]) -> None:
         return
     # Busy messages retain the normal durable queue path. Promotion repeats
     # this preflight after the accepted prior turn has settled; no replay.
-    if session_id in BUSY_SESSIONS or ACTIVE.get(session_id) is not None:
+    if session_id in RUNS.busy or RUNS.active.get(session_id) is not None:
         return
     if not await release_idle_codex_manager_session(manager, session_id, ignore_task=asyncio.current_task()):
         raise TransientAdmissionWait(409, codex_auth.HANDOFF_MESSAGE)
@@ -31766,7 +31719,7 @@ async def retry_claude_stop_fence(session_id: str) -> None:
         await asyncio.sleep(max(0.0, float(delay)))
 
         session = STORE.sessions.get(session_id)
-        async with ACTIVE_LOCK:
+        async with RUNS.active_lock:
             if session_id not in CLAUDE_STOP_FENCE_SESSIONS:
                 return
             if (
@@ -31775,18 +31728,18 @@ async def retry_claude_stop_fence(session_id: str) -> None:
                 != BACKEND_CLAUDE
             ):
                 CLAUDE_STOP_FENCE_SESSIONS.discard(session_id)
-                SERVER_MAINTENANCE_SESSIONS.discard(session_id)
+                RUNS.maintenance.discard(session_id)
                 discard_unused_claude_stop_fence_attempt_lock(session_id)
                 return
             if (
-                session_id in ACTIVE
-                or session_id in BUSY_SESSIONS
+                session_id in RUNS.active
+                or session_id in RUNS.busy
                 or stop_cleanup_in_progress(session_id)
             ):
                 continue
             # Reassert the fail-closed admission lease in case an unrelated
             # late cleanup discarded the coarse maintenance membership.
-            SERVER_MAINTENANCE_SESSIONS.add(session_id)
+            RUNS.maintenance.add(session_id)
 
         try:
             result = await stop_idle_claude_background_subagents_bounded(
@@ -31813,15 +31766,15 @@ async def retry_claude_stop_fence(session_id: str) -> None:
             continue
 
         released = False
-        async with ACTIVE_LOCK:
+        async with RUNS.active_lock:
             if (
                 session_id in CLAUDE_STOP_FENCE_SESSIONS
-                and session_id not in ACTIVE
-                and session_id not in BUSY_SESSIONS
+                and session_id not in RUNS.active
+                and session_id not in RUNS.busy
                 and not stop_cleanup_in_progress(session_id)
             ):
                 CLAUDE_STOP_FENCE_SESSIONS.discard(session_id)
-                SERVER_MAINTENANCE_SESSIONS.discard(session_id)
+                RUNS.maintenance.discard(session_id)
                 released = True
         if released:
             discard_unused_claude_stop_fence_attempt_lock(session_id)
@@ -31890,9 +31843,9 @@ async def cancel_claude_stop_fence_retry(
             timeout=max(0.01, STOP_CONFIRM_TIMEOUT_SECONDS),
         )
     if clear_fence:
-        async with ACTIVE_LOCK:
+        async with RUNS.active_lock:
             CLAUDE_STOP_FENCE_SESSIONS.discard(session_id)
-            SERVER_MAINTENANCE_SESSIONS.discard(session_id)
+            RUNS.maintenance.discard(session_id)
         if not pending:
             CLAUDE_STOP_FENCE_ATTEMPT_LOCKS.pop(session_id, None)
     return not pending
@@ -31978,7 +31931,7 @@ async def close_codex_app_server_manager() -> None:
         shutdown_tasks = [
             task
             for registry in (
-                SESSION_TURN_TASKS,
+                RUNS.turn_tasks,
                 CODEX_INTERACTION_HANDLER_TASKS,
                 CLAUDE_INTERACTION_HANDLER_TASKS,
             )
@@ -32051,7 +32004,7 @@ async def acquire_codex_control_thread(
     reservation_task = asyncio.current_task() if reserve_session else None
     if reservation_task is not None:
         register_session_task(
-            SESSION_TURN_TASKS,
+            RUNS.turn_tasks,
             session_id,
             reservation_task,
         )
@@ -32076,7 +32029,7 @@ async def acquire_codex_control_thread(
     )
     maintenance_reserved = False
     active_thread_id = ""
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         lifecycle_blocker = server_lifecycle_admission_blocker()
         if lifecycle_blocker:
             raise HTTPException(status_code=503, detail=lifecycle_blocker)
@@ -32085,13 +32038,13 @@ async def acquire_codex_control_thread(
                 status_code=409,
                 detail="wait for Codex goals configuration to finish",
             )
-        if session_id in SERVER_MAINTENANCE_SESSIONS:
+        if session_id in RUNS.maintenance:
             raise HTTPException(
                 status_code=409,
                 detail="wait for Codex session maintenance to finish",
             )
-        if session_id in BUSY_SESSIONS:
-            active = ACTIVE.get(session_id)
+        if session_id in RUNS.busy:
+            active = RUNS.active.get(session_id)
             # interactive_app_server describes the initiating client's ability
             # to render approvals, not whether this loaded thread can accept a
             # goal mutation from another compatible client.
@@ -32111,8 +32064,8 @@ async def acquire_codex_control_thread(
                 )
             active_thread_id = str(active["provider_thread_id"]).strip()
         elif reserve_session:
-            BUSY_SESSIONS.add(session_id)
-            CURRENT_TURNS[session_id] = {
+            RUNS.busy.add(session_id)
+            RUNS.current_turns[session_id] = {
                 "run_id": None,
                 "backend": BACKEND_CODEX,
                 "purpose": "codex_native_control",
@@ -32121,7 +32074,7 @@ async def acquire_codex_control_thread(
             }
             reserved = True
         if not reserve_session:
-            SERVER_MAINTENANCE_SESSIONS.add(session_id)
+            RUNS.maintenance.add(session_id)
             maintenance_reserved = True
 
     manager: CodexAppServerManager | None = None
@@ -32149,10 +32102,10 @@ async def acquire_codex_control_thread(
             thread_pinned = True
             acquire_codex_interactive_control_lease(thread_id)
             control_lease_acquired = True
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 active_changed = (
-                    session_id not in BUSY_SESSIONS
+                    session_id not in RUNS.busy
                     or not active
                     or active.get("backend") != BACKEND_CODEX
                     or active.get("transport") != CODEX_TRANSPORT_APP_SERVER
@@ -32239,8 +32192,8 @@ async def acquire_codex_control_thread(
                 allow_prebind=True,
             )
         if maintenance_reserved:
-            async with ACTIVE_LOCK:
-                SERVER_MAINTENANCE_SESSIONS.discard(session_id)
+            async with RUNS.active_lock:
+                RUNS.maintenance.discard(session_id)
         if isinstance(exc, asyncio.CancelledError):
             raise
         if isinstance(exc, HTTPException):
@@ -32250,11 +32203,11 @@ async def acquire_codex_control_thread(
         raise codex_control_http_error(exc) from exc
     finally:
         if reservation_task is not None:
-            tasks = SESSION_TURN_TASKS.get(session_id)
+            tasks = RUNS.turn_tasks.get(session_id)
             if tasks is not None:
                 tasks.discard(reservation_task)
                 if not tasks:
-                    SESSION_TURN_TASKS.pop(session_id, None)
+                    RUNS.turn_tasks.pop(session_id, None)
 
 
 async def release_codex_control_thread(
@@ -32285,9 +32238,9 @@ async def release_codex_control_thread(
             if schedule_queue and released:
                 schedule_next_queued_turn(session_id)
         else:
-            async with ACTIVE_LOCK:
-                SERVER_MAINTENANCE_SESSIONS.discard(session_id)
-                session_idle = session_id not in BUSY_SESSIONS
+            async with RUNS.active_lock:
+                RUNS.maintenance.discard(session_id)
+                session_idle = session_id not in RUNS.busy
             if schedule_queue and session_idle:
                 schedule_next_queued_turn(session_id)
     return released if reserved_session else session_idle
@@ -32311,9 +32264,9 @@ async def release_codex_control_slot(
 
     expected_thread = str(expected_thread_id or "").strip()
     expected_reservation = str(expected_reservation_id or "").strip()
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
-        current = CURRENT_TURNS.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
+        current = RUNS.current_turns.get(session_id)
         if isinstance(active, dict):
             active_thread = str(
                 active.get("provider_thread_id")
@@ -32347,10 +32300,10 @@ async def release_codex_control_slot(
             )
         if not owns_slot:
             return False
-        ACTIVE.pop(session_id, None)
-        BUSY_SESSIONS.discard(session_id)
-        CURRENT_TURNS.pop(session_id, None)
-        STOP_REQUESTS.discard(session_id)
+        RUNS.active.pop(session_id, None)
+        RUNS.busy.discard(session_id)
+        RUNS.current_turns.pop(session_id, None)
+        RUNS.stop_requests.discard(session_id)
         return True
 
 
@@ -32371,9 +32324,9 @@ async def claim_codex_control_terminal_publication(
     expected_operation = str(operation_id or "").strip()
     expected_thread = str(thread_id or "").strip()
     expected_reservation = str(reservation_id or "").strip()
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
-        current = CURRENT_TURNS.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
+        current = RUNS.current_turns.get(session_id)
         if not isinstance(active, dict) or not isinstance(current, dict):
             return False
         active_thread = str(
@@ -32384,8 +32337,8 @@ async def claim_codex_control_terminal_publication(
         owns_operation = bool(
             expected_operation
             and expected_reservation
-            and session_id in BUSY_SESSIONS
-            and session_id not in SERVER_MAINTENANCE_SESSIONS
+            and session_id in RUNS.busy
+            and session_id not in RUNS.maintenance
             and active.get("codex_native_operation")
             and str(active.get("run_id") or "") == expected_operation
             and str(active.get("codex_control_reservation_id") or "").strip()
@@ -32399,11 +32352,11 @@ async def claim_codex_control_terminal_publication(
         )
         if not owns_operation:
             return False
-        ACTIVE.pop(session_id, None)
-        BUSY_SESSIONS.discard(session_id)
-        CURRENT_TURNS.pop(session_id, None)
-        STOP_REQUESTS.discard(session_id)
-        SERVER_MAINTENANCE_SESSIONS.add(session_id)
+        RUNS.active.pop(session_id, None)
+        RUNS.busy.discard(session_id)
+        RUNS.current_turns.pop(session_id, None)
+        RUNS.stop_requests.discard(session_id)
+        RUNS.maintenance.add(session_id)
         CODEX_CONTROL_TERMINAL_FENCES[session_id] = expected_reservation
         return True
 
@@ -32417,7 +32370,7 @@ async def finish_codex_control_terminal_publication(
     """Release a claimed native terminal fence and optionally drain queue."""
 
     expected_reservation = str(reservation_id or "").strip()
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         if (
             not expected_reservation
             or CODEX_CONTROL_TERMINAL_FENCES.get(session_id)
@@ -32425,7 +32378,7 @@ async def finish_codex_control_terminal_publication(
         ):
             return
         CODEX_CONTROL_TERMINAL_FENCES.pop(session_id, None)
-        SERVER_MAINTENANCE_SESSIONS.discard(session_id)
+        RUNS.maintenance.discard(session_id)
     if schedule_queue:
         schedule_next_queued_turn(session_id)
 
@@ -32467,15 +32420,15 @@ async def cancel_codex_native_actions(session_id: str | None = None) -> None:
     selected_session_ids = {task_session_id for task_session_id, _, _ in selected}
     owned_session_ids: set[str] = set()
     interrupts: list[tuple[str, dict[str, Any]]] = []
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         for task_session_id in selected_session_ids:
-            active = ACTIVE.get(task_session_id)
+            active = RUNS.active.get(task_session_id)
             if not active or not active.get("codex_native_operation"):
                 continue
             owned_session_ids.add(task_session_id)
             active["stop_requested"] = True
             if active.get("run_id"):
-                STOPPED_RUNS.add(str(active["run_id"]))
+                RUNS.stopped_runs.add(str(active["run_id"]))
             thread_id = str(active.get("provider_thread_id") or "")
             turn_id = str(active.get("provider_turn_id") or "")
             if (
@@ -32494,8 +32447,8 @@ async def cancel_codex_native_actions(session_id: str | None = None) -> None:
             try:
                 await manager.request("turn/interrupt", params)
             except Exception as exc:
-                async with ACTIVE_LOCK:
-                    active = ACTIVE.get(task_session_id)
+                async with RUNS.active_lock:
+                    active = RUNS.active.get(task_session_id)
                     if active:
                         active["native_interrupt_sent"] = False
                 logger.warning(
@@ -32558,8 +32511,8 @@ async def send_codex_goal_steer(
         # Also called synchronously under the transport writer lock. There is
         # no await between that check and stdin.write: Stop/Pause cannot slip
         # into a wait-for-writer window after the last ownership check.
-        active = ACTIVE.get(session_id) or {}
-        current = CURRENT_TURNS.get(session_id) or {}
+        active = RUNS.active.get(session_id) or {}
+        current = RUNS.current_turns.get(session_id) or {}
         session = STORE.sessions.get(session_id) or {}
         goal = session.get("codex_goal")
         goal_identity = (
@@ -32589,10 +32542,10 @@ async def send_codex_goal_steer(
             and not getattr(subscription, "_closed", False)
             and session_id not in DELETING_SESSIONS
             and session_id not in DELETED_SESSION_TOMBSTONES
-            and session_id not in SERVER_MAINTENANCE_SESSIONS
-            and session_id in BUSY_SESSIONS
-            and session_id not in STOP_REQUESTS
-            and operation_id not in STOPPED_RUNS
+            and session_id not in RUNS.maintenance
+            and session_id in RUNS.busy
+            and session_id not in RUNS.stop_requests
+            and operation_id not in RUNS.stopped_runs
             and isinstance(goal, dict) and goal.get("status") == "active"
             and goal_identity == request.get("goal_identity")
             and not codex_goal_time_budget_is_exhausted(session)
@@ -32613,7 +32566,7 @@ async def send_codex_goal_steer(
         )
 
     async def validate_delivery_owner() -> None:
-        async with ACTIVE_LOCK:
+        async with RUNS.active_lock:
             allowed = delivery_owner_valid()
         if not allowed:
             raise NativeSteerHandoffError(
@@ -32668,9 +32621,9 @@ async def commit_codex_goal_steer(
     """Record accepted input without restarting, resuming, or rebinding a goal."""
     request = pending["request"]
     selected = request["selected"]
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id) or {}
-        current = CURRENT_TURNS.get(session_id) or {}
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id) or {}
+        current = RUNS.current_turns.get(session_id) or {}
         owned = (
             str(active.get("run_id") or "") == operation_id
             and str(current.get("run_id") or "") == operation_id
@@ -32748,7 +32701,7 @@ async def consume_codex_native_turn(
     goal_activity_deadline = time.monotonic() + max(
         CODEX_APP_SERVER_LIFECYCLE_TIMEOUT_SECONDS, IDLE_KILL_SECONDS,
     )
-    goal_steer_queue = (ACTIVE.get(session_id) or {}).get("native_steer_queue") if goal_resume else None
+    goal_steer_queue = (RUNS.active.get(session_id) or {}).get("native_steer_queue") if goal_resume else None
     steer_task: asyncio.Task[Any] | None = None
     notification_task: asyncio.Task[Any] | None = None
     steer_request: dict[str, Any] | None = (
@@ -32789,8 +32742,8 @@ async def consume_codex_native_turn(
                         # then bind it once to the next ready turn. The helper
                         # still rechecks goal/owner/Stop and the exact turn at
                         # the wire boundary; no poller or goal restart is added.
-                        async with ACTIVE_LOCK:
-                            active = ACTIVE.get(session_id) or {}
+                        async with RUNS.active_lock:
+                            active = RUNS.active.get(session_id) or {}
                             if (
                                 active.get("run_id") == operation_id
                                 and active.get("native_steer_queue") is goal_steer_queue
@@ -32829,8 +32782,8 @@ async def consume_codex_native_turn(
                 latest = STORE.sessions.get(session_id) or {}
                 goal = latest.get("codex_goal")
                 goal_status = str(goal.get("status") or "") if isinstance(goal, dict) else ""
-                async with ACTIVE_LOCK:
-                    active = ACTIVE.get(session_id)
+                async with RUNS.active_lock:
+                    active = RUNS.active.get(session_id)
                     stopped = bool(active and active.get("stop_requested"))
                 remaining = codex_goal_time_budget_remaining(latest)
                 used = goal.get("timeUsedSeconds") if isinstance(goal, dict) else 0
@@ -32899,11 +32852,11 @@ async def consume_codex_native_turn(
                         # mutation accepted during cleanup must not start work
                         # after this stream's consumer has exited.
                         async with session_lifecycle_lock(session_id):
-                            async with ACTIVE_LOCK:
-                                active = ACTIVE.get(session_id)
+                            async with RUNS.active_lock:
+                                active = RUNS.active.get(session_id)
                                 latest_goal = (STORE.sessions.get(session_id) or {}).get("codex_goal")
                                 stopped = bool(
-                                    operation_id in STOPPED_RUNS
+                                    operation_id in RUNS.stopped_runs
                                     or (active and active.get("stop_requested"))
                                 )
                                 enqueued = getattr(subscription, "_last_enqueued_sequence", 0)
@@ -32968,8 +32921,8 @@ async def consume_codex_native_turn(
                     terminal_status = "completed"
                     terminal_error = None
                 if notification_turn_id:
-                    async with ACTIVE_LOCK:
-                        active = ACTIVE.get(session_id)
+                    async with RUNS.active_lock:
+                        active = RUNS.active.get(session_id)
                         if (
                             active
                             and str(active.get("run_id") or "") == operation_id
@@ -33007,8 +32960,8 @@ async def consume_codex_native_turn(
                             },
                         )
                     except Exception as exc:
-                        async with ACTIVE_LOCK:
-                            active = ACTIVE.get(session_id)
+                        async with RUNS.active_lock:
+                            active = RUNS.active.get(session_id)
                             if (
                                 active
                                 and str(active.get("run_id") or "")
@@ -33150,8 +33103,8 @@ async def consume_codex_native_turn(
                         native_turn_id,
                         native_item_id,
                     )
-                    async with ACTIVE_LOCK:
-                        active = ACTIVE.get(session_id)
+                    async with RUNS.active_lock:
+                        active = RUNS.active.get(session_id)
                         if (
                             active
                             and str(active.get("run_id") or "") == operation_id
@@ -33203,8 +33156,8 @@ async def consume_codex_native_turn(
                 if goal_resume:
                     goal_turn_running = False
                     goal_clock_started = None
-                    async with ACTIVE_LOCK:
-                        active = ACTIVE.get(session_id)
+                    async with RUNS.active_lock:
+                        active = RUNS.active.get(session_id)
                         if (
                             active and active.get("run_id") == operation_id
                             and active.get("codex_control_reservation_id") == reservation_id
@@ -33240,8 +33193,8 @@ async def consume_codex_native_turn(
             await join_task_despite_caller_cancellation(summary_cleanup)
         if goal_steer_queue is not None:
             async def settle_goal_steering() -> None:
-                async with ACTIVE_LOCK:
-                    active = ACTIVE.get(session_id)
+                async with RUNS.active_lock:
+                    active = RUNS.active.get(session_id)
                     if (
                         active and active.get("run_id") == operation_id
                         and active.get("codex_control_reservation_id") == reservation_id
@@ -33287,8 +33240,8 @@ async def consume_codex_native_turn(
                 )
                 compaction_usage: dict[str, Any] = {}
                 if operation == "compaction":
-                    async with ACTIVE_LOCK:
-                        active = ACTIVE.get(session_id)
+                    async with RUNS.active_lock:
+                        active = RUNS.active.get(session_id)
                         if (
                             active
                             and str(active.get("run_id") or "") == operation_id
@@ -33370,7 +33323,7 @@ async def consume_codex_native_turn(
                         },
                     )
             finally:
-                STOPPED_RUNS.discard(operation_id)
+                RUNS.stopped_runs.discard(operation_id)
                 if terminal_claimed:
                     # The slot is already exactly released. Remove the admission
                     # fence before touching shared-thread LRU state: unpin can be
@@ -34920,11 +34873,11 @@ async def apply_codex_goal_time_budget_limit(
                 current["codex_goal"] = goal
                 current["updated_at"] = now_iso()
                 await STORE.save()
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         if active:
             active["stop_requested"] = True
-            STOPPED_RUNS.add(str(active.get("run_id") or run_id))
+            RUNS.stopped_runs.add(str(active.get("run_id") or run_id))
     if turn is not None and turn.turn_id:
         with suppress(CodexAppServerError):
             await turn.interrupt()
@@ -35073,10 +35026,10 @@ async def codex_thread_has_local_run_owner(
     provider continuation.
     """
 
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         return bool(
-            session_id in BUSY_SESSIONS
+            session_id in RUNS.busy
             and active
             and active.get("backend") == BACKEND_CODEX
             and active.get("transport") == CODEX_TRANSPORT_APP_SERVER
@@ -38271,9 +38224,9 @@ async def persist_run_provider_session(
     # waits for provider cleanup while holding the lifecycle lock, so this
     # deliberately uses the established ACTIVE -> STORE lock order instead of
     # trying to acquire the lifecycle lock from a runner.
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
-        current_turn = CURRENT_TURNS.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
+        current_turn = RUNS.current_turns.get(session_id)
         active_run_id = (
             str(active.get("run_id") or "")
             if isinstance(active, dict)
@@ -38285,7 +38238,7 @@ async def persist_run_provider_session(
             else ""
         )
         if (
-            session_id not in BUSY_SESSIONS
+            session_id not in RUNS.busy
             or run_id not in {active_run_id, current_run_id}
             or any(
                 owner_id not in {"", run_id}
@@ -38395,8 +38348,8 @@ async def run_claude_print(
                     **run_event_metadata(run_id),
                 })
         finally:
-            RUN_METADATA.pop(run_id, None)
-            STOPPED_RUNS.discard(run_id)
+            RUNS.run_metadata.pop(run_id, None)
+            RUNS.stopped_runs.discard(run_id)
             if released:
                 schedule_next_queued_turn(session_id)
         return
@@ -38515,7 +38468,7 @@ async def run_claude_print(
                         })
             elif etype == "result":
                 terminal_result_received = True
-                if run_id in STOPPED_RUNS and is_expected_claude_interruption_result(event):
+                if run_id in RUNS.stopped_runs and is_expected_claude_interruption_result(event):
                     continue
                 result_error = claude_result_error(event)
                 if result_error:
@@ -38538,7 +38491,7 @@ async def run_claude_print(
     stderr = ""
     if proc.stderr:
         stderr = (await proc.stderr.read()).decode("utf-8", "replace").strip()
-    stopped = run_id in STOPPED_RUNS
+    stopped = run_id in RUNS.stopped_runs
     if not stopped and not terminal_result_received and not stream_error:
         stream_error = (
             "Claude print stream ended before a terminal result became "
@@ -39006,8 +38959,8 @@ async def finish_claude_sdk_start_failure(
     delivery_uncertain: bool = False,
     ownership_token: str | None = None,
 ) -> None:
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         if active and str(active.get("run_id") or "") == run_id:
             active["provider_turn_ready"] = False
             active["native_steer_queue"] = None
@@ -39044,8 +38997,8 @@ async def finish_claude_sdk_start_failure(
             **run_event_metadata(run_id),
         })
     finally:
-        RUN_METADATA.pop(run_id, None)
-        STOPPED_RUNS.discard(run_id)
+        RUNS.run_metadata.pop(run_id, None)
+        RUNS.stopped_runs.discard(run_id)
         if released:
             schedule_next_queued_turn(session_id)
 
@@ -39059,7 +39012,7 @@ async def finish_cancelled_claude_sdk_start(
 ) -> None:
     """Retire a possibly accepted query and clear its reservation safely."""
 
-    STOPPED_RUNS.add(run_id)
+    RUNS.stopped_runs.add(run_id)
     if await turn_slot_is_owned(session_id, run_id):
         if ownership_token:
             await evict_claude_sdk_chat(
@@ -39092,8 +39045,8 @@ async def finish_cancelled_claude_sdk_start(
                 **run_event_metadata(run_id),
             })
     finally:
-        RUN_METADATA.pop(run_id, None)
-        STOPPED_RUNS.discard(run_id)
+        RUNS.run_metadata.pop(run_id, None)
+        RUNS.stopped_runs.discard(run_id)
         # This cleanup owns the successful release. The outer task supervisor
         # deliberately sees no remaining owner, so the drain must happen here.
         # A concurrent Stop may request the same drain; QUEUE_START_TASKS keeps
@@ -39303,13 +39256,13 @@ async def run_claude_sdk(
         return
 
     async def activate_initial_supervisor(ownership_token: str) -> None:
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             if (
                 active is not startup_active
                 or str(active.get("run_id") or "") != run_id
                 or active.get("stop_requested")
-                or session_id not in BUSY_SESSIONS
+                or session_id not in RUNS.busy
             ):
                 # This hook runs before supervisor.start_run/query. Raising
                 # cancellation guarantees that a Stop/delete winner cannot
@@ -39420,12 +39373,12 @@ async def run_claude_sdk(
         getattr(handle, "acknowledged", False)
         and not getattr(handle, "done", False)
     )
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         if (
             active is startup_active
             and str(active.get("run_id") or "") == run_id
-            and session_id in BUSY_SESSIONS
+            and session_id in RUNS.busy
         ):
             active.update({
                 "claude_sdk_run": handle,
@@ -39521,7 +39474,7 @@ async def run_claude_sdk(
             )
         )
         if shutdown_interrupted:
-            STOPPED_RUNS.add(current_run_id)
+            RUNS.stopped_runs.add(current_run_id)
             shutdown_interrupted_run_ids.add(current_run_id)
         stream_error = stream_error or concise_error_message(exc)
         return shutdown_interrupted
@@ -39615,8 +39568,8 @@ async def run_claude_sdk(
 
     async def release_transition(event: asyncio.Event) -> None:
         event.set()
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             if active and active.get("logical_transition_ready") is event:
                 active.pop("logical_transition_ready", None)
                 active.pop("logical_transition_candidate_run_id", None)
@@ -39847,8 +39800,8 @@ async def run_claude_sdk(
 
                 transition_ready = asyncio.Event()
                 transition_reserved = False
-                async with ACTIVE_LOCK:
-                    active = ACTIVE.get(session_id)
+                async with RUNS.active_lock:
+                    active = RUNS.active.get(session_id)
                     if not active or active.get("stop_requested"):
                         if isinstance(future, asyncio.Future) and not future.done():
                             future.set_exception(NativeSteerHandoffError(
@@ -39888,11 +39841,11 @@ async def run_claude_sdk(
                     # this chat supervisor and finish the current logical run.
                     retire_supervisor = True
                     stream_error = concise_error_message(exc)
-                    STOPPED_RUNS.add(current_run_id)
+                    RUNS.stopped_runs.add(current_run_id)
                     break
                 except Exception as exc:
-                    async with ACTIVE_LOCK:
-                        active = ACTIVE.get(session_id)
+                    async with RUNS.active_lock:
+                        active = RUNS.active.get(session_id)
                         if (
                             active
                             and not active.get("stop_requested")
@@ -40016,8 +39969,8 @@ async def run_claude_sdk(
                 # Stop advertising native steering as soon as this provider
                 # result is terminal. A Force Send that raced the result is
                 # rejected below and safely requeued onto the next turn.
-                async with ACTIVE_LOCK:
-                    active = ACTIVE.get(session_id)
+                async with RUNS.active_lock:
+                    active = RUNS.active.get(session_id)
                     if (
                         active
                         and str(active.get("run_id") or "") == current_run_id
@@ -40044,8 +39997,8 @@ async def run_claude_sdk(
                 else bool(steer_state.get("interrupt_sent"))
             )
             active_stopping = False
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 active_stopping = not active or bool(active.get("stop_requested"))
             if active_stopping or stream_error or (
                 result_details
@@ -40070,8 +40023,8 @@ async def run_claude_sdk(
                     cwd=cwd,
                 )
             candidate_query_allowed = False
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 if (
                     active
                     and not active.get("stop_requested")
@@ -40147,8 +40100,8 @@ async def run_claude_sdk(
                 if previous_run_id not in outputs_finished_run_ids:
                     with suppress(OSError):
                         previous_manifest_path.replace(manifest_path)
-                async with ACTIVE_LOCK:
-                    active = ACTIVE.get(session_id)
+                async with RUNS.active_lock:
+                    active = RUNS.active.get(session_id)
                     if (
                         active
                         and active.get("logical_transition_ready")
@@ -40202,8 +40155,8 @@ async def run_claude_sdk(
                 steer_state["candidate_ownership_token"] = str(
                     ownership_token
                 )
-                async with ACTIVE_LOCK:
-                    active = ACTIVE.get(session_id)
+                async with RUNS.active_lock:
+                    active = RUNS.active.get(session_id)
                     if (
                         not active
                         or active.get("stop_requested")
@@ -40271,8 +40224,8 @@ async def run_claude_sdk(
                         ),
                         safe_to_requeue=True,
                     ) from exc
-                async with ACTIVE_LOCK:
-                    active = ACTIVE.get(session_id)
+                async with RUNS.active_lock:
+                    active = RUNS.active.get(session_id)
                     delivery_still_allowed = bool(
                         active
                         and not active.get("stop_requested")
@@ -40357,8 +40310,8 @@ async def run_claude_sdk(
                         candidate_artifacts,
                         manifest_path,
                     )
-                async with ACTIVE_LOCK:
-                    active = ACTIVE.get(session_id)
+                async with RUNS.active_lock:
+                    active = RUNS.active.get(session_id)
                     if (
                         active
                         and active.get("logical_transition_ready")
@@ -40386,7 +40339,7 @@ async def run_claude_sdk(
 
             metadata = queued_turn_run_metadata(selected)
             metadata["steer_interrupted_run_id"] = previous_run_id
-            RUN_METADATA[candidate_run_id] = metadata
+            RUNS.run_metadata[candidate_run_id] = metadata
             display_prompt = str(
                 selected.get("display_prompt")
                 if selected.get("display_prompt") is not None
@@ -40397,7 +40350,7 @@ async def run_claude_sdk(
                 if selected.get("display_file_ids") is not None
                 else selected.get("file_ids") or []
             )
-            lineage = turn_steering_lineage(CURRENT_TURNS.get(session_id))
+            lineage = turn_steering_lineage(RUNS.current_turns.get(session_id))
             steering_message = {
                 "prompt": str(selected.get("prompt") or ""),
                 "file_ids": list(selected.get("file_ids") or []),
@@ -40436,8 +40389,8 @@ async def run_claude_sdk(
             provider_acknowledged = candidate_provider_ready
             idle_warning_emitted = False
             delivery_unknown = False
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 if active:
                     stopped_during_handoff = bool(active.get("stop_requested"))
                     active.update({
@@ -40451,8 +40404,8 @@ async def run_claude_sdk(
                         "provider_starting": not candidate_provider_ready,
                     })
                     if stopped_during_handoff:
-                        STOPPED_RUNS.add(candidate_run_id)
-                    current = CURRENT_TURNS.get(session_id)
+                        RUNS.stopped_runs.add(candidate_run_id)
+                    current = RUNS.current_turns.get(session_id)
                     if current is not None:
                         current.update({
                             "run_id": candidate_run_id,
@@ -40558,8 +40511,8 @@ async def run_claude_sdk(
             if stopped_during_handoff:
                 with suppress(Exception):
                     await interrupt_claude_sdk_run_bounded(candidate_handle)
-            RUN_METADATA.pop(previous_run_id, None)
-            STOPPED_RUNS.discard(previous_run_id)
+            RUNS.run_metadata.pop(previous_run_id, None)
+            RUNS.stopped_runs.discard(previous_run_id)
             if isinstance(future, asyncio.Future) and not future.done():
                 future.set_result({
                     "ok": True,
@@ -40578,7 +40531,7 @@ async def run_claude_sdk(
     except asyncio.CancelledError as exc:
         cancelled_error = exc
         retire_supervisor = True
-        STOPPED_RUNS.add(current_run_id)
+        RUNS.stopped_runs.add(current_run_id)
     except Exception as exc:
         shutdown_interrupted = record_sdk_stream_exception(exc)
         retire_supervisor = True
@@ -40724,7 +40677,7 @@ async def run_claude_sdk(
     except asyncio.CancelledError as exc:
         cancelled_error = cancelled_error or exc
         retire_supervisor = True
-        STOPPED_RUNS.add(current_run_id)
+        RUNS.stopped_runs.add(current_run_id)
         await join_task_despite_caller_cancellation(cleanup_task)
 
     async def finalize_sdk_run() -> None:
@@ -40762,7 +40715,7 @@ async def run_claude_sdk(
 
         stopped = bool(
             cancelled_error is not None
-            or current_run_id in STOPPED_RUNS
+            or current_run_id in RUNS.stopped_runs
             or (result_details or {}).get("aborted")
         )
         try:
@@ -40891,8 +40844,8 @@ async def run_claude_sdk(
                 # after its predecessor's completion could not be recorded.
                 drain_queue = False
                 logger.exception("Claude completion recording failed; automatic queue drain deferred")
-        RUN_METADATA.pop(current_run_id, None)
-        STOPPED_RUNS.discard(current_run_id)
+        RUNS.run_metadata.pop(current_run_id, None)
+        RUNS.stopped_runs.discard(current_run_id)
         if released and drain_queue:
             schedule_next_queued_turn(session_id)
 
@@ -40902,7 +40855,7 @@ async def run_claude_sdk(
     except asyncio.CancelledError as exc:
         cancelled_error = cancelled_error or exc
         retire_supervisor = True
-        STOPPED_RUNS.add(current_run_id)
+        RUNS.stopped_runs.add(current_run_id)
         await join_task_despite_caller_cancellation(finalize_task)
     if cancelled_error is not None:
         raise cancelled_error
@@ -41196,8 +41149,8 @@ async def run_codex_exec(
                     **run_event_metadata(run_id),
                 })
         finally:
-            RUN_METADATA.pop(run_id, None)
-            STOPPED_RUNS.discard(run_id)
+            RUNS.run_metadata.pop(run_id, None)
+            RUNS.stopped_runs.discard(run_id)
             if released:
                 schedule_next_queued_turn(session_id)
         return
@@ -41507,7 +41460,7 @@ async def run_codex_exec(
     stderr = ""
     if proc.stderr:
         stderr = (await proc.stderr.read()).decode("utf-8", "replace").strip()
-    stopped = run_id in STOPPED_RUNS
+    stopped = run_id in RUNS.stopped_runs
     await flush_agent_message(
         final=(
             not stopped
@@ -41698,13 +41651,13 @@ async def retain_codex_goal_run_owner(
         project_codex_notification, thread_id,
     )
     async with session_lifecycle_lock(session_id):
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             if not (
                 active and active.get("run_id") == run_id
                 and active.get("provider_thread_id") == thread_id
-                and session_id in BUSY_SESSIONS
-                and (CURRENT_TURNS.get(session_id) or {}).get("run_id") == run_id
+                and session_id in RUNS.busy
+                and (RUNS.current_turns.get(session_id) or {}).get("run_id") == run_id
             ):
                 return False
             goal = (STORE.sessions.get(session_id) or {}).get("codex_goal")
@@ -41715,7 +41668,7 @@ async def retain_codex_goal_run_owner(
                 and isinstance(goal, dict)
                 and (goal.get("status") == "active" or pending_output)
                 and not active.get("stop_requested")
-                and run_id not in STOPPED_RUNS
+                and run_id not in RUNS.stopped_runs
             )
             active["codex_goal_handoff_closed"] = not retain
             if not retain:
@@ -41730,8 +41683,8 @@ async def retain_codex_goal_run_owner(
             active["provider_turn_ready"] = False
             active["native_interrupt_sent"] = False
             active["native_steer_queue"] = asyncio.Queue(maxsize=1)
-            CURRENT_TURNS[session_id]["purpose"] = "codex_goal_resume"
-            CURRENT_TURNS[session_id]["codex_control_reservation_id"] = run_id
+            RUNS.current_turns[session_id]["purpose"] = "codex_goal_resume"
+            RUNS.current_turns[session_id]["codex_control_reservation_id"] = run_id
             # Register the existing supervisor, not a new task, so Delete and
             # server drain see the same native owner as Stop and Force Send.
             owner = asyncio.current_task()
@@ -41759,7 +41712,7 @@ async def archive_rejected_codex_session(session_id: str, thread_id: str, run_id
     Identity is stable while this run owns the chat; ignore stale/deleted runs.
     """
     current = STORE.sessions.get(session_id)
-    active = ACTIVE.get(session_id) or {}
+    active = RUNS.active.get(session_id) or {}
     if (not current or current.get("archived") or session_id in DELETING_SESSIONS
             or current.get("backend") != BACKEND_CODEX
             or str(session_provider_id(current) or "") != thread_id
@@ -41891,7 +41844,7 @@ async def run_codex_app_server(
         if type(generation) is not int or generation < 1:
             return
         child_continuation_generation = generation
-        owner = ACTIVE.get(session_id)
+        owner = RUNS.active.get(session_id)
         known_children: set[str] = set()
         active_children = active_child_ids
         child_turn_ids: dict[str, str] = {}
@@ -41912,17 +41865,17 @@ async def run_codex_app_server(
                     active_children.add(child)
 
         def observe_native(notification: dict[str, Any]) -> None:
-            current = ACTIVE.get(session_id)
+            current = RUNS.active.get(session_id)
             session = STORE.sessions.get(session_id)
             if not (
                 current is owner and current
                 and current.get("run_id") == current_run_id
                 and current.get("provider_thread_id") == provider_id
-                and (CURRENT_TURNS.get(session_id) or {}).get("run_id") == current_run_id
-                and session_id in BUSY_SESSIONS
+                and (RUNS.current_turns.get(session_id) or {}).get("run_id") == current_run_id
+                and session_id in RUNS.busy
                 and session is not None and not session.get("archived")
                 and not current.get("stop_requested")
-                and current_run_id not in STOPPED_RUNS
+                and current_run_id not in RUNS.stopped_runs
                 and getattr(manager, "generation", None) == generation
             ):
                 return
@@ -42054,17 +42007,17 @@ async def run_codex_app_server(
         # Goal activation and its provider-tool projection must win before
         # deciding whether this remains an ordinary, non-goal supervisor.
         await manager.wait_for_notification_handler(project_codex_notification, provider_id)
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             live_goal = (STORE.sessions.get(session_id) or {}).get("codex_goal")
             if not (
                 active and active.get("run_id") == current_run_id
                 and active.get("codex_app_server_turn") is turn
                 and active.get("provider_thread_id") == provider_id
-                and (CURRENT_TURNS.get(session_id) or {}).get("run_id") == current_run_id
-                and session_id in BUSY_SESSIONS
+                and (RUNS.current_turns.get(session_id) or {}).get("run_id") == current_run_id
+                and session_id in RUNS.busy
                 and not active.get("stop_requested")
-                and current_run_id not in STOPPED_RUNS
+                and current_run_id not in RUNS.stopped_runs
                 and getattr(manager, "generation", None) == child_continuation_generation
                 and not (isinstance(live_goal, dict) and live_goal.get("status") == "active")
                 and (pending_children or received_parent_turn_ids - completed_native_turn_ids)
@@ -42097,20 +42050,20 @@ async def run_codex_app_server(
             return
 
         def before_send() -> bool:
-            active = ACTIVE.get(session_id)
+            active = RUNS.active.get(session_id)
             live_session = STORE.sessions.get(session_id)
             live_goal = (live_session or {}).get("codex_goal")
             return bool(
                 active and active.get("run_id") == current_run_id
                 and active.get("codex_app_server_turn") is turn
                 and active.get("provider_thread_id") == provider_id
-                and (CURRENT_TURNS.get(session_id) or {}).get("run_id") == current_run_id
-                and session_id in BUSY_SESSIONS
+                and (RUNS.current_turns.get(session_id) or {}).get("run_id") == current_run_id
+                and session_id in RUNS.busy
                 and live_session is not None and not live_session.get("archived")
                 and session_id not in DELETING_SESSIONS
                 and session_id not in DELETED_SESSION_TOMBSTONES
                 and not active.get("stop_requested")
-                and current_run_id not in STOPPED_RUNS
+                and current_run_id not in RUNS.stopped_runs
                 and getattr(manager, "generation", None) == child_continuation_generation
                 and active.get("codex_child_continuation_waiting") is True
                 and turn.turn_id == waiting_parent_turn_id
@@ -42169,13 +42122,13 @@ async def run_codex_app_server(
             await bind_active_turn_and_reconcile_stop()
 
     def child_continuation_owner_current() -> bool:
-        active = ACTIVE.get(session_id)
+        active = RUNS.active.get(session_id)
         return bool(
             active and active.get("run_id") == current_run_id
             and active.get("codex_app_server_turn") is turn
             and active.get("provider_thread_id") == provider_id
-            and (CURRENT_TURNS.get(session_id) or {}).get("run_id") == current_run_id
-            and session_id in BUSY_SESSIONS
+            and (RUNS.current_turns.get(session_id) or {}).get("run_id") == current_run_id
+            and session_id in RUNS.busy
             and getattr(manager, "generation", None) == child_continuation_generation
             and getattr(turn, "transport_generation", None) == child_continuation_generation
         )
@@ -42212,8 +42165,8 @@ async def run_codex_app_server(
     async def detach_native_steer_admission() -> None:
         """Stop Force Send admission into this runner before queue cleanup."""
 
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             if (
                 active
                 and str(active.get("run_id") or "") == current_run_id
@@ -42683,8 +42636,8 @@ async def run_codex_app_server(
                 return
             transition_reserved = False
             transition_ready.set()
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 if (
                     active
                     and active.get("logical_transition_ready") is transition_ready
@@ -42695,8 +42648,8 @@ async def run_codex_app_server(
                     active.pop("logical_transition_predecessor_run_id", None)
                     active.pop("logical_transition_authority_nonce", None)
 
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             if not active or active.get("stop_requested"):
                 raise NativeSteerHandoffError(
                     "the active Codex turn is already stopping",
@@ -42726,8 +42679,8 @@ async def run_codex_app_server(
                     ),
                     safe_to_requeue=True,
                 ) from exc
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 delivery_still_allowed = bool(
                     active
                     and not active.get("stop_requested")
@@ -42767,8 +42720,8 @@ async def run_codex_app_server(
                     ),
                     safe_to_requeue=True,
                 ) from exc
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 delivery_still_allowed = bool(
                     active
                     and not active.get("stop_requested")
@@ -42989,7 +42942,7 @@ async def run_codex_app_server(
                 if selected.get("display_file_ids") is not None
                 else selected.get("file_ids") or []
             )
-            lineage = turn_steering_lineage(CURRENT_TURNS.get(session_id))
+            lineage = turn_steering_lineage(RUNS.current_turns.get(session_id))
             steering_message = {
                 "prompt": str(selected.get("prompt") or ""),
                 "file_ids": list(selected.get("file_ids") or []),
@@ -42997,13 +42950,13 @@ async def run_codex_app_server(
             if not lineage or steering_message != lineage[-1]:
                 lineage.append(steering_message)
 
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 if not active:
                     raise RuntimeError(
                         "the active turn disappeared after Force Send was accepted"
                     )
-                current = CURRENT_TURNS.get(session_id)
+                current = RUNS.current_turns.get(session_id)
                 if current is None:
                     raise RuntimeError(
                         "the current turn disappeared after Force Send was accepted"
@@ -43017,12 +42970,12 @@ async def run_codex_app_server(
                 current_provider_prompt = request_prompt
                 current_diff_baseline = candidate_diff_baseline
                 clear_logical_buffers()
-                RUN_METADATA[candidate_run_id] = metadata
+                RUNS.run_metadata[candidate_run_id] = metadata
                 active["run_id"] = candidate_run_id
                 active["started_at"] = time.time()
                 active["started_at_iso"] = now_iso()
                 if stopped_during_handoff:
-                    STOPPED_RUNS.add(candidate_run_id)
+                    RUNS.stopped_runs.add(candidate_run_id)
                 current.update({
                     "run_id": candidate_run_id,
                     "prompt": str(selected.get("prompt") or ""),
@@ -43118,8 +43071,8 @@ async def run_codex_app_server(
             ) from exc
         await release_transition_boundary()
 
-        RUN_METADATA.pop(previous_run_id, None)
-        STOPPED_RUNS.discard(previous_run_id)
+        RUNS.run_metadata.pop(previous_run_id, None)
+        RUNS.stopped_runs.discard(previous_run_id)
         try:
             await finish_logical_outputs(
                 previous_run_id,
@@ -43153,16 +43106,16 @@ async def run_codex_app_server(
         if turn is None or not turn.turn_id:
             return
         should_interrupt = False
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             active_owned = bool(
                 active
                 and str(active.get("run_id") or "") == current_run_id
                 and active.get("codex_app_server_turn") is turn
                 and active.get("provider_thread_id") == provider_id
-                and session_id in BUSY_SESSIONS
+                and session_id in RUNS.busy
                 and str(
-                    (CURRENT_TURNS.get(session_id) or {}).get("run_id") or ""
+                    (RUNS.current_turns.get(session_id) or {}).get("run_id") or ""
                 ) == current_run_id
                 and (
                     not child_continuation_generation
@@ -43184,8 +43137,8 @@ async def run_codex_app_server(
             try:
                 await turn.interrupt()
             except Exception:
-                async with ACTIVE_LOCK:
-                    active = ACTIVE.get(session_id)
+                async with RUNS.active_lock:
+                    active = RUNS.active.get(session_id)
                     if (
                         active
                         and str(active.get("run_id") or "") == current_run_id
@@ -43199,9 +43152,9 @@ async def run_codex_app_server(
                 )
 
     def stop_requested_for_current_run() -> bool:
-        if current_run_id in STOPPED_RUNS:
+        if current_run_id in RUNS.stopped_runs:
             return True
-        active = ACTIVE.get(session_id)
+        active = RUNS.active.get(session_id)
         return bool(
             active
             and str(active.get("run_id") or "") == current_run_id
@@ -43652,14 +43605,14 @@ async def run_codex_app_server(
                 )
                 if not persisted_provider:
                     return
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 active_owned = bool(
                     active
                     and str(active.get("run_id") or "") == current_run_id
-                    and session_id in BUSY_SESSIONS
+                    and session_id in RUNS.busy
                     and str(
-                        (CURRENT_TURNS.get(session_id) or {}).get("run_id") or ""
+                        (RUNS.current_turns.get(session_id) or {}).get("run_id") or ""
                     ) == current_run_id
                 )
                 stop_requested = bool(
@@ -43672,7 +43625,7 @@ async def run_codex_app_server(
                 return
 
             if stop_requested:
-                STOPPED_RUNS.add(current_run_id)
+                RUNS.stopped_runs.add(current_run_id)
                 terminal_status = "interrupted"
             else:
                 overrides: dict[str, Any] = {
@@ -43794,14 +43747,14 @@ async def run_codex_app_server(
                     )
                     ambiguous_reconcile_at = time.monotonic()
 
-                async with ACTIVE_LOCK:
-                    active = ACTIVE.get(session_id)
+                async with RUNS.active_lock:
+                    active = RUNS.active.get(session_id)
                     active_owned = bool(
                         active
                         and str(active.get("run_id") or "") == current_run_id
-                        and session_id in BUSY_SESSIONS
+                        and session_id in RUNS.busy
                         and str(
-                            (CURRENT_TURNS.get(session_id) or {}).get("run_id")
+                            (RUNS.current_turns.get(session_id) or {}).get("run_id")
                             or ""
                         ) == current_run_id
                     )
@@ -43931,14 +43884,14 @@ async def run_codex_app_server(
                         # when both became ready together.
                         if notification_task in done:
                             sequence, notification = notification_task.result()
-                            async with ACTIVE_LOCK:
-                                current_owner = ACTIVE.get(session_id)
+                            async with RUNS.active_lock:
+                                current_owner = RUNS.active.get(session_id)
                                 still_owned = bool(
                                     current_owner
                                     and current_owner.get("run_id") == current_run_id
                                     and current_owner.get("codex_app_server_turn") is turn
-                                    and (CURRENT_TURNS.get(session_id) or {}).get("run_id") == current_run_id
-                                    and session_id in BUSY_SESSIONS
+                                    and (RUNS.current_turns.get(session_id) or {}).get("run_id") == current_run_id
+                                    and session_id in RUNS.busy
                                     and (
                                         not child_continuation_generation
                                         or getattr(manager, "generation", None) == child_continuation_generation
@@ -44143,7 +44096,7 @@ async def run_codex_app_server(
 
         stopped = (
             terminal_status in {"interrupted", "cancelled", "canceled"}
-            or current_run_id in STOPPED_RUNS
+            or current_run_id in RUNS.stopped_runs
         )
     except asyncio.CancelledError:
         # The post-processing finalizer below is after this try statement and
@@ -44164,7 +44117,7 @@ async def run_codex_app_server(
             )
         )
         stop_requested = (
-            current_run_id in STOPPED_RUNS
+            current_run_id in RUNS.stopped_runs
             or planned_transport_shutdown
         )
         if (
@@ -44598,7 +44551,7 @@ async def run_codex_app_server(
                 # Post-processing failed before the owned terminal pipeline
                 # could start. Preserve the prior exact-owner recovery path;
                 # the task supervisor will publish a missing terminal marker.
-                RUN_METADATA.pop(current_run_id, None)
+                RUNS.run_metadata.pop(current_run_id, None)
                 fallback_released = await release_turn_slot(
                     session_id,
                     expected_run_id=current_run_id,
@@ -44620,7 +44573,7 @@ async def run_codex_app_server(
                         session_id,
                         stopped,
                     )
-                    STOPPED_RUNS.discard(current_run_id)
+                    RUNS.stopped_runs.discard(current_run_id)
                     # Unpinning is provider-cache hygiene after the chat slot
                     # has already been released. It must not strand an admitted
                     # successor if unpin raises or this runner is cancelled.
@@ -44724,7 +44677,7 @@ async def start_turn(
     # leave a deferred stop marker for the runner to reconcile when it binds.
     request_task = asyncio.current_task()
     if request_task is not None:
-        register_session_task(SESSION_TURN_TASKS, session_id, request_task)
+        register_session_task(RUNS.turn_tasks, session_id, request_task)
     try:
         async with session_lifecycle_lock(session_id):
             ensure_session_not_deleting(session_id)
@@ -44742,11 +44695,11 @@ async def start_turn(
             )
     finally:
         if request_task is not None:
-            tasks = SESSION_TURN_TASKS.get(session_id)
+            tasks = RUNS.turn_tasks.get(session_id)
             if tasks is not None:
                 tasks.discard(request_task)
                 if not tasks:
-                    SESSION_TURN_TASKS.pop(session_id, None)
+                    RUNS.turn_tasks.pop(session_id, None)
 
 
 async def _start_turn_locked(
@@ -44879,19 +44832,17 @@ async def _start_turn_locked(
     has_prior_queue = False
     reservation_admission_id = uuid.uuid4().hex
     if queue_if_busy:
-        async with QUEUE_LOCK:
-            promotion_owner = QUEUE_START_TASKS.get(session_id)
+        async with RUNS.queue_lock:
+            promotion_owner = RUNS.queue_start_tasks.get(session_id)
             has_prior_queue = bool(
-                QUEUED_TURNS.get(session_id)
-                or RUN_NOW_TURNS.get(session_id)
-                or session_id in STEERING_SESSIONS
+                RUNS.has_waiting_work(session_id)
                 or (
                     promotion_owner is not None
                     and not promotion_owner.done()
                     and promotion_owner is not asyncio.current_task()
                 )
             )
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         lifecycle_blocker = server_lifecycle_admission_blocker()
         if lifecycle_blocker:
             raise HTTPException(status_code=503, detail=lifecycle_blocker)
@@ -44903,7 +44854,7 @@ async def _start_turn_locked(
                 status_code=409,
                 detail="wait for Codex goals configuration to finish",
             )
-        if session_id in SERVER_MAINTENANCE_SESSIONS:
+        if session_id in RUNS.maintenance:
             raise TransientAdmissionWait(
                 status_code=409,
                 detail=(
@@ -44913,7 +44864,7 @@ async def _start_turn_locked(
                 ),
             )
         if (
-            session_id in BUSY_SESSIONS
+            session_id in RUNS.busy
             or has_prior_queue
             or stop_cleanup_in_progress(session_id)
         ):
@@ -44925,8 +44876,8 @@ async def _start_turn_locked(
                     detail="session already has a running turn",
                 )
         else:
-            BUSY_SESSIONS.add(session_id)
-            CURRENT_TURNS[session_id] = {
+            RUNS.busy.add(session_id)
+            RUNS.current_turns[session_id] = {
                 "run_id": None,
                 # Private per-admission identity for restart confirmation. A
                 # run id is assigned only after several awaited startup
@@ -45009,8 +44960,8 @@ async def _start_turn_locked(
             sess = await STORE.mark_backend_started(session_id, str(backend))
 
         run_id = f"run_{uuid.uuid4().hex[:16]}"
-        async with ACTIVE_LOCK:
-            current_turn = CURRENT_TURNS.get(session_id)
+        async with RUNS.active_lock:
+            current_turn = RUNS.current_turns.get(session_id)
             if current_turn is not None:
                 current_turn["run_id"] = run_id
                 current_turn["backend"] = backend
@@ -45108,7 +45059,7 @@ async def _start_turn_locked(
             run_metadata["manual_run"] = scheduled_job_manual_run
         run_metadata = {key: value for key, value in run_metadata.items() if value is not None}
         if run_metadata:
-            RUN_METADATA[run_id] = run_metadata
+            RUNS.run_metadata[run_id] = run_metadata
             started_payload.update(run_metadata)
         # Scheduled occurrences are authorized by this exact durable source
         # admission marker, and queued or client-identified requests need it
@@ -45177,7 +45128,7 @@ async def _start_turn_locked(
             str(backend),
             task,
         ))
-        register_session_task(SESSION_TURN_TASKS, session_id, turn_task)
+        register_session_task(RUNS.turn_tasks, session_id, turn_task)
         provider_task_committed = True
         try:
             first_line = (req.prompt.strip().splitlines() or ["New chat"])[0]
@@ -45227,7 +45178,7 @@ async def _start_turn_locked(
                 # Metadata is installed before provider-task commit. Remove
                 # only this failed admission's record; a replacement run may
                 # already own the session by the time cleanup reaches here.
-                RUN_METADATA.pop(failed_run_id, None)
+                RUNS.run_metadata.pop(failed_run_id, None)
             if reserved:
                 # Fenced cleanup cannot release a newer provider that took
                 # over after this failed admission was stopped or cancelled.
@@ -45421,8 +45372,8 @@ async def execution_maintenance_control(
     if EXECUTION_MAINTENANCE is None:
         raise RuntimeError("This process is not an independent execution worker")
     provider_snapshot = await prepare_provider_background_work_snapshot(timeout_seconds=5.0)
-    async with ACTIVE_LOCK:
-        async with QUEUE_LOCK:
+    async with RUNS.active_lock:
+        async with RUNS.queue_lock:
             async with UNSAFE_HTTP_MUTATION_ADMISSION_LOCK:
                 blockers = server_lifecycle_blocker_counts(
                     server_lifecycle_active_session_ids_locked(),
@@ -45918,19 +45869,19 @@ def server_restart_blocker_snapshot_locked(
     explicit_stop_ids = explicit_stop_session_ids()
     maintenance_session_ids = sorted(
         str(session_id)
-        for session_id in SERVER_MAINTENANCE_SESSIONS | explicit_stop_ids
+        for session_id in RUNS.maintenance | explicit_stop_ids
     )
     active_session_ids = sorted(
         str(session_id)
-        for session_id in BUSY_SESSIONS
-        - SERVER_MAINTENANCE_SESSIONS
+        for session_id in RUNS.busy
+        - RUNS.maintenance
         - explicit_stop_ids
     )
     deleting_session_ids = sorted(str(session_id) for session_id in DELETING_SESSIONS)
     queued_tokens: list[tuple[str, str, int, str, bool, bool]] = []
     queued_count = 0
     for session_id, queue in sorted(
-        QUEUED_TURNS.items(),
+        RUNS.queued.items(),
         key=lambda entry: str(entry[0]),
     ):
         for index, item in enumerate(queue):
@@ -45948,7 +45899,7 @@ def server_restart_blocker_snapshot_locked(
                 transitioning,
             ))
     for session_id, item in sorted(
-        RUN_NOW_TURNS.items(),
+        RUNS.run_now.items(),
         key=lambda entry: str(entry[0]),
     ):
         durable = item.get("_durable") is True
@@ -45996,8 +45947,8 @@ def server_restart_blocker_snapshot_locked(
     )
     active_work_tokens: list[tuple[str, str, str, str, str]] = []
     for session_id in active_session_ids:
-        current = CURRENT_TURNS.get(session_id) or {}
-        active = ACTIVE.get(session_id) or {}
+        current = RUNS.current_turns.get(session_id) or {}
+        active = RUNS.active.get(session_id) or {}
         active_work_tokens.append((
             session_id,
             str(current.get("_server_restart_admission_id") or "")[:128],
@@ -46161,10 +46112,10 @@ async def current_server_restart_blocker_snapshot(
         timeout_seconds=timeout,
     )
     degraded: list[str] = []
-    async with bounded_lock(ACTIVE_LOCK, timeout) as active_held:
+    async with bounded_lock(RUNS.active_lock, timeout) as active_held:
         if not active_held:
             degraded.append("active_lock")
-        async with bounded_lock(QUEUE_LOCK, timeout) as queue_held:
+        async with bounded_lock(RUNS.queue_lock, timeout) as queue_held:
             if not queue_held:
                 degraded.append("queue_lock")
             async with bounded_lock(
@@ -46785,8 +46736,8 @@ def server_lifecycle_active_session_ids_locked() -> list[str]:
     """Return chat-scoped work that must drain before worker retirement."""
 
     return sorted(
-        BUSY_SESSIONS
-        | SERVER_MAINTENANCE_SESSIONS
+        RUNS.busy
+        | RUNS.maintenance
         | explicit_stop_session_ids()
     )
 
@@ -46802,12 +46753,12 @@ def restart_blocking_queued_turn_count_locked() -> int:
     return sum(
         item.get("_durable") is False
         or item.get("_update_transitioning") is True
-        for queue in QUEUED_TURNS.values()
+        for queue in RUNS.queued.values()
         for item in queue
     ) + sum(
         item.get("_durable") is False
         or item.get("_update_transitioning") is True
-        for item in RUN_NOW_TURNS.values()
+        for item in RUNS.run_now.values()
     )
 
 
@@ -47080,8 +47031,8 @@ async def lifespan(app: FastAPI):
             STORE.flush_pending_save(),
         )
         explicit_stop_tasks = tuple({
-            *EXPLICIT_STOP_OPERATIONS.values(),
-            *DETACHED_STOP_TASKS,
+            *RUNS.explicit_stops.values(),
+            *RUNS.detached_stop_tasks,
         })
         for explicit_stop_task in explicit_stop_tasks:
             explicit_stop_task.cancel()
@@ -47905,21 +47856,21 @@ async def codex_provider_mcp(request: Request) -> Response:
     if len(core_call_id) > 512:
         return codex_provider_mcp_jsonrpc_error(request_id, -32602, "Invalid call identity")
     standalone_active_owner = False
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         owners = [
             session_id
-            for session_id, active in ACTIVE.items()
+            for session_id, active in RUNS.active.items()
             if (
                 active.get("backend") == BACKEND_CODEX
                 and active.get("transport") == CODEX_TRANSPORT_APP_SERVER
                 and str(active.get("provider_thread_id") or "") == thread_id
                 and str(active.get("run_id") or "") == run_id
-                and session_id in BUSY_SESSIONS
+                and session_id in RUNS.busy
             )
         ]
         if len(owners) == 1:
             standalone_active_owner = bool(
-                (ACTIVE.get(owners[0]) or {}).get(
+                (RUNS.active.get(owners[0]) or {}).get(
                     "standalone_provider_context"
                 )
             )
@@ -47985,10 +47936,10 @@ async def health() -> dict[str, Any]:
     await reconcile_idle_queued_turns_from_health_poll()
     # Health must answer even when an admission lock is wedged; the reads
     # below are consistent without the lock on a single-threaded loop.
-    async with bounded_lock(ACTIVE_LOCK, SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS):
-        active = sorted(BUSY_SESSIONS)
-    async with bounded_lock(QUEUE_LOCK, SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS):
-        queued = {sid: len(queue) for sid, queue in QUEUED_TURNS.items() if queue}
+    async with bounded_lock(RUNS.active_lock, SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS):
+        active = sorted(RUNS.busy)
+    async with bounded_lock(RUNS.queue_lock, SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS):
+        queued = {sid: len(queue) for sid, queue in RUNS.queued.items() if queue}
     restart_blocker_snapshot = await current_server_restart_blocker_snapshot()
     pressure = host_pressure_snapshot()
     tmux = tmux_capability(use_cache=True)
@@ -48297,8 +48248,8 @@ def codex_subagent_has_live_owner(
     session_id = str(
         state.get("session_id") or indexed_session_id or ""
     ).strip()
-    if session_id and session_id in BUSY_SESSIONS:
-        owner = ACTIVE.get(session_id) or CURRENT_TURNS.get(session_id) or {}
+    if session_id and session_id in RUNS.busy:
+        owner = RUNS.active.get(session_id) or RUNS.current_turns.get(session_id) or {}
         state_run_id = str(state.get("run_id") or "").strip()
         owner_run_id = str(owner.get("run_id") or "").strip()
         if not state_run_id or not owner_run_id or state_run_id == owner_run_id:
@@ -48325,9 +48276,9 @@ def codex_subagent_has_live_owner(
 
 def active_codex_work_labels() -> list[str]:
     labels: set[str] = set()
-    for session_id in BUSY_SESSIONS:
-        current = CURRENT_TURNS.get(session_id) or {}
-        active = ACTIVE.get(session_id) or {}
+    for session_id in RUNS.busy:
+        current = RUNS.current_turns.get(session_id) or {}
+        active = RUNS.active.get(session_id) or {}
         session = STORE.sessions.get(session_id) or {}
         backend = str(
             active.get("backend")
@@ -48337,7 +48288,7 @@ def active_codex_work_labels() -> list[str]:
         ).strip().lower()
         if backend == BACKEND_CODEX:
             labels.add(f"active chat {session_id}")
-    for session_id in SERVER_MAINTENANCE_SESSIONS:
+    for session_id in RUNS.maintenance:
         session = STORE.sessions.get(session_id) or {}
         if str(session.get("backend") or DEFAULT_BACKEND).lower() == BACKEND_CODEX:
             labels.add(f"Codex maintenance for {session_id}")
@@ -48428,8 +48379,8 @@ def codex_subagent_native_turn_candidates(manager: Any = None) -> tuple[
         if owner_manager is not manager:
             continue
         state_run_id = str(state.get("run_id") or "").strip()
-        if session_id and session_id in BUSY_SESSIONS:
-            owner = ACTIVE.get(session_id) or CURRENT_TURNS.get(session_id) or {}
+        if session_id and session_id in RUNS.busy:
+            owner = RUNS.active.get(session_id) or RUNS.current_turns.get(session_id) or {}
             owner_run_id = str(owner.get("run_id") or "").strip()
             if (
                 not state_run_id
@@ -48619,8 +48570,8 @@ def loaded_claude_background_session_state(
         if (
             str(session.get("backend") or DEFAULT_BACKEND).strip().lower()
             != BACKEND_CLAUDE
-            or session_id in BUSY_SESSIONS
-            or session_id in SERVER_MAINTENANCE_SESSIONS
+            or session_id in RUNS.busy
+            or session_id in RUNS.maintenance
         ):
             continue
         try:
@@ -48703,8 +48654,8 @@ def active_provider_background_work_labels() -> list[str]:
         if (
             str(session.get("backend") or DEFAULT_BACKEND).strip().lower()
             != BACKEND_CLAUDE
-            or session_id in BUSY_SESSIONS
-            or session_id in SERVER_MAINTENANCE_SESSIONS
+            or session_id in RUNS.busy
+            or session_id in RUNS.maintenance
         ):
             continue
         try:
@@ -49274,8 +49225,8 @@ class HyadexGroupRuntime:
             return {"exists": False}
         return {
             "exists": True,
-            "running": session_id in BUSY_SESSIONS,
-            "queued": len(QUEUED_TURNS.get(session_id) or ()),
+            "running": session_id in RUNS.busy,
+            "queued": len(RUNS.queued.get(session_id) or ()),
             "needs_action": bool(session.get("claude_needs_user_action") or session.get("codex_needs_user_action")),
         }
 
@@ -49857,8 +49808,8 @@ async def _restart_server_endpoint_impl(
         provider_work_snapshot = (
             await prepare_provider_background_work_snapshot()
         )
-        async with ACTIVE_LOCK:
-            async with QUEUE_LOCK:
+        async with RUNS.active_lock:
+            async with RUNS.queue_lock:
                 async with UNSAFE_HTTP_MUTATION_ADMISSION_LOCK:
                     # Recheck every fence while holding the same locks used by
                     # turn/queue and HTTP-mutation admission. Once the journal
@@ -50344,14 +50295,14 @@ async def ensure_backend_update_allowed(
     if requested_backend == current_backend:
         return
 
-    async with ACTIVE_LOCK:
+    async with RUNS.active_lock:
         provider_starting = any(
             not task.done()
-            for task in tuple(SESSION_TURN_TASKS.get(session_id) or ())
+            for task in tuple(RUNS.turn_tasks.get(session_id) or ())
         )
         if (
-            session_id in BUSY_SESSIONS
-            or ACTIVE.get(session_id) is not None
+            session_id in RUNS.busy
+            or RUNS.active.get(session_id) is not None
             or provider_starting
         ):
             raise HTTPException(
@@ -50387,7 +50338,7 @@ async def _update_session(
                 thread_id, run_id = native_archive_owner
                 if (session_id in DELETING_SESSIONS or current.get("backend") != BACKEND_CODEX
                         or str(session_provider_id(current) or "") != thread_id
-                        or (ACTIVE.get(session_id) or {}).get("run_id") != run_id):
+                        or (RUNS.active.get(session_id) or {}).get("run_id") != run_id):
                     return {"session": public_session(current)}
             if req.archived is False and current.get("archived"):
                 try:
@@ -50470,8 +50421,8 @@ async def codex_runtime_snapshot(session_id: str) -> dict[str, Any]:
             and not item.get("responded")
         ]
     cached_status = session.get("codex_thread_status")
-    async with ACTIVE_LOCK:
-        active = session_id in BUSY_SESSIONS
+    async with RUNS.active_lock:
+        active = session_id in RUNS.busy
     if active:
         status = (
             cached_status
@@ -50687,8 +50638,8 @@ async def put_claude_goal(session_id: str, req: ClaudeGoalRequest) -> dict[str, 
     accepted = await start_claude_goal_command(session_id, condition)
     # Bind pending display state only after actual admission. A competing
     # request or an older run's cleanup cannot clear the winner's operation.
-    async with ACTIVE_LOCK:
-        if str((ACTIVE.get(session_id) or {}).get("run_id") or "") == accepted.get("run_id"):
+    async with RUNS.active_lock:
+        if str((RUNS.active.get(session_id) or {}).get("run_id") or "") == accepted.get("run_id"):
             CLAUDE_GOAL_PENDING[session_id] = {
                 "run_id": accepted["run_id"],
                 "previous_set_at": (previous or {}).get("set_at"),
@@ -50704,8 +50655,8 @@ async def delete_claude_goal(session_id: str) -> dict[str, Any]:
     # interrupts the current turn and returns its separate clear receipt.
     async with session_lifecycle_lock(session_id):
         ensure_session_not_deleting(session_id)
-        async with ACTIVE_LOCK:
-            active = dict(ACTIVE.get(session_id) or {})
+        async with RUNS.active_lock:
+            active = dict(RUNS.active.get(session_id) or {})
         if active.get("transport") == CLAUDE_TRANSPORT_AGENT_SDK:
             manager = await claude_sdk_manager()
             try:
@@ -50740,8 +50691,8 @@ async def claude_runtime_snapshot(session_id: str) -> dict[str, Any]:
             if item.get("session_id") == session_id
             and not item.get("responded")
         ]
-    async with ACTIVE_LOCK:
-        active_record = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active_record = RUNS.active.get(session_id)
         active = bool(
             active_record
             and active_record.get("backend") == BACKEND_CLAUDE
@@ -50891,8 +50842,8 @@ async def stop_codex_goal_resume(
     reservation_id: str,
 ) -> None:
     """Fence a failed/cancelled goal activation before releasing its owner."""
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         if (
             not active
             or active.get("codex_native_operation_kind") != "goal_resume"
@@ -50919,8 +50870,8 @@ async def stop_codex_goal_resume(
             logger.warning("failed to quarantine goal resume session=%s thread=%s: %s", session_id, thread_id, concise_error_message(exc))
     # The projector binds early turn/started notifications to this exact
     # reservation even when goal/set fails after accepting the mutation.
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
         turn_id = str(active.get("provider_turn_id") or "") if active else ""
         owned = bool(active and str(active.get("codex_control_reservation_id") or "") == reservation_id)
         needs_interrupt = bool(owned and turn_id and not active.get("native_interrupt_sent"))
@@ -50933,8 +50884,8 @@ async def stop_codex_goal_resume(
                 timeout=CODEX_GOAL_CONTROL_TIMEOUT_SECONDS,
             )
         except Exception as exc:
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 if active and str(active.get("codex_control_reservation_id") or "") == reservation_id:
                     active["native_interrupt_sent"] = False
             try:
@@ -51021,12 +50972,10 @@ async def _put_codex_goal_locked(
         )
         validate_codex_goal_resume_budget(stored_session, req)
         if reservation_id:
-            async with QUEUE_LOCK:
-                promotion = QUEUE_START_TASKS.get(session_id)
-                prior_queue = bool(
-                    QUEUED_TURNS.get(session_id)
-                    or RUN_NOW_TURNS.get(session_id)
-                    or session_id in STEERING_SESSIONS
+            async with RUNS.queue_lock:
+                promotion = RUNS.queue_start_tasks.get(session_id)
+                prior_queue = (
+                    RUNS.has_waiting_work(session_id)
                     or (promotion is not None and not promotion.done())
                 )
             if prior_queue:
@@ -51040,8 +50989,8 @@ async def _put_codex_goal_locked(
             operation_id = f"codexgoal_{uuid.uuid4().hex[:16]}"
             subscription = manager.subscribe_thread(thread_id)
             provider_model, provider_effort, provider_service_tier = codex_runtime_settings(stored_session)
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 if not active or str(active.get("codex_control_reservation_id") or "") != reservation_id:
                     raise HTTPException(status_code=409, detail="The goal resume reservation changed; retry.")
                 active["run_id"] = operation_id
@@ -51050,7 +50999,7 @@ async def _put_codex_goal_locked(
                 active["provider_effort"] = provider_effort
                 active["provider_service_tier"] = provider_service_tier
                 active["native_steer_queue"] = asyncio.Queue(maxsize=1)
-                current_turn = CURRENT_TURNS.get(session_id)
+                current_turn = RUNS.current_turns.get(session_id)
                 if current_turn is not None:
                     current_turn["run_id"] = operation_id
                     current_turn["purpose"] = "codex_goal_resume"
@@ -51157,8 +51106,8 @@ async def _put_codex_goal_locked(
                 thread_id, reservation_id, subscription,
             )
             consumer_owns_reservation = True
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
                 if active and str(active.get("codex_control_reservation_id") or "") == reservation_id:
                     active["owner_task"] = task
         return {
@@ -51315,8 +51264,8 @@ async def _post_codex_compact_locked(session_id: str) -> dict[str, Any]:
     subscription = manager.subscribe_thread(thread_id)
     token_usage_before = current_codex_token_usage_snapshot(session_id)
     try:
-        async with ACTIVE_LOCK:
-            active = ACTIVE.get(session_id)
+        async with RUNS.active_lock:
+            active = RUNS.active.get(session_id)
             if active:
                 active["run_id"] = operation_id
                 active["codex_native_operation_kind"] = "compaction"
@@ -51470,12 +51419,12 @@ async def ensure_discardable_empty_session(session_id: str, expected_updated_at:
                 "parent_id", "pinned", "archived", "manual_unread",
                 "codex_goal", "claude_goal", "emergency_alert",
             ))
-            and session_id not in ACTIVE and session_id not in BUSY_SESSIONS
-            and session_id not in CURRENT_TURNS
-            and not QUEUED_TURNS.get(session_id)
-            and session_id not in RUN_NOW_TURNS
-            and session_id not in RUN_NOW_REQUESTS
-            and not any(not task.done() for task in SESSION_TURN_TASKS.get(session_id, ()))
+            and session_id not in RUNS.active and session_id not in RUNS.busy
+            and session_id not in RUNS.current_turns
+            and not RUNS.queued.get(session_id)
+            and session_id not in RUNS.run_now
+            and session_id not in RUNS.run_now_requests
+            and not any(not task.done() for task in RUNS.turn_tasks.get(session_id, ()))
             and not any(job.get("session_id") == session_id for job in JOBS.jobs.values())
         )
 
@@ -51623,8 +51572,8 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
                         "the session was not deleted. Retry shortly."
                     ),
                 )
-            async with RUN_NOW_REQUEST_LOCK:
-                run_now_entry = RUN_NOW_REQUESTS.get(session_id)
+            async with RUNS.run_now_request_lock:
+                run_now_entry = RUNS.run_now_requests.get(session_id)
                 run_now_task = (
                     run_now_entry[1]
                     if run_now_entry is not None
@@ -51633,9 +51582,9 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
 
             await cancel_codex_native_actions(session_id)
 
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
-                busy = session_id in BUSY_SESSIONS
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
+                busy = session_id in RUNS.busy
 
             if active and not active.get("codex_native_operation"):
                 goal_pause_ok, _goal_paused, goal_pause_error = (
@@ -51648,17 +51597,17 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
                         or "The active Codex goal could not be paused. Retry deletion.",
                     )
 
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id)
-                busy = session_id in BUSY_SESSIONS
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id)
+                busy = session_id in RUNS.busy
                 if active and not active.get("codex_native_operation"):
                     active["stop_requested"] = True
                     if active.get("transport") == CLAUDE_TRANSPORT_AGENT_SDK:
                         active["claude_permissions_open"] = False
                     if active.get("run_id"):
-                        STOPPED_RUNS.add(str(active["run_id"]))
+                        RUNS.stopped_runs.add(str(active["run_id"]))
                 elif busy and not active:
-                    STOP_REQUESTS.add(session_id)
+                    RUNS.stop_requests.add(session_id)
 
             if active and not active.get("codex_native_operation"):
                 native_turn = active.get("codex_app_server_turn")
@@ -51701,12 +51650,12 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
                     await terminate_process_tree(proc)
 
             turns_finished = await wait_for_session_tasks(
-                SESSION_TURN_TASKS,
+                RUNS.turn_tasks,
                 session_id,
             )
             if not turns_finished:
-                async with ACTIVE_LOCK:
-                    unsettled_active = ACTIVE.get(session_id)
+                async with RUNS.active_lock:
+                    unsettled_active = RUNS.active.get(session_id)
                 if (
                     unsettled_active
                     and unsettled_active.get("transport")
@@ -51725,7 +51674,7 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
                         unsettled_tasks = {
                             task
                             for task in tuple(
-                                SESSION_TURN_TASKS.get(session_id) or ()
+                                RUNS.turn_tasks.get(session_id) or ()
                             )
                             if (
                                 task is not current_task
@@ -51743,7 +51692,7 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
                                 ),
                             )
                         turns_finished = await wait_for_session_tasks(
-                            SESSION_TURN_TASKS,
+                            RUNS.turn_tasks,
                             session_id,
                             timeout=0.01,
                         )
@@ -51781,13 +51730,13 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
                                 "the session was not deleted. Retry shortly."
                             ),
                         )
-            async with RUN_NOW_REQUEST_LOCK:
-                current_run_now = RUN_NOW_REQUESTS.get(session_id)
+            async with RUNS.run_now_request_lock:
+                current_run_now = RUNS.run_now_requests.get(session_id)
                 if (
                     current_run_now is not None
                     and current_run_now[1] is run_now_task
                 ):
-                    RUN_NOW_REQUESTS.pop(session_id, None)
+                    RUNS.run_now_requests.pop(session_id, None)
                 for cache_key in tuple(RUN_NOW_COMPLETED_RESULTS):
                     if cache_key[0] == session_id:
                         RUN_NOW_COMPLETED_RESULTS.pop(cache_key, None)
@@ -51829,29 +51778,29 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
             # All fallible provider/task cleanup has completed. From here the
             # deletion is committed: revoke run authority first, then remove
             # queue/runtime ownership.
-            async with ACTIVE_LOCK:
+            async with RUNS.active_lock:
                 deletion_run_ids = {
                     str(value or "")
                     for value in (
-                        (ACTIVE.get(session_id) or {}).get("run_id"),
-                        (CURRENT_TURNS.get(session_id) or {}).get("run_id"),
+                        (RUNS.active.get(session_id) or {}).get("run_id"),
+                        (RUNS.current_turns.get(session_id) or {}).get("run_id"),
                     )
                     if str(value or "")
                 }
             for deletion_run_id in deletion_run_ids:
                 await revoke_provider_authority(deletion_run_id)
-            steering_waiter = STEERING_WAIT_TASKS.pop(session_id, None)
+            steering_waiter = RUNS.steering_waits.pop(session_id, None)
             if steering_waiter is not None and not steering_waiter[2].done():
                 steering_waiter[2].cancel()
-            async with QUEUE_LOCK:
-                QUEUED_TURNS.pop(session_id, None)
-                RUN_NOW_TURNS.pop(session_id, None)
-                STEERING_SESSIONS.discard(session_id)
-            async with ACTIVE_LOCK:
-                ACTIVE.pop(session_id, None)
-                BUSY_SESSIONS.discard(session_id)
-                CURRENT_TURNS.pop(session_id, None)
-                STOP_REQUESTS.discard(session_id)
+            async with RUNS.queue_lock:
+                RUNS.queued.pop(session_id, None)
+                RUNS.run_now.pop(session_id, None)
+                RUNS.steering.discard(session_id)
+            async with RUNS.active_lock:
+                RUNS.active.pop(session_id, None)
+                RUNS.busy.discard(session_id)
+                RUNS.current_turns.pop(session_id, None)
+                RUNS.stop_requests.discard(session_id)
             if provider_thread_ids:
                 async with CODEX_APP_SERVER_THREAD_LRU_LOCK:
                     for provider_thread_id in provider_thread_ids:
@@ -51905,7 +51854,7 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
                     # durable delete so cancellation cannot strand a local
                     # blocker.
                     CLAUDE_STOP_FENCE_SESSIONS.discard(session_id)
-                    SERVER_MAINTENANCE_SESSIONS.discard(session_id)
+                    RUNS.maintenance.discard(session_id)
                     CLAUDE_STOP_FENCE_ATTEMPT_LOCKS.pop(session_id, None)
                 if committed_deleted:
                     await broadcast_committed_emergency_removal(session_id)
@@ -52137,9 +52086,9 @@ async def fork_session(session_id: str, req: ForkSessionRequest) -> dict[str, An
     async with session_lifecycle_lock(session_id):
         try:
             ensure_session_not_deleting(session_id)
-            async with ACTIVE_LOCK:
-                active = ACTIVE.get(session_id) or {}
-                running = session_id in BUSY_SESSIONS or bool(active)
+            async with RUNS.active_lock:
+                active = RUNS.active.get(session_id) or {}
+                running = session_id in RUNS.busy or bool(active)
                 active_run_id = str(active.get("run_id") or "")
                 latest_sequence = (STORE.sessions.get(session_id) or {}).get("latest_event_seq")
             snapshot = None
@@ -52707,9 +52656,9 @@ async def run_explicit_stop_operation(
             _admission_ready=admission_ready,
         )
     )
-    DETACHED_STOP_TASKS.add(stop_task)
-    stop_task.add_done_callback(DETACHED_STOP_TASKS.discard)
-    register_session_task(DETACHED_STOP_TASKS_BY_SESSION, session_id, stop_task)
+    RUNS.detached_stop_tasks.add(stop_task)
+    stop_task.add_done_callback(RUNS.detached_stop_tasks.discard)
+    register_session_task(RUNS.detached_stop_tasks_by_session, session_id, stop_task)
     outer_fence_released = False
     queue_wake_scheduled = False
 
@@ -52788,8 +52737,8 @@ async def run_explicit_stop_operation(
                     session_id,
                 )
             current_task = asyncio.current_task()
-            if EXPLICIT_STOP_OPERATIONS.get(session_id) is current_task:
-                EXPLICIT_STOP_OPERATIONS.pop(session_id, None)
+            if RUNS.explicit_stops.get(session_id) is current_task:
+                RUNS.explicit_stops.pop(session_id, None)
         outer_fence_released = True
         # A prompt child completion is now safe to wake after the outer fence
         # is gone. A still-live child owns that one wake through its callback.
@@ -52806,7 +52755,7 @@ async def stop_turn_endpoint(session_id: str) -> dict[str, Any]:
         lifecycle_blocker = server_lifecycle_admission_blocker()
         if lifecycle_blocker:
             raise HTTPException(status_code=503, detail=lifecycle_blocker)
-        operation = EXPLICIT_STOP_OPERATIONS.get(session_id)
+        operation = RUNS.explicit_stops.get(session_id)
         if operation is None or operation.done():
             if detached_stop_in_progress(session_id):
                 raise HTTPException(
@@ -52820,7 +52769,7 @@ async def stop_turn_endpoint(session_id: str) -> dict[str, Any]:
             operation = asyncio.create_task(
                 run_explicit_stop_operation(session_id, admission_ready)
             )
-            EXPLICIT_STOP_OPERATIONS[session_id] = operation
+            RUNS.explicit_stops[session_id] = operation
             # stop_turn sets this immediately after it has fenced the observed
             # owner under ACTIVE_LOCK. The explicit-operation entry itself
             # prevents queued promotion while the durable queue pause and all
@@ -53110,10 +53059,10 @@ async def stop_turn(
     stopping_control_reservation_id = ""
     stopping_control_thread_id = ""
     stopping_admission_id = ""
-    async with ACTIVE_LOCK:
-        active = ACTIVE.get(session_id)
-        busy = session_id in BUSY_SESSIONS
-        current_turn = CURRENT_TURNS.get(session_id) or {}
+    async with RUNS.active_lock:
+        active = RUNS.active.get(session_id)
+        busy = session_id in RUNS.busy
+        current_turn = RUNS.current_turns.get(session_id) or {}
         expected_run_id = str(expected_run_id or "").strip() or None
         if expected_run_id is not None:
             active_run_id = str((active or {}).get("run_id") or "")
@@ -53181,7 +53130,7 @@ async def stop_turn(
                     active["claude_permissions_open"] = False
                 if active.get("run_id"):
                     stopping_run_id = str(active["run_id"])
-                    STOPPED_RUNS.add(stopping_run_id)
+                    RUNS.stopped_runs.add(stopping_run_id)
                 transition_value = active.get("logical_transition_ready")
                 if isinstance(transition_value, asyncio.Event):
                     transition_ready = transition_value
@@ -53222,9 +53171,9 @@ async def stop_turn(
                     # A targeted cancellation is run-scoped. A session-wide
                     # startup marker could otherwise stop a successor if the
                     # expected launch loses its slot before binding ACTIVE.
-                    STOPPED_RUNS.add(stopping_run_id)
+                    RUNS.stopped_runs.add(stopping_run_id)
                 else:
-                    STOP_REQUESTS.add(session_id)
+                    RUNS.stop_requests.add(session_id)
         # Identity of the reservation this Stop observed. A Stop that outlives
         # its deadline runs detached; it must never act on a successor turn
         # admitted after the fence was released.
@@ -53243,14 +53192,14 @@ async def stop_turn(
         ).strip()
         stopping_purpose = str(
             current_turn.get("purpose")
-            or (RUN_METADATA.get(stopping_run_id or "") or {}).get("purpose")
+            or (RUNS.run_metadata.get(stopping_run_id or "") or {}).get("purpose")
             or ""
         )
         current_task = asyncio.current_task()
         owned_tasks = [
             task
             for task in (
-                *tuple(SESSION_TURN_TASKS.get(session_id) or ()),
+                *tuple(RUNS.turn_tasks.get(session_id) or ()),
                 *tuple(
                     task
                     for (task_session_id, _operation_id), task in
@@ -53311,19 +53260,19 @@ async def stop_turn(
         ):
             return
         owns_maintenance = False
-        async with ACTIVE_LOCK:
+        async with RUNS.active_lock:
             session_idle = (
-                session_id not in ACTIVE
-                and session_id not in BUSY_SESSIONS
+                session_id not in RUNS.active
+                and session_id not in RUNS.busy
             )
             if session_idle:
-                already_reserved = session_id in SERVER_MAINTENANCE_SESSIONS
+                already_reserved = session_id in RUNS.maintenance
                 owns_maintenance = (
                     not already_reserved
                     or session_id in CLAUDE_STOP_FENCE_SESSIONS
                 )
                 if owns_maintenance:
-                    SERVER_MAINTENANCE_SESSIONS.add(session_id)
+                    RUNS.maintenance.add(session_id)
         if not session_idle or not owns_maintenance:
             return
         # Cancellation anywhere after this point must leave update admission
@@ -53337,14 +53286,14 @@ async def stop_turn(
             )
         finally:
             fence_committed = bool(subagent_stop.get("fence_committed", False))
-            async with ACTIVE_LOCK:
+            async with RUNS.active_lock:
                 if fence_committed:
                     CLAUDE_STOP_FENCE_SESSIONS.discard(session_id)
-                    SERVER_MAINTENANCE_SESSIONS.discard(session_id)
+                    RUNS.maintenance.discard(session_id)
                     discard_unused_claude_stop_fence_attempt_lock(session_id)
                 else:
                     CLAUDE_STOP_FENCE_SESSIONS.add(session_id)
-                    SERVER_MAINTENANCE_SESSIONS.add(session_id)
+                    RUNS.maintenance.add(session_id)
                     retry_required = True
             if retry_required:
                 schedule_claude_stop_fence_retry(session_id)
@@ -53399,10 +53348,10 @@ async def stop_turn(
             pending = set(owned_tasks)
             while True:
                 current_task = asyncio.current_task()
-                async with ACTIVE_LOCK:
-                    bound_active = ACTIVE.get(session_id)
-                    still_busy = session_id in BUSY_SESSIONS
-                    current_turn = dict(CURRENT_TURNS.get(session_id) or {})
+                async with RUNS.active_lock:
+                    bound_active = RUNS.active.get(session_id)
+                    still_busy = session_id in RUNS.busy
+                    current_turn = dict(RUNS.current_turns.get(session_id) or {})
                     reservation_replaced = bool(
                         still_busy
                         and stopping_admission_id
@@ -53411,7 +53360,7 @@ async def stop_turn(
                     )
                     pending = {
                         task
-                        for task in SESSION_TURN_TASKS.get(session_id) or ()
+                        for task in RUNS.turn_tasks.get(session_id) or ()
                         if task is not current_task and not task.done()
                     } | {
                         task
@@ -53484,7 +53433,7 @@ async def stop_turn(
                     backend = str(session.get("backend") or "")
                     run_id = str(current_turn.get("run_id") or "") or None
                     if run_id:
-                        STOPPED_RUNS.add(run_id)
+                        RUNS.stopped_runs.add(run_id)
                     for task in pending:
                         task.cancel()
                     if pending:
@@ -53506,12 +53455,8 @@ async def stop_turn(
                         # exact reservation while Stop was joining the task.
                         # Count that as this Stop's release only if the chat is
                         # still idle; a promoted replacement must remain owned.
-                        async with ACTIVE_LOCK:
-                            released = bool(
-                                session_id not in BUSY_SESSIONS
-                                and session_id not in ACTIVE
-                                and session_id not in CURRENT_TURNS
-                            )
+                        async with RUNS.active_lock:
+                            released = not RUNS.holds_turn(session_id)
                     await settle_stopped_claude_subagents()
                     if emit_event and released:
                         await append_event(session_id, "turn_stopped", {
@@ -53523,9 +53468,9 @@ async def stop_turn(
                             ),
                             "hard_stop": True,
                         })
-                    RUN_METADATA.pop(run_id, None) if run_id else None
+                    RUNS.run_metadata.pop(run_id, None) if run_id else None
                     if run_id and all(task.done() for task in pending):
-                        STOPPED_RUNS.discard(run_id)
+                        RUNS.stopped_runs.discard(run_id)
                     schedule_unpaused_queue_after_release(released)
                     goal_result = (
                         await settle_idle_codex_goal_for_stop(session_id)
@@ -53561,7 +53506,7 @@ async def stop_turn(
             )
             await settle_stopped_claude_subagents()
             if run_id:
-                RUN_METADATA.pop(run_id, None)
+                RUNS.run_metadata.pop(run_id, None)
             if emit_event and released:
                 await append_event(session_id, "turn_stopped", {
                     "run_id": run_id,
@@ -53634,7 +53579,7 @@ async def stop_turn(
 
         run_id = str(active.get("run_id") or "") or None
         if run_id:
-            STOPPED_RUNS.add(run_id)
+            RUNS.stopped_runs.add(run_id)
         current_task = asyncio.current_task()
         owned = {
             task
@@ -53658,14 +53603,14 @@ async def stop_turn(
         # A natural terminal notification may have won the race with local
         # cancellation. In that case its runner already emitted the terminal
         # row and released the reservation, so do not manufacture a duplicate.
-        async with ACTIVE_LOCK:
+        async with RUNS.active_lock:
             still_owned = (
-                ACTIVE.get(session_id) is active
-                and session_id in BUSY_SESSIONS
+                RUNS.active.get(session_id) is active
+                and session_id in RUNS.busy
             )
         if not still_owned:
             if run_id and all(task.done() for task in owned):
-                STOPPED_RUNS.discard(run_id)
+                RUNS.stopped_runs.discard(run_id)
             return {
                 "ok": True,
                 "stopped": True,
@@ -53731,9 +53676,9 @@ async def stop_turn(
                 ),
             })
         if run_id:
-            RUN_METADATA.pop(run_id, None)
+            RUNS.run_metadata.pop(run_id, None)
             if all(task.done() for task in owned):
-                STOPPED_RUNS.discard(run_id)
+                RUNS.stopped_runs.discard(run_id)
         schedule_unpaused_queue_after_release(released)
         return {
             "ok": True,
@@ -53762,8 +53707,8 @@ async def stop_turn(
             await native_turn.interrupt()
             native_interrupt = True
         except Exception as exc:
-            async with ACTIVE_LOCK:
-                current = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                current = RUNS.active.get(session_id)
                 if current is active:
                     current["native_interrupt_sent"] = False
             logger.warning(
@@ -53782,8 +53727,8 @@ async def stop_turn(
             )
             native_interrupt = True
         except Exception as exc:
-            async with ACTIVE_LOCK:
-                current = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                current = RUNS.active.get(session_id)
                 if current is active:
                     current["native_interrupt_sent"] = False
             logger.warning(
@@ -53799,8 +53744,8 @@ async def stop_turn(
             )
             native_interrupt = True
         except Exception as exc:
-            async with ACTIVE_LOCK:
-                current = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                current = RUNS.active.get(session_id)
                 if current is active:
                     current["native_interrupt_sent"] = False
             logger.warning(
@@ -53831,8 +53776,8 @@ async def stop_turn(
                 timeout=STOP_CONFIRM_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
-            async with ACTIVE_LOCK:
-                current = ACTIVE.get(session_id)
+            async with RUNS.active_lock:
+                current = RUNS.active.get(session_id)
                 if current is active:
                     current["native_interrupt_sent"] = False
             if (
@@ -53867,12 +53812,12 @@ async def stop_turn(
     dynamic_tasks = set(owned_tasks)
     while True:
         current_task = asyncio.current_task()
-        async with ACTIVE_LOCK:
-            current = ACTIVE.get(session_id)
-            still_busy = session_id in BUSY_SESSIONS
+        async with RUNS.active_lock:
+            current = RUNS.active.get(session_id)
+            still_busy = session_id in RUNS.busy
             dynamic_tasks = {
                 task
-                for task in SESSION_TURN_TASKS.get(session_id) or ()
+                for task in RUNS.turn_tasks.get(session_id) or ()
                 if task is not current_task and not task.done()
             } | {
                 task
@@ -53974,8 +53919,8 @@ async def stop_turn(
     # A provider interrupt is an acknowledgement, not terminal state. Leave
     # the chat active and permit a later Stop click to retry the interrupt
     # instead of rendering a false "Turn Stopped" row.
-    async with ACTIVE_LOCK:
-        current = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        current = RUNS.active.get(session_id)
         if current is active:
             current["native_interrupt_sent"] = False
     if (
@@ -54582,19 +54527,19 @@ async def get_turn_code_diff(session_id: str, run_id: str) -> FileResponse:
 async def active_artifact_publication_run(
     session_id: str,
 ) -> tuple[str, dict[str, Any]]:
-    async with ACTIVE_LOCK:
-        current = CURRENT_TURNS.get(session_id)
-        active = ACTIVE.get(session_id)
+    async with RUNS.active_lock:
+        current = RUNS.current_turns.get(session_id)
+        active = RUNS.active.get(session_id)
         run_id = str((current or {}).get("run_id") or "").strip()
         if (
-            session_id not in BUSY_SESSIONS
+            session_id not in RUNS.busy
             or not isinstance(current, dict)
             or not isinstance(active, dict)
             or not run_id
             or str(active.get("run_id") or "").strip() != run_id
             or active.get("codex_native_operation") is True
             or active.get("stop_requested") is True
-            or run_id in STOPPED_RUNS
+            or run_id in RUNS.stopped_runs
         ):
             raise HTTPException(
                 status_code=409,

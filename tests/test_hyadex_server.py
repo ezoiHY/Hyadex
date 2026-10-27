@@ -88,7 +88,7 @@ class GroupWiringTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_group_jobs_are_not_deferred_by_a_busy_anchor_chat(self) -> None:
         with (
-            patch.object(agent_server, "BUSY_SESSIONS", {"sess_member"}),
+            patch.object(agent_server.RUNS, "busy", {"sess_member"}),
             patch.object(agent_server, "JOB_MIN_AVAILABLE_MEM_MB", 0),
             patch.object(agent_server, "MIN_START_AVAILABLE_MEM_MB", 0),
             patch.object(agent_server, "JOB_MAX_ACTIVE_RUNS", 0),
