@@ -100,9 +100,9 @@ from hyadex.providers.claude.background_state import (
 from hyadex.providers.claude.sdk import (
     ClaudeSDKQueryError,
     ClaudeSDKSupervisorClosed,
-    ClaudeSDKSupervisorManager,
     ClaudeSDKUnavailable,
 )
+from hyadex.providers.claude.sdk_manager import ClaudeSDKSupervisorManager
 from hyadex.providers.codex.commands import build_claude_sdk_options
 from hyadex.providers.registry import (
     build_user_provider_prompt,

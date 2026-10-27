@@ -135,11 +135,11 @@ from hyadex.providers.claude.sdk import (
     CLAUDE_NON_DURABLE_SCHEDULER_TOOLS,
     claude_nondurable_scheduler_reason,
     CLAUDE_PROVIDER_MCP_TOOL_NAME,
-    ClaudeSDKSupervisorManager,
     ClaudeSDKUnavailable,
     create_claude_agent_options,
     default_claude_sdk_client_factory,
 )
+from hyadex.providers.claude.sdk_manager import ClaudeSDKSupervisorManager
 from hyadex.providers.instructions import CLAUDE_SDK_CONFIGURATION_VERSION
 from hyadex.providers.runtime import (
     is_scrubbed_provider_runtime_env_name,

@@ -18,7 +18,7 @@ from hyadex.core.config import (
 )
 from hyadex.core.paths import events_path
 from hyadex.core.server_logging import concise_error_message
-from hyadex.providers.claude.sdk import ClaudeSDKSupervisorManager
+from hyadex.providers.claude.sdk_manager import ClaudeSDKSupervisorManager
 from hyadex.providers.state import PROVIDERS
 
 logger = logging.getLogger("hyadex-server")

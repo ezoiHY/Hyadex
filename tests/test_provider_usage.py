@@ -5,7 +5,8 @@ import unittest
 
 from provider_usage import ProviderUsage, claude_account_snapshot, claude_window, codex_buckets, codex_snapshot
 from hyadex.providers.codex.app_server import CodexAppServerClient
-from hyadex.providers.claude.sdk import ClaudeSDKSupervisorManager, _ReceivedMessage
+from hyadex.providers.claude.sdk import _ReceivedMessage
+from hyadex.providers.claude.sdk_manager import ClaudeSDKSupervisorManager
 from tests.test_claude_sdk_client import FakeFactory
 
 

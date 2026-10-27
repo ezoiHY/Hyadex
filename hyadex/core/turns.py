@@ -246,9 +246,9 @@ from hyadex.providers.claude.runtime import (
 from hyadex.providers.claude.sdk import (
     ClaudeSDKQueryError,
     ClaudeSDKSupervisorClosed,
-    ClaudeSDKSupervisorManager,
     ClaudeSDKUnavailable,
 )
+from hyadex.providers.claude.sdk_manager import ClaudeSDKSupervisorManager
 from hyadex.providers.claude.subagents import (
     claude_sdk_field,
     claude_sdk_type,
@@ -259,11 +259,11 @@ from hyadex.providers.claude.subagents import (
 from hyadex.providers.codex.app_server import (
     CodexAppServerDisconnected,
     CodexAppServerError,
-    CodexAppServerManager,
     CodexAppServerProtocolError,
     CodexAppServerRequestError,
     CodexAppServerSubscriptionClosed,
 )
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from hyadex.providers.codex.commands import (
     acquire_codex_control_thread,
     build_claude_sdk_options,

@@ -219,11 +219,11 @@ from hyadex.providers.claude.sdk import (
 )
 from hyadex.providers.codex.app_server import (
     CodexAppServerError,
-    CodexAppServerManager,
     CodexAppServerProtocolError,
     CodexAppServerRequestError,
     decline_server_request,
 )
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from hyadex.providers.codex.commands import SIDE_QUESTIONS
 from hyadex.providers.codex.config import (
     codex_effective_thread_config,

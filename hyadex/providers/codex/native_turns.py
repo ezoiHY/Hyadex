@@ -27,10 +27,10 @@ from hyadex.core.util import clean_assistant_text
 from hyadex.features.usage import join_task_despite_caller_cancellation
 from hyadex.providers.authority import NativeSteerHandoffError
 from hyadex.providers.codex.app_server import (
-    CodexAppServerManager,
     CodexAppServerProtocolError,
     CodexAppServerSubscriptionClosed,
 )
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from hyadex.providers.codex.goals import (
     apply_codex_goal_time_budget_limit,
     commit_codex_goal_steer,

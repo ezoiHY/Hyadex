@@ -47,13 +47,13 @@ from hyadex.core.session_codex import (
 )
 from hyadex.core.sessions import append_event, STORE
 from hyadex.core.util import utc_timestamp
-from hyadex.providers.claude.sdk import ClaudeSDKSupervisorManager
+from hyadex.providers.claude.sdk_manager import ClaudeSDKSupervisorManager
 from hyadex.providers.claude.subagents import (
     build_claude_subagent_snapshot,
     compact_subagent_text,
     normalize_subagent_status,
 )
-from hyadex.providers.codex.app_server import CodexAppServerManager
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from hyadex.providers.codex.config import (
     _codex_config_positive_int,
     codex_effective_thread_config,

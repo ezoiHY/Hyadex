@@ -9,9 +9,9 @@ from unittest.mock import patch
 from hyadex.providers.claude.sdk import (
     ClaudeSDKConfigurationConflict,
     ClaudeSDKGenerationChanged,
-    ClaudeSDKSupervisorManager,
     ClaudeSDKUnavailable,
 )
+from hyadex.providers.claude.sdk_manager import ClaudeSDKSupervisorManager
 from side_questions import SideQuestionError
 from tests.test_claude_sdk_client import FakeClaudeClient, FakeFactory
 

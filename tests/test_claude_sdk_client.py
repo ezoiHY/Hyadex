@@ -21,7 +21,6 @@ from hyadex.providers.claude.sdk import (
     ClaudeSDKRunActive,
     ClaudeSDKSupervisorError,
     ClaudeSDKSupervisorClosed,
-    ClaudeSDKSupervisorManager,
     ClaudeSDKUnavailable,
     claude_background_tracking_hooks,
     claude_nondurable_scheduler_reason,
@@ -32,6 +31,7 @@ from hyadex.providers.claude.sdk import (
     _parse_claude_sdk_message,
     _query_message_stream,
 )
+from hyadex.providers.claude.sdk_manager import ClaudeSDKSupervisorManager
 
 
 class FakeClaudeClient:

@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from hyadex.providers.claude.sdk import ClaudeSDKSupervisorManager
-    from hyadex.providers.codex.app_server import CodexAppServerManager
+    from hyadex.providers.claude.sdk_manager import ClaudeSDKSupervisorManager
+    from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 
 
 @dataclass(eq=False)

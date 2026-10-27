@@ -64,6 +64,8 @@ FILES = (
     'NOTICE',
     'hyadex/installation.py',
     'hyadex/inventory.py',
+    'hyadex/providers/codex/app_server_manager.py',
+    'hyadex/providers/claude/sdk_manager.py',
     'hyadex/core/lifecycle_admission.py',
     'hyadex/core/stop_turn.py',
     'hyadex/core/stop_fence.py',

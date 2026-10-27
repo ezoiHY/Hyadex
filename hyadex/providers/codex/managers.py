@@ -33,11 +33,8 @@ from hyadex.core.session_codex import (
 )
 from hyadex.providers.claude.history import session_provider_id
 from hyadex.providers.claude.catalog import runtime_command
-from hyadex.providers.codex.app_server import (
-    CodexAppServerError,
-    CodexAppServerManager,
-    CodexAppServerRequestError,
-)
+from hyadex.providers.codex.app_server import CodexAppServerError, CodexAppServerRequestError
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from hyadex.providers.codex.config import sanitize_codex_thread_config
 from hyadex.providers.codex.forks import codex_raw_developer_message
 from hyadex.providers.codex.goals import reconcile_codex_thread_goal

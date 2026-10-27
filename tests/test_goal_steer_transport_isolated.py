@@ -3,7 +3,8 @@
 import asyncio
 import unittest
 
-from hyadex.providers.codex.app_server import CodexAppServerManager, CodexAppServerProtocolError
+from hyadex.providers.codex.app_server import CodexAppServerProtocolError
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from tests.test_codex_app_server import FakeProcessFactory, wait_until
 
 

@@ -12,12 +12,12 @@ from unittest.mock import AsyncMock, patch
 from hyadex.providers.codex.app_server import (
     CodexAppServerClient,
     CodexAppServerDisconnected,
-    CodexAppServerManager,
     CodexAppServerProtocolError,
     CodexAppServerRequestError,
     CodexAppServerSubscriptionClosed,
     CodexAppServerTimeout,
 )
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 
 
 NO_RESPONSE = object()

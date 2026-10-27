@@ -29,7 +29,8 @@ from hyadex.core.session_codex import (
 from hyadex.core.state import DELETED_SESSION_TOMBSTONES, DELETING_SESSIONS
 from hyadex.features.usage import bounded_codex_interaction_value
 from hyadex.providers.claude.interactions import CLAUDE_INTERACTION_HANDLER_TASKS
-from hyadex.providers.codex.app_server import CodexAppServerManager, decline_server_request
+from hyadex.providers.codex.app_server import decline_server_request
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from hyadex.providers.codex.goals import (
     CODEX_QUARANTINED_GOAL_THREADS,
     reset_codex_ephemeral_runtime_metadata,

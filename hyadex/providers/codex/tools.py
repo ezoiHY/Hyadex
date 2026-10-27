@@ -48,7 +48,7 @@ from hyadex.providers.authority import (
     resolve_provider_tool_arguments,
     validate_provider_tool_input,
 )
-from hyadex.providers.codex.app_server import CodexAppServerManager
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from hyadex.providers.codex.config import codex_effective_thread_config
 from hyadex.providers.codex.goals import codex_native_goal_owner_matches
 from hyadex.providers.codex.threads import codex_thread_instructions

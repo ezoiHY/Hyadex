@@ -175,7 +175,7 @@ from hyadex.providers.claude.history import (
     provider_session_identifier,
     session_provider_id,
 )
-from hyadex.providers.codex.app_server import CodexAppServerManager
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from hyadex.providers.codex.config import (
     _codex_config_positive_int,
     codex_effective_thread_config,

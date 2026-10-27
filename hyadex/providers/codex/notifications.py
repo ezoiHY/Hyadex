@@ -54,7 +54,7 @@ from hyadex.providers.claude.history import (
     session_provider_id,
     text_from_content,
 )
-from hyadex.providers.codex.app_server import CodexAppServerManager
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from hyadex.providers.codex.goals import (
     CODEX_QUARANTINED_GOAL_THREADS,
     persist_reconciled_codex_goal,

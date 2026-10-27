@@ -30,7 +30,7 @@ from hyadex.providers.claude.history import (
     provider_session_identifier,
     session_provider_id,
 )
-from hyadex.providers.codex.app_server import CodexAppServerManager
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from hyadex.providers.runtime import scrub_provider_runtime_environment
 from hyadex.providers.state import PROVIDERS
 

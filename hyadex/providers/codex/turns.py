@@ -111,11 +111,11 @@ from hyadex.providers.claude.projection import mark_provider_turn_ready, tool_ch
 from hyadex.providers.codex.app_server import (
     CodexAppServerDisconnected,
     CodexAppServerError,
-    CodexAppServerManager,
     CodexAppServerProtocolError,
     CodexAppServerRequestError,
     CodexAppServerSubscriptionClosed,
 )
+from hyadex.providers.codex.app_server_manager import CodexAppServerManager
 from hyadex.providers.codex.commands import (
     acquire_codex_control_thread,
     codex_app_server_manager,
