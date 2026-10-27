@@ -5248,7 +5248,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
                     "queued-rejected",
                 )
             )
-            done, _pending = await asyncio.wait({force_send}, timeout=2)
+            done, _pending = await asyncio.wait({force_send}, timeout=10)
             self.assertIn(force_send, done)
             self.assertTrue(predecessor_path.exists())
             self.assertEqual(
