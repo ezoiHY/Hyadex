@@ -2021,7 +2021,7 @@ EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.conf
 
 
 # Module globals that core code reaches through WIRING.
-WIRED_NAMES = {"JOBS": "jobs"}
+WIRED_NAMES = {"JOBS": "jobs", "run_codex": "run_codex", "run_claude": "run_claude"}
 
 
 class _CompatibilityFacade(types.ModuleType):

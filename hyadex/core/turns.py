@@ -8735,7 +8735,7 @@ async def _start_turn_locked(
                 provider_turn_payload.user_prompt,
                 prompt,
             )
-            task = run_codex(
+            task = WIRING.run_codex(
                 session_id,
                 run_id,
                 provider_turn_payload.user_prompt,
@@ -8755,7 +8755,7 @@ async def _start_turn_locked(
                 provider_turn_payload.user_prompt,
                 prompt,
             )
-            task = run_claude(
+            task = WIRING.run_claude(
                 session_id,
                 run_id,
                 provider_turn_payload.user_prompt,
@@ -9541,3 +9541,7 @@ async def post_turn_with_receipt(session_id: str, req: TurnRequest) -> Any:
 
 async def post_turn_without_receipt(session_id: str, req: TurnRequest) -> dict[str, Any]:
     return await start_turn(session_id, req)
+
+
+WIRING.run_codex = run_codex
+WIRING.run_claude = run_claude
