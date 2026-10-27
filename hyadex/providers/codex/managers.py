@@ -65,7 +65,7 @@ from hyadex.providers.registry import (
     unregister_provider_child,
 )
 from hyadex.providers.state import PROVIDERS
-from hyadex.providers.subagents import record_codex_subagent_limit_application
+from hyadex.providers.codex.subagents import record_codex_subagent_limit_application
 
 logger = logging.getLogger("hyadex-server")
 

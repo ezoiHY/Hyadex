@@ -10,7 +10,7 @@ from hyadex.core.runs import RUNS
 from hyadex.core.sessions import append_event, event_output_text
 from hyadex.core.util import _patch_changed_paths, clean_assistant_text, normalized_tool_name
 from hyadex.features.files import run_event_metadata
-from hyadex.providers.subagents import (
+from hyadex.providers.claude.subagents import (
     claude_sdk_field,
     claude_sdk_subagent_lifecycle_raw,
     claude_sdk_type,

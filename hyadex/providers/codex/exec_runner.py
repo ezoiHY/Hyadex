@@ -39,9 +39,8 @@ from hyadex.core.turns import (
     bind_active_turn,
     clear_active_process,
     finalize_owned_turn_finished,
-    release_turn_slot,
-    schedule_next_queued_turn,
 )
+from hyadex.core.turn_start import release_turn_slot, schedule_next_queued_turn
 from hyadex.core.util import clean_assistant_text, compact_memory_text
 from hyadex.features.files import capture_git_baseline, publish_turn_code_diff, run_event_metadata
 from hyadex.features.usage import join_task_despite_caller_cancellation

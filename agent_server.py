@@ -452,62 +452,69 @@ from hyadex.features.forks import (
     save_staged_fork_provider_reference,
 )
 from hyadex.core.stop import (
+    join_cancelled_tasks,
+    request_explicit_stop,
+    run_explicit_stop_operation,
+)
+from hyadex.core.run_now import (
     _run_queued_turn_now_and_release,
     _run_queued_turn_now_once,
+    run_queued_turn_now,
+)
+from hyadex.core.stop_turn import stop_turn
+from hyadex.core.abandoned import (
     abandoned_turn_after_restart,
-    join_cancelled_tasks,
     recover_abandoned_turns_after_start,
-    request_explicit_stop,
     RESTART_ORPHAN_ACTIVITY_TYPES,
     RESTART_ORPHAN_TERMINAL_TYPES,
-    run_explicit_stop_operation,
-    run_queued_turn_now,
-    stop_turn,
     tail_jsonl_file,
 )
 from hyadex.core.turns import (
-    _recover_queued_turns_for_sessions,
-    _start_next_queued_turn_locked,
-    _start_turn_locked,
     active_run_summaries,
     append_active_stdout,
     append_turn_finished_event,
     bind_active_turn,
     clear_active_process,
-    enqueue_turn,
-    execute_receipted_turn,
     explicit_stop_session_ids,
     finalize_owned_turn_finished,
     interactive_client_capabilities,
     jsonable_active_run,
+    recover_queued_turns_after_start,
+    server_lifecycle_active_session_ids_locked,
+    set_claude_goal,
+    start_claude_goal_command,
+    start_turn_durably,
+)
+from hyadex.core.stop_fence import retry_claude_stop_fence, schedule_claude_stop_fence_retry
+from hyadex.core.turn_receipts import (
+    execute_receipted_turn,
     post_turn_with_receipt,
     post_turn_without_receipt,
-    provider_turn_may_manage_jobs,
     read_indexed_run_trace,
+    recover_turn_receipt,
+    start_turn,
+    turn_receipt_path,
+    write_turn_receipt,
+)
+from hyadex.core.turn_start import (
+    _recover_queued_turns_for_sessions,
+    _start_next_queued_turn_locked,
+    _start_turn_locked,
+    enqueue_turn,
+    provider_turn_may_manage_jobs,
     reconcile_idle_queue_session,
     reconcile_idle_queue_session_from_snapshot,
     reconcile_idle_queued_turns,
     reconcile_idle_queued_turns_from_health_poll,
     reconcile_provider_task_exit,
-    recover_queued_turns_after_start,
-    recover_turn_receipt,
     release_turn_slot,
-    retry_claude_stop_fence,
     retry_next_queued_turn_later,
-    schedule_claude_stop_fence_retry,
     schedule_next_queued_turn,
     schedule_queued_turn_retry,
     schedule_steered_turn_slot_waiter,
-    server_lifecycle_active_session_ids_locked,
-    set_claude_goal,
-    start_claude_goal_command,
     start_next_queued_turn,
-    start_turn,
-    start_turn_durably,
     supervise_provider_turn_task,
-    turn_receipt_path,
     wait_for_steered_turn_slot,
-    write_turn_receipt,
 )
 from hyadex.providers.claude.turns import (
     finish_cancelled_claude_sdk_start,
@@ -1101,20 +1108,11 @@ from hyadex.providers.claude.background_state import (
     persist_claude_background_task_receipts,
     PROVIDER_WORK_LABEL_LIMIT,
 )
-from hyadex.providers.subagents import (
+from hyadex.providers.subagents import build_subagent_snapshot, empty_subagent_stop_result
+from hyadex.providers.codex.subagents import (
     _emit_codex_subagent_state_once,
-    build_claude_subagent_snapshot,
-    build_subagent_snapshot,
     cache_codex_subagent_native_statuses,
     cached_codex_subagent_native_statuses,
-    claude_sdk_field,
-    claude_sdk_subagent_lifecycle_raw,
-    claude_sdk_type,
-    claude_stop_fence_attempt_lock,
-    CLAUDE_STOP_FENCE_ATTEMPT_LOCKS,
-    CLAUDE_STOP_FENCE_ATTEMPT_TASKS,
-    claude_subagent_child_activity,
-    claude_subagent_progress_activity,
     codex_child_status_from_thread,
     codex_child_status_from_turn,
     codex_collaboration_states,
@@ -1133,15 +1131,10 @@ from hyadex.providers.subagents import (
     CODEX_SUBAGENT_TRANSITION_LOCKS,
     codex_subagents_admin_status,
     CodexSubagentsAdminRequest,
-    compact_subagent_text,
-    discard_unused_claude_stop_fence_attempt_lock,
     emit_codex_subagent_state,
-    empty_subagent_stop_result,
-    evict_claude_sdk_chat,
     finalize_codex_subagents_after_run,
     get_codex_subagents_admin,
     is_codex_subagent_notification_user_item,
-    normalize_subagent_status,
     prepare_codex_subagent_terminal_snapshot,
     project_codex_subagent_item,
     put_codex_subagents_admin,
@@ -1151,6 +1144,21 @@ from hyadex.providers.subagents import (
     schedule_codex_subagent_finalization,
     stop_codex_descendant_subagents,
     useful_subagent_identity_text,
+)
+from hyadex.providers.claude.subagents import (
+    build_claude_subagent_snapshot,
+    claude_sdk_field,
+    claude_sdk_subagent_lifecycle_raw,
+    claude_sdk_type,
+    claude_stop_fence_attempt_lock,
+    CLAUDE_STOP_FENCE_ATTEMPT_LOCKS,
+    CLAUDE_STOP_FENCE_ATTEMPT_TASKS,
+    claude_subagent_child_activity,
+    claude_subagent_progress_activity,
+    compact_subagent_text,
+    discard_unused_claude_stop_fence_attempt_lock,
+    evict_claude_sdk_chat,
+    normalize_subagent_status,
 )
 from hyadex.features.files import (
     _capture_git_tree,
@@ -1486,11 +1494,13 @@ from hyadex.core.sessions import (
 from hyadex.core.session_titles import (
     cancel_generated_session_title,
     close_generated_session_titles,
+    read_native_session_title,
+    title_runtime_key,
+)
+from hyadex.core.lifecycle_admission import (
     EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
     execution_maintenance_blocks_work,
-    read_native_session_title,
     server_lifecycle_admission_blocker,
-    title_runtime_key,
 )
 from hyadex.core.session_settings import (
     clamp_codex_runtime_effort,
@@ -2092,7 +2102,7 @@ from hyadex.core.config import (
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], sys.modules['hyadex.api.terminal'], sys.modules['hyadex.api.sessions'], sys.modules['hyadex.api.search'], sys.modules['hyadex.api.providers'], sys.modules['hyadex.api.turns'], sys.modules['hyadex.api.jobs'], sys.modules['hyadex.api.agent'], sys.modules['hyadex.api.files'], sys.modules['hyadex.main'], sys.modules['hyadex.providers.codex.turns'], sys.modules['hyadex.providers.claude.turns'], sys.modules['hyadex.providers.codex.forks'], sys.modules['hyadex.providers.codex.threads'], sys.modules['hyadex.providers.codex.goals'], sys.modules['hyadex.providers.codex.tools'], sys.modules['hyadex.providers.codex.managers'], sys.modules['hyadex.providers.codex.notifications'], sys.modules['hyadex.providers.codex.interactions'], sys.modules['hyadex.providers.codex.commands'], sys.modules['hyadex.providers.codex.reasoning_stream'], sys.modules['hyadex.providers.codex.exec_runner'], sys.modules['hyadex.providers.codex.controls'], sys.modules['hyadex.providers.codex.native_turns'], sys.modules['hyadex.core.session_alerts'], sys.modules['hyadex.core.session_codex'], sys.modules['hyadex.core.event_seq'], sys.modules['hyadex.core.session_files'], sys.modules['hyadex.core.restart_status'], sys.modules['hyadex.core.session_settings'], sys.modules['hyadex.core.session_titles'], sys.modules['hyadex.core.queue_admission'], sys.modules['hyadex.core.steering'], sys.modules['hyadex.core.history_sync'], sys.modules['hyadex.providers.claude.background'], sys.modules['hyadex.core.artifacts'], sys.modules['hyadex.core.queue_recovery'], sys.modules['hyadex.features.job_access'], sys.modules['hyadex.features.job_admission'], sys.modules['hyadex.features.job_history'], sys.modules['hyadex.core.host'], sys.modules['hyadex.core.publications'], sys.modules['hyadex.core.timeline_index'], sys.modules['hyadex.providers.claude.background_state'], sys.modules['hyadex.providers.claude.catalog'], sys.modules['hyadex.providers.claude.context_usage'], sys.modules['hyadex.providers.claude.goals'], sys.modules['hyadex.providers.claude.interactions'], sys.modules['hyadex.providers.claude.projection'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], sys.modules['hyadex.api.terminal'], sys.modules['hyadex.api.sessions'], sys.modules['hyadex.api.search'], sys.modules['hyadex.api.providers'], sys.modules['hyadex.api.turns'], sys.modules['hyadex.api.jobs'], sys.modules['hyadex.api.agent'], sys.modules['hyadex.api.files'], sys.modules['hyadex.main'], sys.modules['hyadex.providers.codex.turns'], sys.modules['hyadex.providers.claude.turns'], sys.modules['hyadex.providers.codex.forks'], sys.modules['hyadex.providers.codex.threads'], sys.modules['hyadex.providers.codex.goals'], sys.modules['hyadex.providers.codex.tools'], sys.modules['hyadex.providers.codex.managers'], sys.modules['hyadex.providers.codex.notifications'], sys.modules['hyadex.providers.codex.interactions'], sys.modules['hyadex.providers.codex.commands'], sys.modules['hyadex.providers.codex.reasoning_stream'], sys.modules['hyadex.providers.codex.exec_runner'], sys.modules['hyadex.providers.codex.controls'], sys.modules['hyadex.providers.codex.native_turns'], sys.modules['hyadex.core.session_alerts'], sys.modules['hyadex.core.session_codex'], sys.modules['hyadex.core.event_seq'], sys.modules['hyadex.core.session_files'], sys.modules['hyadex.core.restart_status'], sys.modules['hyadex.core.session_settings'], sys.modules['hyadex.core.session_titles'], sys.modules['hyadex.core.queue_admission'], sys.modules['hyadex.core.steering'], sys.modules['hyadex.core.history_sync'], sys.modules['hyadex.providers.claude.background'], sys.modules['hyadex.core.artifacts'], sys.modules['hyadex.core.queue_recovery'], sys.modules['hyadex.features.job_access'], sys.modules['hyadex.features.job_admission'], sys.modules['hyadex.features.job_history'], sys.modules['hyadex.core.host'], sys.modules['hyadex.core.publications'], sys.modules['hyadex.core.timeline_index'], sys.modules['hyadex.providers.claude.background_state'], sys.modules['hyadex.providers.claude.catalog'], sys.modules['hyadex.providers.claude.context_usage'], sys.modules['hyadex.providers.claude.goals'], sys.modules['hyadex.providers.claude.interactions'], sys.modules['hyadex.providers.claude.projection'], sys.modules['hyadex.core.abandoned'], sys.modules['hyadex.core.run_now'], sys.modules['hyadex.providers.claude.subagents'], sys.modules['hyadex.providers.codex.subagents'], sys.modules['hyadex.core.turn_start'], sys.modules['hyadex.core.turn_receipts'], sys.modules['hyadex.core.stop_fence'], sys.modules['hyadex.core.stop_turn'], sys.modules['hyadex.core.lifecycle_admission'], )
 
 
 # Module globals that core code reaches through WIRING.

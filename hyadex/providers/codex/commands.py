@@ -60,7 +60,7 @@ from hyadex.core.sessions import (
     session_system_prompt,
     STORE,
 )
-from hyadex.core.session_titles import server_lifecycle_admission_blocker
+from hyadex.core.lifecycle_admission import server_lifecycle_admission_blocker
 from hyadex.core.session_settings import codex_runtime_settings, effective_claude_permission_mode
 from hyadex.core.session_codex import (
     codex_app_server_env,
@@ -199,7 +199,7 @@ from hyadex.providers.runtime import (
     validate_provider_runtime_env,
 )
 from hyadex.providers.state import PROVIDERS
-from hyadex.providers.subagents import (
+from hyadex.providers.codex.subagents import (
     CODEX_GOALS_CONFIG_LOCK,
     codex_session_has_live_subagents,
     record_codex_subagent_limit_application,

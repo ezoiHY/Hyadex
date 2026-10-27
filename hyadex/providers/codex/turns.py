@@ -94,6 +94,8 @@ from hyadex.core.turns import (
     bind_active_turn,
     clear_active_process,
     finalize_owned_turn_finished,
+)
+from hyadex.core.turn_start import (
     reconcile_provider_task_exit,
     release_turn_slot,
     schedule_next_queued_turn,
@@ -198,14 +200,14 @@ from hyadex.providers.registry import (
     turn_slot_is_owned,
 )
 from hyadex.providers.runtime import validate_provider_runtime_env
-from hyadex.providers.subagents import (
+from hyadex.providers.codex.subagents import (
     codex_child_status_from_thread,
     codex_collaboration_states,
     codex_collaboration_thread_ids,
     codex_subagent_thread_identity,
-    normalize_subagent_status,
     schedule_codex_subagent_finalization,
 )
+from hyadex.providers.claude.subagents import normalize_subagent_status
 from provider_commands import ProviderCommandRecord
 
 logger = logging.getLogger("hyadex-server")

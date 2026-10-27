@@ -125,9 +125,9 @@ from hyadex.core.session_settings import (
 from hyadex.core.session_titles import (
     cancel_generated_session_title,
     read_native_session_title,
-    server_lifecycle_admission_blocker,
     title_runtime_key,
 )
+from hyadex.core.lifecycle_admission import server_lifecycle_admission_blocker
 from hyadex.core.state import (
     DELETED_SESSION_TOMBSTONES,
     DELETING_SESSIONS,

@@ -119,7 +119,7 @@ from hyadex.providers.claude.background_state import (
 from hyadex.providers.instructions import HYADEX_CONTEXT_END_MARKER
 from hyadex.providers.runtime import assert_provider_user_message_unchanged, ProviderTurnPayload
 from hyadex.providers.state import PROVIDERS
-from hyadex.providers.subagents import prepare_codex_subagent_terminal_snapshot
+from hyadex.providers.codex.subagents import prepare_codex_subagent_terminal_snapshot
 from hyadex.store.files import atomic_json
 import local_session_ownership
 from provider_commands import ProviderCommandInventory

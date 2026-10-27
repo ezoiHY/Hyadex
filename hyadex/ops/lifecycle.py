@@ -59,10 +59,8 @@ from hyadex.core.runs import RUNS
 from hyadex.core.server import SERVER
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import PROVIDER_AUTHORITIES, PROVIDER_AUTHORITY_LOCK, STORE
-from hyadex.core.session_titles import (
-    close_generated_session_titles,
-    execution_maintenance_blocks_work,
-)
+from hyadex.core.session_titles import close_generated_session_titles
+from hyadex.core.lifecycle_admission import execution_maintenance_blocks_work
 from hyadex.core.restart_status import (
     managed_server_restart_blocks_work,
     read_server_restart_status,
@@ -80,7 +78,8 @@ from hyadex.core.state import (
     TURN_RECEIPT_TASKS,
     UNSAFE_HTTP_MUTATION_ADMISSION_LOCK,
 )
-from hyadex.core.stop import join_cancelled_tasks, recover_abandoned_turns_after_start
+from hyadex.core.stop import join_cancelled_tasks
+from hyadex.core.abandoned import recover_abandoned_turns_after_start
 from hyadex.core.turns import (
     active_run_summaries,
     explicit_stop_session_ids,
@@ -110,7 +109,7 @@ from hyadex.providers.registry import (
     refresh_runtime_diagnostics,
     sweep_orphaned_provider_children,
 )
-from hyadex.providers.subagents import CLAUDE_STOP_FENCE_ATTEMPT_TASKS
+from hyadex.providers.claude.subagents import CLAUDE_STOP_FENCE_ATTEMPT_TASKS
 import server_instances
 
 logger = logging.getLogger("hyadex-server")

@@ -67,7 +67,7 @@ from hyadex.core.runs import RUNS
 from hyadex.core.server import SERVER
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.session_settings import CreateSessionRequest, retired_session_runtime_message
-from hyadex.core.session_titles import server_lifecycle_admission_blocker
+from hyadex.core.lifecycle_admission import server_lifecycle_admission_blocker
 from hyadex.core.sessions import (
     append_event,
     ensure_session_not_deleting,
@@ -192,12 +192,12 @@ from hyadex.providers.registry import (
     strip_hyadex_provider_context,
 )
 from hyadex.providers.state import PROVIDERS
-from hyadex.providers.subagents import (
+from hyadex.providers.subagents import empty_subagent_stop_result
+from hyadex.providers.claude.subagents import (
     build_claude_subagent_snapshot,
     claude_stop_fence_attempt_lock,
     CLAUDE_STOP_FENCE_ATTEMPT_TASKS,
     discard_unused_claude_stop_fence_attempt_lock,
-    empty_subagent_stop_result,
     evict_claude_sdk_chat,
 )
 from hyadex.store.transcripts import jsonl_records

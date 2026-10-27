@@ -17,7 +17,7 @@ from starlette.routing import Match
 
 from hyadex.core.config import AGENT_TOKEN, EMERGENCY_MESSAGE_MAX_CHARS, MAX_JOB_TITLE_CHARS
 from hyadex.core.server import SERVER
-from hyadex.core.session_titles import (
+from hyadex.core.lifecycle_admission import (
     EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
     execution_maintenance_blocks_work,
 )

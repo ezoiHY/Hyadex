@@ -18,7 +18,7 @@ from hyadex.core.paths import events_path
 from hyadex.core.restart_status import MANAGED_SERVER_RESTART_ACTIVE_DETAIL
 from hyadex.core.runs import RUNS
 from hyadex.core.session_alerts import reversed_jsonl_events
-from hyadex.core.session_titles import (
+from hyadex.core.lifecycle_admission import (
     EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
     server_lifecycle_admission_blocker,
 )

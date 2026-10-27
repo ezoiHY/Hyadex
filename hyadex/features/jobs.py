@@ -54,7 +54,7 @@ from hyadex.core.server_logging import concise_error_message
 from hyadex.core.session_alerts import reversed_jsonl_events
 from hyadex.core.session_files import list_session_file_records
 from hyadex.core.session_settings import effective_provider_jobs_access, session_backend_locked
-from hyadex.core.session_titles import (
+from hyadex.core.lifecycle_admission import (
     EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
     server_lifecycle_admission_blocker,
 )
@@ -69,7 +69,7 @@ from hyadex.core.state import (
     DELETING_SESSIONS,
     TIMELINE_INDEX_CACHE_LOCK,
 )
-from hyadex.core.turns import start_turn
+from hyadex.core.turn_receipts import start_turn
 from hyadex.core.util import ensure_dirs, low_available_memory_message, TransientAdmissionWait
 from hyadex.core.wiring import WIRING
 from hyadex.features.group_runtime import new_job_revision, start_group_job_run

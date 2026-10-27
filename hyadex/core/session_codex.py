@@ -1,4 +1,4 @@
-"""Codex details kept on chat records: threads, compaction terminals, app-server environment."""
+"""Codex details kept on chat records (threads, compaction terminals, app-server environment) and the provider helper endpoint address."""
 from __future__ import annotations
 
 from contextlib import suppress

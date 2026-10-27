@@ -70,14 +70,14 @@ from hyadex.providers.codex.threads import (
     codex_thread_has_local_run_owner,
     codex_thread_status_message,
 )
-from hyadex.providers.subagents import (
+from hyadex.providers.codex.subagents import (
     codex_child_status_from_thread,
     codex_collaboration_thread_ids,
     codex_subagent_thread_identity,
     emit_codex_subagent_state,
-    normalize_subagent_status,
     project_codex_subagent_item,
 )
+from hyadex.providers.claude.subagents import normalize_subagent_status
 
 logger = logging.getLogger("hyadex-server")
 

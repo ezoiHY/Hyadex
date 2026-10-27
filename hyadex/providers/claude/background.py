@@ -15,12 +15,12 @@ from hyadex.core.history_sync import append_durable_event
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.sessions import register_session_task, STORE
 from hyadex.providers.state import PROVIDERS
-from hyadex.providers.subagents import (
+from hyadex.providers.subagents import empty_subagent_stop_result
+from hyadex.providers.claude.subagents import (
     build_claude_subagent_snapshot,
     claude_stop_fence_attempt_lock,
     CLAUDE_STOP_FENCE_ATTEMPT_TASKS,
     discard_unused_claude_stop_fence_attempt_lock,
-    empty_subagent_stop_result,
     evict_claude_sdk_chat,
 )
 

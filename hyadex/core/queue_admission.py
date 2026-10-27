@@ -10,7 +10,7 @@ from hyadex.core.config import QUEUE_FENCE_LOG_INTERVAL_SECONDS
 from hyadex.core.restart_status import MANAGED_SERVER_RESTART_ACTIVE_DETAIL
 from hyadex.core.runs import RUNS
 from hyadex.core.server import SERVER
-from hyadex.core.session_titles import server_lifecycle_admission_blocker
+from hyadex.core.lifecycle_admission import server_lifecycle_admission_blocker
 from hyadex.core.state import (
     QUEUE_FENCE_LOGGED_AT,
     QUEUE_RECOVERY_ADMISSION_WAIT_SECONDS,

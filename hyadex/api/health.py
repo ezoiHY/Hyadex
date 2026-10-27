@@ -50,7 +50,7 @@ from hyadex.core.queue_admission import queue_recovery_readiness
 from hyadex.core.runs import RUNS
 from hyadex.core.server import SERVER
 from hyadex.core.sessions import CLAUDE_STOP_FENCE_SESSIONS, STORE
-from hyadex.core.turns import reconcile_idle_queued_turns_from_health_poll
+from hyadex.core.turn_start import reconcile_idle_queued_turns_from_health_poll
 from hyadex.core.util import bounded_lock, server_identity
 from hyadex.features.jobs import JOBS, scheduled_job_resource_diagnostics
 from hyadex.features.terminal import tmux_capability

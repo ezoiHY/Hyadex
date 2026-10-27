@@ -22,7 +22,7 @@ from hyadex.core.sessions import (
     STORE,
 )
 from hyadex.core.session_settings import codex_goal_time_budget_remaining
-from hyadex.core.turns import schedule_next_queued_turn
+from hyadex.core.turn_start import schedule_next_queued_turn
 from hyadex.core.util import clean_assistant_text
 from hyadex.features.usage import join_task_despite_caller_cancellation
 from hyadex.providers.authority import NativeSteerHandoffError

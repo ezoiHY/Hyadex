@@ -107,7 +107,7 @@ from hyadex.core.sessions import (
     STORE,
     write_abandoned_fork_thread_ids,
 )
-from hyadex.core.session_titles import server_lifecycle_admission_blocker
+from hyadex.core.lifecycle_admission import server_lifecycle_admission_blocker
 from hyadex.core.session_settings import (
     clamp_codex_runtime_effort,
     codex_available_model,
@@ -356,7 +356,7 @@ from hyadex.providers.runtime import (
     validate_provider_runtime_env,
 )
 from hyadex.providers.state import PROVIDERS
-from hyadex.providers.subagents import (
+from hyadex.providers.codex.subagents import (
     codex_child_status_from_thread,
     codex_collaboration_thread_ids,
     CODEX_GOALS_CONFIG_LOCK,
@@ -365,10 +365,10 @@ from hyadex.providers.subagents import (
     codex_subagent_native_turn_scopes,
     codex_subagent_thread_identity,
     emit_codex_subagent_state,
-    normalize_subagent_status,
     project_codex_subagent_item,
     record_codex_subagent_limit_application,
 )
+from hyadex.providers.claude.subagents import normalize_subagent_status
 from provider_commands import (
     claude_provider_command_inventory,
     codex_provider_command_inventory,

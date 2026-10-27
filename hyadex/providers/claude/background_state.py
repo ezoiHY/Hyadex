@@ -15,7 +15,7 @@ from hyadex.core.config import BACKEND_CLAUDE, DEFAULT_BACKEND
 from hyadex.core.paths import events_path
 from hyadex.core.runs import RUNS
 from hyadex.core.sessions import append_event, STORE
-from hyadex.providers.subagents import build_claude_subagent_snapshot
+from hyadex.providers.claude.subagents import build_claude_subagent_snapshot
 
 
 async def persist_claude_background_task_receipts(

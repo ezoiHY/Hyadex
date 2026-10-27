@@ -21,7 +21,7 @@ from hyadex.providers.codex.goals import (
     get_codex_goals_admin,
     put_codex_goals_admin,
 )
-from hyadex.providers.subagents import (
+from hyadex.providers.codex.subagents import (
     CodexSubagentsAdminRequest,
     get_codex_subagents_admin,
     put_codex_subagents_admin,

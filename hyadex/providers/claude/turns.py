@@ -60,9 +60,8 @@ from hyadex.core.turns import (
     bind_active_turn,
     clear_active_process,
     finalize_owned_turn_finished,
-    release_turn_slot,
-    schedule_next_queued_turn,
 )
+from hyadex.core.turn_start import release_turn_slot, schedule_next_queued_turn
 from hyadex.core.util import clean_assistant_text
 from hyadex.core.wiring import WIRING
 from hyadex.features.files import capture_git_baseline, publish_turn_code_diff, run_event_metadata
@@ -119,7 +118,11 @@ from hyadex.providers.runtime import (
     assert_provider_user_message_unchanged,
     validate_provider_runtime_env,
 )
-from hyadex.providers.subagents import claude_sdk_field, claude_sdk_type, evict_claude_sdk_chat
+from hyadex.providers.claude.subagents import (
+    claude_sdk_field,
+    claude_sdk_type,
+    evict_claude_sdk_chat,
+)
 from provider_commands import ProviderCommandRecord
 
 logger = logging.getLogger("hyadex-server")

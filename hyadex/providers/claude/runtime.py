@@ -71,7 +71,7 @@ from hyadex.core.runs import RUNS
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.session_files import iter_session_events
 from hyadex.core.session_settings import effective_claude_permission_mode
-from hyadex.core.session_titles import server_lifecycle_admission_blocker
+from hyadex.core.lifecycle_admission import server_lifecycle_admission_blocker
 from hyadex.core.sessions import (
     append_event,
     CLAUDE_STOP_FENCE_SESSIONS,
@@ -146,7 +146,7 @@ from hyadex.providers.runtime import (
     PROVIDER_SECRET_ENV_NAMES,
 )
 from hyadex.providers.state import PROVIDERS
-from hyadex.providers.subagents import (
+from hyadex.providers.claude.subagents import (
     build_claude_subagent_snapshot,
     claude_sdk_field,
     claude_sdk_subagent_lifecycle_raw,

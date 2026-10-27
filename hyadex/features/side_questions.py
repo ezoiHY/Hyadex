@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from hyadex.core.server import SERVER
-from hyadex.core.session_titles import server_lifecycle_admission_blocker
+from hyadex.core.lifecycle_admission import server_lifecycle_admission_blocker
 import side_questions
 
 CODEX_GOALS_RECONFIGURING = False

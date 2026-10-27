@@ -56,7 +56,7 @@ from hyadex.core.sessions import (
     session_lifecycle_lock,
     STORE,
 )
-from hyadex.core.session_titles import execution_maintenance_blocks_work
+from hyadex.core.lifecycle_admission import execution_maintenance_blocks_work
 from hyadex.core.session_settings import (
     ensure_backend_update_allowed,
     ensure_claude_permission_mode_update_allowed,
