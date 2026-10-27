@@ -103,5 +103,19 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertEqual(missing, [])
 
 
+    def test_rebound_globals_are_not_reexported(self):
+        # A global its module rebinds at run time would go stale as an
+        # imported copy in agent_server; tests must patch the owner.
+        import agent_server
+
+        reexported = []
+        for relative in server_source.EXTRACTED:
+            tree = ast.parse((ROOT / relative).read_text())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Global):
+                    reexported += [f"{relative}: {name}" for name in node.names if name in vars(agent_server)]
+        self.assertEqual(reexported, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,7 @@ from fastapi import BackgroundTasks, HTTPException, Request
 from fastapi.responses import Response
 
 import agent_server
+from hyadex.ops import lifecycle
 from tests.runtime_state import patch_server
 
 
@@ -143,7 +144,7 @@ def restart_environment(root: Path):
         # The restart path consults the cached positive proof first; keep the
         # cache empty so each test's patched probe decides.
         stack.enter_context(patch.object(
-            agent_server,
+            lifecycle,
             "MANAGED_SERVER_SERVICE_KIND_CACHE",
             None,
         ))
@@ -826,7 +827,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                     "detect_managed_server_service_kind",
                     return_value=None,
                 ), patch.object(
-                    agent_server,
+                    lifecycle,
                     "MANAGED_SERVER_SERVICE_KIND_CACHE",
                     None,
                 ), self.assertRaises(HTTPException) as unmanaged:

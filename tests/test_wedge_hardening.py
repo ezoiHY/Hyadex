@@ -15,6 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import BackgroundTasks, HTTPException
 
 import agent_server
+from tests import server_source
+from hyadex.ops import lifecycle
 from tests.test_server_restart_endpoints import (
     http_request,
     restart_body,
@@ -593,7 +595,7 @@ class ManagedServiceProofTests(unittest.TestCase):
     def test_probe_timeout_keeps_prior_positive_proof(self):
         with patch.object(agent_server.sys, "platform", "darwin"), \
              patch.object(agent_server, "official_server_release_tree", return_value=True), \
-             patch.object(agent_server, "MANAGED_SERVER_SERVICE_KIND_CACHE", "launch-agent"), \
+             patch.object(lifecycle, "MANAGED_SERVER_SERVICE_KIND_CACHE", "launch-agent"), \
              patch.object(
                  agent_server,
                  "macos_launchd_owns_current_process",
@@ -608,7 +610,7 @@ class ManagedServiceProofTests(unittest.TestCase):
     def test_probe_timeout_without_prior_proof_fails_closed(self):
         with patch.object(agent_server.sys, "platform", "darwin"), \
              patch.object(agent_server, "official_server_release_tree", return_value=True), \
-             patch.object(agent_server, "MANAGED_SERVER_SERVICE_KIND_CACHE", None), \
+             patch.object(lifecycle, "MANAGED_SERVER_SERVICE_KIND_CACHE", None), \
              patch.object(
                  agent_server,
                  "macos_launchd_owns_current_process",
@@ -633,7 +635,7 @@ class ManagedServiceProofTests(unittest.TestCase):
             + agent_server.SERVER_SHUTDOWN_PHASE_COUNT
             * agent_server.SERVER_SHUTDOWN_PHASE_TIMEOUT_SECONDS,
         )
-        source = Path(agent_server.__file__).read_text()
+        source = server_source.text()
         self.assertEqual(
             source.count("await bounded_shutdown_phase("),
             agent_server.SERVER_SHUTDOWN_PHASE_COUNT,

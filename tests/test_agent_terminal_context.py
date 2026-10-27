@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import agent_server
+from hyadex.providers.claude import runtime as claude_runtime
 
 
 def codex_developer_instructions(command: list[str]) -> str:
@@ -128,7 +129,7 @@ class AgentTerminalContextTests(unittest.TestCase):
         )
         with (
             patch.object(
-                agent_server,
+                claude_runtime,
                 "CLAUDE_NO_SESSION_PERSISTENCE_SUPPORTED",
                 None,
             ),
