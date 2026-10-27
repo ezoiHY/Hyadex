@@ -81,6 +81,7 @@ publish, emergency, notify) and planned client features use. API contract 30.
 - Removed the single-service systemd template; `install.sh` writes the worker
   and gateway units itself.
 - No API, stored-state or chat behaviour changed.
+
 ## 2026-10-27 — Terminal in the Mac app
 
 - Each chat has a terminal panel (⌃` or the toolbar button) docked under the
