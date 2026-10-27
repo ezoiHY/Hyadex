@@ -178,6 +178,11 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
 logger = logging.getLogger("hyadex-server")
 
 # --- Extracted modules ---
+from hyadex.api import search as search_routes
+from hyadex.api.search import (
+    search_all_session_timelines,
+    search_session_timeline,
+)
 from hyadex.api import sessions as sessions_routes
 from hyadex.api.sessions import (
     create_session,
@@ -2292,32 +2297,6 @@ router.include_router(create_group_router(
 ))
 
 
-@router.get("/api/search")
-async def search_all_session_timelines(
-    q: str = Query(min_length=2, max_length=500),
-    limit: int = Query(default=40, ge=1, le=100),
-) -> dict[str, Any]:
-    eligible_session_ids = active_history_search_session_ids()
-    return await asyncio.to_thread(
-        search_all_timelines,
-        q,
-        limit,
-        eligible_session_ids,
-    )
-
-
-@router.get("/api/sessions/{session_id}/search")
-async def search_session_timeline(
-    session_id: str,
-    q: str = Query(min_length=2, max_length=500),
-    limit: int = Query(default=40, ge=1, le=100),
-) -> dict[str, Any]:
-    if session_id not in STORE.sessions:
-        raise HTTPException(status_code=404, detail="session not found")
-    ensure_session_not_initializing(session_id)
-    return await asyncio.to_thread(search_timeline_index, session_id, q, limit)
-
-
 @router.get("/api/sessions/{session_id}/codex/runtime")
 async def get_codex_runtime(session_id: str) -> dict[str, Any]:
     return await codex_runtime_snapshot(session_id)
@@ -3281,6 +3260,7 @@ def main() -> int:
 
 
 # --- Route modules ---
+mount_routes(router, search_routes.router)
 mount_routes(router, sessions_routes.router)
 mount_routes(router, terminal_routes.router)
 mount_routes(router, admin_routes.router)
@@ -3299,7 +3279,7 @@ app = create_app(ApplicationBindings(
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], sys.modules['hyadex.api.terminal'], sys.modules['hyadex.api.sessions'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], sys.modules['hyadex.api.terminal'], sys.modules['hyadex.api.sessions'], sys.modules['hyadex.api.search'], )
 
 
 # Module globals that core code reaches through WIRING.
