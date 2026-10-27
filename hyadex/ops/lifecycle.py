@@ -22,7 +22,7 @@ import uuid
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from hyadex.features import autopilot
+from hyadex.core.abandoned import recover_abandoned_turns_after_start
 from hyadex.core.config import (
     AGENT_TOKEN,
     CONFIG_ENV_APPLIED,
@@ -47,6 +47,7 @@ from hyadex.core.http import (
     unsafe_http_mutation_count_locked,
     validate_listener_auth,
 )
+from hyadex.core.lifecycle_admission import execution_maintenance_blocks_work
 from hyadex.core.paths import now_iso
 from hyadex.core.processes import (
     bounded_restart_tmux_cgroup_state,
@@ -55,12 +56,6 @@ from hyadex.core.processes import (
     top_process_rows,
 )
 from hyadex.core.queue_recovery import queue_checkpoint_loop
-from hyadex.core.runs import RUNS
-from hyadex.core.server import SERVER
-from hyadex.core.server_logging import concise_error_message
-from hyadex.core.sessions import PROVIDER_AUTHORITIES, PROVIDER_AUTHORITY_LOCK, STORE
-from hyadex.core.session_titles import close_generated_session_titles
-from hyadex.core.lifecycle_admission import execution_maintenance_blocks_work
 from hyadex.core.restart_status import (
     managed_server_restart_blocks_work,
     read_server_restart_status,
@@ -71,7 +66,12 @@ from hyadex.core.restart_status import (
     server_restart_status_age_seconds,
     write_server_restart_status,
 )
+from hyadex.core.runs import RUNS
+from hyadex.core.server import SERVER
+from hyadex.core.server_logging import concise_error_message
 from hyadex.core.session_codex import ABANDONED_FORK_PROVIDER_THREADS
+from hyadex.core.session_titles import close_generated_session_titles
+from hyadex.core.sessions import PROVIDER_AUTHORITIES, PROVIDER_AUTHORITY_LOCK, STORE
 from hyadex.core.state import (
     DELETING_SESSIONS,
     HEALTH_QUEUE_RECONCILE_STATE,
@@ -79,7 +79,6 @@ from hyadex.core.state import (
     UNSAFE_HTTP_MUTATION_ADMISSION_LOCK,
 )
 from hyadex.core.stop import join_cancelled_tasks
-from hyadex.core.abandoned import recover_abandoned_turns_after_start
 from hyadex.core.turns import (
     active_run_summaries,
     explicit_stop_session_ids,
@@ -88,20 +87,22 @@ from hyadex.core.turns import (
 )
 from hyadex.core.util import bounded_lock, ensure_dirs, server_identity, utc_timestamp
 from hyadex.features.forks import cleanup_abandoned_fork_provider_threads
-from hyadex.features.group_runtime import GROUPS
+from hyadex.features.group_runtime import AUTOPILOT, GROUPS
 from hyadex.features.history import clear_imported_active_runs, HISTORY_MAINTENANCE_TASKS
 from hyadex.features.jobs import JOBS
 from hyadex.features.search import history_search_index_loop
 from hyadex.features.side_questions import CODEX_GOALS_RECONFIGURING
 from hyadex.features.terminal import scrub_tmux_global_secret_environment, TERMINAL_ATTACHMENTS
-from hyadex.providers.claude.runtime import CLAUDE_STOP_FENCE_RETRY_TASKS, close_claude_sdk_manager
+from hyadex.ops import instances as server_instances
 from hyadex.providers.claude.background_state import PROVIDER_WORK_LABEL_LIMIT
+from hyadex.providers.claude.runtime import CLAUDE_STOP_FENCE_RETRY_TASKS, close_claude_sdk_manager
+from hyadex.providers.claude.subagents import CLAUDE_STOP_FENCE_ATTEMPT_TASKS
+from hyadex.providers.codex.commands import SIDE_QUESTIONS
+from hyadex.providers.codex.interactions import close_codex_app_server_manager
 from hyadex.providers.codex.runtime import (
     active_provider_background_work_labels,
     provider_background_work_labels_from_snapshot,
 )
-from hyadex.providers.codex.commands import SIDE_QUESTIONS
-from hyadex.providers.codex.interactions import close_codex_app_server_manager
 from hyadex.providers.codex.threads import recover_abandoned_codex_compactions_after_start
 from hyadex.providers.registry import (
     kill_registered_provider_children,
@@ -109,8 +110,6 @@ from hyadex.providers.registry import (
     refresh_runtime_diagnostics,
     sweep_orphaned_provider_children,
 )
-from hyadex.providers.claude.subagents import CLAUDE_STOP_FENCE_ATTEMPT_TASKS
-from hyadex.ops import instances as server_instances
 
 logger = logging.getLogger("hyadex-server")
 
@@ -1363,7 +1362,6 @@ async def lifespan(app: FastAPI):
         )
 
 
-AUTOPILOT = autopilot.AutopilotEngine(STATE_DIR / "autopilot", GROUPS)
 
 
 def require_server_restart_control(request: Request) -> None:

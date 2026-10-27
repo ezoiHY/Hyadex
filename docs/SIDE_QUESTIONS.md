@@ -105,7 +105,7 @@ Temporary directories are removed after the exact owned process group is reaped.
 Failures expose concise provider errors rather than raw stderr or credentials.
 An explicit temporary name avoids a separate model request to generate a title.
 
-Codex is handled by the separate `codex_side_question.py` adapter. Its isolated
+Codex is handled by the separate `hyadex/providers/codex/side_question.py` adapter. Its isolated
 ephemeral app-server thread receives the same bounded text snapshot and no parent
 session identity. See that adapter's explicit tool/environment configuration;
 unsupported isolation must fail before submitting a normal agent turn.

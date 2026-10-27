@@ -19,7 +19,7 @@ It needs no user prompt or model generation. No client API shape changes.
   effective settings and run a second, disposable initialization with extra
   `modelPicker.options`. Its candidates come from the account's Models API
   when an API key is configured, otherwise from the documented supported-model
-  seed in `claude_model_catalog.py`. This seed includes current and older IDs,
+  seed in `hyadex/providers/claude/model_catalog.py`. This seed includes current and older IDs,
   but **is never appended directly to the returned catalog**.
 - Only candidates returned by that native picker are included. Claude retains
   enforcement of managed settings, `availableModels`, account restrictions and

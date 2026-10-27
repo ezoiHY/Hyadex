@@ -4,9 +4,9 @@ A group discussion puts the user, Claude Code and Codex in one shared timeline
 on the same server. It is built to spend as few provider tokens as possible
 while every agent stays fully native.
 
-Implementation: [`hyadex/groups.py`](../hyadex/groups.py) (engine and models),
-[`hyadex/routes/groups.py`](../hyadex/routes/groups.py) (HTTP/WebSocket routes) and
-`HyadexGroupRuntime` in [`agent_server.py`](../agent_server.py) (the adapter that
+Implementation: [`hyadex/features/group_engine.py`](../hyadex/features/group_engine.py) (engine and models),
+[`hyadex/api/groups.py`](../hyadex/api/groups.py) (HTTP/WebSocket routes) and
+`HyadexGroupRuntime` in [`hyadex/features/group_runtime.py`](../hyadex/features/group_runtime.py) (the adapter that
 connects groups to ordinary chats). Tests: `tests/test_group_chat.py` and
 `tests/test_hyadex_server.py`.
 

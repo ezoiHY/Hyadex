@@ -32,10 +32,9 @@ their identity; they cannot silently run with a different provider or login
 paused. Jobs with saved `@Chat` targets pause for repair, and queued cross-chat
 deliveries are discarded with a durable `turn_unqueued`.
 
-The application factory, group/Autopilot engines and routes, transcript
-primitives, job calendar/context policy and native provider clients live in
-`hyadex/`. `agent_server.py` still owns substantial runtime state and route
-logic. This checkpoint does not claim that P2 decomposition is complete.
+The server lives in the `hyadex` package, split by domain into `core`,
+`providers`, `features`, `api`, `ops` and `cli` (see `ARCHITECTURE.md`).
+`agent_server.py` is only the entry point installed services run.
 
 ## Verified use
 

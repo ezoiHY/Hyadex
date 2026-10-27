@@ -148,5 +148,39 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertFalse(parses("GET", "/api/health"))
 
 
+    def test_module_imports_have_no_cycles(self):
+        # Lower modules never import higher ones; a cycle means a dependency
+        # should go through WIRING or the code sits in the wrong module.
+        modules = {}
+        for path in (ROOT / "hyadex").rglob("*.py"):
+            name = ".".join(path.relative_to(ROOT).with_suffix("").parts)
+            modules[name.removesuffix(".__init__")] = path
+        graph = {}
+        for name, path in modules.items():
+            deps = set()
+            for node in ast.parse(path.read_text()).body:
+                if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                    deps |= {node.module} & modules.keys()
+                    deps |= {f"{node.module}.{a.name}" for a in node.names} & modules.keys()
+                elif isinstance(node, ast.Import):
+                    deps |= {a.name for a in node.names} & modules.keys()
+            graph[name] = deps - {name}
+        state, cycles = {}, []
+
+        def visit(name, stack):
+            state[name] = "open"
+            for dep in sorted(graph[name]):
+                if state.get(dep) == "open":
+                    cycles.append(stack[stack.index(dep):] + [dep])
+                elif dep not in state:
+                    visit(dep, stack + [dep])
+            state[name] = "done"
+
+        for name in sorted(graph):
+            if name not in state:
+                visit(name, [name])
+        self.assertEqual(cycles, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-"""Run package contracts in a temporary home without importing agent_server.
+"""Run package contracts in a temporary home without loading the server.
 
 This small suite covers extracted domain/app/storage modules. The complete
 integration, provider and installer suite remains scripts/run_test_shard.py.
@@ -56,7 +56,7 @@ import unittest
 
 class NoServerImport(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'agent_server':
+        if fullname in ('agent_server', 'hyadex.main', 'tests.hyadex_server'):
             raise ImportError('The fast suite must not import the server runtime')
 
 sys.meta_path.insert(0, NoServerImport())

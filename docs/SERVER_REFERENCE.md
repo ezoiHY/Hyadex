@@ -687,7 +687,7 @@ state, schedule, IANA timezone, and next-run time; job prompts are omitted.
 The helper's `list` command returns the complete current set. Agents are
 instructed to change jobs only after an explicit scheduling request.
 
-The installed `hyadex_jobs.py` helper is the authoritative interface from
+The installed `hyadex/cli/jobs.py` helper is the authoritative interface from
 an agent turn. Every live turn receives a private, run-scoped authority file
 and exact helper command in its provider-authority block. The helper accepts
 that file and the bound chat ID explicitly, then uses server-enforced
@@ -1029,7 +1029,7 @@ FIFO order.
 Before publishing:
 
 ```bash
-python3 -m py_compile agent_server.py hyadex_jobs.py hyadex_emergency.py hyadex_notify.py hyadex_publish.py provider_commands.py hyadex/providers/claude/sdk.py hyadex/providers/codex/app_server.py hyadex/providers/runtime.py
+python3 -m compileall -q agent_server.py execution_service.py execution_uninstall.py server_instances.py hyadex
 rg -n 'private-host|/home/<name>|/Users/<name>|token-value' .
 ```
 

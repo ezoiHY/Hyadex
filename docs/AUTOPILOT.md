@@ -6,9 +6,10 @@ is the automated version of a [group discussion](GROUP_DISCUSSIONS.md): the
 server decides who acts next, so agents spend tokens only on planning,
 implementing and reviewing.
 
-Implementation: [`hyadex/autopilot.py`](../hyadex/autopilot.py) and
-[`hyadex/routes/autopilot.py`](../hyadex/routes/autopilot.py), wired in `agent_server.py`
-(`AUTOPILOT`). Tests: `tests/test_autopilot.py`.
+Implementation: [`hyadex/features/autopilot.py`](../hyadex/features/autopilot.py) and
+[`hyadex/api/autopilot.py`](../hyadex/api/autopilot.py); the engine instance
+(`AUTOPILOT`) is created beside `GROUPS` in `hyadex/features/group_runtime.py`
+and its routes are mounted in `hyadex/main.py`. Tests: `tests/test_autopilot.py`.
 
 ## Flow
 

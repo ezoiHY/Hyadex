@@ -27,6 +27,7 @@ from hyadex.core import config
 from hyadex.api.groups import create_group_router
 from hyadex.api.autopilot import create_autopilot_router
 assert 'agent_server' not in sys.modules
+assert 'hyadex.main' not in sys.modules
 assert list(Path.home().iterdir()) == []
 assert not hasattr(groups, 'create_group_router')
 assert not hasattr(autopilot, 'create_autopilot_router')

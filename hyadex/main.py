@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 from contextlib import suppress
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -28,8 +28,10 @@ from hyadex.api import (
     terminal as terminal_routes,
     turns as turns_routes,
 )
-from hyadex.api.common import require_native_admin_control
 from hyadex.api.app import ApplicationBindings, create_app
+from hyadex.api.autopilot import create_autopilot_router
+from hyadex.api.common import require_native_admin_control
+from hyadex.api.groups import create_group_router
 from hyadex.core.config import (
     AGENT_TOKEN,
     EVENTS_WEBSOCKET_PROTOCOL,
@@ -71,25 +73,20 @@ from hyadex.core.state import (
     UNSAFE_HTTP_MUTATION_TASKS,
     USER_ROUTE,
 )
-from hyadex.features.group_runtime import GROUPS
+from hyadex.features import side_question_service as side_questions
+from hyadex.features.group_runtime import AUTOPILOT, GROUPS
 from hyadex.features.usage import HUB, join_task_despite_caller_cancellation
-from hyadex.ops.lifecycle import AUTOPILOT, lifespan, uvicorn_graceful_shutdown_seconds
+from hyadex.ops import instances as server_instances
+from hyadex.ops.lifecycle import lifespan, uvicorn_graceful_shutdown_seconds
 from hyadex.providers.authority import request_exact_registered_provider_capability
+import hyadex.providers.claude.turns
 from hyadex.providers.codex.commands import SIDE_QUESTIONS
 from hyadex.providers.codex.tools import (
     request_client_is_codex_provider_mcp_local,
     request_exact_codex_provider_mcp_secret,
 )
+import hyadex.providers.codex.turns
 from hyadex.providers.registry import request_client_is_provider_helper_local
-from hyadex.api.autopilot import create_autopilot_router
-from hyadex.api.groups import create_group_router
-from hyadex.ops import instances as server_instances
-from hyadex.features import side_question_service as side_questions
-
-
-# Provider runners register themselves with the turn engine on import.
-import hyadex.providers.claude.turns  # noqa: E402,F401
-import hyadex.providers.codex.turns  # noqa: E402,F401
 
 logger = logging.getLogger("hyadex-server")
 

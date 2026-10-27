@@ -3,6 +3,22 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-27 — Server split into packages
+
+- Internal restructuring with no change to the API, stored data or chat
+  behaviour. The server now lives in the `hyadex` package, split by domain
+  (`core`, `providers/claude`, `providers/codex`, `features`, `api`, `ops`,
+  `cli`; see [ARCHITECTURE](ARCHITECTURE.md)). Installed services start the
+  same way: `agent_server.py`, `execution_service.py`, `execution_uninstall.py`
+  and `server_instances.py` remain as entry points, and `install.sh`,
+  `uninstall.sh` and `instances.sh` are used as before.
+- The helper commands agents run inside a turn moved from `hyadex_*.py` to
+  `hyadex/cli/` (`jobs.py`, `publish.py`, `emergency.py`, `notify.py`). Agents
+  receive the new paths automatically from the next turn.
+- Fixed: requests that change a group discussion took their admission lease
+  before their body had arrived, so a slow upload could hold up a server
+  restart. They now wait for the body like every other change.
+
 ## 2026-10-27 — Server internals separated
 
 - Internal restructuring with no change to the API, stored data or chat

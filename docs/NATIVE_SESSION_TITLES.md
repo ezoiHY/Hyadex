@@ -61,7 +61,7 @@ backported alongside naming rather than inferred from the release version:
   imports; unreadable/unsafe ownership indexes fail closed with a retryable error.
   Fresh chats without an existing provider ID do not need that scan or lock.
 
-`local_session_ownership.py` contains the compatible registry/index reader and
+`hyadex/ops/session_ownership.py` contains the compatible registry/index reader and
 import lock extracted from main's `server_instances.py`, without backporting
 service-install/remove commands. It is included in all runtime packaging lists.
 No service, registry or other instance's history is modified during discovery.

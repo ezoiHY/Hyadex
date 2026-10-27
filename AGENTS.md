@@ -7,9 +7,10 @@
 - Verify provider parity separately against the corresponding native runtime
   and client. Do not infer Claude parity from Codex tests, treat headings as
   proof of complete content, or claim parity from visibility changes alone.
-- Keep new subsystems in their own modules (as `hyadex/groups.py` does) and wire
-  them into `agent_server.py` through a small adapter. Do not grow the
-  monolith when a module can own the logic.
+- Keep new subsystems in their own modules (as `hyadex/features/group_engine.py`
+  does) and wire them into the server through a small adapter (as
+  `hyadex/features/group_runtime.py` does). Keep files focused; see
+  `docs/ARCHITECTURE.md` for where code belongs and how modules depend.
 - Run tests with a temporary `HOME` and state. Exercise changes against a real
   server through `scripts/dev_server.py` (an isolated named instance). Never
   restart, reconfigure or reuse the state of an installed server, including

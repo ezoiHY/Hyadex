@@ -26,7 +26,8 @@ For a quick check of the extracted packages, run:
 .venv/bin/python scripts/run_fast_tests.py
 ```
 
-This runner creates a temporary home and rejects imports of `agent_server`.
+This runner creates a temporary home and rejects imports of the server
+(`agent_server`, `hyadex.main` and the test namespace `tests.hyadex_server`).
 It covers calendar and job policy, native provider-client contracts, runtime
 input validation, group/Autopilot engines and routes, the app factory, transcript
 parsing and runtime inventories. It does not replace the
@@ -36,7 +37,7 @@ full integration/provider/installer suite above; `--list` shows its exact scope.
 in-chat helpers and planned client features call. Removing or renaming one of
 those routes must update its caller and that list together.
 
-Several modules read the home directory when `agent_server` is imported, so
+Several modules read the home directory when the server is imported, so
 always use a temporary `HOME`; never point tests at installed services or real
 chat history. On macOS a few inherited suites (installer and memory-admission checks) depend on Linux or on free memory and may fail
 locally; CI runs on Linux.

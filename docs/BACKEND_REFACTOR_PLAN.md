@@ -9,8 +9,12 @@
 | 0 安全网 | 部分完成：6 个已知失败测试中 3 个修好，另外 3 个随被删的功能一起删除；新增 `tests/test_route_inventory.py`，锁定客户端在用的路由；用隔离实例录了一份 GET 接口的响应形状快照用于比对。契约测试和磁盘兼容夹具仍待补 | 随阶段 1、2 提交 |
 | 1 删除死代码 | 完成。`uninstall.sh` 的旧单体分支暂留：命名实例管理仍走这条路径 | `513c31f` |
 | 2 删除无人使用的功能 | 完成，按 §4 的决定：终端保留（Mac 端已接入终端面板），工作区浏览、自定义端点、Codex 登录管理、跨聊天全部删除。Codex 的自动登录切换（用户在终端里 `codex login` 后新 turn 自动用新登录）保留，它属于原生登录的一部分，不是管理界面 | `8be5cfe` `3a24cb8` `3fc39b8` `4880c0d` |
-| 3 在原文件内理清边界 | 完成：事件改走事件总线（`hyadex/events.py`）；会话存储的锁只能经 `STORE.transaction()`；20 个运行态全局收拢进 `RunState`（`hyadex/core/runs.py`）；鉴权声明在路由上（`route_auth`），中间件不再保存路径。另修复 Claude 上下文显示问题 | `c701f2b` `8301652` `04ab2b0` `b565f8d` |
-| 4–6 | 未开始 | |
+| 3 在原文件内理清边界 | 完成：事件改走事件总线（现为 `hyadex/core/event_bus.py`）；会话存储的锁只能经 `STORE.transaction()`；20 个运行态全局收拢进 `RunState`（`hyadex/core/runs.py`）；鉴权声明在路由上（`route_auth`），中间件不再保存路径。另修复 Claude 上下文显示问题 | `c701f2b` `8301652` `04ab2b0` `b565f8d` |
+| 4 拆成包 | 完成：代码按领域拆进 `hyadex/` 的 `core`、`providers/{claude,codex}`、`features`、`api`、`ops`、`cli`，共 154 个模块，导入图无环（由架构测试守住）。运行中会变的状态收进 `SERVER`、`RUNS`、`PROVIDERS` 三个对象；下层调上层只经 `WIRING`（轮次引擎启动各家 runner、查定时任务）。兼容门面已删除：测试改用 `tests/hyadex_server.py`（打一次补丁替换所有持有该对象的模块）。根目录只留安装好的服务和脚本按路径启动的入口：`agent_server.py`、`execution_service.py`、`execution_uninstall.py`、`server_instances.py`。与原计划的差异：启动目标仍是 `agent_server:app`，因为已安装的 launchd/systemd 服务按这个路径启动，改它要连带迁移已安装的服务 | 见 `refactor/backend-phase4` 分支 |
+| 5 拆巨型函数 | 未开始。仍超过 2,000 行的 6 个文件都由单个大函数或大类撑着：`run_codex_app_server`（2,857 行）、`run_claude_sdk`（1,729 行）、`ClaudeSDKSupervisor`、`CodexAppServerClient`、`SessionStore`、`JobStore` | |
+| 6 | 未开始 | |
+
+阶段 4 结束时：`agent_server.py` 只剩 15 行的入口，测试 2,952 个全部通过。
 
 阶段 2 结束时：`agent_server.py` 从 79,132 行降到约 55,500 行；路由从 198 个降到 109 个（不计 HEAD）；测试 2,934 个全部通过（删除的是被删功能的测试）。
 

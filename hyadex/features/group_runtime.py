@@ -9,7 +9,6 @@ import uuid
 
 from fastapi import HTTPException
 
-from hyadex.features import group_engine as group_chat
 from hyadex.core.config import (
     BACKEND_CLAUDE,
     BACKEND_CODEX,
@@ -22,18 +21,19 @@ from hyadex.core.event_log import read_events
 from hyadex.core.paths import existing_cwd, now_iso
 from hyadex.core.queue import unqueue_turn
 from hyadex.core.runs import RUNS
-from hyadex.core.sessions import ensure_session_not_deleting, session_lifecycle_lock, STORE
 from hyadex.core.session_settings import CreateSessionRequest, UpdateSessionRequest
+from hyadex.core.sessions import ensure_session_not_deleting, session_lifecycle_lock, STORE
 from hyadex.core.state import EVENTS
 from hyadex.core.stop import request_explicit_stop
 from hyadex.core.turns import interactive_client_capabilities, set_claude_goal, start_turn_durably
-from hyadex.providers.codex.controls import _put_codex_goal_locked
 from hyadex.core.util import clean_assistant_text
 from hyadex.core.wiring import WIRING
+from hyadex.features import autopilot, group_engine as group_chat
 from hyadex.features.terminal import _update_session
 from hyadex.features.usage import HUB
-from hyadex.providers.claude.runtime import TurnRequest
 from hyadex.providers.claude.goals import ClaudeGoalRequest
+from hyadex.providers.claude.runtime import TurnRequest
+from hyadex.providers.codex.controls import _put_codex_goal_locked
 from hyadex.providers.codex.goals import CodexGoalRequest
 
 
@@ -191,6 +191,7 @@ class HyadexGroupRuntime:
 
 
 GROUPS = group_chat.GroupEngine(STATE_DIR / "groups", HyadexGroupRuntime())
+AUTOPILOT = autopilot.AutopilotEngine(STATE_DIR / "autopilot", GROUPS)
 
 # Group discussions follow their member chats' turns; observing only schedules
 # the engine's own work and never delays the chat's event path.
