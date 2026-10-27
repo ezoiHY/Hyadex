@@ -31,6 +31,7 @@ public struct RootView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                TerminalButton(model: model)
                 DetailsButton(model: model)
                 ChangesButton(model: model)
             }
@@ -76,6 +77,24 @@ private struct ChangesButton: View {
         .disabled(count == 0 && !model.showChanges)
         .help(count == 0 ? "还没有改动" : "查看 \(count) 个文件的改动（⌥⌘I）")
         .accessibilityLabel(count == 0 ? "没有改动" : "改动，\(count) 个文件")
+    }
+}
+
+/// Shows or hides the selected chat's terminal (⌃`).
+private struct TerminalButton: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        let chatID: String? = if case .chat(let id) = model.selection { id } else { nil }
+        let open = chatID.map { model.terminalOpen.contains($0) } ?? false
+        Button {
+            if let chatID { model.toggleTerminal(chatID) }
+        } label: {
+            Label("终端", systemImage: open ? "terminal.fill" : "terminal")
+        }
+        .keyboardShortcut("`", modifiers: .control)
+        .disabled(chatID == nil)
+        .help(open ? "隐藏终端（⌃`）" : "打开终端（⌃`）")
     }
 }
 

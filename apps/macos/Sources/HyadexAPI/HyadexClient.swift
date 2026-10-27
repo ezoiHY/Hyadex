@@ -93,6 +93,21 @@ public struct HyadexClient: Sendable {
         return json
     }
 
+    /// An authenticated WebSocket request; the token stays in a header.
+    public func webSocketRequest(_ path: String, query: [String: String] = [:], protocols: [String]) -> URLRequest {
+        var components = URLComponents(url: endpoint.baseURL.appending(path: path), resolvingAgainstBaseURL: false)!
+        components.scheme = components.scheme == "https" ? "wss" : "ws"
+        if !query.isEmpty {
+            components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+        }
+        var request = URLRequest(url: components.url!)
+        if let token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.setValue(protocols.joined(separator: ", "), forHTTPHeaderField: "Sec-WebSocket-Protocol")
+        return request
+    }
+
     func get(_ path: String, query: [String: String] = [:]) async throws -> JSON {
         try await request("GET", path, query: query)
     }
@@ -204,6 +219,28 @@ public struct HyadexClient: Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
+    // MARK: Terminal (one persistent tmux session per chat)
+
+    public func terminalSocketRequest(_ id: String, columns: Int, rows: Int) -> URLRequest {
+        webSocketRequest("api/sessions/\(id)/terminal/ws",
+                         query: ["columns": String(columns), "rows": String(rows)],
+                         protocols: ["hyadex-terminal-v1"])
+    }
+
+    public func terminalWindows(_ id: String) async throws -> JSON {
+        try await get("api/sessions/\(id)/terminal/windows")
+    }
+
+    public func terminalAction(_ id: String, action: String, target: String? = nil) async throws -> JSON {
+        var body: [String: JSON] = ["action": .string(action)]
+        if let target { body["target"] = .string(target) }
+        return try await post("api/sessions/\(id)/terminal/action", .object(body))
+    }
+
+    public func killTerminal(_ id: String) async throws {
+        _ = try await request("DELETE", "api/sessions/\(id)/terminal")
+    }
+
     // MARK: Groups
 
     public func groups() async throws -> [JSON] {
@@ -225,6 +262,15 @@ public struct HyadexClient: Sendable {
     public func postGroupMessage(_ id: String, text: String, mode: String, analysisOnly: Bool) async throws -> JSON {
         try await post("api/groups/\(id)/messages",
                        ["text": .string(text), "mode": .string(mode), "analysis_only": .bool(analysisOnly)])
+    }
+
+    /// Adds a member; returns the updated group.
+    public func addParticipant(_ id: String, _ spec: JSON) async throws -> JSON {
+        try await post("api/groups/\(id)/participants", spec)["group"]
+    }
+
+    public func removeParticipant(_ id: String, handle: String) async throws {
+        _ = try await request("DELETE", "api/groups/\(id)/participants/\(handle)")
     }
 
     public func stopGroup(_ id: String) async throws {

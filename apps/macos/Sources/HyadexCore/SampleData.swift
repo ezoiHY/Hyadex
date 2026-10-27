@@ -208,6 +208,9 @@ public enum SampleData {
                 .message(id: "g1-1", author: .user,
                          text: "@claude @codex 评审一下成员游标的推进时机：现在是派发前就推进，崩溃时会不会漏消息？",
                          time: ago(12, from: now), mentions: ["claude", "codex"]),
+                .thinking(id: "g1-2a", seconds: 6, text: "先看 `_admit` 和游标保存的顺序，再确认恢复时从哪里重放。"),
+                .tool(id: "g1-2b", kind: .read, title: "hyadex/groups.py", output: "", status: .succeeded, seconds: 0.2),
+                .tool(id: "g1-2c", kind: .search, title: "cursor", output: "", status: .succeeded, seconds: 0.4),
                 .message(id: "g1-2", author: claude, text: """
                 会漏。`member.cursor` 在 `_admit` 之前就推进了，如果进程在两者之间崩溃，恢复后这个成员会跳过这批消息。
 
@@ -217,6 +220,10 @@ public enum SampleData {
 
                 @codex 你来改一下？顺便补一个“崩溃发生在两者之间”的测试。
                 """, time: ago(10, from: now), mentions: ["codex"]),
+                .tool(id: "g1-3a", kind: .edit, title: "hyadex/groups.py", output: "", status: .succeeded, seconds: 0.3),
+                .tool(id: "g1-3b", kind: .edit, title: "tests/test_group_chat.py", output: "", status: .succeeded, seconds: 0.4),
+                .tool(id: "g1-3c", kind: .command, title: "python3 -m unittest tests.test_group_chat -q",
+                      output: "Ran 48 tests in 3.1s\n\nOK", status: .succeeded, seconds: 3.4),
                 .message(id: "g1-3", author: codex, text: "同意。已按这个顺序改好，并在测试里用故障注入模拟了在 `_admit` 之后、保存之前崩溃。",
                          time: ago(6, from: now), receipt: FileChangeSet(files: [
                             FileChange(path: "hyadex/groups.py", added: 6, removed: 1, diff: cursorDiff),
@@ -226,8 +233,6 @@ public enum SampleData {
                 .divider(id: "g1-4", text: "第 1 轮结束 · 3 次派发 · 2,140 字符"),
                 .message(id: "g1-5", author: .user, text: "@codex 再把并行模式下的同样情况也覆盖一下。",
                          time: ago(1, from: now), mentions: ["codex"]),
-                .tool(id: "g1-6", kind: .command, title: "@codex · python3 -m unittest tests.test_group_chat -q",
-                      output: "", status: .running, seconds: 12),
             ],
             "g2": [
                 .message(id: "g2-1", author: .user, text: "@claude 根据本周的 git log 整理一份周报。", time: ago(60 * 20 + 5, from: now), mentions: ["claude"]),
@@ -339,5 +344,16 @@ public enum SampleData {
                                             percent: Double(chat.tokensUsed) * 100 / Double(window))
         }
         return (usage, context)
+    }
+
+    /// The demo group's member still answering, and its finished turns' durations.
+    static func groupLive(now: Date) -> ([String: [MemberTurn]], [String: [String: Int]]) {
+        let live = MemberTurn(id: "g1-d3", author: .agent("codex", .codex), steps: [
+            .tool(id: "g1-6a", kind: .edit, title: "tests/test_group_chat.py", output: "", status: .succeeded, seconds: 0.3),
+            .tool(id: "g1-6b", kind: .command, title: "python3 -m unittest tests.test_group_chat -q",
+                  output: "", status: .running, seconds: 12),
+        ], activity: LiveActivity(kind: .tool, label: ToolKind.command.activeVerb,
+                                  detail: "python3 -m unittest tests.test_group_chat -q", since: now.addingTimeInterval(-40)))
+        return (["g1": [live]], ["g1": ["g1-2a": 18, "g1-3a": 74]])
     }
 }

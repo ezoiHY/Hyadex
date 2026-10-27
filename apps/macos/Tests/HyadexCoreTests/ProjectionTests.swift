@@ -293,3 +293,42 @@ struct UsageAndPermissionTests {
         #expect(media[1].1.last?.isImage == false)
     }
 }
+
+struct GroupMemberWorkTests {
+    @Test func memberTurnIsFoundByDispatchID() throws {
+        var member = SessionProjection(backend: .codex, cwd: "/tmp")
+        member.apply([
+            ["seq": 1, "type": "turn_started", "id": "t1", "prompt": "group context", "client_request_id": "gd_1",
+             "ts": "2030-01-01T00:00:00Z"],
+            ["seq": 2, "type": "tool_started", "tool": ["id": "x1", "name": "exec_command", "input": ["cmd": "ls"]],
+             "ts": "2030-01-01T00:00:01Z"],
+            ["seq": 3, "type": "tool_finished", "tool": ["id": "x1", "name": "exec_command", "output": "a"],
+             "ts": "2030-01-01T00:00:02Z"],
+            ["seq": 4, "type": "assistant_text", "text": "done", "ts": "2030-01-01T00:00:03Z"],
+            ["seq": 5, "type": "turn_finished", "ts": "2030-01-01T00:00:09Z"],
+            ["seq": 6, "type": "turn_started", "id": "t2", "prompt": "next", "client_request_id": "gd_2",
+             "ts": "2030-01-01T00:01:00Z"],
+        ])
+        let first = try #require(member.turn(forRequest: "gd_1"))
+        #expect(first.steps.count == 1)
+        #expect(first.seconds == 9)
+        #expect(!first.running)
+        let second = try #require(member.turn(forRequest: "gd_2"))
+        #expect(second.steps.isEmpty)
+        #expect(second.running)
+        #expect(member.turn(forRequest: "gd_9") == nil)
+    }
+
+    @Test func activeDispatchesFollowTheRound() {
+        var group = GroupProjection(backends: ["codex": .codex])
+        group.apply([
+            ["seq": 1, "type": "dispatch", "dispatch_id": "gd_1", "handle": "codex", "state": "running", "session_id": "s1"],
+            ["seq": 2, "type": "member_status", "handle": "codex", "state": "running", "dispatch_id": "gd_1"],
+        ])
+        #expect(group.activeDispatches.map(\.id) == ["gd_1"])
+        #expect(group.activeDispatches.first?.sessionID == "s1")
+        group.apply(["seq": 3, "type": "message", "author": "codex", "author_kind": "agent", "text": "ok", "dispatch_id": "gd_1"])
+        #expect(group.activeDispatches.isEmpty)
+        #expect(group.dispatchOfMessage["g3"] == "gd_1")
+    }
+}

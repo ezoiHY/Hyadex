@@ -1,4 +1,5 @@
 import Foundation
+import HyadexAPI
 
 public enum AgentBackend: String, CaseIterable, Codable, Hashable, Sendable {
     case claude, codex
@@ -432,6 +433,25 @@ public struct GroupApproval: Identifiable, Hashable, Sendable {
     }
 }
 
+/// A group member's answer in progress: the work it has done so far in its
+/// own chat, what it is doing now, and approvals it is waiting for.
+public struct MemberTurn: Identifiable, Hashable, Sendable {
+    public let id: String  // the dispatch id
+    public let author: Author
+    public var steps: [TimelineItem]
+    public var approvals: [GroupApproval]
+    public var activity: LiveActivity?
+
+    public init(id: String, author: Author, steps: [TimelineItem] = [], approvals: [GroupApproval] = [],
+                activity: LiveActivity? = nil) {
+        self.id = id
+        self.author = author
+        self.steps = steps
+        self.approvals = approvals
+        self.activity = activity
+    }
+}
+
 /// A message the user sent that the server has not acknowledged yet.
 public struct PendingSend: Identifiable, Hashable, Sendable {
     public let id: String  // the turn's client_request_id
@@ -460,5 +480,32 @@ public struct LiveActivity: Hashable, Sendable {
         self.label = label
         self.detail = detail
         self.since = since
+    }
+}
+
+
+/// One tmux window of a chat's terminal.
+public struct TerminalWindow: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let index: Int
+    public let name: String
+    public let active: Bool
+    public let panes: Int
+
+    public init(id: String, index: Int, name: String, active: Bool, panes: Int) {
+        self.id = id
+        self.index = index
+        self.name = name
+        self.active = active
+        self.panes = panes
+    }
+
+    static func parse(_ json: JSON) -> [TerminalWindow] {
+        json["windows"].array.compactMap { item in
+            guard let index = item["index"].int else { return nil }
+            return TerminalWindow(id: item["id"].string ?? "@\(index)", index: index,
+                                  name: item["name"].string ?? "", active: item["active"].bool ?? false,
+                                  panes: item["panes"].int ?? 1)
+        }.sorted { $0.index < $1.index }
     }
 }

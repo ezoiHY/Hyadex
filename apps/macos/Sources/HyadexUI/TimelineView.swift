@@ -19,6 +19,11 @@ struct TimelineView: View {
     var onDecide: (String, ApprovalDecision) -> Void = { _, _ in }
     /// Bytes of an attached or published file.
     var loadMedia: @Sendable (MediaFile) async -> Data? = { _ in nil }
+    /// Group members' answers in progress.
+    var liveTurns: [MemberTurn] = []
+    /// Durations of finished member turns, keyed by their first step id.
+    var processSeconds: [String: Int] = [:]
+    var onDecideMember: (GroupApproval, ApprovalDecision) -> Void = { _, _ in }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -31,6 +36,11 @@ struct TimelineView: View {
                                         onOpenFile: onOpenFile, onDecide: onDecide, loadMedia: loadMedia)
                         case .process(_, let steps, let seconds, let live, let inProgress):
                             ProcessRow(steps: steps, seconds: seconds, live: live ? activity : nil, inProgress: inProgress)
+                        case .answer(let steps, let seconds, let message):
+                            AnswerRow(steps: steps, seconds: seconds, message: message, mentionHandles: mentionHandles,
+                                      onOpenFile: onOpenFile)
+                        case .liveTurn(let turn):
+                            LiveTurnRow(turn: turn, onDecide: onDecideMember)
                         case .activity:
                             if let activity { ActivityLine(activity: activity) }
                         }
@@ -50,6 +60,8 @@ struct TimelineView: View {
             .onChange(of: items.last) { scrollToBottom(proxy) }
             .onChange(of: pending) { scrollToBottom(proxy) }
             .onChange(of: activity?.kind) { scrollToBottom(proxy) }
+            // Follow a member's progress, and bring a new approval into view.
+            .onChange(of: liveTurns.map { "\($0.id)|\($0.steps.count)|\($0.approvals.count)" }) { scrollToBottom(proxy) }
         }
     }
 
@@ -63,12 +75,18 @@ struct TimelineView: View {
         case item(TimelineItem)
         /// A turn's work; `live` while the turn is still running.
         case process(String, [TimelineItem], seconds: Int?, live: Bool, inProgress: Bool = false)
+        /// A named agent's answer with the work behind it (group discussions).
+        case answer([TimelineItem], seconds: Int?, message: TimelineItem)
+        /// A group member's answer in progress.
+        case liveTurn(MemberTurn)
         case activity
 
         var id: String {
             switch self {
             case .item(let item): item.id
             case .process(let id, _, _, _, _): id
+            case .answer(_, _, let message): message.id
+            case .liveTurn(let turn): "live-" + turn.id
             case .activity: "live-activity"
             }
         }
@@ -91,7 +109,8 @@ struct TimelineView: View {
         func flush() {
             guard let first = steps.first else { return }
             let current = activity != nil && (lastUser.map { index > $0 } ?? true)
-            result.append(.process("process-" + first.id, steps, seconds: turn.flatMap { turnSeconds[$0] }, live: false,
+            result.append(.process("process-" + first.id, steps,
+                                   seconds: processSeconds[first.id] ?? turn.flatMap { turnSeconds[$0] }, live: false,
                                    inProgress: current))
             steps = []
         }
@@ -113,9 +132,23 @@ struct TimelineView: View {
         } else {
             flush()
         }
+        // In groups, a reply shows its author first, then the work, then the text.
+        if showsAuthors {
+            var merged: [Row] = []
+            for row in result {
+                if case .item(let message) = row, case .message(_, let author, _, _, _, _, _) = message, author.kind == .agent,
+                   case .process(_, let steps, let seconds, false, false)? = merged.last {
+                    merged[merged.count - 1] = .answer(steps, seconds: seconds, message: message)
+                } else {
+                    merged.append(row)
+                }
+            }
+            result = merged
+        }
         for send in pending {
             result.append(.item(.message(id: send.id, author: .user, text: send.text, time: send.time)))
         }
+        result += liveTurns.map(Row.liveTurn)
         let streaming: Bool = {
             if case .message(_, _, _, _, _, _, true)? = items.last { return true }
             return false
@@ -387,18 +420,7 @@ private struct AgentMessage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             if showsAuthor {
-                HStack(spacing: 6) {
-                    AgentAvatar(backend: author.backend, size: 16)
-                    Text("@" + author.name)
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(Theme.color(for: author.backend))
-                    Text(time.formatted(date: .omitted, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                    if streaming {
-                        ProgressView().controlSize(.mini)
-                    }
-                }
+                AuthorHeader(author: author, time: time)
             }
             if text.isEmpty && streaming {
                 Text("正在回复…").foregroundStyle(.secondary)
@@ -830,5 +852,80 @@ struct MessageText: View {
 
     var body: some View {
         RichMarkdown(text, mentionHandles: mentionHandles, loadImage: actions.loadImage, onOpenLink: actions.openLink)
+    }
+}
+
+/// A group member's reply: who answered, the work behind it (folded), then
+/// the answer and what it changed.
+private struct AnswerRow: View {
+    let steps: [TimelineItem]
+    let seconds: Int?
+    let message: TimelineItem
+    let mentionHandles: Set<String>
+    let onOpenFile: (String) -> Void
+
+    var body: some View {
+        if case .message(_, let author, let text, let time, _, let receipt, let streaming) = message {
+            VStack(alignment: .leading, spacing: 7) {
+                AuthorHeader(author: author, time: time)
+                ProcessRow(steps: steps, seconds: seconds, live: nil)
+                if text.isEmpty && streaming {
+                    Text("正在回复…").foregroundStyle(.secondary)
+                } else {
+                    MessageText(text: text, mentionHandles: mentionHandles)
+                }
+                if let receipt, !receipt.files.isEmpty {
+                    ReceiptChip(set: receipt, onOpenFile: onOpenFile)
+                }
+            }
+            .accessibilityElement(children: .contain)
+        }
+    }
+}
+
+/// A group member still answering: its live status, the work so far, and
+/// any approval it is waiting for, where it happens.
+private struct LiveTurnRow: View {
+    let turn: MemberTurn
+    let onDecide: (GroupApproval, ApprovalDecision) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            AuthorHeader(author: turn.author, time: nil)
+            if let activity = turn.activity {
+                if turn.steps.isEmpty {
+                    ActivityLine(activity: activity)
+                } else {
+                    ProcessRow(steps: turn.steps, seconds: nil, live: activity)
+                }
+            } else if !turn.steps.isEmpty {
+                ProcessRow(steps: turn.steps, seconds: nil, live: nil, inProgress: true)
+            }
+            ForEach(turn.approvals) { approval in
+                ApprovalCard(author: turn.author, title: approval.title, command: approval.detail,
+                             reason: approval.reason, decision: .pending, allowsSession: approval.allowsSession,
+                             showsAuthor: false) { onDecide(approval, $0) }
+            }
+        }
+    }
+}
+
+/// "✳ @claude 19:24" above a group member's message.
+struct AuthorHeader: View {
+    let author: Author
+    let time: Date?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            AgentAvatar(backend: author.backend, size: 16)
+            Text("@" + author.name)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(Theme.color(for: author.backend))
+            if let time {
+                Text(time.formatted(date: .omitted, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import HyadexAPI
+import HyadexTerminal
 import Observation
 
 public enum ConnectionState: Hashable, Sendable {
@@ -51,6 +52,10 @@ public final class AppModel {
     public var catalogs: [AgentBackend: RuntimeCatalog] = [:]
     /// Approvals group members are waiting for, by group id.
     public var groupApprovals: [String: [GroupApproval]] = [:]
+    /// Group members' answers in progress, by group id.
+    public var groupLive: [String: [MemberTurn]] = [:]
+    /// How long each finished member turn took, keyed by its first step id, by group id.
+    public var processSeconds: [String: [String: Int]] = [:]
     /// Plan usage of each provider account, as the native CLI reports it.
     public var usage: [AgentBackend: ProviderUsage] = [:]
     /// How full each chat's context window is, by chat id.
@@ -66,6 +71,14 @@ public final class AppModel {
     /// a receipt, "查看 diff", or the toolbar). It is not a permanent column.
     public var showChanges = false
     public var selectedFilePath: String?
+    /// Chats whose terminal panel is open, and the panel height they share.
+    public var terminalOpen: Set<String> = []
+    public var terminalHeight: Double = UserDefaults.standard.object(forKey: "terminalHeight") as? Double ?? 260 {
+        didSet { UserDefaults.standard.set(terminalHeight, forKey: "terminalHeight") }
+    }
+    /// tmux windows of each chat's terminal, refreshed while its panel is open.
+    public var terminalWindows: [String: [TerminalWindow]] = [:]
+    @ObservationIgnored private var terminalSessions: [String: TerminalSession] = [:]
     public var sheet: SheetKind?
     public var searchText = ""
 
@@ -91,6 +104,7 @@ public final class AppModel {
         timelines = SampleData.chatTimelines(now: now).merging(SampleData.groupTimelines(now: now)) { $1 }
         queues["c3"] = [QueuedMessage(text: "测试跑完后把 CHANGELOG 也检查一下。")]
         (usage, contextUsage) = SampleData.usage(chats: chats, now: now)
+        (groupLive, processSeconds) = SampleData.groupLive(now: now)
         select(firstItem(in: sidebarMode))
     }
 
@@ -225,6 +239,65 @@ public final class AppModel {
         showChanges = true
     }
 
+    // MARK: Terminal
+
+    /// The chat's terminal attachment; nil in demo mode.
+    public func terminalSession(for chatID: String) -> TerminalSession? {
+        guard let live else { return nil }
+        if let session = terminalSessions[chatID] { return session }
+        let client = live.client
+        let session = TerminalSession { columns, rows in
+            client.terminalSocketRequest(chatID, columns: columns, rows: rows)
+        }
+        terminalSessions[chatID] = session
+        return session
+    }
+
+    public func toggleTerminal(_ chatID: String) {
+        if terminalOpen.contains(chatID) {
+            terminalOpen.remove(chatID)
+        } else {
+            terminalOpen.insert(chatID)
+        }
+    }
+
+    public func refreshTerminalWindows(_ chatID: String) async {
+        guard let live, let json = try? await live.client.terminalWindows(chatID) else { return }
+        terminalWindows[chatID] = TerminalWindow.parse(json)
+    }
+
+    /// tmux window and pane actions: new-window, split-right, split-down,
+    /// select-window, kill-window, kill-pane.
+    public func terminalAction(_ chatID: String, _ action: String, target: String? = nil) {
+        guard let live else { return }
+        Task {
+            do {
+                let json = try await live.client.terminalAction(chatID, action: action, target: target)
+                terminalWindows[chatID] = TerminalWindow.parse(json)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// Ends the tmux session and everything running in it.
+    public func killTerminal(_ chatID: String) {
+        guard let live else { return }
+        terminalSessions[chatID]?.disconnect()
+        terminalSessions[chatID] = nil
+        terminalWindows[chatID] = nil
+        terminalOpen.remove(chatID)
+        Task {
+            do { try await live.client.killTerminal(chatID) } catch { errorMessage = error.localizedDescription }
+        }
+    }
+
+    private func dropTerminalSessions() {
+        terminalSessions.values.forEach { $0.disconnect() }
+        terminalSessions = [:]
+        terminalWindows = [:]
+    }
+
     // MARK: Chats
 
     public func send(_ rawText: String, toChat id: String) {
@@ -351,6 +424,23 @@ public final class AppModel {
         guard let live, let data = try? await live.client.fileData(id, fileID: fileID, target: target) else { return nil }
         mediaCache[key] = data
         return data
+    }
+
+    /// The status line for a group whose message is on its way to the members.
+    public func activity(forGroup id: String) -> LiveActivity? {
+        guard let pending = pendingSends[id]?.first, (groupLive[id] ?? []).isEmpty else { return nil }
+        return LiveActivity(kind: .starting, label: "正在派发", since: pending.time)
+    }
+
+    /// Adds a member to a group; the server picks a free handle.
+    public func addMember(_ backend: AgentBackend, toGroup id: String) {
+        if let live { Task { await live.addMember(backend, toGroup: id) } }
+    }
+
+    public func removeMember(_ handle: String, fromGroup id: String) {
+        guard let index = groups.firstIndex(where: { $0.id == id }) else { return }
+        groups[index].participants.removeAll { $0.handle == handle }
+        if let live { Task { await live.removeMember(handle, fromGroup: id) } }
     }
 
     // MARK: Models and reasoning effort
@@ -634,15 +724,17 @@ public final class AppModel {
     public func connect(to server: ServerEndpoint, token: String?, remember: Bool = true) async {
         live?.stop()
         live = nil
+        dropTerminalSessions()
         connection = .connecting
         let controller = LiveController(model: self, client: HyadexClient(endpoint: server, token: token))
         let previousSelection = selection
         do {
             if !isLive {
                 chats = []; groups = []; runs = []; jobs = []; timelines = [:]; queues = [:]; drafts = [:]
-                usage = [:]; contextUsage = [:]
+                usage = [:]; contextUsage = [:]; groupLive = [:]; processSeconds = [:]
             }
             mediaCache = [:]
+            dropTerminalSessions()
             live = controller
             isLive = true
             try await controller.start()
@@ -670,6 +762,7 @@ public final class AppModel {
     public func disconnect() {
         live?.stop()
         live = nil
+        dropTerminalSessions()
         connection = .demo
         loadDemo()
     }
@@ -684,6 +777,7 @@ public final class AppModel {
         timelines = SampleData.chatTimelines(now: now).merging(SampleData.groupTimelines(now: now)) { $1 }
         queues = ["c3": [QueuedMessage(text: "测试跑完后把 CHANGELOG 也检查一下。")]]
         (usage, contextUsage) = SampleData.usage(chats: chats, now: now)
+        (groupLive, processSeconds) = SampleData.groupLive(now: now)
         select(firstItem(in: sidebarMode))
     }
 

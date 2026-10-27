@@ -27,6 +27,8 @@ public struct SessionProjection: Sendable {
     /// `client_request_id`s the server has accepted (turn started or queued).
     public private(set) var acceptedRequests: Set<String> = []
     private var turnUserItem: String?
+    /// Turns started for a `client_request_id`: request → (user item id, start time).
+    private var requestTurns: [String: (item: String, started: Date)] = [:]
 
     private var index: [String: Int] = [:]
     private var toolStarts: [String: Date] = [:]
@@ -59,10 +61,15 @@ public struct SessionProjection: Sendable {
             lastActivity = time
             turnStartedAt = time
             turnUserItem = id
-            if let request = event["client_request_id"].string { acceptedRequests.insert(request) }
+            if let request = event["client_request_id"].string {
+                acceptedRequests.insert(request)
+                requestTurns[request] = (id, time)
+            }
             if let queuedID = event["queued_id"].string { queued.removeAll { $0.id == queuedID } }
             let prompt = event["display_prompt"].text ?? event["prompt"].text ?? ""
-            if !prompt.isEmpty { append(.message(id: id, author: .user, text: prompt, time: time)) }
+            if !prompt.isEmpty || event["client_request_id"].string != nil {
+                append(.message(id: id, author: .user, text: prompt, time: time))
+            }
             let attached = (event["display_file_ids"].array.isEmpty ? event["file_ids"] : event["display_file_ids"])
                 .array.compactMap(\.string)
             if !attached.isEmpty {
@@ -161,6 +168,43 @@ public struct SessionProjection: Sendable {
         default:
             break
         }
+    }
+
+    /// One turn's work, for the turn started with `request` (a group dispatch id).
+    public struct TurnSlice: Hashable, Sendable {
+        /// Thinking, tool calls and answered approvals, in order.
+        public var steps: [TimelineItem] = []
+        /// Approvals still waiting for a decision.
+        public var pendingApprovals: [TimelineItem] = []
+        public var changes: FileChangeSet?
+        public var seconds: Int?
+        public var running = false
+        public var startedAt: Date?
+    }
+
+    public func turn(forRequest request: String) -> TurnSlice? {
+        guard let (userItem, started) = requestTurns[request], let start = index[userItem] else { return nil }
+        var slice = TurnSlice(seconds: turnSeconds[userItem], startedAt: started)
+        var position = start + 1
+        var files: [FileChange] = []
+        while position < items.count {
+            let item = items[position]
+            if case .message(_, let author, _, _, _, _, _) = item, author.kind == .user { break }
+            switch item {
+            case .thinking, .tool:
+                slice.steps.append(item)
+            case .approval(let id, _, _, _, _, let decision, _):
+                if decision == .pending && pending[id] != nil { slice.pendingApprovals.append(item) } else { slice.steps.append(item) }
+            case .changes(_, let set):
+                files += set.files
+            default:
+                break
+            }
+            position += 1
+        }
+        slice.changes = files.isEmpty ? nil : FileChangeSet(files: files)
+        slice.running = running && turnUserItem == userItem
+        return slice
     }
 
     static func mediaFile(_ record: JSON) -> MediaFile? {
@@ -354,6 +398,10 @@ public struct GroupProjection: Sendable {
     public private(set) var memberStates: [String: ActivityState] = [:]
     /// Orchestrator progress notes (Autopilot runs show these as their activity log).
     public private(set) var notes: [TimelineItem] = []
+    /// Agent message item id → the dispatch that produced it.
+    public private(set) var dispatchOfMessage: [String: String] = [:]
+    /// Dispatches whose member has not answered yet, in dispatch order.
+    public private(set) var activeDispatches: [GroupDispatch] = []
     private var backends: [String: AgentBackend]
 
     public init(backends: [String: AgentBackend]) {
@@ -383,6 +431,10 @@ public struct GroupProjection: Sendable {
             case "user":
                 items.append(.message(id: id, author: .user, text: text, time: time, mentions: mentions))
             case "agent":
+                if let dispatch = event["dispatch_id"].string {
+                    dispatchOfMessage[id] = dispatch
+                    activeDispatches.removeAll { $0.id == dispatch }
+                }
                 let backend = backends[name] ?? (name.hasPrefix("codex") ? .codex : .claude)
                 items.append(.message(id: id, author: .agent(name, backend), text: text, time: time,
                                       mentions: mentions, receipt: changes))
@@ -394,10 +446,22 @@ public struct GroupProjection: Sendable {
                 let audience = event["audience"].array.compactMap(\.string)
                 if audience.isEmpty || audience.contains("user") { notes.append(note) }
             }
+        case "dispatch":
+            guard let dispatch = event["dispatch_id"].string, let handle = event["handle"].string,
+                  !activeDispatches.contains(where: { $0.id == dispatch }) else { return }
+            let state = event["state"].string ?? "running"
+            if ["running", "queued", "dispatched"].contains(state) {
+                activeDispatches.append(GroupDispatch(id: dispatch, handle: handle, sessionID: event["session_id"].string, time: time))
+            }
         case "member_status":
             guard let handle = event["handle"].string else { return }
-            memberStates[handle] = Self.state(event["status"].string ?? event["state"].string)
+            let state = Self.state(event["status"].string ?? event["state"].string)
+            memberStates[handle] = state
+            if let dispatch = event["dispatch_id"].string, state == .idle || state == .failed {
+                activeDispatches.removeAll { $0.id == dispatch }
+            }
         case "round_finished":
+            activeDispatches.removeAll()
             let reason = event["reason"].string ?? event["status"].string
             items.append(.divider(id: id, text: reason == "stopped" ? "本轮已停止" : "本轮结束"))
         case "participant_added":
@@ -425,4 +489,12 @@ public struct GroupProjection: Sendable {
         default: .idle
         }
     }
+}
+
+/// A member asked to answer in a group round.
+public struct GroupDispatch: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let handle: String
+    public let sessionID: String?
+    public let time: Date
 }

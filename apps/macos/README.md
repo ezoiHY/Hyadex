@@ -65,11 +65,25 @@ the app shows built-in demo data.
   third-party packages.
 - **Media.** Images and files attached to a turn or published by an agent show
   in the conversation; click to open them.
-- **Groups.** Member status, `@` completion, sequential or parallel answers,
-  analysis-only rounds, file receipts and Stop.
+- **Groups.** Laid out like a chat. A sent message shows at once; each member
+  answering gets its own live status line (thinking, the running command…).
+  Each reply shows who answered, its work folded into one row ("已处理 9 秒 ·
+  运行 1 条命令"), the answer, and the files it changed with their diffs. A
+  member's approval appears inside its turn. The composer holds the members
+  (model, effort, permission mode and context per member; add or remove
+  members), the answer mode (sequential or parallel) and analysis-only. The
+  work comes from each member's own chat, matched to the group by dispatch.
 - **Autopilot.** Create a run with its approval, isolation and reviewer options;
   follow the phase, the plan and each task's verification; approve, give
   feedback, pause, resume or abort.
+- **Terminal.** ⌃` or the toolbar's terminal button opens the chat's persistent
+  terminal under the conversation: one tmux session per chat on the server, in
+  the chat's working directory, which the agent can also inspect. It is a real
+  terminal (colours, full-screen programs such as vim or htop, input methods,
+  copy and paste, scrolling back through tmux history), with tabs for its tmux
+  windows, new windows, splits, and closing a pane or the whole session. Hiding
+  the panel only detaches; commands keep running, and reopening it repaints the
+  current screen. Drag its top edge to change the height.
 - **Changes and details.** There is no permanent side column. A change card, a
   group receipt or a task's "查看 diff" slides a changes panel over the
   conversation (Esc closes it); the toolbar button shows the file count and is
@@ -85,6 +99,10 @@ the app shows built-in demo data.
   native approvals appear inline and are answered through
   `/api/sessions/{id}/{claude|codex}/interactions/{id}/resolve`.
 - An open Autopilot run is polled; its progress notes come from its group timeline.
+- The terminal attaches over `/api/sessions/{id}/terminal/ws` (`hyadex-terminal-v1`):
+  raw PTY output in binary frames, keystrokes back as binary frames, and JSON
+  frames for resize and tmux history scrolling. tmux windows come from
+  `/terminal/windows` and change through `/terminal/action`.
 
 ## Code layout
 
@@ -93,6 +111,7 @@ the app shows built-in demo data.
 | `HyadexAPI` | REST client, WebSocket event stream, keychain token store, JSON values. |
 | `HyadexCore` | `AppModel` (@Observable), live controller, event projections, models, demo data. |
 | `HyadexRichText` | Message rendering: Markdown and TeX parsers, math layout, syntax highlighting. |
+| `HyadexTerminal` | Terminal emulator (xterm subset for tmux), its CoreText view and the PTY socket. |
 | `HyadexUI` | SwiftUI views and design tokens. |
 | `HyadexApp` | Entry point: window, settings, menu bar extra, commands, development checks. |
 
@@ -113,7 +132,9 @@ directly from a shell may not receive windows.
   development server, `HYADEX_E2E_DIR=/tmp/e2e` drives a Claude turn and a Codex
   turn with an approval each and an `@codex` group message;
   `HYADEX_E2E_AUTOPILOT=1` adds a job toggle and a one-task Autopilot run (`=only`
-  skips the chats). It expects chats titled "mac e2e …", a group titled
+  skips the chats). `HYADEX_E2E_TERMINAL=1` (or `=only`) types commands into the
+  Codex test chat's terminal and checks output, colours, CJK text, resizing, tmux
+  windows and reattaching. It expects chats titled "mac e2e …", a group titled
   "mac e2e group" and a job titled "mac e2e …". Agents run for real and use tokens.
 
 ## Verified
@@ -127,7 +148,7 @@ logs recorded from that server.
 ## Known gaps
 
 - Opening a chat loads its latest 400 events; older history is not paged yet.
-- Autopilot and group receipts list changed files without diffs in the inspector.
+- Autopilot receipts list changed files without diffs in the inspector.
 - Assistant text arrives as whole messages (the server does not stream tokens).
 - Math covers the LaTeX agents usually write (fractions, roots, scripts, big
   operators, delimiters, accents, matrices, cases, aligned); an unsupported
