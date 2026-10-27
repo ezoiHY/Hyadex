@@ -178,6 +178,18 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
 logger = logging.getLogger("hyadex-server")
 
 # --- Extracted modules ---
+from hyadex.api import health as health_routes
+from hyadex.api.health import (
+    complete_working_directory,
+    connection_addresses,
+    health,
+    HYADEX_SERVER_DISPLAY_NAME,
+    runtime_catalog,
+    runtime_provider_usage,
+)
+from hyadex.api.common import (
+    require_native_admin_control,
+)
 from hyadex.api import provider_mcp as provider_mcp_routes
 from hyadex.api.provider_mcp import (
     codex_provider_mcp,
@@ -1936,11 +1948,6 @@ def file_response_media_type(meta: dict[str, Any]) -> str:
     return effective_content_type(filename, str(meta.get("content_type") or ""))
 
 
-HYADEX_SERVER_DISPLAY_NAME = canonical_server_display_name(
-    os.environ.get("HYADEX_SERVER_NAME")
-)
-
-
 def route_auth_for_scope(app: Any, method: str, path: str, *, any_method: bool = False) -> RouteAuth:
     """The declaration of the route a request would reach (default ``user``).
 
@@ -2199,252 +2206,6 @@ async def require_agent_token(request: Request, call_next):
             )
 
 
-@router.get("/api/connection-addresses")
-async def connection_addresses(request: Request) -> dict[str, Any]:
-    require_native_admin_control(request)
-    # Discover only on explicit QR sharing, never on the frequently polled health path.
-    from server_instances import candidate_addresses, connection_choices, tailscale_status
-
-    def discover() -> list[str]:
-        choices = connection_choices(
-            SERVER.bind_address, SERVER.port,
-            candidate_addresses(SERVER.bind_address, SERVER.port), tailscale_status(),
-        )
-        return list(dict.fromkeys(filter(None, [choices["tailscale"], *choices["lan"]])))[:6]
-
-    return {"version": 1, "server_identity": server_identity(), "urls": await asyncio.to_thread(discover)}
-
-
-@router.get("/api/health")
-async def health() -> dict[str, Any]:
-    await reconcile_idle_queued_turns_from_health_poll()
-    # Health must answer even when an admission lock is wedged; the reads
-    # below are consistent without the lock on a single-threaded loop.
-    async with bounded_lock(RUNS.active_lock, SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS):
-        active = sorted(RUNS.busy)
-    async with bounded_lock(RUNS.queue_lock, SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS):
-        queued = {sid: len(queue) for sid, queue in RUNS.queued.items() if queue}
-    restart_blocker_snapshot = await current_server_restart_blocker_snapshot()
-    pressure = host_pressure_snapshot()
-    tmux = tmux_capability(use_cache=True)
-    return {
-        "ok": True,
-        "chat_readiness": queue_recovery_readiness(),
-        "server_version": SERVER_VERSION,
-        "api_contract_version": API_CONTRACT_VERSION,
-        "server_identity": server_identity(),
-        "server_instance_id": SERVER_INSTANCE_ID,
-        "server_name": HYADEX_SERVER_DISPLAY_NAME,
-        "state_dir": str(STATE_DIR),
-        "default_backend": DEFAULT_BACKEND,
-        "default_cwd": existing_cwd(DEFAULT_CWD),
-        "auth_required": bool(AGENT_TOKEN),
-        "capabilities": {
-            "group_discussions_v1": {"version": 1, "modes": ["sequential", "parallel"], "jobs": True,
-                                     "goals": True, "enabled_backends": sorted(enabled_backends())},
-            "autopilot_v1": {"version": 1, "approval": ["plan", "step", "none"],
-                             "isolation": ["worktree", "in_place"], "reviewer": ["planner", "fresh", "none"]},
-            "subagent_limit_v1": {"version": 1, "backends": ["codex", "claude"]},
-            "provider_usage": {"available": bool(AGENT_TOKEN), "version": 1, "backends": ["codex", "claude"]},
-            "side_questions": side_questions.capability(),
-            "websocket_auth_v1": {
-                "available": True,
-                "required": False,
-                "version": 1,
-                "message": (
-                    "Event and terminal sockets support URL-free token "
-                    "authentication."
-                ),
-                "action": None,
-                "event_protocol": EVENTS_WEBSOCKET_PROTOCOL,
-                "terminal_protocol": TERMINAL_WEBSOCKET_PROTOCOL,
-            },
-            "event_stream_liveness_v1": {"available": True, "version": 1},
-            "session_fork_completed_prefix_v1": {
-                "available": True,
-                "version": 1,
-                "supported_backends": [BACKEND_CLAUDE, BACKEND_CODEX],
-            },
-            "local_provider_commands_v1": {
-                "available": True,
-                "required": False,
-                "version": 1,
-                "endpoint": "/api/sessions/{session_id}/provider-commands",
-                "supported_backends": [BACKEND_CODEX, BACKEND_CLAUDE],
-                "client_capability_by_backend": {
-                    BACKEND_CODEX: CODEX_INTERACTIVE_CLIENT_CAPABILITY,
-                    BACKEND_CLAUDE: CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY,
-                },
-                "supported_kinds_by_backend": {
-                    BACKEND_CODEX: ["skill"],
-                    BACKEND_CLAUDE: ["command"],
-                },
-                "max_items": MAX_PROVIDER_COMMANDS,
-                "message": (
-                    "Session-scoped Claude commands and Codex skills are available."
-                ),
-                "action": None,
-            },
-            "server_restart": server_restart_capability(
-                restart_blocker_snapshot
-            ),
-            "tmux": tmux,
-            "working_directory_completion": {
-                "available": True,
-                "required": False,
-                "message": "Working-directory suggestions are available from this server.",
-                "action": None,
-                "version": 1,
-                "max_results": MAX_WORKING_DIRECTORY_COMPLETIONS,
-            },
-            "scheduled_jobs": {
-                "available": True,
-                "required": False,
-                "message": (
-                    "Scheduled jobs support parent-chat and standalone "
-                    "provider contexts."
-                ),
-                "action": None,
-                "version": 6,
-                "context_modes": ["chat", "standalone"],
-                "default_context_mode": "chat",
-                "features": {
-                    "next_run_reset": True,
-                    "interval_next_run_reanchors": True,
-                },
-            },
-            "provider_jobs_access_control_v1": {
-                "available": bool(AGENT_TOKEN),
-                "required": False,
-                "message": (
-                    "Per-chat provider scheduled-jobs access control is available."
-                    if AGENT_TOKEN
-                    else "Provider scheduled-jobs access control requires an authenticated HyadexServer configuration."
-                ),
-                "action": None if AGENT_TOKEN else "Configure an HyadexServer client token.",
-                "version": 1,
-                "modes": list(PROVIDER_JOBS_ACCESS_MODES),
-                "default": PROVIDER_JOBS_ACCESS_DEFAULT,
-            },
-            "agent_emergency_alerts_v1": {
-                "available": True,
-                "required": False,
-                "message": "Agents can raise explicit, durable emergency alerts for immediate user attention.",
-                "action": None,
-                "version": 1,
-                "max_message_chars": EMERGENCY_MESSAGE_MAX_CHARS,
-                "max_requests_per_run": EMERGENCY_REQUESTS_PER_RUN,
-                "max_active_alerts": EMERGENCY_ACTIVE_ALERT_LIMIT,
-                "stream_path": "/api/emergency-alerts/events",
-                "stream_protocol": EMERGENCY_WEBSOCKET_PROTOCOL,
-                "acknowledge_through_alert_id": True,
-            },
-            "agent_notification_levels_v1": {
-                "available": bool(AGENT_TOKEN),
-                "required": False,
-                "message": "Agents can choose durable normal, important, or emergency notification levels.",
-                "action": None if AGENT_TOKEN else "Configure an HyadexServer client token.",
-                "version": 1,
-                "levels": ["normal", "important", "emergency"],
-                "max_message_chars": EMERGENCY_MESSAGE_MAX_CHARS,
-                "max_requests_per_run": NOTIFICATION_REQUESTS_PER_RUN,
-            },
-            "codex_controls": {
-                "available": CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC,
-                "required": False,
-                "message": (
-                    "Interactive Codex app-server controls are available to opted-in clients."
-                    if CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC
-                    else "Codex controls require the app-server transport."
-                ),
-                "action": (
-                    None
-                    if CODEX_TRANSPORT != CODEX_TRANSPORT_EXEC
-                    else "Set HYADEX_CODEX_TRANSPORT=app-server or auto."
-                ),
-                "version": 2,
-                "interactive_client_capability": CODEX_INTERACTIVE_CLIENT_CAPABILITY,
-                "features": {
-                    "approvals": True,
-                    "questions": True,
-                    "goals": CODEX_GOALS_ENABLED,
-                    "compaction": True,
-                    "thread_status": True,
-                },
-            },
-            "claude_controls": {
-                "available": (
-                    CLAUDE_TRANSPORT != CLAUDE_TRANSPORT_PRINT
-                    and claude_sdk_dependency_available()
-                ),
-                "required": False,
-                "message": (
-                    "Per-chat Claude Agent SDK controls are available to opted-in clients."
-                    if (
-                        CLAUDE_TRANSPORT != CLAUDE_TRANSPORT_PRINT
-                        and claude_sdk_dependency_available()
-                    )
-                    else "Claude uses the compatible print transport."
-                ),
-                "action": (
-                    None
-                    if claude_sdk_dependency_available()
-                    else "Install the server release with Claude Agent SDK support."
-                ),
-                "version": 3,
-                "interactive_client_capability": (
-                    CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY
-                ),
-                "permission_modes": list(CLAUDE_PERMISSION_MODE_OPTIONS),
-                "features": {
-                    # Every real turn now carries run-scoped out-of-band
-                    # authority. In-place provider steering cannot prove that
-                    # a delayed pre-steer tool call belongs to the successor
-                    # run, so Force Send deliberately uses Stop -> fresh turn.
-                    "native_steer": False,
-                    "force_send": True,
-                    "interrupt": True,
-                    "approvals": True,
-                    "questions": True,
-                    "permission_mode_control": True,
-                    "permission_modes": True,
-                    "context_usage_refresh": True,
-                    "resume": True,
-                    "fork": True,
-                },
-                "fallback_transport": CLAUDE_TRANSPORT_PRINT,
-            },
-        },
-        "websocket_runtime": True,
-        "websocket_runtime_version": websockets.__version__,
-        "active": active,
-        "active_count": len(active),
-        "claude_stop_fence_count": len(CLAUDE_STOP_FENCE_SESSIONS),
-        "queued": queued,
-        "jobs": len(JOBS.jobs),
-        "job_guard": {**pressure, **scheduled_job_resource_diagnostics(pressure, len(active))},
-        "host_health_log": str(HOST_HEALTH_FILE),
-        "runtimes": runtime_diagnostics_snapshot(),
-    }
-
-
-def require_native_admin_control(request: Request) -> None:
-    """Repeat privileged native auth at the endpoint invocation boundary."""
-
-    if privileged_native_browser_request_forbidden(request):
-        raise HTTPException(status_code=403, detail="forbidden")
-    if not AGENT_TOKEN:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "This administrative control requires authenticated "
-                "HyadexServer mode"
-            ),
-        )
-    if not request_exact_native_token_header_authorized(request):
-        raise HTTPException(status_code=401, detail="unauthorized")
-
-
 router.include_router(side_questions.create_side_question_router(
     authorize=require_native_admin_control,
     session_exists=native_session_available,
@@ -2561,47 +2322,6 @@ async def restart_server_endpoint(
         raise
 
 
-@router.get("/api/runtime/catalog")
-async def runtime_catalog(refresh: bool = False) -> dict[str, Any]:
-    if refresh:
-        await refresh_codex_app_server_binary(force=True)
-        await refresh_codex_app_server_login(source="catalog_refresh")
-    return await asyncio.to_thread(discover_runtime_catalog, force_runtime_probe=refresh)
-
-
-@router.get("/api/runtime/usage")
-async def runtime_provider_usage(
-    request: Request, backend: str, session_id: str | None = None,
-    refresh: bool = False,
-) -> JSONResponse:
-    require_native_admin_control(request)
-    session = STORE.sessions.get(session_id) if session_id else None
-    if session_id and session is None:
-        raise HTTPException(404, "session not found")
-    if backend not in {BACKEND_CODEX, BACKEND_CLAUDE}:
-        result = provider_usage.unavailable(backend, "unsupported_provider")
-    elif session is not None and str(session.get("backend") or DEFAULT_BACKEND).lower() != backend:
-        result = provider_usage.unavailable(backend, "selection_changed")
-    elif backend == BACKEND_CODEX:
-        if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC:
-            result = provider_usage.unavailable(backend, "unsupported_transport")
-        else:
-            try:
-                manager = await codex_app_server_manager(session, allow_retired_login=True)
-                result = await PROVIDER_USAGE.read_codex(manager, refresh=refresh)
-            except Exception:
-                result = provider_usage.unavailable(backend, "temporarily_unavailable")
-    else:
-        result = await read_claude_account_usage(refresh=refresh)
-        if result.get("status") != "available":
-            generation = (PROVIDERS.claude_sdk_manager.usage_generation(session_id)
-                          if session_id and PROVIDERS.claude_sdk_manager is not None else None)
-            observed = PROVIDER_USAGE.read_claude(session_id or "", generation)
-            if observed.get("status") == "available":
-                result = observed
-    return JSONResponse(result, headers={"Cache-Control": "no-store"})
-
-
 @router.get("/api/sessions/{session_id}/terminal")
 async def get_session_terminal(session_id: str, lines: int = 240) -> dict[str, Any]:
     return await asyncio.to_thread(terminal_snapshot, session_id, lines=lines)
@@ -2672,14 +2392,6 @@ async def search_all_session_timelines(
         limit,
         eligible_session_ids,
     )
-
-
-@router.get("/api/working-directories/complete")
-async def complete_working_directory(
-    path: str = Query(default="", max_length=MAX_WORKSPACE_PATH_CHARS),
-    limit: int = Query(default=24, ge=1, le=MAX_WORKING_DIRECTORY_COMPLETIONS),
-) -> dict[str, Any]:
-    return await asyncio.to_thread(complete_working_directory_sync, path, limit)
 
 
 @router.post("/api/sessions")
@@ -4570,6 +4282,7 @@ def main() -> int:
 
 
 # --- Route modules ---
+mount_routes(router, health_routes.router)
 mount_routes(router, provider_mcp_routes.router)
 
 app = create_app(ApplicationBindings(
@@ -4584,7 +4297,7 @@ app = create_app(ApplicationBindings(
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], )
 
 
 # Module globals that core code reaches through WIRING.
