@@ -178,6 +178,16 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
 logger = logging.getLogger("hyadex-server")
 
 # --- Extracted modules ---
+from hyadex.api import turns as turns_routes
+from hyadex.api.turns import (
+    deferred_force_send_response_for_client,
+    delete_queued_turn,
+    patch_queued_turn,
+    post_move_queued_turn,
+    post_run_queued_turn_now,
+    post_turn,
+    stop_turn_endpoint,
+)
 from hyadex.api import providers as providers_routes
 from hyadex.api.providers import (
     delete_claude_goal,
@@ -1965,29 +1975,6 @@ if len(PROVIDER_THREAD_INSTRUCTION_ADDENDUM) > MAX_PROVIDER_STATIC_INSTRUCTIONS_
 WIRING.jobs = JOBS
 
 
-def deferred_force_send_response_for_client(
-    result: dict[str, Any],
-    request: RunQueuedTurnNowRequest | None,
-) -> dict[str, Any]:
-    """Expose the additive deferred contract only to clients that opt in."""
-    if request is not None and request.accept_deferred_queue_response:
-        return result
-    raise HTTPException(
-        status_code=409,
-        detail={
-            "code": "force_send_deferred",
-            "message": str(
-                result.get("message")
-                or "Force Send was deferred and the message remains queued."
-            ),
-            "action": "Refresh the queue before trying Force Send again.",
-            "retryable": True,
-            "delivery_uncertain": False,
-            "queued_id": result.get("queued_id"),
-        },
-    )
-
-
 def file_response_media_type(meta: dict[str, Any]) -> str:
     filename = str(meta.get("filename") or Path(str(meta.get("path") or "")).name)
     return effective_content_type(filename, str(meta.get("content_type") or ""))
@@ -2372,77 +2359,6 @@ async def acknowledge_session_emergency(
         )
         sess = await project_committed_emergency_event(session_id, event)
         return {"session": public_session(sess), "acknowledged": True}
-
-
-@router.post("/api/sessions/{session_id}/turns")
-async def post_turn(session_id: str, req: TurnRequest) -> Any:
-    if req.shared_chat_id is not None or req.shared_chat_request_id is not None:
-        raise HTTPException(status_code=422, detail="Browser sharing attribution is no longer accepted")
-    if req.client_request_id is not None:
-        return await post_turn_with_receipt(session_id, req)
-    return await post_turn_without_receipt(session_id, req)
-
-
-@router.delete("/api/sessions/{session_id}/queue/{queued_id}")
-async def delete_queued_turn(session_id: str, queued_id: str) -> dict[str, Any]:
-    return await unqueue_turn(session_id, queued_id)
-
-
-@router.patch("/api/sessions/{session_id}/queue/{queued_id}")
-async def patch_queued_turn(session_id: str, queued_id: str, req: UpdateQueuedTurnRequest) -> dict[str, Any]:
-    return await update_queued_turn(session_id, queued_id, req)
-
-
-@router.post("/api/sessions/{session_id}/queue/{queued_id}/move")
-async def post_move_queued_turn(session_id: str, queued_id: str, req: MoveQueuedTurnRequest) -> dict[str, Any]:
-    return await move_queued_turn(session_id, queued_id, req)
-
-
-@router.post("/api/sessions/{session_id}/queue/{queued_id}/run-now")
-async def post_run_queued_turn_now(
-    session_id: str,
-    queued_id: str,
-    req: RunQueuedTurnNowRequest | None = None,
-) -> dict[str, Any]:
-    try:
-        result = await run_queued_turn_now(session_id, queued_id)
-        if result.get("deferred"):
-            return deferred_force_send_response_for_client(result, req)
-        return result
-    except NativeSteerHandoffError as exc:
-        # Retry-safe races normally become deferred outcomes in the coalesced
-        # operation above. Keep this defensive boundary so no future handoff
-        # path can leak an expected provider-completion race as a raw 500.
-        if exc.safe_to_requeue:
-            result = await deferred_force_send_outcome(session_id, queued_id, exc)
-            return deferred_force_send_response_for_client(result, req)
-        delivery_uncertain = bool(exc.delivery_uncertain)
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": (
-                    "force_send_delivery_uncertain"
-                    if delivery_uncertain
-                    else "force_send_not_retryable"
-                ),
-                "message": (
-                    "Force Send delivery could not be confirmed: "
-                    f"{concise_error_message(exc)}"
-                ),
-                "action": (
-                    "Do not retry automatically. Refresh the chat and verify "
-                    "whether the message appeared."
-                ),
-                "retryable": False,
-                "delivery_uncertain": delivery_uncertain,
-                "queued_id": queued_id,
-            },
-        ) from exc
-
-
-@router.post("/api/sessions/{session_id}/stop")
-async def stop_turn_endpoint(session_id: str) -> dict[str, Any]:
-    return await request_explicit_stop(session_id)
 
 
 @router.get("/api/jobs")
@@ -3146,6 +3062,7 @@ def main() -> int:
 
 
 # --- Route modules ---
+mount_routes(router, turns_routes.router)
 mount_routes(router, providers_routes.router)
 mount_routes(router, search_routes.router)
 mount_routes(router, sessions_routes.router)
@@ -3166,7 +3083,7 @@ app = create_app(ApplicationBindings(
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], sys.modules['hyadex.api.terminal'], sys.modules['hyadex.api.sessions'], sys.modules['hyadex.api.search'], sys.modules['hyadex.api.providers'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], sys.modules['hyadex.api.terminal'], sys.modules['hyadex.api.sessions'], sys.modules['hyadex.api.search'], sys.modules['hyadex.api.providers'], sys.modules['hyadex.api.turns'], )
 
 
 # Module globals that core code reaches through WIRING.
