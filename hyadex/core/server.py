@@ -10,6 +10,8 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+from hyadex.core.config import hyadex_setting
+
 
 @dataclass(eq=False)
 class ServerState:
@@ -28,6 +30,9 @@ class ServerState:
     # Exclusive lock on the state directory for this process.
     state_process_lock: Any = None
 
+
+SERVER = ServerState(bind_address=hyadex_setting("AGENT_BIND", "0.0.0.0"),
+                     port=int(hyadex_setting("AGENT_PORT", "7870")))
 
 LEGACY_NAMES: dict[str, str] = {
     "SERVER_BIND_ADDRESS": "bind_address",

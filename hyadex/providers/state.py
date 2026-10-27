@@ -39,6 +39,8 @@ class ProviderState:
     claude_sdk_manager: ClaudeSDKSupervisorManager | None = None
 
 
+PROVIDERS = ProviderState()
+
 LEGACY_NAMES: dict[str, str] = {
     "CODEX_APP_SERVER_MANAGER": "codex_manager",
     "CODEX_APP_SERVER_MANAGER_EPOCH": "codex_manager_epoch",

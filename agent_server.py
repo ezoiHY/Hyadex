@@ -162,10 +162,10 @@ from hyadex import autopilot
 from hyadex.routes.autopilot import create_autopilot_router
 from hyadex import groups as group_chat
 from hyadex.events import EventBus
-from hyadex.providers.state import ProviderState
-from hyadex.core.server import ServerState
+from hyadex.providers.state import PROVIDERS, ProviderState
+from hyadex.core.server import SERVER, ServerState
 from hyadex.core.wiring import WIRING
-from hyadex.core.runs import RunState
+from hyadex.core.runs import RUNS, RunState
 from hyadex.routes.groups import create_group_router
 import side_questions
 import title_generation
@@ -456,7 +456,6 @@ from hyadex.core.config import (
 
 # Fail before reading another instance's config or resolving/migrating state.
 server_instances.validate_runtime_environment(os.environ, Path.home())
-SERVER = ServerState(bind_address=hyadex_setting("AGENT_BIND", "0.0.0.0"), port=int(hyadex_setting("AGENT_PORT", "7870")))
 try:
     SERVER_VERSION = SERVER_VERSION_FILE.read_text().strip() or "development"
 except OSError:
@@ -6750,7 +6749,6 @@ async def broadcast_committed_emergency_removal(session_id: str) -> None:
         await join_task_despite_caller_cancellation(task)
 
 
-RUNS = RunState()
 # Chats with a provider-transcript catch-up already queued or running, so a
 # burst of opens cannot start overlapping syncs of the same chat.
 HISTORY_SYNC_SCHEDULED: set[str] = set()
@@ -6807,7 +6805,6 @@ RUN_NOW_COMPLETED_RESULTS: OrderedDict[
     tuple[str, str],
     dict[str, Any],
 ] = OrderedDict()
-PROVIDERS = ProviderState()
 CODEX_APP_SERVER_MANAGER_LOCK = asyncio.Lock()
 CODEX_RETIRED_APP_SERVER_MANAGERS: list[CodexAppServerManager] = []
 CODEX_SESSION_APP_SERVER_MANAGERS: dict[str, CodexAppServerManager] = {}
@@ -48120,7 +48117,7 @@ class HyadexGroupRuntime:
 
     async def stop_member(self, session_id: str) -> None:
         if session_id in STORE.sessions:
-            await stop_turn_endpoint(session_id)
+            await request_explicit_stop(session_id)
 
     async def cancel_queued(self, session_id: str, queued_id: str) -> bool:
         if session_id not in STORE.sessions:
@@ -48135,7 +48132,7 @@ class HyadexGroupRuntime:
     async def retire_member_session(self, session_id: str) -> None:
         session = STORE.sessions.get(session_id)
         if session and not session.get("archived"):
-            await update_session(session_id, UpdateSessionRequest(archived=True))
+            await _update_session(session_id, UpdateSessionRequest(archived=True))
 
     def member_status(self, session_id: str) -> dict[str, Any]:
         session = STORE.sessions.get(session_id)
@@ -48187,7 +48184,7 @@ class HyadexGroupRuntime:
             raise HTTPException(status_code=404, detail="member chat not found")
         backend = str(session.get("backend") or DEFAULT_BACKEND)
         if backend == BACKEND_CLAUDE:
-            return await put_claude_goal(session_id, ClaudeGoalRequest(condition=objective))
+            return await set_claude_goal(session_id, ClaudeGoalRequest(condition=objective))
         if backend == BACKEND_CODEX:
             async with session_lifecycle_lock(session_id):
                 ensure_session_not_deleting(session_id)
@@ -49548,6 +49545,10 @@ class ClaudeGoalRequest(BaseModel):
 
 @router.put("/api/sessions/{session_id}/claude/goal")
 async def put_claude_goal(session_id: str, req: ClaudeGoalRequest) -> dict[str, Any]:
+    return await set_claude_goal(session_id, req)
+
+
+async def set_claude_goal(session_id: str, req: ClaudeGoalRequest) -> dict[str, Any]:
     require_claude_goal_session(session_id)
     condition = req.condition.strip()
     if not condition or condition.lower() == "clear":
@@ -51665,6 +51666,10 @@ async def run_explicit_stop_operation(
 
 @router.post("/api/sessions/{session_id}/stop")
 async def stop_turn_endpoint(session_id: str) -> dict[str, Any]:
+    return await request_explicit_stop(session_id)
+
+
+async def request_explicit_stop(session_id: str) -> dict[str, Any]:
     # Serialize only Stop admission with turn admission. Provider interrupts,
     # subagent teardown, and bounded terminal confirmation continue under the
     # narrower EXPLICIT_STOP_OPERATIONS fence so unrelated route reads and

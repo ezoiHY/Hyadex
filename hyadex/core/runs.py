@@ -76,6 +76,9 @@ class RunState:
         return bool(self.queued.get(session_id) or self.run_now.get(session_id)) or session_id in self.steering
 
 
+RUNS = RunState()
+
+
 # Module globals each attribute replaced; tests compiling agent_server
 # functions in isolation still provide state under these names.
 LEGACY_NAMES: dict[str, str] = {
