@@ -178,6 +178,22 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
 logger = logging.getLogger("hyadex-server")
 
 # --- Extracted modules ---
+from hyadex.api import jobs as jobs_routes
+from hyadex.api.jobs import (
+    create_agent_session_job,
+    create_group_job,
+    create_job,
+    delete_agent_session_job,
+    delete_group_job,
+    delete_job,
+    get_agent_session_job_runs,
+    list_agent_session_jobs,
+    list_group_jobs,
+    list_jobs,
+    run_job,
+    update_agent_session_job,
+    update_job,
+)
 from hyadex.api import turns as turns_routes
 from hyadex.api.turns import (
     deferred_force_send_response_for_client,
@@ -2252,41 +2268,6 @@ EVENTS.on_observe(lambda session_id, event: GROUPS.observe_member_event(session_
 router.include_router(create_autopilot_router(AUTOPILOT))
 
 
-@router.post("/api/groups/{group_id}/jobs")
-async def create_group_job(group_id: str, req: CreateScopedJobRequest) -> dict[str, Any]:
-    """Schedule a message into a group. It is anchored to the default responder's chat."""
-
-    group = GROUPS.require(group_id, writable=True)
-    if group.get("kind") == "autopilot":
-        raise HTTPException(status_code=409, detail="this group belongs to an autopilot run")
-    handle = GROUPS.default_responder(group)
-    participant = GROUPS.participant(group, handle) if handle else None
-    if participant is None:
-        raise HTTPException(status_code=409, detail="the group has no agents")
-    fields = req.model_dump(exclude_unset=True)
-    if fields.get("chat_references") or fields.get("team_references"):
-        raise HTTPException(status_code=400, detail="group jobs do not support chat or team references")
-    session_id = participant["session_id"]
-    async with session_lifecycle_lock(session_id):
-        job = await JOBS.create(CreateJobRequest(session_id=session_id, **fields), group_id=group_id)
-    return {"job": public_job(job)}
-
-
-@router.get("/api/groups/{group_id}/jobs")
-async def list_group_jobs(group_id: str) -> dict[str, Any]:
-    GROUPS.require(group_id)
-    return {"jobs": [public_job(job) for job in JOBS.jobs.values() if job.get("group_id") == group_id]}
-
-
-@router.delete("/api/groups/{group_id}/jobs/{job_id}")
-async def delete_group_job(group_id: str, job_id: str) -> dict[str, Any]:
-    job = JOBS.jobs.get(job_id)
-    if not job or job.get("group_id") != group_id:
-        raise HTTPException(status_code=404, detail="job not found")
-    session_id = str(job.get("session_id") or "")
-    async with session_lifecycle_lock(session_id):
-        deleted = await JOBS.delete(job_id, expected_session_id=session_id)
-    return {"deleted": bool(deleted), "id": job_id}
 router.include_router(create_group_router(
     GROUPS,
     websocket_authorized=websocket_authorized,
@@ -2359,196 +2340,6 @@ async def acknowledge_session_emergency(
         )
         sess = await project_committed_emergency_event(session_id, event)
         return {"session": public_session(sess), "acknowledged": True}
-
-
-@router.get("/api/jobs")
-async def list_jobs(session_id: str | None = None) -> dict[str, Any]:
-    jobs = sorted(
-        (
-            public_job(job)
-            for job in JOBS.jobs.values()
-            if session_id is None or job.get("session_id") == session_id
-        ),
-        key=lambda j: j.get("updated_at") or "",
-        reverse=True,
-    )
-    return {"jobs": jobs}
-
-
-@router.get("/api/agent/sessions/{session_id}/jobs", dependencies=route_auth("agent_helper", 0))
-async def list_agent_session_jobs(request: Request, session_id: str) -> dict[str, Any]:
-    async with session_lifecycle_lock(session_id):
-        await authorize_provider_jobs_operation(
-            request,
-            session_id=session_id,
-            operation="read",
-        )
-        response = await list_session_jobs(session_id)
-        return {
-            **response,
-            "jobs": [
-                provider_public_job(job)
-                for job in response.get("jobs") or []
-                if isinstance(job, dict)
-            ],
-        }
-
-
-@router.get("/api/agent/sessions/{session_id}/jobs/{job_id}/runs", dependencies=route_auth("agent_helper", 0))
-async def get_agent_session_job_runs(
-    request: Request,
-    session_id: str,
-    job_id: str,
-    timeline_group_id: str | None = Query(
-        default=None,
-        min_length=1,
-        max_length=320,
-    ),
-    before_seq: int | None = Query(default=None, ge=1),
-    limit: int = Query(default=20, ge=1, le=100),
-) -> dict[str, Any]:
-    async with session_lifecycle_lock(session_id):
-        await authorize_provider_jobs_operation(
-            request,
-            session_id=session_id,
-            operation="read",
-        )
-        response = await get_session_job_runs(
-            session_id,
-            job_id,
-            timeline_group_id=timeline_group_id,
-            before_seq=before_seq,
-            limit=limit,
-        )
-        return {
-            **response,
-            "runs": [
-                provider_public_job_run(run)
-                for run in response.get("runs") or []
-                if isinstance(run, dict)
-            ],
-        }
-
-
-@router.post("/api/jobs")
-async def create_job(req: CreateJobRequest) -> dict[str, Any]:
-    async with session_lifecycle_lock(req.session_id):
-        job = await JOBS.create(req)
-    return {"job": public_job(job)}
-
-
-@router.post("/api/agent/sessions/{session_id}/jobs", dependencies=route_auth("agent_helper", 512 * 1024))
-async def create_agent_session_job(
-    request: Request,
-    session_id: str,
-    req: AgentCreateScopedJobRequest,
-) -> dict[str, Any]:
-    async with session_lifecycle_lock(session_id):
-        await authorize_provider_jobs_operation(
-            request,
-            session_id=session_id,
-            operation="write",
-        )
-        if "team_references" in request_fields_set(req):
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "provider jobs access cannot create durable team grants"
-                ),
-            )
-        fields = req.model_dump(exclude_unset=True)
-        # Both are retired and validated empty; neither has an effect.
-        fields.pop("chat_routes", None)
-        fields.pop("chat_references", None)
-        job = await JOBS.create(CreateJobRequest(
-            session_id=session_id,
-            **fields,
-        ), emit_event=False)
-        await append_provider_job_mutation_event(job, "job_created")
-        return {"job": provider_public_job(job)}
-
-
-@router.patch("/api/jobs/{job_id}")
-async def update_job(job_id: str, req: UpdateJobRequest) -> dict[str, Any]:
-    snapshot = await JOBS.snapshot(job_id)
-    session_id = str(snapshot.get("session_id") or "")
-    async with session_lifecycle_lock(session_id):
-        job = await JOBS.update(
-            job_id,
-            req.model_dump(exclude_unset=True),
-            expected_session_id=session_id,
-        )
-    return {"job": public_job(job)}
-
-
-@router.patch("/api/agent/sessions/{session_id}/jobs/{job_id}", dependencies=route_auth("agent_helper", 512 * 1024))
-async def update_agent_session_job(
-    request: Request,
-    session_id: str,
-    job_id: str,
-    req: AgentUpdateJobRequest,
-) -> dict[str, Any]:
-    async with session_lifecycle_lock(session_id):
-        await authorize_provider_jobs_operation(
-            request,
-            session_id=session_id,
-            operation="write",
-        )
-        if (
-            "team_references" in request_fields_set(req)
-            and req.team_references
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "provider jobs access cannot add or expand durable team grants"
-                ),
-            )
-        fields = req.model_dump(exclude_unset=True)
-        # Retired and validated empty. An explicit empty chat_references
-        # still clears a legacy job's saved @Chat targets.
-        fields.pop("chat_routes", None)
-        job = await JOBS.update(
-            job_id,
-            fields,
-            expected_session_id=session_id,
-            emit_event=False,
-        )
-        await append_provider_job_mutation_event(job, "job_updated")
-        return {"job": provider_public_job(job)}
-
-
-@router.delete("/api/jobs/{job_id}")
-async def delete_job(job_id: str) -> dict[str, Any]:
-    snapshot = await JOBS.snapshot(job_id)
-    session_id = str(snapshot.get("session_id") or "")
-    async with session_lifecycle_lock(session_id):
-        deleted = await JOBS.delete(
-            job_id,
-            expected_session_id=session_id,
-        )
-    return {"ok": True, "deleted": deleted}
-
-
-@router.delete("/api/agent/sessions/{session_id}/jobs/{job_id}", dependencies=route_auth("agent_helper", 0))
-async def delete_agent_session_job(
-    request: Request,
-    session_id: str,
-    job_id: str,
-) -> dict[str, Any]:
-    async with session_lifecycle_lock(session_id):
-        await authorize_provider_jobs_operation(
-            request,
-            session_id=session_id,
-            operation="write",
-        )
-        deleted = await JOBS.delete(job_id, expected_session_id=session_id)
-        return {"ok": True, "deleted": deleted}
-
-
-@router.post("/api/jobs/{job_id}/run")
-async def run_job(job_id: str) -> dict[str, Any]:
-    return await JOBS.request_manual_run(job_id)
 
 
 @router.websocket("/api/emergency-alerts/events")
@@ -3062,6 +2853,7 @@ def main() -> int:
 
 
 # --- Route modules ---
+mount_routes(router, jobs_routes.router)
 mount_routes(router, turns_routes.router)
 mount_routes(router, providers_routes.router)
 mount_routes(router, search_routes.router)
@@ -3083,7 +2875,7 @@ app = create_app(ApplicationBindings(
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], sys.modules['hyadex.api.terminal'], sys.modules['hyadex.api.sessions'], sys.modules['hyadex.api.search'], sys.modules['hyadex.api.providers'], sys.modules['hyadex.api.turns'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], sys.modules['hyadex.providers.registry'], sys.modules['hyadex.core.queue'], sys.modules['hyadex.providers.codex.runtime'], sys.modules['hyadex.core.http'], sys.modules['hyadex.features.emergency'], sys.modules['hyadex.core.turns'], sys.modules['hyadex.core.stop'], sys.modules['hyadex.features.forks'], sys.modules['hyadex.features.group_runtime'], sys.modules['hyadex.features.jobs'], sys.modules['hyadex.features.search'], sys.modules['hyadex.ops.lifecycle'], sys.modules['hyadex.api.provider_mcp'], sys.modules['hyadex.api.common'], sys.modules['hyadex.api.health'], sys.modules['hyadex.api.admin'], sys.modules['hyadex.api.terminal'], sys.modules['hyadex.api.sessions'], sys.modules['hyadex.api.search'], sys.modules['hyadex.api.providers'], sys.modules['hyadex.api.turns'], sys.modules['hyadex.api.jobs'], )
 
 
 # Module globals that core code reaches through WIRING.
