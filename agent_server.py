@@ -178,6 +178,67 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
 logger = logging.getLogger("hyadex-server")
 
 # --- Extracted modules ---
+from hyadex.core.state import (
+    AGENT_HELPER_PROXY_HEADERS,
+    COMPACT_TIMELINE_HIDDEN_TYPES,
+    CROSS_CHAT_CLIENT_INTERNAL_EVENT_TYPES,
+    DARWIN_MEMORY_CACHE,
+    DARWIN_MEMORY_CACHE_SECONDS,
+    DELETED_SESSION_TOMBSTONES,
+    DELETING_SESSIONS,
+    EVENT_DELIVERY_LOCKS,
+    EVENT_INDEX_MIN_FILE_BYTES,
+    EVENT_INDEX_STRIDE,
+    EVENT_INDEX_VERSION,
+    EVENT_LINE_SEQ_RE,
+    EVENT_SEQ_CACHE,
+    EVENT_SEQ_LOCK,
+    EVENT_SEQ_REPAIR_LOCKS,
+    EVENT_STREAM_HEARTBEAT_SECONDS,
+    EVENTS,
+    HEALTH_QUEUE_RECONCILE_STATE,
+    LEGACY_STEERING_PREFIX,
+    LIVE_STDOUT_MAX_LINE_CHARS,
+    LIVE_STDOUT_MAX_LINES,
+    NOTIFICATION_EVENT_FIELDS,
+    QUEUE_CHECKPOINT_DIRTY,
+    QUEUE_FENCE_LOGGED_AT,
+    QUEUE_RECOVERY_ADMISSION_WAIT_SECONDS,
+    QUEUE_RECOVERY_READY,
+    QUEUE_RETRY_TASKS,
+    REASONING_SUMMARY_STREAM_LAST_SENT,
+    REASONING_SUMMARY_STREAM_PENDING,
+    REASONING_SUMMARY_STREAMS,
+    ROUTE_AUTH_INDEX,
+    RouteAuth,
+    RouteAuthKind,
+    RUN_NOW_COMPLETED_MAX,
+    RUN_NOW_COMPLETED_RESULTS,
+    RUN_NOW_COMPLETED_TTL_SECONDS,
+    RUN_NOW_IDLE_OWNER_CLEANUP_TIMEOUT_SECONDS,
+    RUN_NOW_IDLE_OWNER_TIMEOUT_SECONDS,
+    RUN_NOW_PROVIDER_HANDOFF_TIMEOUT_SECONDS,
+    RUN_TRACE_EVENT_TYPES,
+    SESSION_LIFECYCLE_LOCKS,
+    SESSION_LIFECYCLE_UPDATE_FIELDS,
+    SESSION_SNAPSHOT_RECONCILE_AT,
+    SESSION_STORE_SAVE_DEBOUNCE_SECONDS,
+    SESSION_STORE_SAVE_MAX_LATENCY_SECONDS,
+    SESSIONS_WRITE_LOCK,
+    TIMELINE_INDEX_CACHE,
+    TIMELINE_INDEX_CACHE_LOCK,
+    TIMELINE_INDEX_CACHE_MAX,
+    TIMELINE_INDEX_HIDDEN_TYPES,
+    TIMELINE_INDEX_LOCK_STRIPES,
+    TIMELINE_INDEX_LOCKS,
+    TIMELINE_INDEX_PROJECTION_VERSION,
+    TIMELINE_INDEX_TRACE_TYPES,
+    TURN_RECEIPT_TASKS,
+    UNSAFE_HTTP_MUTATION_ADMISSION_LOCK,
+    UNSAFE_HTTP_MUTATION_METHODS,
+    UNSAFE_HTTP_MUTATION_TASKS,
+    USER_ROUTE,
+)
 from hyadex.core.server_logging import (
     ACCESS_LOG_MESSAGE_RE,
     ACCESS_LOG_TOKEN_QUERY_RE,
@@ -1450,27 +1511,8 @@ async def publish_turn_code_diff(
         raise
 
 
-EVENT_SEQ_CACHE: dict[str, int] = {}
-EVENT_SEQ_LOCK = asyncio.Lock()
-EVENT_SEQ_REPAIR_LOCKS: dict[str, asyncio.Lock] = {}
-REASONING_SUMMARY_STREAMS: dict[str, dict[tuple[str, str, str], dict[str, Any]]] = {}
 REASONING_SUMMARY_STREAM_REVISION = 0
-REASONING_SUMMARY_STREAM_PENDING: dict[str, asyncio.Task[Any]] = {}
-REASONING_SUMMARY_STREAM_LAST_SENT: dict[str, float] = {}
-EVENT_DELIVERY_LOCKS: dict[str, asyncio.Lock] = {}
 ARTIFACT_PUBLICATION_LOCK_STRIPES = tuple(asyncio.Lock() for _ in range(64))
-TIMELINE_INDEX_CACHE_MAX = int(hyadex_setting("TIMELINE_INDEX_CACHE_MAX", "24"))
-TIMELINE_INDEX_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
-TIMELINE_INDEX_PROJECTION_VERSION = 7
-# Retained as a compatibility/testing surface; synchronization uses the fixed
-# stripe pool below so deleted-session churn cannot leak one lock per chat.
-TIMELINE_INDEX_LOCKS: dict[str, threading.Lock] = {}
-# Cache membership and the per-session lock registry are shared across every
-# request worker.  Protect them independently from the per-session scan locks:
-# an LRU eviction for chat A must never remove or recreate chat B's lock while
-# chat B is building/reading its index.
-TIMELINE_INDEX_CACHE_LOCK = threading.RLock()
-TIMELINE_INDEX_LOCK_STRIPES = tuple(threading.Lock() for _ in range(64))
 FORK_INTERNAL_RUN_CACHE_MAX = int(hyadex_setting("FORK_INTERNAL_RUN_CACHE_MAX", "128"))
 FORK_INTERNAL_RUN_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
 FORK_INTERNAL_RUN_LOCKS: dict[str, threading.Lock] = {}
@@ -1726,16 +1768,6 @@ async def reconcile_event_seq_after_failed_write(
             repaired_seq,
             stored_seq,
         )
-
-
-EVENT_INDEX_VERSION = 1
-# One sparse checkpoint per this many events keeps events.idx tiny (a
-# 100k-event chat needs ~200 entries) while bounding a catch-up scan to
-# at most one stride of already-delivered lines.
-EVENT_INDEX_STRIDE = 512
-# Below this size a full scan is cheaper than building an index for it.
-EVENT_INDEX_MIN_FILE_BYTES = 256 * 1024
-EVENT_LINE_SEQ_RE = re.compile(rb'^\s*\{"seq":\s*(\d+)')
 
 
 def events_index_path(path: Path) -> Path:
@@ -2114,16 +2146,6 @@ def validate_listener_auth() -> None:
         )
 
 
-AGENT_HELPER_PROXY_HEADERS = {
-    b"forwarded",
-    b"via",
-    b"x-forwarded-for",
-    b"x-forwarded-host",
-    b"x-forwarded-proto",
-    b"x-real-ip",
-}
-
-
 def request_has_agent_helper_proxy_headers(request: Request) -> bool:
     """Reject requests whose socket peer may be an identity-hiding proxy."""
 
@@ -2341,22 +2363,6 @@ class UpdateSessionRequest(BaseModel):
     codex_permission_profile: str | None = Field(default=None, max_length=240)
     codex_approvals_reviewer: Literal["user", "auto_review", "guardian_subagent"] | None = None
     provider_jobs_access: Literal["full", "read_only", "blocked"] | None = None
-
-
-SESSION_LIFECYCLE_UPDATE_FIELDS = frozenset({
-    "cwd",
-    "backend",
-    "model",
-    "effort",
-    "system_prompt",
-    "claude_permission_mode",
-    "codex_approval_policy",
-    "codex_sandbox_mode",
-    "codex_permission_profile",
-    "codex_approvals_reviewer",
-    "provider_jobs_access",
-    "archived",
-})
 
 
 class ReadSessionRequest(BaseModel):
@@ -3116,12 +3122,6 @@ EMERGENCY_EVENT_FIELDS = frozenset({
     "id", "seq", "type", "ts", "session_id", "run_id",
     "emergency_alert", "emergency_alert_id", "emergency_request_id", "emergency_request_digest",
 })
-NOTIFICATION_EVENT_FIELDS = frozenset({
-    "id", "seq", "type", "ts", "session_id", "run_id", "message",
-    "notification_level", "notification_request_id", "notification_request_digest",
-})
-
-
 def notification_events_after(
     session_id: str,
     after_seq: int,
@@ -3281,11 +3281,6 @@ def encode_sessions_json(sessions: dict[str, dict[str, Any]]) -> str:
     return json.dumps(sessions, separators=(",", ":"))
 
 
-# Serializes concurrent sessions.json writers (worker threads and the
-# shutdown fallback) so two writers never interleave on the shared temp file.
-SESSIONS_WRITE_LOCK = threading.Lock()
-
-
 def write_sessions_json_text(
     path: Path,
     text: str,
@@ -3336,16 +3331,6 @@ def _write_sessions_json_text_locked(path: Path, text: str, *, durable: bool) ->
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
-
-
-SESSION_STORE_SAVE_DEBOUNCE_SECONDS = max(
-    0.0,
-    float(hyadex_setting("SESSIONS_SAVE_DEBOUNCE_SECONDS", "0.25")),
-)
-SESSION_STORE_SAVE_MAX_LATENCY_SECONDS = max(
-    SESSION_STORE_SAVE_DEBOUNCE_SECONDS,
-    float(hyadex_setting("SESSIONS_SAVE_MAX_LATENCY_SECONDS", "2.0")),
-)
 
 
 class PendingSessionSave:
@@ -6618,10 +6603,6 @@ class SubscriberHub:
 
 
 HUB = SubscriberHub()
-# Committed chat events fan out here; the event log does not know its consumers.
-EVENTS = EventBus()
-
-
 @EVENTS.on_deliver
 async def deliver_event_to_live_clients(session_id: str, event: dict[str, Any]) -> None:
     if event_files_belong_to_session(event, session_id) and is_client_visible_event(event):
@@ -6714,48 +6695,6 @@ CLAUDE_STOP_FENCE_RETRY_TASKS: dict[str, asyncio.Task[Any]] = {}
 CLAUDE_STOP_FENCE_RETRY_DELAYS_SECONDS = (5.0, 15.0, 30.0, 60.0)
 CLAUDE_STOP_FENCE_ATTEMPT_LOCKS: dict[str, asyncio.Lock] = {}
 CLAUDE_STOP_FENCE_ATTEMPT_TASKS: dict[str, set[asyncio.Task[Any]]] = {}
-QUEUE_RECOVERY_READY: set[str] = set()
-QUEUE_CHECKPOINT_DIRTY: set[str] = set()
-QUEUE_RECOVERY_ADMISSION_WAIT_SECONDS = 2.0
-RUN_NOW_PROVIDER_HANDOFF_TIMEOUT_SECONDS = max(
-    5.0,
-    float(
-        hyadex_setting(
-            "RUN_NOW_PROVIDER_HANDOFF_TIMEOUT_SECONDS",
-            "120",
-        )
-    ),
-)
-RUN_NOW_IDLE_OWNER_TIMEOUT_SECONDS = max(
-    RUN_NOW_PROVIDER_HANDOFF_TIMEOUT_SECONDS,
-    float(
-        hyadex_setting(
-            "RUN_NOW_IDLE_OWNER_TIMEOUT_SECONDS",
-            "300",
-        )
-    ),
-)
-RUN_NOW_IDLE_OWNER_CLEANUP_TIMEOUT_SECONDS = max(
-    1.0,
-    float(
-        hyadex_setting(
-            "RUN_NOW_IDLE_OWNER_CLEANUP_TIMEOUT_SECONDS",
-            "15",
-        )
-    ),
-)
-RUN_NOW_COMPLETED_TTL_SECONDS = max(
-    1.0,
-    float(hyadex_setting("RUN_NOW_COMPLETED_TTL_SECONDS", "120")),
-)
-RUN_NOW_COMPLETED_MAX = max(
-    16,
-    int(hyadex_setting("RUN_NOW_COMPLETED_MAX", "512")),
-)
-RUN_NOW_COMPLETED_RESULTS: OrderedDict[
-    tuple[str, str],
-    dict[str, Any],
-] = OrderedDict()
 CODEX_APP_SERVER_MANAGER_LOCK = asyncio.Lock()
 CODEX_RETIRED_APP_SERVER_MANAGERS: list[CodexAppServerManager] = []
 CODEX_SESSION_APP_SERVER_MANAGERS: dict[str, CodexAppServerManager] = {}
@@ -6840,9 +6779,6 @@ CODEX_NATIVE_ACTION_TASKS: dict[tuple[str, str], asyncio.Task[Any]] = {}
 CODEX_CONTROL_TERMINAL_FENCES: dict[str, str] = {}
 CODEX_INTERACTION_HANDLER_TASKS: dict[str, set[asyncio.Task[Any]]] = {}
 CLAUDE_INTERACTION_HANDLER_TASKS: dict[str, set[asyncio.Task[Any]]] = {}
-SESSION_LIFECYCLE_LOCKS: dict[str, asyncio.Lock] = {}
-DELETING_SESSIONS: set[str] = set()
-DELETED_SESSION_TOMBSTONES: set[str] = set()
 CLAUDE_NO_SESSION_PERSISTENCE_SUPPORTED: bool | None = None
 PROVIDER_AUTHORITY_LOCK = asyncio.Lock()
 # Indexed only by SHA-256(token); plaintext exists solely in the mode-0600
@@ -6942,9 +6878,6 @@ def stop_cleanup_in_progress(session_id: str) -> bool:
         explicit_stop_in_progress(session_id)
         or detached_stop_in_progress(session_id)
     )
-
-
-QUEUE_FENCE_LOGGED_AT: dict[tuple[str, str], float] = {}
 
 
 def queue_promotion_fence(session_id: str) -> str | None:
@@ -7117,8 +7050,6 @@ async def reset_codex_ephemeral_runtime_metadata() -> None:
         if changed:
             await STORE.save()
 
-LIVE_STDOUT_MAX_LINES = 400
-LIVE_STDOUT_MAX_LINE_CHARS = 12_000
 TMUX_CAPTURE_MAX_LINES = 2_000
 TMUX_COMMAND_TIMEOUT_SECONDS = 4
 TERMINAL_READ_BYTES = 64 * 1024
@@ -8975,13 +8906,6 @@ async def purge_provider_authority_files_after_restart() -> int:
             continue
         removed_files += 1
     return removed_files
-
-
-LEGACY_STEERING_PREFIX = (
-    "The previous agent turn was interrupted before completion. Continue that request while "
-    "applying the steering instruction below. Treat both messages as user input, and give the "
-    "steering instruction priority wherever they conflict.\n\n"
-)
 
 
 def legacy_file_ids_for_paths(paths: list[str]) -> list[str]:
@@ -11178,9 +11102,6 @@ async def retry_next_queued_turn_later(session_id: str, delay_seconds: int | Non
     await start_next_queued_turn(session_id)
 
 
-QUEUE_RETRY_TASKS: dict[str, asyncio.Task[Any]] = {}
-
-
 def schedule_queued_turn_retry(
     session_id: str,
     delay_seconds: int | None = None,
@@ -12559,10 +12480,6 @@ def top_process_rows(limit: int = 20) -> list[dict[str, Any]]:
     if not rows:
         rows = sorted(procfs_process_rows(), key=lambda row: int(row.get("rss_kb") or 0), reverse=True)
     return rows[: max(1, min(limit, 50))]
-
-
-DARWIN_MEMORY_CACHE: dict[str, Any] = {"at": float("-inf"), "mb": None}
-DARWIN_MEMORY_CACHE_SECONDS = 5.0
 
 
 def parse_vm_stat_available_mb(stdout: str) -> int | None:
@@ -14618,18 +14535,6 @@ def client_safe_event(event: dict[str, Any]) -> dict[str, Any]:
     return safe
 
 
-CROSS_CHAT_CLIENT_INTERNAL_EVENT_TYPES = {
-    "turn_started",
-    "turn_queued",
-    "turn_unqueued",
-    "turn_queue_updated",
-    "turn_queue_reordered",
-    "turn_queue_run_now",
-    "turn_queue_paused",
-    "turn_queue_delivery_fenced",
-}
-
-
 def is_client_visible_event(event: dict[str, Any]) -> bool:
     """Keep legacy internal handoff admission rows out of every client.
 
@@ -15367,22 +15272,6 @@ async def send_event_catchup(
         offset = 0
         stalled_once = True
     return cursor
-
-
-COMPACT_TIMELINE_HIDDEN_TYPES = {
-    "raw_event",
-    "reasoning_summary",
-    "reasoning_text",
-    "tool_started",
-    "tool_finished",
-    "process_started",
-    "provider_session",
-    "cwd_fallback",
-    "history_imported",
-    "backend_changed",
-    "session_created",
-    "code_diff",
-}
 
 
 def is_visible_timeline_event(
@@ -16824,30 +16713,6 @@ def build_claude_subagent_snapshot(session_id: str, limit: int = 64) -> dict[str
     }
 
 
-TIMELINE_INDEX_HIDDEN_TYPES = {
-    "turn_queued",
-    "turn_unqueued",
-    "turn_queue_updated",
-    "turn_queue_reordered",
-    "turn_queue_run_now",
-    "turn_queue_paused",
-    "turn_queue_delivery_fenced",
-    "queue_snapshot",
-    "subagent_state",
-    "job_updated",
-    "job_deleted",
-    "raw_event",
-    "codex_thread_status",
-    "codex_goal_updated",
-    "codex_goal_cleared",
-    "claude_subagents_stopped",
-    "claude_goal_changed",
-    "claude_background_tasks_reconciled",
-    "claude_background_task_reconciliation_consumed",
-    # Legacy beta servers briefly emitted usage as timeline events. Keep those
-    # old rows out of pagination even though current servers never emit them.
-    "codex_token_usage",
-}
 TIMELINE_INDEX_JOB_TYPES = {"job_created", "job_ran", "job_started", "job_deferred", "job_finished", "job_error"}
 TIMELINE_INDEX_CODEX_GOAL_TYPES = {
     "codex_goal_budget_limited",
@@ -16855,11 +16720,6 @@ TIMELINE_INDEX_CODEX_GOAL_TYPES = {
 TIMELINE_INDEX_CODEX_COMPACTION_TYPES = {
     "codex_compaction_started",
     "codex_compaction_completed",
-}
-TIMELINE_INDEX_TRACE_TYPES = {
-    "reasoning_summary", "reasoning_text", "tool_started", "tool_finished", "process_started", "provider_session",
-    "cwd_fallback", "history_imported", "backend_changed", "artifact_error", "session_created",
-    "idle_warning",
 }
 SEMANTIC_TIMELINE_JOB_RUN_LIMIT = 7
 SEMANTIC_TIMELINE_JOB_EXTRA_LIMIT = 64
@@ -19218,15 +19078,6 @@ def read_scheduled_job_runs(
         "has_more": has_more,
         "next_before": next_before,
     }
-
-
-RUN_TRACE_EVENT_TYPES = {
-    "reasoning_summary",
-    "reasoning_text",
-    "tool_started",
-    "tool_finished",
-    "code_diff",
-}
 
 
 def read_indexed_run_trace(
@@ -43911,14 +43762,6 @@ SERVER_RESTART_MAX_BODY_BYTES = 2_048
 SERVER_RESTART_BLOCKER_SNAPSHOT_VERSION = 2
 SERVER_RESTART_COUNT_LIMIT = 1_000_000
 CODEX_GOALS_ADMIN_MAX_BODY_BYTES = 256
-UNSAFE_HTTP_MUTATION_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-UNSAFE_HTTP_MUTATION_ADMISSION_LOCK = asyncio.Lock()
-# Exact leases replace the old scalar counter. A request task can be cancelled
-# again while unwinding its middleware ``finally`` block, so any cleanup that
-# awaits this admission lock can be cancelled before decrementing and strand a
-# permanent lifecycle blocker. Lease cleanup is synchronous and exact;
-# completed tasks are also pruned defensively by every authoritative reader.
-UNSAFE_HTTP_MUTATION_TASKS: dict[str, asyncio.Task[Any] | None] = {}
 EXECUTION_MAINTENANCE_ACTIVE_DETAIL = "HyadexServer execution worker is in maintenance"
 MANAGED_SERVER_RESTART_ACTIVE_DETAIL = "HyadexServer is restarting"
 MANAGED_SERVER_SERVICE_KIND_CACHE: str | None = None
@@ -45675,38 +45518,6 @@ async def lifespan(app: FastAPI):
 
 router = APIRouter()
 
-RouteAuthKind = Literal["user", "agent_helper", "provider_mcp", "native_admin", "restart"]
-
-
-@dataclass(frozen=True)
-class RouteAuth:
-    """How a route is admitted, declared where the route is defined.
-
-    The auth middleware enforces it from request headers before FastAPI reads
-    the body, so an unauthenticated caller can never make the server buffer or
-    parse one. Routes without a declaration are ``user`` routes (the client
-    bearer). As a dependency it does nothing; handlers that need more repeat
-    their own checks.
-
-    - ``agent_helper``: an in-chat helper with its run's provider capability,
-      from a local provider process; the bearer is not a substitute.
-    - ``provider_mcp``: Codex's local MCP tool channel, with its process secret.
-    - ``native_admin``: native operator settings; header token only.
-    - ``restart``: server restart; header token only, outside mutation admission.
-
-    ``body_limit`` bounds unsafe-method bodies (``None``: no route limit).
-    """
-
-    kind: RouteAuthKind = "user"
-    body_limit: int | None = None
-
-    def __call__(self) -> None:
-        return None
-
-
-USER_ROUTE = RouteAuth()
-
-
 def route_auth(kind: RouteAuthKind, body_limit: int | None = None) -> list[Any]:
     """``dependencies=route_auth(...)`` for a route decorator."""
     return [Depends(RouteAuth(kind, body_limit))]
@@ -45731,9 +45542,6 @@ def declared_auth_routes(routes: Any) -> tuple[tuple[Any, RouteAuth], ...]:
         if auth is not None and auth.kind != "user":
             found.append((route, auth))
     return tuple(found)
-
-
-ROUTE_AUTH_INDEX: "weakref.WeakKeyDictionary[Any, tuple[tuple[Any, RouteAuth], ...]]" = weakref.WeakKeyDictionary()
 
 
 def route_auth_for_scope(app: Any, method: str, path: str, *, any_method: bool = False) -> RouteAuth:
@@ -46243,13 +46051,6 @@ async def require_agent_token(request: Request, call_next):
                 mutation_task,
                 mutation_registry,
             )
-
-
-HEALTH_QUEUE_RECONCILE_STATE: dict[str, Any] = {
-    "last_at": float("-inf"),
-    "task": None,
-}
-SESSION_SNAPSHOT_RECONCILE_AT: dict[str, float] = {}
 
 
 async def reconcile_idle_queue_session_from_snapshot(session_id: str) -> bool:
@@ -51025,9 +50826,6 @@ async def _fork_session_locked(
     return {"session": public_session(child), "sessions": [public_session(sess) for sess in ordered_sessions]}
 
 
-TURN_RECEIPT_TASKS: dict[tuple[str, str], tuple[str, asyncio.Task]] = {}
-
-
 def turn_receipt_path(session_id: str, request_id: str) -> Path:
     return events_path(session_id).parent / "turn-receipts" / f"{request_id}.json"
 
@@ -52904,9 +52702,6 @@ async def session_terminal(
             await ws.close()
 
 
-EVENT_STREAM_HEARTBEAT_SECONDS = 15.0
-
-
 async def send_event_stream_status(ws: WebSocket, session_id: str, phase: str) -> None:
     # Ephemeral, opt-in control frames: never persisted or assigned a seq.
     await asyncio.wait_for(ws.send_json({
@@ -53768,7 +53563,7 @@ app = create_app(ApplicationBindings(
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], )
 
 
 # Module globals that core code reaches through WIRING.
