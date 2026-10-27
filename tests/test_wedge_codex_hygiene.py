@@ -9,33 +9,31 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 
-import agent_server
-
-
+from tests import hyadex_server
 class CompactionMirroringTests(unittest.IsolatedAsyncioTestCase):
     """Every automatic compaction of one turn is mirrored, not only the first."""
 
     async def asyncSetUp(self) -> None:
-        self.previous_sessions = agent_server.STORE.sessions
-        agent_server.STORE.sessions = {
+        self.previous_sessions = hyadex_server.STORE.sessions
+        hyadex_server.STORE.sessions = {
             "chat": {
                 "id": "chat",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": "thread",
             }
         }
 
     async def asyncTearDown(self) -> None:
-        agent_server.STORE.sessions = self.previous_sessions
+        hyadex_server.STORE.sessions = self.previous_sessions
 
     def test_aliases_omit_turn_alias_when_item_is_known(self) -> None:
-        with_item = agent_server.native_codex_compaction_terminal_aliases(
+        with_item = hyadex_server.native_codex_compaction_terminal_aliases(
             "thread", "turn-1", "compact-1"
         )
-        turn_only = agent_server.native_codex_compaction_terminal_aliases(
+        turn_only = hyadex_server.native_codex_compaction_terminal_aliases(
             "thread", "turn-1", None
         )
-        item_only = agent_server.native_codex_compaction_terminal_aliases(
+        item_only = hyadex_server.native_codex_compaction_terminal_aliases(
             "thread", None, "compact-1"
         )
         self.assertEqual(len(with_item), 2)
@@ -47,36 +45,36 @@ class CompactionMirroringTests(unittest.IsolatedAsyncioTestCase):
         # The thread+turn alias is never part of a lookup that knows the item.
         self.assertNotIn(turn_only[1], with_item)
         self.assertEqual(
-            agent_server.native_codex_compaction_terminal_aliases(
+            hyadex_server.native_codex_compaction_terminal_aliases(
                 "thread", None, None
             ),
             (),
         )
 
     def test_remembered_completion_recognises_sparse_replays_only(self) -> None:
-        agent_server.remember_codex_native_compaction_terminal(
+        hyadex_server.remember_codex_native_compaction_terminal(
             "chat", "thread", "turn-1", "compact-1"
         )
         # Sparse replays of the same compaction (either id missing) are terminal.
         self.assertTrue(
-            agent_server.codex_native_compaction_was_terminal(
+            hyadex_server.codex_native_compaction_was_terminal(
                 "chat", "thread", "turn-1", None
             )
         )
         self.assertTrue(
-            agent_server.codex_native_compaction_was_terminal(
+            hyadex_server.codex_native_compaction_was_terminal(
                 "chat", "thread", None, "compact-1"
             )
         )
         self.assertTrue(
-            agent_server.codex_native_compaction_was_terminal(
+            hyadex_server.codex_native_compaction_was_terminal(
                 "chat", "thread", "turn-other", "compact-1"
             )
         )
         # A later compaction in the same turn carries a new item id and is not
         # a replay, even though the turn alias of the first one is remembered.
         self.assertFalse(
-            agent_server.codex_native_compaction_was_terminal(
+            hyadex_server.codex_native_compaction_was_terminal(
                 "chat", "thread", "turn-1", "compact-2"
             )
         )
@@ -85,8 +83,8 @@ class CompactionMirroringTests(unittest.IsolatedAsyncioTestCase):
         active = {
             "chat": {
                 "run_id": "run-1",
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                "backend": hyadex_server.BACKEND_CODEX,
+                "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                 "provider_thread_id": "thread",
                 "provider_turn_id": "turn-1",
             }
@@ -101,7 +99,7 @@ class CompactionMirroringTests(unittest.IsolatedAsyncioTestCase):
             events.append((event_type, payload))
             # Mirror the real append path: the session metadata hook is what
             # remembers native terminal identities and tallies compactions.
-            await agent_server.update_session_event_metadata(
+            await hyadex_server.update_session_event_metadata(
                 session_id,
                 {"type": event_type, "seq": len(events), **payload},
             )
@@ -118,24 +116,24 @@ class CompactionMirroringTests(unittest.IsolatedAsyncioTestCase):
             }
 
         with (
-            patch.object(agent_server.RUNS, "active", active),
+            patch.object(hyadex_server.RUNS, "active", active),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_session_id_for_thread",
                 return_value="chat",
             ),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
-            patch.object(agent_server, "append_event", side_effect=record_event),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", side_effect=record_event),
         ):
             for item_id in ("compact-1", "compact-2"):
-                await agent_server.project_codex_notification(
+                await hyadex_server.project_codex_notification(
                     notification("item/started", item_id)
                 )
-                await agent_server.project_codex_notification(
+                await hyadex_server.project_codex_notification(
                     notification("item/completed", item_id)
                 )
             # A late replay of the first completion stays suppressed.
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 notification("item/completed", "compact-1")
             )
 
@@ -152,31 +150,31 @@ class CompactionMirroringTests(unittest.IsolatedAsyncioTestCase):
         item_ids = [payload["item_id"] for _event_type, payload in events]
         self.assertEqual(item_ids, ["compact-1", "compact-1", "compact-2", "compact-2"])
         self.assertEqual(
-            agent_server.STORE.sessions["chat"]["codex_compaction_count"],
+            hyadex_server.STORE.sessions["chat"]["codex_compaction_count"],
             2,
         )
 
 
 class CompactionCounterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.previous_sessions = agent_server.STORE.sessions
-        self.previous_index = agent_server.CODEX_THREAD_SESSION_INDEX
-        agent_server.CODEX_THREAD_SESSION_INDEX = {}
-        agent_server.STORE.sessions = {
+        self.previous_sessions = hyadex_server.STORE.sessions
+        self.previous_index = hyadex_server.CODEX_THREAD_SESSION_INDEX
+        hyadex_server.CODEX_THREAD_SESSION_INDEX = {}
+        hyadex_server.STORE.sessions = {
             "chat": {
                 "id": "chat",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": "thread-a",
                 "session_id": "thread-a",
             }
         }
 
     async def asyncTearDown(self) -> None:
-        agent_server.STORE.sessions = self.previous_sessions
-        agent_server.CODEX_THREAD_SESSION_INDEX = self.previous_index
+        hyadex_server.STORE.sessions = self.previous_sessions
+        hyadex_server.CODEX_THREAD_SESSION_INDEX = self.previous_index
 
     async def completed(self, compaction_id: str, seq: int) -> None:
-        await agent_server.update_session_event_metadata(
+        await hyadex_server.update_session_event_metadata(
             "chat",
             {
                 "type": "codex_compaction_completed",
@@ -188,52 +186,52 @@ class CompactionCounterTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_counter_increments_once_per_terminal_key(self) -> None:
-        with patch.object(agent_server.STORE, "save", AsyncMock()):
+        with patch.object(hyadex_server.STORE, "save", AsyncMock()):
             await self.completed("native:thread-a:turn-1:c1", 1)
             await self.completed("native:thread-a:turn-1:c2", 2)
             # Re-persisting an already terminal key is a replay, not a new
             # compaction.
             await self.completed("native:thread-a:turn-1:c1", 3)
         self.assertEqual(
-            agent_server.STORE.sessions["chat"]["codex_compaction_count"], 2
+            hyadex_server.STORE.sessions["chat"]["codex_compaction_count"], 2
         )
         self.assertEqual(
-            agent_server.codex_compaction_count(agent_server.STORE.sessions["chat"]),
+            hyadex_server.codex_compaction_count(hyadex_server.STORE.sessions["chat"]),
             2,
         )
-        self.assertEqual(agent_server.codex_compaction_count({"codex_compaction_count": True}), 0)
-        self.assertEqual(agent_server.codex_compaction_count({"codex_compaction_count": "9"}), 0)
+        self.assertEqual(hyadex_server.codex_compaction_count({"codex_compaction_count": True}), 0)
+        self.assertEqual(hyadex_server.codex_compaction_count({"codex_compaction_count": "9"}), 0)
 
     async def test_counter_resets_when_provider_thread_changes(self) -> None:
-        agent_server.STORE.sessions["chat"]["codex_compaction_count"] = 7
-        agent_server.STORE.sessions["chat"]["_codex_hygiene_warned"] = {
+        hyadex_server.STORE.sessions["chat"]["codex_compaction_count"] = 7
+        hyadex_server.STORE.sessions["chat"]["_codex_hygiene_warned"] = {
             "thread_id": "thread-a",
             "level": "large",
         }
         with (
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
             patch.object(
-                agent_server, "broadcast_provider_runtime_changed", AsyncMock()
+                hyadex_server, "broadcast_provider_runtime_changed", AsyncMock()
             ),
             patch.object(
-                agent_server, "ensure_codex_thread_not_pending_fork_cleanup"
+                hyadex_server, "ensure_codex_thread_not_pending_fork_cleanup"
             ),
         ):
             # Same thread: the tally is preserved.
-            await agent_server.STORE.save_provider_session(
-                "chat", "thread-a", agent_server.BACKEND_CODEX
+            await hyadex_server.STORE.save_provider_session(
+                "chat", "thread-a", hyadex_server.BACKEND_CODEX
             )
             self.assertEqual(
-                agent_server.STORE.sessions["chat"]["codex_compaction_count"], 7
+                hyadex_server.STORE.sessions["chat"]["codex_compaction_count"], 7
             )
-            await agent_server.STORE.save_provider_session(
-                "chat", "thread-b", agent_server.BACKEND_CODEX
+            await hyadex_server.STORE.save_provider_session(
+                "chat", "thread-b", hyadex_server.BACKEND_CODEX
             )
-        session = agent_server.STORE.sessions["chat"]
+        session = hyadex_server.STORE.sessions["chat"]
         self.assertNotIn("codex_compaction_count", session)
         self.assertNotIn("_codex_hygiene_warned", session)
         self.assertTrue(session.get("codex_thread_started_at"))
-        self.assertEqual(agent_server.codex_compaction_count(session), 0)
+        self.assertEqual(hyadex_server.codex_compaction_count(session), 0)
 
 
 class RolloutHygieneTests(unittest.IsolatedAsyncioTestCase):
@@ -257,70 +255,70 @@ class RolloutHygieneTests(unittest.IsolatedAsyncioTestCase):
             json.dumps({"type": "session_meta", "payload": {"id": "someone-else"}})
             + "\n"
         )
-        agent_server.CODEX_ROLLOUT_PATH_CACHE.clear()
-        agent_server.CODEX_ROLLOUT_PATH_MISSES.clear()
+        hyadex_server.CODEX_ROLLOUT_PATH_CACHE.clear()
+        hyadex_server.CODEX_ROLLOUT_PATH_MISSES.clear()
 
     def tearDown(self) -> None:
-        agent_server.CODEX_ROLLOUT_PATH_CACHE.clear()
-        agent_server.CODEX_ROLLOUT_PATH_MISSES.clear()
+        hyadex_server.CODEX_ROLLOUT_PATH_CACHE.clear()
+        hyadex_server.CODEX_ROLLOUT_PATH_MISSES.clear()
         self.temp.cleanup()
 
     def test_rollout_path_finds_and_caches_the_verified_file(self) -> None:
-        with patch.object(agent_server, "CODEX_SESSIONS_ROOT", self.root):
-            found = agent_server.codex_rollout_path(self.THREAD)
+        with patch.object(hyadex_server, "CODEX_SESSIONS_ROOT", self.root):
+            found = hyadex_server.codex_rollout_path(self.THREAD)
             self.assertEqual(found, self.rollout.resolve())
-            self.assertIn(self.THREAD, agent_server.CODEX_ROLLOUT_PATH_CACHE)
-            self.assertIsNone(agent_server.codex_rollout_path("missing-thread"))
-            self.assertIn("missing-thread", agent_server.CODEX_ROLLOUT_PATH_MISSES)
-            self.assertIsNone(agent_server.codex_rollout_path("../escape"))
+            self.assertIn(self.THREAD, hyadex_server.CODEX_ROLLOUT_PATH_CACHE)
+            self.assertIsNone(hyadex_server.codex_rollout_path("missing-thread"))
+            self.assertIn("missing-thread", hyadex_server.CODEX_ROLLOUT_PATH_MISSES)
+            self.assertIsNone(hyadex_server.codex_rollout_path("../escape"))
             # A vanished cached file is dropped rather than returned stale.
             self.rollout.unlink()
-            self.assertIsNone(agent_server.codex_rollout_path(self.THREAD))
-            self.assertNotIn(self.THREAD, agent_server.CODEX_ROLLOUT_PATH_CACHE)
+            self.assertIsNone(hyadex_server.codex_rollout_path(self.THREAD))
+            self.assertNotIn(self.THREAD, hyadex_server.CODEX_ROLLOUT_PATH_CACHE)
 
     async def test_hygiene_fields_and_warning_thresholds(self) -> None:
         session = {
             "id": "chat",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.THREAD,
             "codex_compaction_count": 3,
             "codex_thread_started_at": "2026-09-04T10:00:00Z",
         }
-        with patch.object(agent_server, "CODEX_SESSIONS_ROOT", self.root):
-            hygiene = await agent_server.codex_thread_hygiene(session)
+        with patch.object(hyadex_server, "CODEX_SESSIONS_ROOT", self.root):
+            hygiene = await hyadex_server.codex_thread_hygiene(session)
         self.assertEqual(hygiene["rollout_path"], str(self.rollout.resolve()))
         self.assertEqual(hygiene["rollout_bytes"], self.rollout.stat().st_size)
         self.assertTrue(hygiene["rollout_mtime"])
         self.assertEqual(hygiene["compaction_count"], 3)
         self.assertEqual(hygiene["thread_started_at"], "2026-09-04T10:00:00Z")
-        self.assertIsNone(agent_server.codex_thread_hygiene_warning(hygiene))
+        self.assertIsNone(hyadex_server.codex_thread_hygiene_warning(hygiene))
 
         with (
-            patch.object(agent_server, "CODEX_ROLLOUT_WARN_BYTES", 1000),
-            patch.object(agent_server, "CODEX_ROLLOUT_OVERSIZED_BYTES", 10_000),
-            patch.object(agent_server, "CODEX_COMPACTION_WARN_COUNT", 5),
+            patch.object(hyadex_server, "CODEX_ROLLOUT_WARN_BYTES", 1000),
+            patch.object(hyadex_server, "CODEX_ROLLOUT_OVERSIZED_BYTES", 10_000),
+            patch.object(hyadex_server, "CODEX_COMPACTION_WARN_COUNT", 5),
         ):
             self.assertEqual(
-                agent_server.codex_thread_hygiene_warning(hygiene), "large"
+                hyadex_server.codex_thread_hygiene_warning(hygiene), "large"
             )
             self.assertEqual(
-                agent_server.codex_thread_hygiene_warning(
+                hyadex_server.codex_thread_hygiene_warning(
                     {**hygiene, "rollout_bytes": 10_000}
                 ),
                 "oversized",
             )
             self.assertEqual(
-                agent_server.codex_thread_hygiene_warning(
+                hyadex_server.codex_thread_hygiene_warning(
                     {"rollout_bytes": None, "compaction_count": 5}
                 ),
                 "large",
             )
             self.assertIsNone(
-                agent_server.codex_thread_hygiene_warning(
+                hyadex_server.codex_thread_hygiene_warning(
                     {"rollout_bytes": 999, "compaction_count": 4}
                 )
             )
-            public = agent_server.codex_thread_hygiene_public(hygiene)
+            public = hyadex_server.codex_thread_hygiene_public(hygiene)
             self.assertEqual(public["warning"], "large")
             self.assertEqual(
                 public["thresholds"],
@@ -332,9 +330,9 @@ class RolloutHygieneTests(unittest.IsolatedAsyncioTestCase):
             )
 
         # Chats without a thread report an inert snapshot without touching disk.
-        with patch.object(agent_server, "CODEX_SESSIONS_ROOT", self.root):
-            empty = await agent_server.codex_thread_hygiene(
-                {"id": "new", "backend": agent_server.BACKEND_CODEX}
+        with patch.object(hyadex_server, "CODEX_SESSIONS_ROOT", self.root):
+            empty = await hyadex_server.codex_thread_hygiene(
+                {"id": "new", "backend": hyadex_server.BACKEND_CODEX}
             )
         self.assertEqual(
             empty,
@@ -353,25 +351,25 @@ class RolloutHygieneTests(unittest.IsolatedAsyncioTestCase):
             {"CODEX_ROLLOUT_WARN_BYTES": "12345", "CODEX_COMPACTION_WARN_COUNT": "junk"},
         ):
             self.assertEqual(
-                agent_server.codex_hygiene_int_setting("CODEX_ROLLOUT_WARN_BYTES", 1),
+                hyadex_server.codex_hygiene_int_setting("CODEX_ROLLOUT_WARN_BYTES", 1),
                 12345,
             )
             self.assertEqual(
-                agent_server.codex_hygiene_int_setting("CODEX_COMPACTION_WARN_COUNT", 100),
+                hyadex_server.codex_hygiene_int_setting("CODEX_COMPACTION_WARN_COUNT", 100),
                 100,
             )
         with patch.dict("os.environ", {"HYADEX_CODEX_ROLLOUT_WARN_BYTES": "777"}):
             self.assertEqual(
-                agent_server.codex_hygiene_int_setting("CODEX_ROLLOUT_WARN_BYTES", 1),
+                hyadex_server.codex_hygiene_int_setting("CODEX_ROLLOUT_WARN_BYTES", 1),
                 777,
             )
 
     async def test_runtime_snapshot_includes_thread_hygiene(self) -> None:
-        previous_sessions = agent_server.STORE.sessions
-        agent_server.STORE.sessions = {
+        previous_sessions = hyadex_server.STORE.sessions
+        hyadex_server.STORE.sessions = {
             "chat": {
                 "id": "chat",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": self.THREAD,
                 "codex_compaction_count": 2,
                 "codex_rotated_threads": [{"thread_id": "old", "rotated_at": "x"}],
@@ -379,13 +377,13 @@ class RolloutHygieneTests(unittest.IsolatedAsyncioTestCase):
         }
         try:
             with (
-                patch.object(agent_server, "CODEX_SESSIONS_ROOT", self.root),
-                patch.object(agent_server.PROVIDERS, "codex_manager", None),
-                patch.object(agent_server, "CODEX_ROLLOUT_WARN_BYTES", 1000),
+                patch.object(hyadex_server, "CODEX_SESSIONS_ROOT", self.root),
+                patch.object(hyadex_server.PROVIDERS, "codex_manager", None),
+                patch.object(hyadex_server, "CODEX_ROLLOUT_WARN_BYTES", 1000),
             ):
-                runtime = await agent_server.codex_runtime_snapshot("chat")
+                runtime = await hyadex_server.codex_runtime_snapshot("chat")
         finally:
-            agent_server.STORE.sessions = previous_sessions
+            hyadex_server.STORE.sessions = previous_sessions
         hygiene = runtime["thread_hygiene"]
         self.assertEqual(hygiene["warning"], "large")
         self.assertEqual(hygiene["compaction_count"], 2)
@@ -393,11 +391,11 @@ class RolloutHygieneTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime["rotated_threads"], [{"thread_id": "old", "rotated_at": "x"}])
 
     async def test_turn_start_warns_once_per_level(self) -> None:
-        previous_sessions = agent_server.STORE.sessions
-        agent_server.STORE.sessions = {
+        previous_sessions = hyadex_server.STORE.sessions
+        hyadex_server.STORE.sessions = {
             "chat": {
                 "id": "chat",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": self.THREAD,
             }
         }
@@ -413,14 +411,14 @@ class RolloutHygieneTests(unittest.IsolatedAsyncioTestCase):
 
         try:
             with (
-                patch.object(agent_server, "CODEX_SESSIONS_ROOT", self.root),
-                patch.object(agent_server, "CODEX_ROLLOUT_WARN_BYTES", 1000),
-                patch.object(agent_server, "CODEX_ROLLOUT_OVERSIZED_BYTES", 1 << 40),
-                patch.object(agent_server.STORE, "save", AsyncMock()),
-                patch.object(agent_server, "append_event", side_effect=record_event),
+                patch.object(hyadex_server, "CODEX_SESSIONS_ROOT", self.root),
+                patch.object(hyadex_server, "CODEX_ROLLOUT_WARN_BYTES", 1000),
+                patch.object(hyadex_server, "CODEX_ROLLOUT_OVERSIZED_BYTES", 1 << 40),
+                patch.object(hyadex_server.STORE, "save", AsyncMock()),
+                patch.object(hyadex_server, "append_event", side_effect=record_event),
             ):
-                await agent_server.warn_codex_thread_hygiene("chat", self.THREAD, "run-1")
-                await agent_server.warn_codex_thread_hygiene("chat", self.THREAD, "run-2")
+                await hyadex_server.warn_codex_thread_hygiene("chat", self.THREAD, "run-1")
+                await hyadex_server.warn_codex_thread_hygiene("chat", self.THREAD, "run-2")
                 self.assertEqual(len(events), 1)
                 event_type, payload = events[0]
                 self.assertEqual(event_type, "codex_thread_hygiene")
@@ -428,27 +426,27 @@ class RolloutHygieneTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(payload["run_id"], "run-1")
                 self.assertEqual(payload["thread_id"], self.THREAD)
                 self.assertIn("Start fresh thread", str(payload["message"]))
-                warned = agent_server.STORE.sessions["chat"]["_codex_hygiene_warned"]
+                warned = hyadex_server.STORE.sessions["chat"]["_codex_hygiene_warned"]
                 self.assertEqual(warned["level"], "large")
                 self.assertEqual(warned["thread_id"], self.THREAD)
 
                 # Crossing the next threshold warns again, exactly once more.
-                with patch.object(agent_server, "CODEX_ROLLOUT_OVERSIZED_BYTES", 1000):
-                    await agent_server.warn_codex_thread_hygiene("chat", self.THREAD, "run-3")
-                    await agent_server.warn_codex_thread_hygiene("chat", self.THREAD, "run-4")
+                with patch.object(hyadex_server, "CODEX_ROLLOUT_OVERSIZED_BYTES", 1000):
+                    await hyadex_server.warn_codex_thread_hygiene("chat", self.THREAD, "run-3")
+                    await hyadex_server.warn_codex_thread_hygiene("chat", self.THREAD, "run-4")
                 self.assertEqual(len(events), 2)
                 self.assertEqual(events[1][1]["warning"], "oversized")
 
                 # The scheduled variant runs off the turn's critical path.
-                agent_server.STORE.sessions["chat"].pop("_codex_hygiene_warned")
-                agent_server.schedule_codex_thread_hygiene_check("chat", self.THREAD, "run-5")
-                await agent_server.wait_for_session_tasks(
-                    agent_server.CODEX_HYGIENE_TASKS, "chat"
+                hyadex_server.STORE.sessions["chat"].pop("_codex_hygiene_warned")
+                hyadex_server.schedule_codex_thread_hygiene_check("chat", self.THREAD, "run-5")
+                await hyadex_server.wait_for_session_tasks(
+                    hyadex_server.CODEX_HYGIENE_TASKS, "chat"
                 )
                 self.assertEqual(len(events), 3)
                 self.assertEqual(events[2][1]["run_id"], "run-5")
         finally:
-            agent_server.STORE.sessions = previous_sessions
+            hyadex_server.STORE.sessions = previous_sessions
 
     async def test_acquire_run_thread_schedules_check_only_for_resumed_threads(
         self,
@@ -456,30 +454,30 @@ class RolloutHygieneTests(unittest.IsolatedAsyncioTestCase):
         scheduled: list[tuple[str, str, str | None]] = []
         with (
             patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_codex_app_server_thread",
                 AsyncMock(return_value=("thread-native", "hash")),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "schedule_codex_thread_hygiene_check",
                 side_effect=lambda *args: scheduled.append(args),
             ),
         ):
-            await agent_server.acquire_codex_run_thread(
+            await hyadex_server.acquire_codex_run_thread(
                 object(),
                 "chat",
-                {"backend": agent_server.BACKEND_CODEX},
+                {"backend": hyadex_server.BACKEND_CODEX},
                 "/tmp",
                 standalone_provider_context=False,
                 expected_run_id="run-new",
             )
             self.assertEqual(scheduled, [])
-            await agent_server.acquire_codex_run_thread(
+            await hyadex_server.acquire_codex_run_thread(
                 object(),
                 "chat",
                 {
-                    "backend": agent_server.BACKEND_CODEX,
+                    "backend": hyadex_server.BACKEND_CODEX,
                     "codex_thread_id": "thread-native",
                 },
                 "/tmp",

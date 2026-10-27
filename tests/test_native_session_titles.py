@@ -11,9 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-import agent_server as server
-
-
+from tests import hyadex_server as server
 def session(backend="claude", *, title="First request", source="prompt"):
     return {
         "id": "title-chat", "backend": backend, "session_id": "provider-title",

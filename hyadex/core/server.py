@@ -29,6 +29,9 @@ class ServerState:
     execution_maintenance: Any = None
     # Exclusive lock on the state directory for this process.
     state_process_lock: Any = None
+    # Private origin provider helpers call back to; set by the execution
+    # worker before startup (public bind/port still describe the gateway).
+    provider_callback_origin: str | None = None
 
 
 SERVER = ServerState(bind_address=hyadex_setting("AGENT_BIND", "0.0.0.0"),
@@ -41,6 +44,7 @@ LEGACY_NAMES: dict[str, str] = {
     "QUEUE_RECOVERY_TASK": "queue_recovery_task",
     "EXECUTION_MAINTENANCE": "execution_maintenance",
     "SERVER_STATE_PROCESS_LOCK": "state_process_lock",
+    "PROVIDER_CALLBACK_ORIGIN": "provider_callback_origin",
 }
 
 

@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import agent_server
+from tests import hyadex_server
 import httpx
 from hyadex.ops import session_ownership as instances
 from tests.native_transcripts import write_claude_transcript, write_codex_transcript
@@ -169,62 +169,62 @@ class CrossInstanceIndexTests(ImportFixtures, unittest.TestCase):
 class CrossInstanceImportEndpointTests(ImportFixtures, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         super().setUp()
-        patch.object(agent_server, "STATE_DIR", self.current.state).start()
-        patch.object(agent_server.STORE, "sessions", {}).start()
-        self.create = patch.object(agent_server.STORE, "create", AsyncMock()).start()
+        patch.object(hyadex_server, "STATE_DIR", self.current.state).start()
+        patch.object(hyadex_server.STORE, "sessions", {}).start()
+        self.create = patch.object(hyadex_server.STORE, "create", AsyncMock()).start()
 
     async def test_manual_resume_cannot_bypass_filter_including_import_history_false(self):
         for backend, field in instances.PROVIDER_ID_FIELDS.items():
-            if field not in agent_server.CreateSessionRequest.model_fields:
+            if field not in hyadex_server.CreateSessionRequest.model_fields:
                 continue  # Do not enable providers absent from this release.
             self.index(self.other, {"local": {"backend": backend, field: "owned"}})
             for supplied_field in (field, "provider_session_id", "session_id"):
                 with self.subTest(backend=backend, supplied_field=supplied_field):
-                    req = agent_server.CreateSessionRequest(**{"backend": backend, supplied_field: "owned", "import_history": False})
-                    with self.assertRaises(agent_server.HTTPException) as error:
-                        await agent_server.create_session(req)
+                    req = hyadex_server.CreateSessionRequest(**{"backend": backend, supplied_field: "owned", "import_history": False})
+                    with self.assertRaises(hyadex_server.HTTPException) as error:
+                        await hyadex_server.create_session(req)
                     self.assertEqual(error.exception.status_code, 409)
         self.create.assert_not_awaited()
 
     async def test_fresh_chat_does_not_check_other_instances(self):
-        with patch.object(agent_server, "other_local_instance_provider_keys", side_effect=AssertionError("unnecessary scan")), patch.object(
-            agent_server, "create_session_with_history", AsyncMock(return_value={"session": {}}),
+        with patch.object(hyadex_server, "other_local_instance_provider_keys", side_effect=AssertionError("unnecessary scan")), patch.object(
+            hyadex_server, "create_session_with_history", AsyncMock(return_value={"session": {}}),
         ) as create:
-            req = agent_server.CreateSessionRequest(backend="claude")
-            self.assertEqual(await agent_server.create_session(req), {"session": {}})
+            req = hyadex_server.CreateSessionRequest(backend="claude")
+            self.assertEqual(await hyadex_server.create_session(req), {"session": {}})
             create.assert_awaited_once_with(req)
         self.assertFalse(self.registry.root.exists())
 
     async def test_failed_resume_releases_guard_for_retry(self):
-        req = agent_server.CreateSessionRequest(backend="claude", provider_session_id="free")
-        with patch.object(agent_server, "create_session_with_history", AsyncMock(side_effect=RuntimeError("synthetic"))):
+        req = hyadex_server.CreateSessionRequest(backend="claude", provider_session_id="free")
+        with patch.object(hyadex_server, "create_session_with_history", AsyncMock(side_effect=RuntimeError("synthetic"))):
             with self.assertRaisesRegex(RuntimeError, "synthetic"):
-                await agent_server.create_session(req)
+                await hyadex_server.create_session(req)
         with instances.history_import_lock():
             pass
 
     async def test_cancelled_resume_releases_guard_for_retry(self):
-        req = agent_server.CreateSessionRequest(backend="claude", provider_session_id="free")
-        with patch.object(agent_server, "create_session_with_history", AsyncMock(side_effect=asyncio.CancelledError)):
+        req = hyadex_server.CreateSessionRequest(backend="claude", provider_session_id="free")
+        with patch.object(hyadex_server, "create_session_with_history", AsyncMock(side_effect=asyncio.CancelledError)):
             with self.assertRaises(asyncio.CancelledError):
-                await agent_server.create_session(req)
+                await hyadex_server.create_session(req)
         with instances.history_import_lock():
             pass
 
     async def test_concurrent_import_returns_retryable_error_without_creating(self):
-        req = agent_server.CreateSessionRequest(backend="claude", provider_session_id="free")
+        req = hyadex_server.CreateSessionRequest(backend="claude", provider_session_id="free")
         with instances.history_import_lock():
-            with self.assertRaises(agent_server.HTTPException) as error:
-                await agent_server.create_session(req)
+            with self.assertRaises(hyadex_server.HTTPException) as error:
+                await hyadex_server.create_session(req)
         self.assertEqual(error.exception.status_code, 503)
         self.create.assert_not_awaited()
 
     async def test_unreadable_foreign_index_blocks_resume_not_new_chats(self):
         target = self.index(self.other, {})
         target.write_text("not json")
-        req = agent_server.CreateSessionRequest(backend="claude", provider_session_id="free")
-        with self.assertRaises(agent_server.HTTPException) as error:
-            await agent_server.create_session(req)
+        req = hyadex_server.CreateSessionRequest(backend="claude", provider_session_id="free")
+        with self.assertRaises(hyadex_server.HTTPException) as error:
+            await hyadex_server.create_session(req)
         self.assertEqual(error.exception.status_code, 503)
         self.create.assert_not_awaited()
 

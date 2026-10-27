@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import agent_server
+from tests import hyadex_server
 from tests.test_provider_history_sync import legacy_provider_authority_block
 
 
@@ -23,25 +23,25 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                     self.event(4, "assistant_text", text="Answer", **metadata),
                     self.event(5, "turn_finished", result_text="Answer", **metadata),
                 ])
-                agent_server.TIMELINE_INDEX_CACHE.clear()
-                page = agent_server.read_semantic_timeline_page(self.session_id, limit=2, tail=True)
+                hyadex_server.TIMELINE_INDEX_CACHE.clear()
+                page = hyadex_server.read_semantic_timeline_page(self.session_id, limit=2, tail=True)
                 if not scheduled:
                     self.assertTrue(any(event["type"] == "reasoning_summary" for event in page["events"]))
                 self.assertFalse(any(event["type"] == "reasoning_text" for event in page["events"]))
-                trace = agent_server.read_indexed_run_trace(self.session_id, "channel-run", anchor_seq=5)
+                trace = hyadex_server.read_indexed_run_trace(self.session_id, "channel-run", anchor_seq=5)
                 self.assertEqual([event["type"] for event in trace["events"]], ["reasoning_summary", "reasoning_text"])
-                self.assertEqual(agent_server.timeline_index_event_text(trace["events"][1]), "")
+                self.assertEqual(hyadex_server.timeline_index_event_text(trace["events"][1]), "")
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.previous_state_dir = agent_server.STATE_DIR
-        agent_server.STATE_DIR = Path(self.temporary.name)
-        agent_server.FORK_INTERNAL_RUN_CACHE.clear()
-        agent_server.FORK_INTERNAL_RUN_LOCKS.clear()
-        agent_server.TIMELINE_INDEX_CACHE.clear()
-        agent_server.TIMELINE_INDEX_LOCKS.clear()
+        self.previous_state_dir = hyadex_server.STATE_DIR
+        hyadex_server.STATE_DIR = Path(self.temporary.name)
+        hyadex_server.FORK_INTERNAL_RUN_CACHE.clear()
+        hyadex_server.FORK_INTERNAL_RUN_LOCKS.clear()
+        hyadex_server.TIMELINE_INDEX_CACHE.clear()
+        hyadex_server.TIMELINE_INDEX_LOCKS.clear()
         self.session_id = "compact-history-chat"
-        path = agent_server.events_path(self.session_id)
+        path = hyadex_server.events_path(self.session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             "".join(json.dumps(self.event(seq, event_type)) + "\n" for seq, event_type in enumerate([
@@ -72,13 +72,13 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def tearDown(self) -> None:
-        agent_server.FORK_INTERNAL_RUN_CACHE.clear()
-        agent_server.FORK_INTERNAL_RUN_LOCKS.clear()
-        agent_server.TIMELINE_INDEX_CACHE.clear()
-        agent_server.TIMELINE_INDEX_LOCKS.clear()
-        agent_server.EVENT_SEQ_CACHE.pop(self.session_id, None)
-        agent_server.HISTORY_SEARCH_DIRTY.discard(self.session_id)
-        agent_server.STATE_DIR = self.previous_state_dir
+        hyadex_server.FORK_INTERNAL_RUN_CACHE.clear()
+        hyadex_server.FORK_INTERNAL_RUN_LOCKS.clear()
+        hyadex_server.TIMELINE_INDEX_CACHE.clear()
+        hyadex_server.TIMELINE_INDEX_LOCKS.clear()
+        hyadex_server.EVENT_SEQ_CACHE.pop(self.session_id, None)
+        hyadex_server.HISTORY_SEARCH_DIRTY.discard(self.session_id)
+        hyadex_server.STATE_DIR = self.previous_state_dir
         self.temporary.cleanup()
 
     def test_client_safe_job_projection_is_immutable(self) -> None:
@@ -89,7 +89,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                     job["prompt"] = prompt
                 event = self.event(23, "job_created", job=job)
 
-                projected = agent_server.client_safe_event(event)
+                projected = hyadex_server.client_safe_event(event)
 
                 self.assertIsNot(projected, event)
                 self.assertIsNot(projected["job"], job)
@@ -100,11 +100,11 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(job["prompt"], prompt)
 
     def test_history_projects_promptless_job_for_older_clients(self) -> None:
-        path = agent_server.events_path(self.session_id)
+        path = hyadex_server.events_path(self.session_id)
         stored = self.event(1, "job_created", job={"id": "job-1", "title": "Data Repeater"})
         path.write_text(json.dumps(stored) + "\n", encoding="utf-8")
 
-        events = agent_server.read_visible_events_page(self.session_id, limit=100, tail=False)[0]
+        events = hyadex_server.read_visible_events_page(self.session_id, limit=100, tail=False)[0]
 
         self.assertEqual(events[0]["job"]["prompt"], "")
         persisted = json.loads(path.read_text(encoding="utf-8"))
@@ -112,11 +112,11 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_append_event_broadcasts_compatible_job_without_persisting_prompt(self) -> None:
         broadcast = AsyncMock()
-        with patch.object(agent_server.HUB, "broadcast", new=broadcast), patch.object(
-            agent_server,
+        with patch.object(hyadex_server.HUB, "broadcast", new=broadcast), patch.object(
+            hyadex_server,
             "ensure_dirs",
         ):
-            event = await agent_server.append_event(self.session_id, "job_created", {
+            event = await hyadex_server.append_event(self.session_id, "job_created", {
                 "job": {"id": "job-1", "title": "Data Repeater"},
                 "job_id": "job-1",
             })
@@ -124,7 +124,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         live_event = broadcast.await_args.args[1]
         self.assertEqual(live_event["job"]["prompt"], "")
         self.assertNotIn("prompt", event["job"])
-        persisted = json.loads(agent_server.events_path(self.session_id).read_text(encoding="utf-8").splitlines()[-1])
+        persisted = json.loads(hyadex_server.events_path(self.session_id).read_text(encoding="utf-8").splitlines()[-1])
         self.assertNotIn("prompt", persisted["job"])
 
     def test_all_raw_event_readers_project_legacy_imported_provider_prompts(self) -> None:
@@ -144,7 +144,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 1,
                 "turn_started",
                 run_id="import_raw_projection",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt="Imported question" + authority,
             ),
@@ -152,7 +152,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 2,
                 "assistant_text",
                 run_id="import_raw_projection",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 text="Imported answer",
             ),
@@ -160,7 +160,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 3,
                 "turn_started",
                 run_id="import_raw_projection",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt=notice,
             ),
@@ -168,7 +168,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 4,
                 "assistant_text",
                 run_id="import_raw_projection",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 text="Answer after provider-only boundary",
             ),
@@ -176,7 +176,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 5,
                 "turn_started",
                 run_id="import_raw_projection",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 provider_history_sanitized=True,
                 prompt=marked_notice,
@@ -185,26 +185,26 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 6,
                 "turn_started",
                 run_id="native_user",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 prompt=native_prompt,
             ),
         ]
         self.write_events(stored)
 
-        direct_authority = agent_server.client_safe_event(stored[0])
-        direct_notice = agent_server.client_safe_event(stored[2])
+        direct_authority = hyadex_server.client_safe_event(stored[0])
+        direct_notice = hyadex_server.client_safe_event(stored[2])
         self.assertEqual(direct_authority["prompt"], "Imported question")
         self.assertEqual(direct_notice["prompt"], "")
         self.assertNotIn(
-            agent_server.TIMELINE_IMPORTED_PROMPT_HIDDEN_FIELD,
+            hyadex_server.TIMELINE_IMPORTED_PROMPT_HIDDEN_FIELD,
             direct_notice,
         )
 
         pages = (
-            agent_server.read_events(self.session_id, limit=20),
-            agent_server.read_client_events_page(self.session_id, limit=20)[0],
-            agent_server.read_visible_events_page(self.session_id, limit=20)[0],
-            agent_server.read_visible_events_after_page(
+            hyadex_server.read_events(self.session_id, limit=20),
+            hyadex_server.read_client_events_page(self.session_id, limit=20)[0],
+            hyadex_server.read_visible_events_page(self.session_id, limit=20)[0],
+            hyadex_server.read_visible_events_after_page(
                 self.session_id,
                 after=0,
                 limit=20,
@@ -220,16 +220,16 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(by_seq[6]["prompt"], native_prompt)
                 self.assertNotIn("Hyadex provider authority", by_seq[1]["prompt"])
                 self.assertNotIn(
-                    agent_server.TIMELINE_IMPORTED_PROMPT_HIDDEN_FIELD,
+                    hyadex_server.TIMELINE_IMPORTED_PROMPT_HIDDEN_FIELD,
                     by_seq[3],
                 )
 
-        head_at_empty_boundary = agent_server.read_client_events_page(
+        head_at_empty_boundary = hyadex_server.read_client_events_page(
             self.session_id,
             after=2,
             limit=1,
         )
-        tail_at_empty_boundary = agent_server.read_client_events_page(
+        tail_at_empty_boundary = hyadex_server.read_client_events_page(
             self.session_id,
             before=4,
             limit=1,
@@ -261,7 +261,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 1,
                 "turn_started",
                 run_id="import_ws_projection",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt=notice,
             ),
@@ -269,13 +269,13 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 2,
                 "assistant_text",
                 run_id="import_ws_projection",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 text="Answer remains routed after the empty boundary",
             ),
         ])
 
-        first, continuation, exhausted = agent_server.read_event_catchup_batch(
+        first, continuation, exhausted = hyadex_server.read_event_catchup_batch(
             self.session_id,
             after=0,
             through=2,
@@ -286,7 +286,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first[0]["prompt"], "")
         self.assertEqual(continuation[4], 1)
 
-        second, continuation, exhausted = agent_server.read_event_catchup_batch(
+        second, continuation, exhausted = hyadex_server.read_event_catchup_batch(
             self.session_id,
             after=1,
             through=2,
@@ -311,13 +311,13 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             "</task-notification>"
         )
         broadcast = AsyncMock()
-        with patch.object(agent_server.HUB, "broadcast", new=broadcast):
-            stored = await agent_server.append_event(
+        with patch.object(hyadex_server.HUB, "broadcast", new=broadcast):
+            stored = await hyadex_server.append_event(
                 self.session_id,
                 "turn_started",
                 {
                     "run_id": "import_live_projection",
-                    "backend": agent_server.BACKEND_CLAUDE,
+                    "backend": hyadex_server.BACKEND_CLAUDE,
                     "imported": True,
                     "prompt": notice,
                 },
@@ -327,17 +327,17 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         projected = broadcast.await_args.args[1]
         self.assertEqual(projected["prompt"], "")
         self.assertNotIn(
-            agent_server.TIMELINE_IMPORTED_PROMPT_HIDDEN_FIELD,
+            hyadex_server.TIMELINE_IMPORTED_PROMPT_HIDDEN_FIELD,
             projected,
         )
 
     def test_compact_filter_preserves_conversation_system_job_and_file_events(self) -> None:
-        default_page = agent_server.read_visible_events_page(
+        default_page = hyadex_server.read_visible_events_page(
             self.session_id,
             limit=100,
             tail=False,
         )
-        compact_page = agent_server.read_visible_events_page(
+        compact_page = hyadex_server.read_visible_events_page(
             self.session_id,
             limit=100,
             tail=False,
@@ -367,7 +367,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(compact_page[1:], (22, 11, 0, 0))
 
     def test_compact_before_and_after_pages_count_only_compact_events(self) -> None:
-        before_page = agent_server.read_visible_events_page(
+        before_page = hyadex_server.read_visible_events_page(
             self.session_id,
             before=18,
             limit=3,
@@ -377,7 +377,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([event["seq"] for event in before_page[0]], [12, 14, 16])
         self.assertEqual(before_page[1:], (22, 8, 5, 0))
 
-        after_page = agent_server.read_visible_events_after_page(
+        after_page = hyadex_server.read_visible_events_after_page(
             self.session_id,
             after=10,
             limit=3,
@@ -387,19 +387,19 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after_page[1:], (22, 6, 0, 3))
 
     def test_empty_delta_skips_fork_scan_and_preserves_rollback_sequence(self) -> None:
-        with patch.object(agent_server, "fork_internal_run_ids") as fork_scan:
+        with patch.object(hyadex_server, "fork_internal_run_ids") as fork_scan:
             for after in (22, 30):
                 with self.subTest(after=after):
                     self.assertEqual(
-                        agent_server.read_visible_events_after_page(self.session_id, after=after),
+                        hyadex_server.read_visible_events_after_page(self.session_id, after=after),
                         ([], 22, 0, 0, 0),
                     )
             fork_scan.assert_not_called()
 
     def test_ordinary_delta_and_visible_catchup_skip_fork_scan(self) -> None:
-        with patch.object(agent_server, "fork_internal_run_ids") as fork_scan:
-            delta = agent_server.read_visible_events_after_page(self.session_id, after=18)
-            catchup, continuation, exhausted = agent_server.read_event_catchup_batch(
+        with patch.object(hyadex_server, "fork_internal_run_ids") as fork_scan:
+            delta = hyadex_server.read_visible_events_after_page(self.session_id, after=18)
+            catchup, continuation, exhausted = hyadex_server.read_event_catchup_batch(
                 self.session_id, after=18, through=22, visible=True,
             )
             fork_scan.assert_not_called()
@@ -410,7 +410,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(exhausted)
 
     def test_legacy_fork_digest_runs_do_not_count_as_visible_page_events(self) -> None:
-        path = agent_server.events_path(self.session_id)
+        path = hyadex_server.events_path(self.session_id)
         events = [
             self.event(1, "turn_started", run_id="digest-run", purpose="handoff_digest", forked=True, prompt="Generate digest"),
             self.event(2, "reasoning_summary", run_id="digest-run", forked=True, text="Private digest reasoning"),
@@ -419,14 +419,14 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(5, "assistant_text", run_id="normal-run", forked=True, text="Retained answer"),
         ]
         path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
-        agent_server.FORK_INTERNAL_RUN_CACHE.clear()
+        hyadex_server.FORK_INTERNAL_RUN_CACHE.clear()
 
-        page = agent_server.read_visible_events_page(self.session_id, limit=100, tail=False)
-        after_page = agent_server.read_visible_events_after_page(self.session_id, after=1, limit=100)
-        catchup, continuation, exhausted = agent_server.read_event_catchup_batch(
+        page = hyadex_server.read_visible_events_page(self.session_id, limit=100, tail=False)
+        after_page = hyadex_server.read_visible_events_after_page(self.session_id, after=1, limit=100)
+        catchup, continuation, exhausted = hyadex_server.read_event_catchup_batch(
             self.session_id, after=1, through=5, visible=True,
         )
-        generic = agent_server.read_events(self.session_id, limit=100, visible=True)
+        generic = hyadex_server.read_events(self.session_id, limit=100, visible=True)
 
         self.assertEqual([event["seq"] for event in page[0]], [4, 5])
         self.assertEqual(page[1:], (5, 2, 0, 0))
@@ -480,7 +480,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         events.append(self.event(seq, "turn_finished", run_id="human-new", result_text="Latest answer"))
         self.write_events(events)
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=2,
             tail=True,
@@ -512,7 +512,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("human-new", [event.get("run_id") for event in page["events"]])
         self.assertNotIn("human-old", [event.get("run_id") for event in page["events"]])
 
-        older = agent_server.read_semantic_timeline_page(
+        older = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             semantic_before=page["next_semantic_before"],
             limit=2,
@@ -557,7 +557,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         ])
         self.write_events(events)
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=1,
             tail=True,
@@ -577,7 +577,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("turn_finished", [event["type"] for event in page["events"]])
         self.assertGreater(
             len(page["events"]),
-            agent_server.SEMANTIC_TIMELINE_EVENT_BUDGET_PER_ITEM,
+            hyadex_server.SEMANTIC_TIMELINE_EVENT_BUDGET_PER_ITEM,
         )
         self.assertNotIn("tool_started", [event["type"] for event in page["events"]])
         self.assertEqual(
@@ -620,7 +620,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 ))
                 self.write_events(events)
 
-                page = agent_server.read_semantic_timeline_page(
+                page = hyadex_server.read_semantic_timeline_page(
                     self.session_id,
                     limit=1,
                     tail=True,
@@ -635,7 +635,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                     len(artifacts),
                     min(
                         artifact_count,
-                        agent_server.SEMANTIC_TIMELINE_ESSENTIAL_LIMIT_PER_ITEM,
+                        hyadex_server.SEMANTIC_TIMELINE_ESSENTIAL_LIMIT_PER_ITEM,
                     ),
                 )
                 if artifact_count == 13:
@@ -645,8 +645,8 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                     )
                 self.assertLessEqual(
                     len(page["events"]),
-                    agent_server.SEMANTIC_TIMELINE_EVENT_BUDGET_PER_ITEM
-                    + agent_server.SEMANTIC_TIMELINE_ESSENTIAL_LIMIT_PER_ITEM,
+                    hyadex_server.SEMANTIC_TIMELINE_EVENT_BUDGET_PER_ITEM
+                    + hyadex_server.SEMANTIC_TIMELINE_ESSENTIAL_LIMIT_PER_ITEM,
                 )
 
     def test_semantic_media_page_cap_is_fair_across_multiple_turns(self) -> None:
@@ -682,7 +682,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ))
         self.write_events(events)
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=5,
             tail=True,
@@ -697,19 +697,19 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         }
         base_budget = (
             len(run_ids)
-            * agent_server.SEMANTIC_TIMELINE_EVENT_BUDGET_PER_ITEM
+            * hyadex_server.SEMANTIC_TIMELINE_EVENT_BUDGET_PER_ITEM
         )
 
         self.assertTrue(all(count > 0 for count in counts.values()))
         self.assertLessEqual(max(counts.values()) - min(counts.values()), 1)
         self.assertTrue(all(
-            count <= agent_server.SEMANTIC_TIMELINE_ESSENTIAL_LIMIT_PER_ITEM
+            count <= hyadex_server.SEMANTIC_TIMELINE_ESSENTIAL_LIMIT_PER_ITEM
             for count in counts.values()
         ))
         self.assertLessEqual(
             len(page["events"]),
             base_budget
-            + agent_server.SEMANTIC_TIMELINE_ESSENTIAL_PAGE_OVERFLOW_LIMIT,
+            + hyadex_server.SEMANTIC_TIMELINE_ESSENTIAL_PAGE_OVERFLOW_LIMIT,
         )
 
     def test_emergency_alerts_remain_exact_semantic_landmarks_inside_turns_and_jobs(self) -> None:
@@ -737,7 +737,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.write_events(events)
 
-        index = agent_server.build_timeline_index(self.session_id)
+        index = hyadex_server.build_timeline_index(self.session_id)
         emergency_landmarks = [
             landmark
             for landmark in index["landmarks"]
@@ -748,7 +748,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             [("event:event-2", 2), ("event:event-5", 5)],
         )
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=10,
             tail=False,
@@ -788,20 +788,20 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                     self.event(27, "turn_finished", **metadata, result_text="Completed after reset"),
                 ]
                 self.write_events(events)
-                index = agent_server.build_timeline_index(self.session_id)
+                index = hyadex_server.build_timeline_index(self.session_id)
                 landmark = next(item for item in index["landmarks"] if item["key"] == "event:event-2")
                 self.assertEqual(landmark["kind"], "system")
                 self.assertEqual(landmark["title"], "Provider Context Reset")
                 self.assertEqual(landmark["start_seq"], 2)
                 for clear_cache in (False, True):
                     if clear_cache:
-                        agent_server.TIMELINE_INDEX_CACHE.clear()
-                    page = agent_server.read_semantic_timeline_page(
+                        hyadex_server.TIMELINE_INDEX_CACHE.clear()
+                    page = hyadex_server.read_semantic_timeline_page(
                         self.session_id, after=1, semantic_before=3, limit=1, tail=False,
                     )
                     self.assertEqual(page["semantic_item_count"], 1)
                     self.assertEqual(page["events"], [reset])
-                    safe = agent_server.client_safe_event(page["events"][0])
+                    safe = hyadex_server.client_safe_event(page["events"][0])
                     self.assertEqual(safe["backend"], "opencode")
                     self.assertEqual(safe["previous_provider_session_id"], "ses_before_reset")
                     self.assertEqual(safe["message"], reset["message"])
@@ -813,12 +813,12 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                        previous_provider_session_id="ses_before_reset", message="Provider context reset"),
             self.event(3, "turn_finished", run_id="reset-cache-run", backend="opencode"),
         ])
-        agent_server.build_timeline_index(self.session_id)
-        cached = agent_server.timeline_index_cached_entry(self.session_id)
+        hyadex_server.build_timeline_index(self.session_id)
+        cached = hyadex_server.timeline_index_cached_entry(self.session_id)
         self.assertIsNotNone(cached)
         cached["projection_version"] = 6
         cached["payload"] = {"landmarks": [{"key": "old-reset-hidden-sentinel"}]}
-        rebuilt = agent_server.build_timeline_index(self.session_id)
+        rebuilt = hyadex_server.build_timeline_index(self.session_id)
         self.assertNotIn("old-reset-hidden-sentinel", json.dumps(rebuilt))
         self.assertIn("event:event-2", [item["key"] for item in rebuilt["landmarks"]])
 
@@ -842,7 +842,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             events.append(self.event(seq, "turn_finished", result_text=run_id, **common))
         self.write_events(events)
 
-        latest = agent_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
+        latest = hyadex_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
         latest_summary = next(event for event in latest["events"] if event["type"] == "job_summary")
         self.assertEqual(latest["semantic_total"], 3)
         self.assertEqual(latest_summary["job_id"], "job-1")
@@ -858,7 +858,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             if event.get("purpose") == "scheduled_job"
         ))
 
-        older = agent_server.read_semantic_timeline_page(
+        older = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             semantic_before=latest["next_semantic_before"],
             limit=1,
@@ -868,7 +868,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(older_summary["job_id"], "job-2")
         self.assertFalse(any(event.get("job_id") == "job-1" for event in older["events"]))
 
-        oldest = agent_server.read_semantic_timeline_page(
+        oldest = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             semantic_before=older["next_semantic_before"],
             limit=1,
@@ -896,7 +896,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(6, "turn_finished", result_text="Second result", **common),
         ])
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=10,
             tail=True,
@@ -939,7 +939,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ),
         ])
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=10,
             tail=True,
@@ -979,12 +979,12 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         ])
 
         # Seed the append-only cache while both recycled-ID attempts are live.
-        agent_server.read_semantic_timeline_page(
+        hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=10,
             tail=True,
         )
-        path = agent_server.events_path(self.session_id)
+        path = hyadex_server.events_path(self.session_id)
         with path.open("a", encoding="utf-8") as destination:
             destination.write("".join(json.dumps(event) + "\n" for event in [
                 self.event(5, "assistant_text", text="First late output", **first),
@@ -992,7 +992,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 self.event(7, "turn_finished", result_text="Second result", **second),
             ]))
 
-        latest = agent_server.read_semantic_timeline_page(
+        latest = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=1,
             tail=True,
@@ -1011,13 +1011,13 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             if event["type"] == "turn_finished"
         ], ["Second result"])
 
-        middle = agent_server.read_semantic_timeline_page(
+        middle = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             semantic_before=latest["next_semantic_before"],
             limit=1,
             tail=True,
         )
-        oldest = agent_server.read_semantic_timeline_page(
+        oldest = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             semantic_before=middle["next_semantic_before"],
             limit=1,
@@ -1034,12 +1034,12 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             if event["type"] == "turn_finished"
         ], ["First late result"])
 
-        first_history = agent_server.read_scheduled_job_runs(
+        first_history = hyadex_server.read_scheduled_job_runs(
             self.session_id,
             "job-1",
             timeline_group_id="job:job-1",
         )
-        second_history = agent_server.read_scheduled_job_runs(
+        second_history = hyadex_server.read_scheduled_job_runs(
             self.session_id,
             "job-1",
             timeline_group_id="job:job-1:segment:4",
@@ -1055,21 +1055,21 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 event.get("result_text"),
                 event["job_run_count"],
             )
-            for event in agent_server.read_semantic_timeline_page(
+            for event in hyadex_server.read_semantic_timeline_page(
                 self.session_id,
                 limit=10,
                 tail=True,
             )["events"]
             if event["type"] == "job_summary"
         ]
-        agent_server.TIMELINE_INDEX_CACHE.pop(self.session_id, None)
+        hyadex_server.TIMELINE_INDEX_CACHE.pop(self.session_id, None)
         rebuilt_cards = [
             (
                 event["job_timeline_group_id"],
                 event.get("result_text"),
                 event["job_run_count"],
             )
-            for event in agent_server.read_semantic_timeline_page(
+            for event in hyadex_server.read_semantic_timeline_page(
                 self.session_id,
                 limit=10,
                 tail=True,
@@ -1099,7 +1099,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(4, "turn_finished", result_text="Second result", **common),
         ])
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=10,
             tail=True,
@@ -1107,7 +1107,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         summary = next(
             event for event in page["events"] if event["type"] == "job_summary"
         )
-        history = agent_server.read_scheduled_job_runs(
+        history = hyadex_server.read_scheduled_job_runs(
             self.session_id,
             "job-1",
             timeline_group_id="job:job-1",
@@ -1138,7 +1138,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(3, "job_error", job_id="job-1", message="Capacity monitor failed"),
         ])
 
-        page = agent_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
+        page = hyadex_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
         summary = next(event for event in page["events"] if event["type"] == "job_summary")
 
         self.assertEqual(page["semantic_total"], 1)
@@ -1176,7 +1176,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                     self.event(3, terminal_type, **terminal_fields, **common),
                 ])
 
-                page = agent_server.read_semantic_timeline_page(
+                page = hyadex_server.read_semantic_timeline_page(
                     self.session_id,
                     limit=1,
                     tail=True,
@@ -1237,7 +1237,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ),
         ])
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=2,
             tail=True,
@@ -1259,7 +1259,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             and event.get("run_id") == "job-run"
             for event in page["events"]
         ))
-        trace = agent_server.read_indexed_run_trace(
+        trace = hyadex_server.read_indexed_run_trace(
             self.session_id,
             "job-run",
             anchor_seq=4,
@@ -1299,7 +1299,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ),
         ])
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=1,
             tail=True,
@@ -1337,7 +1337,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(5, "turn_stopped", **latest),
         ])
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=1,
             tail=True,
@@ -1364,7 +1364,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(3, "job_deferred", job_id="job-1", message="Capacity monitor deferred"),
         ])
 
-        page = agent_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
+        page = hyadex_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
         summary = next(event for event in page["events"] if event["type"] == "job_summary")
 
         self.assertEqual(page["semantic_total"], 1)
@@ -1423,7 +1423,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         ])
         self.write_events(events)
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=1,
             tail=True,
@@ -1442,16 +1442,16 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(4, "turn_finished", run_id="legacy-job-run", result_text="Healthy"),
         ]
         self.write_events(initial_turn)
-        before_link = agent_server.build_timeline_index(self.session_id)
+        before_link = hyadex_server.build_timeline_index(self.session_id)
         self.assertEqual(len(before_link["landmarks"]), 1)
 
         late_link = self.event(5, "job_ran", run_id="legacy-job-run", job_id="job-legacy", job={
                 "id": "job-legacy", "title": "Legacy monitor", "run_count": 1,
             })
-        with agent_server.events_path(self.session_id).open("a", encoding="utf-8") as destination:
+        with hyadex_server.events_path(self.session_id).open("a", encoding="utf-8") as destination:
             destination.write(json.dumps(late_link) + "\n")
 
-        page = agent_server.read_semantic_timeline_page(self.session_id, limit=10, tail=True)
+        page = hyadex_server.read_semantic_timeline_page(self.session_id, limit=10, tail=True)
 
         self.assertEqual(page["semantic_total"], 1)
         self.assertEqual(page["semantic_item_count"], 1)
@@ -1487,9 +1487,9 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(6, "turn_finished", run_id="latest-run", result_text="Done"),
         ])
 
-        latest = agent_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
+        latest = hyadex_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
         self.assertEqual(latest["next_semantic_before"], 5)
-        middle = agent_server.read_semantic_timeline_page(
+        middle = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             semantic_before=latest["next_semantic_before"],
             limit=1,
@@ -1497,7 +1497,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(middle["next_semantic_before"], 2)
         self.assertEqual([event["type"] for event in middle["events"]], ["error"])
-        oldest = agent_server.read_semantic_timeline_page(
+        oldest = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             semantic_before=middle["next_semantic_before"],
             limit=1,
@@ -1510,7 +1510,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         events = [
             self.event(1, "turn_started", run_id="large-run", prompt="Large turn"),
         ]
-        final_large_seq = agent_server.MAX_EVENT_RESPONSE_LIMIT + 152
+        final_large_seq = hyadex_server.MAX_EVENT_RESPONSE_LIMIT + 152
         for seq in range(2, final_large_seq):
             events.append(self.event(
                 seq,
@@ -1525,14 +1525,14 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         ])
         self.write_events(events)
 
-        page = agent_server.read_semantic_timeline_page(self.session_id, limit=2, tail=True)
+        page = hyadex_server.read_semantic_timeline_page(self.session_id, limit=2, tail=True)
 
         self.assertEqual(page["semantic_item_count"], 2)
-        self.assertLessEqual(len(page["events"]), agent_server.MAX_EVENT_RESPONSE_LIMIT)
+        self.assertLessEqual(len(page["events"]), hyadex_server.MAX_EVENT_RESPONSE_LIMIT)
         self.assertLessEqual(
             len(page["events"]),
             page["semantic_item_count"]
-            * agent_server.SEMANTIC_TIMELINE_EVENT_BUDGET_PER_ITEM,
+            * hyadex_server.SEMANTIC_TIMELINE_EVENT_BUDGET_PER_ITEM,
         )
         represented_runs = {
             str(event.get("run_id") or "")
@@ -1553,13 +1553,13 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ])
         self.write_events(events)
 
-        original_projection = agent_server.client_safe_event
+        original_projection = hyadex_server.client_safe_event
         with patch.object(
-            agent_server,
+            hyadex_server,
             "client_safe_event",
             wraps=original_projection,
         ) as projection:
-            page = agent_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
+            page = hyadex_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
 
         self.assertEqual(page["semantic_item_count"], 1)
         self.assertEqual(projection.call_count, 2)
@@ -1571,8 +1571,8 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(3, "turn_finished", run_id="run-1", result_text="Answer"),
         ])
 
-        agent_server.build_timeline_index(self.session_id)
-        records = agent_server.TIMELINE_INDEX_CACHE[self.session_id]["records"]
+        hyadex_server.build_timeline_index(self.session_id)
+        records = hyadex_server.TIMELINE_INDEX_CACHE[self.session_id]["records"]
 
         self.assertTrue(records)
         self.assertTrue(all("search_entries" not in record for record in records))
@@ -1600,10 +1600,10 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ),
         ]
         self.write_events(first_run)
-        first = agent_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
+        first = hyadex_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
         first_summary = next(event for event in first["events"] if event["type"] == "job_summary")
 
-        path = agent_server.events_path(self.session_id)
+        path = hyadex_server.events_path(self.session_id)
         second_run = [
             self.event(
                 3,
@@ -1627,7 +1627,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         with path.open("a", encoding="utf-8") as destination:
             destination.write("".join(json.dumps(event) + "\n" for event in second_run))
 
-        refreshed = agent_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
+        refreshed = hyadex_server.read_semantic_timeline_page(self.session_id, limit=1, tail=True)
         summaries = [event for event in refreshed["events"] if event["type"] == "job_summary"]
 
         self.assertEqual(len(summaries), 1)
@@ -1653,7 +1653,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(10, "job_deleted", job_id="job-1"),
         ])
 
-        page = agent_server.read_semantic_timeline_page(self.session_id, limit=10, tail=True)
+        page = hyadex_server.read_semantic_timeline_page(self.session_id, limit=10, tail=True)
         summary = next(event for event in page["events"] if event["type"] == "job_summary")
 
         self.assertEqual(page["semantic_total"], 2)
@@ -1729,13 +1729,13 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ),
         ])
 
-        index = agent_server.build_timeline_index(self.session_id)
-        page = agent_server.read_semantic_timeline_page(
+        index = hyadex_server.build_timeline_index(self.session_id)
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=10,
             tail=True,
         )
-        raw_page = agent_server.read_visible_events_page(
+        raw_page = hyadex_server.read_visible_events_page(
             self.session_id,
             limit=100,
             tail=False,
@@ -1838,20 +1838,20 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         sessions = {
             self.session_id: {
                 "id": self.session_id,
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": "root-thread",
                 "codex_subagents": {
                     "child-thread": {
-                        "backend": agent_server.BACKEND_CODEX,
+                        "backend": hyadex_server.BACKEND_CODEX,
                         "subagent_id": "child-thread",
                     },
                 },
             },
         }
 
-        with patch.object(agent_server.STORE, "sessions", sessions):
-            index = agent_server.build_timeline_index(self.session_id)
-            page = agent_server.read_semantic_timeline_page(
+        with patch.object(hyadex_server.STORE, "sessions", sessions):
+            index = hyadex_server.build_timeline_index(self.session_id)
+            page = hyadex_server.read_semantic_timeline_page(
                 self.session_id,
                 limit=10,
                 tail=True,
@@ -1891,7 +1891,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(
                 3,
                 "subagent_state",
-                backend=agent_server.BACKEND_CODEX,
+                backend=hyadex_server.BACKEND_CODEX,
                 subagent_id="old-child",
                 subagent_status="completed",
             ),
@@ -1915,7 +1915,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         sessions = {
             self.session_id: {
                 "id": self.session_id,
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": "root-thread",
                 # Simulate a restart after this child fell out of the bounded
                 # codex_subagents snapshot.
@@ -1923,10 +1923,10 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        with patch.object(agent_server.STORE, "sessions", sessions):
-            index = agent_server.build_timeline_index(self.session_id)
-            agent_server.TIMELINE_INDEX_CACHE.clear()
-            rebuilt = agent_server.build_timeline_index(self.session_id)
+        with patch.object(hyadex_server.STORE, "sessions", sessions):
+            index = hyadex_server.build_timeline_index(self.session_id)
+            hyadex_server.TIMELINE_INDEX_CACHE.clear()
+            rebuilt = hyadex_server.build_timeline_index(self.session_id)
 
         expected = ["codex:compaction:native:root-thread:root-turn:root-item"]
         self.assertEqual(
@@ -1952,9 +1952,9 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 message="Compaction started.",
             ),
         ])
-        first = agent_server.build_timeline_index(self.session_id)
+        first = hyadex_server.build_timeline_index(self.session_id)
 
-        with agent_server.events_path(self.session_id).open(
+        with hyadex_server.events_path(self.session_id).open(
             "a",
             encoding="utf-8",
         ) as destination:
@@ -1975,8 +1975,8 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 message="Compaction completed.",
             )) + "\n")
 
-        refreshed = agent_server.build_timeline_index(self.session_id)
-        page = agent_server.read_semantic_timeline_page(
+        refreshed = hyadex_server.build_timeline_index(self.session_id)
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=10,
             tail=True,
@@ -2055,8 +2055,8 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ),
         ])
 
-        index = agent_server.build_timeline_index(self.session_id)
-        page = agent_server.read_semantic_timeline_page(
+        index = hyadex_server.build_timeline_index(self.session_id)
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=10,
             tail=True,
@@ -2098,9 +2098,9 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 prompt="Initial request",
             ),
         ])
-        agent_server.build_timeline_index(self.session_id)
+        hyadex_server.build_timeline_index(self.session_id)
 
-        path = agent_server.events_path(self.session_id)
+        path = hyadex_server.events_path(self.session_id)
         for index in range(1, 11):
             previous_run = f"run-{index - 1}"
             current_run = f"run-{index}"
@@ -2119,8 +2119,8 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                     prompt=f"Steer {index}",
                 )) + "\n")
 
-            index_payload = agent_server.build_timeline_index(self.session_id)
-            cache = agent_server.TIMELINE_INDEX_CACHE[self.session_id]
+            index_payload = hyadex_server.build_timeline_index(self.session_id)
+            cache = hyadex_server.TIMELINE_INDEX_CACHE[self.session_id]
             self.assertEqual(
                 cache["current_turn_by_run"],
                 {current_run: f"turn:{current_run}"},
@@ -2128,7 +2128,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cache["active_turn_key"], f"turn:{current_run}")
             self.assertEqual(len(index_payload["landmarks"]), index + 1)
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=20,
             tail=True,
@@ -2152,7 +2152,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(5, "turn_finished", run_id="completed-run", result_text="Answer"),
         ])
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=1,
             tail=True,
@@ -2183,18 +2183,18 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(5, "turn_finished", run_id="provider-run", result_text="Answer"),
         ])
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=1,
             tail=True,
         )
 
         provider = next(event for event in page["events"] if event["type"] == "provider_session")
-        self.assertFalse(agent_server.semantic_timeline_event_is_trace_anchor(provider))
+        self.assertFalse(hyadex_server.semantic_timeline_event_is_trace_anchor(provider))
         anchors = [
             event
             for event in page["events"]
-            if agent_server.semantic_timeline_event_is_trace_anchor(event)
+            if hyadex_server.semantic_timeline_event_is_trace_anchor(event)
         ]
         self.assertEqual(
             [(event["seq"], event["type"]) for event in anchors],
@@ -2226,7 +2226,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             events.append(self.event(seq, "turn_finished", run_id=run_id, result_text="Done"))
         self.write_events(events)
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=len(run_ids),
             tail=True,
@@ -2243,7 +2243,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ))
         self.assertLessEqual(
             len(page["events"]),
-            len(run_ids) * (agent_server.SEMANTIC_TIMELINE_EVENT_BUDGET_PER_ITEM + 1),
+            len(run_ids) * (hyadex_server.SEMANTIC_TIMELINE_EVENT_BUDGET_PER_ITEM + 1),
         )
 
     def test_native_steer_preserves_completed_commentary_in_semantic_page(self) -> None:
@@ -2301,7 +2301,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ),
         ])
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=2,
             tail=True,
@@ -2387,7 +2387,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ),
         ])
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=2,
             tail=True,
@@ -2487,7 +2487,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ))
         self.write_events(events)
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=2,
             tail=True,
@@ -2578,7 +2578,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             ),
         ])
 
-        page = agent_server.read_semantic_timeline_page(
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=1,
             tail=True,
@@ -2613,23 +2613,23 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         }
         original_to_thread = asyncio.to_thread
         offload = AsyncMock(side_effect=original_to_thread)
-        with patch.dict(agent_server.STORE.sessions, {self.session_id: session}, clear=True), patch.object(
-            agent_server.asyncio,
+        with patch.dict(hyadex_server.STORE.sessions, {self.session_id: session}, clear=True), patch.object(
+            hyadex_server.asyncio,
             "to_thread",
             new=offload,
         ):
-            default_response = await agent_server.get_session(
+            default_response = await hyadex_server.get_session(
                 self.session_id,
                 limit=100,
                 tail=False,
             )
-            visible_response = await agent_server.get_session(
+            visible_response = await hyadex_server.get_session(
                 self.session_id,
                 limit=100,
                 tail=False,
                 visible=True,
             )
-            compact_response = await agent_server.get_session(
+            compact_response = await hyadex_server.get_session(
                 self.session_id,
                 after=10,
                 limit=3,
@@ -2644,9 +2644,9 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         # Opening serves the existing projection; slow metadata repair runs
         # in background maintenance rather than ahead of each page read.
         self.assertEqual(offload.await_count, 3)
-        self.assertIs(offload.await_args_list[0].args[0], agent_server.read_client_events_page)
-        self.assertIs(offload.await_args_list[1].args[0], agent_server.read_visible_events_page)
-        self.assertIs(offload.await_args_list[2].args[0], agent_server.read_visible_events_after_page)
+        self.assertIs(offload.await_args_list[0].args[0], hyadex_server.read_client_events_page)
+        self.assertIs(offload.await_args_list[1].args[0], hyadex_server.read_visible_events_page)
+        self.assertIs(offload.await_args_list[2].args[0], hyadex_server.read_visible_events_after_page)
         self.assertTrue(offload.await_args_list[2].kwargs["compact"])
 
     async def test_endpoint_exposes_additive_semantic_paging_fields(self) -> None:
@@ -2661,8 +2661,8 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             self.event(1, "turn_started", run_id="run-1", prompt="Question"),
             self.event(2, "turn_finished", run_id="run-1", result_text="Answer"),
         ])
-        with patch.dict(agent_server.STORE.sessions, {self.session_id: session}, clear=True):
-            response = await agent_server.get_session(
+        with patch.dict(hyadex_server.STORE.sessions, {self.session_id: session}, clear=True):
+            response = await hyadex_server.get_session(
                 self.session_id,
                 limit=1,
                 tail=True,
@@ -2696,7 +2696,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 1,
                 "turn_started",
                 run_id="import_legacy_prompts",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt="Actual imported question" + authority,
             ),
@@ -2704,7 +2704,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 2,
                 "assistant_text",
                 run_id="import_legacy_prompts",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 text="First answer",
             ),
@@ -2712,7 +2712,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 3,
                 "turn_started",
                 run_id="import_legacy_prompts",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt=generated_notice,
             ),
@@ -2720,7 +2720,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 4,
                 "assistant_text",
                 run_id="import_legacy_prompts",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 text="Background answer stays visible",
             ),
@@ -2728,7 +2728,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 5,
                 "turn_started",
                 run_id="import_legacy_prompts",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 provider_history_sanitized=True,
                 prompt=human_notice,
@@ -2737,27 +2737,27 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 6,
                 "assistant_text",
                 run_id="import_legacy_prompts",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 text="Human evidence response",
             ),
             self.event(
                 7,
                 "turn_started",
                 run_id="import_authority_only",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt=authority.strip(),
             ),
         ]
         self.write_events(events)
 
-        index = agent_server.build_timeline_index(self.session_id)
-        page = agent_server.read_semantic_timeline_page(
+        index = hyadex_server.build_timeline_index(self.session_id)
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=10,
             tail=False,
         )
-        assistant_only_tail = agent_server.read_semantic_timeline_page(
+        assistant_only_tail = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             semantic_before=5,
             limit=1,
@@ -2794,7 +2794,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             [4],
         )
 
-        cached = agent_server.timeline_index_cached_entry(self.session_id)
+        cached = hyadex_server.timeline_index_cached_entry(self.session_id)
         self.assertIsNotNone(cached)
         cached["projection_version"] = 1
         cached["payload"] = {
@@ -2804,7 +2804,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
             "event_count": 1,
             "generated_at": "2026-07-19T00:00:00Z",
         }
-        rebuilt = agent_server.build_timeline_index(self.session_id)
+        rebuilt = hyadex_server.build_timeline_index(self.session_id)
         self.assertNotIn("stale-projection-sentinel", json.dumps(rebuilt))
         self.assertEqual(len(rebuilt["landmarks"]), 3)
 
@@ -2823,7 +2823,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 1,
                 "turn_started",
                 run_id=run_id,
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt=generated_notice,
             ),
@@ -2831,7 +2831,7 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 2,
                 "turn_started",
                 run_id=run_id,
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 provider_history_sanitized=True,
                 prompt="Real imported question",
@@ -2840,14 +2840,14 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
                 3,
                 "assistant_text",
                 run_id=run_id,
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 text="Real imported answer",
             ),
         ])
 
-        index = agent_server.build_timeline_index(self.session_id)
-        page = agent_server.read_semantic_timeline_page(
+        index = hyadex_server.build_timeline_index(self.session_id)
+        page = hyadex_server.read_semantic_timeline_page(
             self.session_id,
             limit=1,
             tail=True,
@@ -2858,11 +2858,11 @@ class CompactTimelinePagingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([event["seq"] for event in page["events"]], [2, 3])
 
     def write_events(self, events: list[dict[str, object]]) -> None:
-        agent_server.events_path(self.session_id).write_text(
+        hyadex_server.events_path(self.session_id).write_text(
             "".join(json.dumps(event) + "\n" for event in events),
             encoding="utf-8",
         )
-        agent_server.TIMELINE_INDEX_CACHE.clear()
+        hyadex_server.TIMELINE_INDEX_CACHE.clear()
 
     def event(self, seq: int, event_type: str, **fields: object) -> dict[str, object]:
         event: dict[str, object] = {

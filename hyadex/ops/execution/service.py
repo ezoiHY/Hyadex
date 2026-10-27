@@ -248,9 +248,15 @@ def remove_stale_worker_socket(path: Path) -> None:
 
 
 async def serve_worker(args: argparse.Namespace, lease: ProcessLease) -> None:
-    module, app = load_application(args.application)
-    if args.application == "agent_server:app":
-        expected_runtime = module.STATE_DIR.expanduser().resolve() / "execution"
+    _module, app = load_application(args.application)
+    hyadex_server = args.application == "agent_server:app"
+    if hyadex_server:
+        from hyadex.core.config import SERVER_ADMIN_ROOT, SERVER_VERSION, STATE_DIR
+        from hyadex.core.server import SERVER
+        from hyadex.core.server_logging import configure_server_logging
+        from hyadex.ops.lifecycle import execution_maintenance_control
+
+        expected_runtime = STATE_DIR.expanduser().resolve() / "execution"
         if args.runtime_dir != expected_runtime:
             raise ValueError("Worker runtime directory must be its state directory's execution folder")
     remove_stale_worker_socket(args.runtime_dir / "worker.socket")
@@ -262,18 +268,18 @@ async def serve_worker(args: argparse.Namespace, lease: ProcessLease) -> None:
     callback_port = callback_socket.getsockname()[1]
     callback_origin = f"http://127.0.0.1:{callback_port}"
     maintenance = None
-    if args.application == "agent_server:app":
+    if hyadex_server:
         # Public addresses still describe the gateway, including Team Hub URLs.
         # Only provider callbacks use the worker-owned stable private listener.
-        module.SERVER.bind_address = args.bind
-        module.SERVER.port = args.port
-        module.PROVIDER_CALLBACK_ORIGIN = callback_origin
-        module.configure_server_logging(module.STATE_DIR)
+        SERVER.bind_address = args.bind
+        SERVER.port = args.port
+        SERVER.provider_callback_origin = callback_origin
+        configure_server_logging(STATE_DIR)
         from hyadex.ops.execution.install import pending_worker_operation
         from hyadex.ops.execution.maintenance import ExecutionMaintenance
 
         maintenance = ExecutionMaintenance(
-            module.SERVER_ADMIN_ROOT / "execution-maintenance.json", lease.instance_id,
+            SERVER_ADMIN_ROOT / "execution-maintenance.json", lease.instance_id,
         )
         configured_install = os.environ.get("HYADEX_SERVER_INSTALL_DIR")
         if configured_install:
@@ -285,8 +291,8 @@ async def serve_worker(args: argparse.Namespace, lease: ProcessLease) -> None:
                 maintenance.hold_for_startup(operation)
         # Set before app startup so recovered queues and scheduled work cannot
         # start in a candidate that has not passed activation health checks.
-        module.SERVER.execution_maintenance = maintenance
-    version = str(getattr(module, "SERVER_VERSION", source_version()))
+        SERVER.execution_maintenance = maintenance
+    version = SERVER_VERSION if hyadex_server else source_version()
     identity = {
         "protocol": PROTOCOL_VERSION,
         "instance_id": lease.instance_id,
@@ -321,8 +327,8 @@ async def serve_worker(args: argparse.Namespace, lease: ProcessLease) -> None:
             lifecycle_app,
             token=ensure_execution_secret(args.runtime_dir / "control.token"),
             worker_instance_id=lease.instance_id,
-            status_callback=module.execution_maintenance_control,
-            maintenance_callback=module.execution_maintenance_control,
+            status_callback=execution_maintenance_control,
+            maintenance_callback=execution_maintenance_control,
         )
     server = uvicorn.Server(uvicorn.Config(
         callback_app, host="127.0.0.1", port=callback_port,

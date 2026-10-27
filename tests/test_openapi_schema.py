@@ -1,9 +1,7 @@
 import asyncio
 import unittest
 
-import agent_server
-
-
+from tests import hyadex_server
 HTTP_METHODS = {
     "delete",
     "get",
@@ -17,12 +15,12 @@ HTTP_METHODS = {
 
 class OpenAPIOperationIdTests(unittest.TestCase):
     def schema(self) -> dict:
-        previous = agent_server.app.openapi_schema
+        previous = hyadex_server.app.openapi_schema
         try:
-            agent_server.app.openapi_schema = None
-            return agent_server.app.openapi()
+            hyadex_server.app.openapi_schema = None
+            return hyadex_server.app.openapi()
         finally:
-            agent_server.app.openapi_schema = previous
+            hyadex_server.app.openapi_schema = previous
 
     def router_response(self, method: str, path: str) -> tuple[int, dict[str, str]]:
         async def dispatch() -> tuple[int, dict[str, str]]:
@@ -34,7 +32,7 @@ class OpenAPIOperationIdTests(unittest.TestCase):
             async def send(message: dict) -> None:
                 messages.append(message)
 
-            await agent_server.app.router(
+            await hyadex_server.app.router(
                 {
                     "type": "http",
                     "asgi": {"version": "3.0", "spec_version": "2.3"},

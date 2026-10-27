@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 from starlette.requests import Request
 
-import agent_server
+from tests import hyadex_server
 from hyadex.cli import publish as hyadex_publish
 
 
@@ -38,7 +38,7 @@ def request_for(
     if retry:
         headers.append((b"x-hyadex-publication-retry", b"1"))
     return Request({
-        "type": "http", "app": agent_server.app,
+        "type": "http", "app": hyadex_server.app,
         "method": "POST",
         "path": "/api/agent/sessions/sess/artifacts",
         "headers": headers,
@@ -111,7 +111,7 @@ class ArtifactPublisherCLITests(unittest.TestCase):
 
         for host in ("127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"):
             with self.subTest(server_host=host):
-                self.assertTrue(agent_server.network_host_is_loopback(host))
+                self.assertTrue(hyadex_server.network_host_is_loopback(host))
 
     def test_remote_server_is_rejected_before_token_is_sent(self) -> None:
         with patch.dict(
@@ -354,10 +354,10 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
         active: bool = True,
     ) -> ExitStack:
         stack = ExitStack()
-        stack.enter_context(patch.object(agent_server, "STATE_DIR", root / "state"))
-        stack.enter_context(patch.object(agent_server, "FILES_ROOT", root / "files"))
+        stack.enter_context(patch.object(hyadex_server, "STATE_DIR", root / "state"))
+        stack.enter_context(patch.object(hyadex_server, "FILES_ROOT", root / "files"))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "authorize_provider_action",
             AsyncMock(return_value={
                 "source_session_id": session_id,
@@ -366,7 +366,7 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
             }),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_AUTHORITIES",
             {
                 hashlib.sha256(b"provider-secret").hexdigest(): {
@@ -376,30 +376,30 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
                 }
             },
         ))
-        stack.enter_context(patch.object(agent_server, "EVENT_SEQ_CACHE", {}))
-        stack.enter_context(patch.object(agent_server, "EVENT_DELIVERY_LOCKS", {}))
+        stack.enter_context(patch.object(hyadex_server, "EVENT_SEQ_CACHE", {}))
+        stack.enter_context(patch.object(hyadex_server, "EVENT_DELIVERY_LOCKS", {}))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "ARTIFACT_PUBLICATION_LOCK_STRIPES",
             tuple(asyncio.Lock() for _ in range(64)),
         ))
         stack.enter_context(patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "sessions",
             {session_id: {"id": session_id, "backend": "codex"}},
         ))
         stack.enter_context(patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "busy",
             {session_id} if active else set(),
         ))
         stack.enter_context(patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "current_turns",
             {session_id: {"run_id": run_id}} if active else {},
         ))
         stack.enter_context(patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "active",
             {
                 session_id: {
@@ -409,11 +409,11 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
                 }
             } if active else {},
         ))
-        stack.enter_context(patch.object(agent_server.RUNS, "stopped_runs", set()))
-        stack.enter_context(patch.object(agent_server, "DELETING_SESSIONS", set()))
-        stack.enter_context(patch.object(agent_server, "DELETED_SESSION_TOMBSTONES", set()))
+        stack.enter_context(patch.object(hyadex_server.RUNS, "stopped_runs", set()))
+        stack.enter_context(patch.object(hyadex_server, "DELETING_SESSIONS", set()))
+        stack.enter_context(patch.object(hyadex_server, "DELETED_SESSION_TOMBSTONES", set()))
         stack.enter_context(patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "run_metadata",
             {
                 run_id: {
@@ -424,11 +424,11 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
             },
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "update_session_event_metadata",
             AsyncMock(),
         ))
-        stack.enter_context(patch.object(agent_server.HUB, "broadcast", AsyncMock()))
+        stack.enter_context(patch.object(hyadex_server.HUB, "broadcast", AsyncMock()))
         return stack
 
     async def test_endpoint_persists_receipt_and_retry_survives_deleted_source(self) -> None:
@@ -436,7 +436,7 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
             root = Path(tmp)
             source = root / "render.mov"
             source.write_bytes(b"video")
-            request_model = agent_server.PublishArtifactsRequest(
+            request_model = hyadex_server.PublishArtifactsRequest(
                 publication_id="pub_once",
                 files=[{
                     "path": str(source),
@@ -445,22 +445,22 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
                 }],
             )
             with self.runtime_patches(root):
-                first = await agent_server.publish_agent_artifacts(
+                first = await hyadex_server.publish_agent_artifacts(
                     request_for(),
                     "sess",
                     request_model,
                 )
                 source.unlink()
-                agent_server.RUNS.busy.clear()
-                agent_server.RUNS.current_turns.clear()
-                agent_server.RUNS.active.clear()
-                second = await agent_server.publish_agent_artifacts(
+                hyadex_server.RUNS.busy.clear()
+                hyadex_server.RUNS.current_turns.clear()
+                hyadex_server.RUNS.active.clear()
+                second = await hyadex_server.publish_agent_artifacts(
                     request_for(retry=True),
                     "sess",
                     request_model,
                 )
 
-                event_lines = agent_server.events_path("sess").read_text().splitlines()
+                event_lines = hyadex_server.events_path("sess").read_text().splitlines()
                 artifact_dirs = list((root / "files").glob("art_*"))
 
             self.assertEqual(first, second)
@@ -481,38 +481,38 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
             root = Path(tmp)
             source = root / "render.mp4"
             source.write_bytes(b"video")
-            model = agent_server.PublishArtifactsRequest(
+            model = hyadex_server.PublishArtifactsRequest(
                 publication_id="pub_tail_recovery",
                 files=[str(source)],
             )
             with self.runtime_patches(root):
-                first = await agent_server.publish_agent_artifacts(
+                first = await hyadex_server.publish_agent_artifacts(
                     request_for(),
                     "sess",
                     model,
                 )
-                agent_server.publication_receipt_path(
+                hyadex_server.publication_receipt_path(
                     "sess",
                     "pub_tail_recovery",
                 ).unlink()
                 source.unlink()
-                agent_server.RUNS.busy.clear()
-                agent_server.RUNS.current_turns.clear()
-                agent_server.RUNS.active.clear()
+                hyadex_server.RUNS.busy.clear()
+                hyadex_server.RUNS.current_turns.clear()
+                hyadex_server.RUNS.active.clear()
 
-                recovered = await agent_server.publish_agent_artifacts(
+                recovered = await hyadex_server.publish_agent_artifacts(
                     request_for(retry=True),
                     "sess",
                     model,
                 )
 
                 self.assertEqual(first, recovered)
-                self.assertTrue(agent_server.publication_receipt_path(
+                self.assertTrue(hyadex_server.publication_receipt_path(
                     "sess",
                     "pub_tail_recovery",
                 ).is_file())
                 self.assertEqual(
-                    len(agent_server.events_path("sess").read_text().splitlines()),
+                    len(hyadex_server.events_path("sess").read_text().splitlines()),
                     1,
                 )
                 self.assertEqual(len(list((root / "files").glob("art_*"))), 1)
@@ -524,22 +524,22 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
             second_source = root / "second.txt"
             first_source.write_text("first")
             second_source.write_text("second")
-            first_model = agent_server.PublishArtifactsRequest(
+            first_model = hyadex_server.PublishArtifactsRequest(
                 publication_id="pub_bound",
                 files=[str(first_source)],
             )
-            changed_model = agent_server.PublishArtifactsRequest(
+            changed_model = hyadex_server.PublishArtifactsRequest(
                 publication_id="pub_bound",
                 files=[str(second_source)],
             )
             with self.runtime_patches(root):
-                await agent_server.publish_agent_artifacts(
+                await hyadex_server.publish_agent_artifacts(
                     request_for(),
                     "sess",
                     first_model,
                 )
-                with self.assertRaises(agent_server.HTTPException) as conflict:
-                    await agent_server.publish_agent_artifacts(
+                with self.assertRaises(hyadex_server.HTTPException) as conflict:
+                    await hyadex_server.publish_agent_artifacts(
                         request_for(),
                         "sess",
                         changed_model,
@@ -548,7 +548,7 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(conflict.exception.status_code, 409)
                 self.assertIn("another artifact batch", conflict.exception.detail)
                 self.assertEqual(
-                    len(agent_server.events_path("sess").read_text().splitlines()),
+                    len(hyadex_server.events_path("sess").read_text().splitlines()),
                     1,
                 )
                 self.assertEqual(len(list((root / "files").glob("art_*"))), 1)
@@ -558,41 +558,41 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
             root = Path(tmp)
             source = root / "report.txt"
             source.write_text("report")
-            model = agent_server.PublishArtifactsRequest(
+            model = hyadex_server.PublishArtifactsRequest(
                 publication_id="pub_reject",
                 files=[str(source)],
             )
             async def authorize(request, *, action, session_id):
                 del action, session_id
-                if not agent_server.request_client_is_loopback(request):
-                    raise agent_server.HTTPException(status_code=403, detail="loopback required")
-                if agent_server.provider_capability_header(request) != "provider-secret":
-                    raise agent_server.HTTPException(status_code=403, detail="bad provider capability")
+                if not hyadex_server.request_client_is_loopback(request):
+                    raise hyadex_server.HTTPException(status_code=403, detail="loopback required")
+                if hyadex_server.provider_capability_header(request) != "provider-secret":
+                    raise hyadex_server.HTTPException(status_code=403, detail="bad provider capability")
                 return {"source_session_id": "sess", "source_run_id": "run_active"}
 
             with self.runtime_patches(root, active=False), patch.object(
-                agent_server,
+                hyadex_server,
                 "authorize_provider_action",
                 side_effect=authorize,
             ):
-                with self.assertRaises(agent_server.HTTPException) as remote:
-                    await agent_server.publish_agent_artifacts(
+                with self.assertRaises(hyadex_server.HTTPException) as remote:
+                    await hyadex_server.publish_agent_artifacts(
                         request_for("10.0.0.8"),
                         "sess",
                         model,
                     )
                 self.assertEqual(remote.exception.status_code, 403)
 
-                with self.assertRaises(agent_server.HTTPException) as unauthorized:
-                    await agent_server.publish_agent_artifacts(
+                with self.assertRaises(hyadex_server.HTTPException) as unauthorized:
+                    await hyadex_server.publish_agent_artifacts(
                         request_for(provider_token="wrong"),
                         "sess",
                         model,
                     )
                 self.assertEqual(unauthorized.exception.status_code, 403)
 
-                with self.assertRaises(agent_server.HTTPException) as inactive:
-                    await agent_server.publish_agent_artifacts(
+                with self.assertRaises(hyadex_server.HTTPException) as inactive:
+                    await hyadex_server.publish_agent_artifacts(
                         request_for(),
                         "sess",
                         model,
@@ -605,31 +605,31 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
             root = Path(tmp)
             source = root / "secured.txt"
             source.write_text("secured")
-            model = agent_server.PublishArtifactsRequest(
+            model = hyadex_server.PublishArtifactsRequest(
                 publication_id="pub_middleware",
                 files=[str(source)],
             )
 
             async def dispatch(request):
                 try:
-                    result = await agent_server.publish_agent_artifacts(
+                    result = await hyadex_server.publish_agent_artifacts(
                         request,
                         "sess",
                         model,
                     )
-                    return agent_server.JSONResponse(result)
-                except agent_server.HTTPException as exc:
-                    return agent_server.JSONResponse(
+                    return hyadex_server.JSONResponse(result)
+                except hyadex_server.HTTPException as exc:
+                    return hyadex_server.JSONResponse(
                         {"detail": exc.detail},
                         status_code=exc.status_code,
                     )
 
             with self.runtime_patches(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "AGENT_TOKEN",
                 "api-secret",
             ):
-                accepted = await agent_server.require_agent_token(
+                accepted = await hyadex_server.require_agent_token(
                     request_for(),
                     dispatch,
                 )
@@ -637,7 +637,7 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
 
                 blocked_dispatch = AsyncMock()
                 unknown = Request({
-                    "type": "http", "app": agent_server.app,
+                    "type": "http", "app": hyadex_server.app,
                     "method": "POST",
                     "path": "/api/agent/future-unprotected-route",
                     "headers": [],
@@ -646,7 +646,7 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
                     "server": ("127.0.0.1", 7870),
                     "client": ("127.0.0.1", 43210),
                 })
-                rejected = await agent_server.require_agent_token(
+                rejected = await hyadex_server.require_agent_token(
                     unknown,
                     blocked_dispatch,
                 )
@@ -658,30 +658,30 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
             root = Path(tmp)
             source = root / "valid.txt"
             source.write_text("valid")
-            model = agent_server.PublishArtifactsRequest(
+            model = hyadex_server.PublishArtifactsRequest(
                 publication_id="pub_invalid",
                 files=[str(source), "relative/missing.txt"],
             )
             with self.runtime_patches(root):
-                with self.assertRaises(agent_server.HTTPException) as invalid:
-                    await agent_server.publish_agent_artifacts(
+                with self.assertRaises(hyadex_server.HTTPException) as invalid:
+                    await hyadex_server.publish_agent_artifacts(
                         request_for(),
                         "sess",
                         model,
                     )
                 self.assertEqual(invalid.exception.status_code, 422)
                 self.assertFalse((root / "files").exists())
-                self.assertFalse(agent_server.events_path("sess").exists())
+                self.assertFalse(hyadex_server.events_path("sess").exists())
 
     async def test_copy_runs_off_event_loop_and_postcommit_failures_keep_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "large.bin"
             source.write_bytes(b"payload")
-            entries = agent_server.normalize_artifact_entries([str(source)])
+            entries = hyadex_server.normalize_artifact_entries([str(source)])
             caller_thread = threading.get_ident()
             copy_threads = []
-            original_prepare = agent_server.prepare_artifact_records
+            original_prepare = hyadex_server.prepare_artifact_records
 
             def observed_prepare(*args):
                 copy_threads.append(threading.get_ident())
@@ -690,27 +690,27 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
             with self.runtime_patches(root):
                 with (
                     patch.object(
-                        agent_server,
+                        hyadex_server,
                         "prepare_artifact_records",
                         observed_prepare,
                     ),
                     patch.object(
-                        agent_server,
+                        hyadex_server,
                         "store_publication_events",
                         side_effect=asyncio.CancelledError,
                     ),
                     patch.object(
-                        agent_server,
+                        hyadex_server,
                         "update_session_event_metadata",
                         AsyncMock(side_effect=asyncio.CancelledError),
                     ),
                 ):
-                    events = await agent_server.publish_artifact_entries(
+                    events = await hyadex_server.publish_artifact_entries(
                         "sess",
                         "run_active",
                         entries,
                         publication_id="pub_postcommit",
-                        publication_digest=agent_server.artifact_entries_digest(entries),
+                        publication_digest=hyadex_server.artifact_entries_digest(entries),
                     )
 
             self.assertEqual(len(events), 1)
@@ -729,7 +729,7 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
                 "files": [str(valid), str(missing)],
             }))
             with self.runtime_patches(root):
-                await agent_server.collect_manifest(
+                await hyadex_server.collect_manifest(
                     "sess",
                     "run_active",
                     manifest,
@@ -737,7 +737,7 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
                 )
                 events = [
                     json.loads(line)
-                    for line in agent_server.events_path("sess").read_text().splitlines()
+                    for line in hyadex_server.events_path("sess").read_text().splitlines()
                 ]
             self.assertFalse(manifest.exists())
             self.assertEqual([event["type"] for event in events], ["artifact_error"])
@@ -759,10 +759,10 @@ class ArtifactPublisherServerTests(unittest.IsolatedAsyncioTestCase):
                 return [{"seq": 1, "artifact": {"id": "art_test"}}]
 
             with (
-                patch.object(agent_server, "live_manifest_batch_ready", return_value=True),
-                patch.object(agent_server, "publish_artifact_entries", slow_publish),
+                patch.object(hyadex_server, "live_manifest_batch_ready", return_value=True),
+                patch.object(hyadex_server, "publish_artifact_entries", slow_publish),
             ):
-                task = asyncio.create_task(agent_server.watch_manifest_artifacts(
+                task = asyncio.create_task(hyadex_server.watch_manifest_artifacts(
                     "sess",
                     "run_active",
                     manifest,

@@ -4,21 +4,21 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import agent_server
+from tests import hyadex_server
 from tests.test_provider_history_sync import legacy_provider_authority_block
 
 
 class TimelineSearchForkTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.previous_state_dir = agent_server.STATE_DIR
-        self.previous_search_db = agent_server.HISTORY_SEARCH_DB
-        agent_server.STATE_DIR = Path(self.temporary.name)
-        agent_server.HISTORY_SEARCH_DB = agent_server.STATE_DIR / "history_search.sqlite3"
-        agent_server.FORK_INTERNAL_RUN_CACHE.clear()
-        agent_server.FORK_INTERNAL_RUN_LOCKS.clear()
+        self.previous_state_dir = hyadex_server.STATE_DIR
+        self.previous_search_db = hyadex_server.HISTORY_SEARCH_DB
+        hyadex_server.STATE_DIR = Path(self.temporary.name)
+        hyadex_server.HISTORY_SEARCH_DB = hyadex_server.STATE_DIR / "history_search.sqlite3"
+        hyadex_server.FORK_INTERNAL_RUN_CACHE.clear()
+        hyadex_server.FORK_INTERNAL_RUN_LOCKS.clear()
         self.session_id = "legacy-fork"
-        path = agent_server.events_path(self.session_id)
+        path = hyadex_server.events_path(self.session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         events = [
             self.event(1, "turn_started", run_id="digest-run", purpose="handoff_digest", forked=True, prompt="Generate private digest"),
@@ -41,16 +41,16 @@ class TimelineSearchForkTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
-        agent_server.FORK_INTERNAL_RUN_CACHE.clear()
-        agent_server.FORK_INTERNAL_RUN_LOCKS.clear()
-        agent_server.STATE_DIR = self.previous_state_dir
-        agent_server.HISTORY_SEARCH_DB = self.previous_search_db
+        hyadex_server.FORK_INTERNAL_RUN_CACHE.clear()
+        hyadex_server.FORK_INTERNAL_RUN_LOCKS.clear()
+        hyadex_server.STATE_DIR = self.previous_state_dir
+        hyadex_server.HISTORY_SEARCH_DB = self.previous_search_db
         self.temporary.cleanup()
 
     def test_search_excludes_the_entire_copied_digest_run(self) -> None:
-        connection = agent_server.history_search_connection()
+        connection = hyadex_server.history_search_connection()
         try:
-            indexed_sessions, indexed_events = agent_server.sync_history_search_index(
+            indexed_sessions, indexed_events = hyadex_server.sync_history_search_index(
                 connection,
                 {self.session_id},
                 {self.session_id},
@@ -59,21 +59,21 @@ class TimelineSearchForkTests(unittest.TestCase):
             connection.close()
 
         self.assertEqual((indexed_sessions, indexed_events), (1, 2))
-        self.assertEqual(agent_server.search_timeline_index(self.session_id, "private"), {
+        self.assertEqual(hyadex_server.search_timeline_index(self.session_id, "private"), {
             "session_id": self.session_id,
             "query": "private",
             "results": [],
         })
-        retained = agent_server.search_timeline_index(self.session_id, "searchable")
+        retained = hyadex_server.search_timeline_index(self.session_id, "searchable")
         self.assertEqual([result["seq"] for result in retained["results"]], [5, 4])
-        self.assertEqual(agent_server.search_timeline_index(self.session_id, "relay"), {
+        self.assertEqual(hyadex_server.search_timeline_index(self.session_id, "relay"), {
             "session_id": self.session_id,
             "query": "relay",
             "results": [],
         })
 
     def test_search_index_version_change_removes_legacy_rows_before_rebuild(self) -> None:
-        connection = agent_server.history_search_connection()
+        connection = hyadex_server.history_search_connection()
         connection.execute(
             "INSERT INTO history_search(text, session_id, event_id, seq, ts, role) VALUES (?, ?, ?, ?, ?, ?)",
             ("stale private digest", self.session_id, "legacy-event", 1, None, "assistant"),
@@ -88,7 +88,7 @@ class TimelineSearchForkTests(unittest.TestCase):
         connection.commit()
         connection.close()
 
-        migrated = agent_server.history_search_connection()
+        migrated = hyadex_server.history_search_connection()
         try:
             self.assertEqual(migrated.execute("SELECT COUNT(*) FROM history_search").fetchone()[0], 0)
             self.assertEqual(migrated.execute("SELECT COUNT(*) FROM history_search_state").fetchone()[0], 0)
@@ -96,7 +96,7 @@ class TimelineSearchForkTests(unittest.TestCase):
                 migrated.execute(
                     "SELECT value FROM history_search_meta WHERE key = 'index_version'"
                 ).fetchone()[0],
-                agent_server.HISTORY_SEARCH_INDEX_VERSION,
+                hyadex_server.HISTORY_SEARCH_INDEX_VERSION,
             )
         finally:
             migrated.close()
@@ -124,7 +124,7 @@ class TimelineSearchForkTests(unittest.TestCase):
                 1,
                 "turn_started",
                 run_id="import_search_clean",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt="visiblecleanneedle" + authority,
             ),
@@ -132,7 +132,7 @@ class TimelineSearchForkTests(unittest.TestCase):
                 2,
                 "turn_started",
                 run_id="import_search_notice",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt=generated_notice,
             ),
@@ -140,7 +140,7 @@ class TimelineSearchForkTests(unittest.TestCase):
                 3,
                 "turn_started",
                 run_id="import_human_paste",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 provider_history_sanitized=True,
                 prompt=human_notice,
@@ -149,7 +149,7 @@ class TimelineSearchForkTests(unittest.TestCase):
                 4,
                 "turn_started",
                 run_id="import_authority_only",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt=authority.strip(),
             ),
@@ -157,11 +157,11 @@ class TimelineSearchForkTests(unittest.TestCase):
                 5,
                 "turn_started",
                 run_id="import_native_lookalike",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 prompt=native_notice,
             ),
         ]
-        agent_server.events_path(self.session_id).write_text(
+        hyadex_server.events_path(self.session_id).write_text(
             "".join(
                 json.dumps(event, separators=(",", ":")) + "\n"
                 for event in events
@@ -169,10 +169,10 @@ class TimelineSearchForkTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        connection = agent_server.history_search_connection()
+        connection = hyadex_server.history_search_connection()
         try:
             indexed_sessions, indexed_events = (
-                agent_server.sync_history_search_index(
+                hyadex_server.sync_history_search_index(
                     connection,
                     {self.session_id},
                     {self.session_id},
@@ -182,31 +182,31 @@ class TimelineSearchForkTests(unittest.TestCase):
             connection.close()
 
         self.assertEqual((indexed_sessions, indexed_events), (1, 3))
-        cleaned = agent_server.search_timeline_index(
+        cleaned = hyadex_server.search_timeline_index(
             self.session_id,
             "visiblecleanneedle",
         )
         self.assertEqual(len(cleaned["results"]), 1)
         self.assertEqual(cleaned["results"][0]["snippet"], "visiblecleanneedle")
         self.assertEqual(
-            agent_server.search_timeline_index(
+            hyadex_server.search_timeline_index(
                 self.session_id,
                 "secretgeneratedneedle",
             )["results"],
             [],
         )
-        preserved = agent_server.search_timeline_index(
+        preserved = hyadex_server.search_timeline_index(
             self.session_id,
             "legitimatepastedneedle",
         )
         self.assertEqual([result["seq"] for result in preserved["results"]], [3])
-        native = agent_server.search_timeline_index(
+        native = hyadex_server.search_timeline_index(
             self.session_id,
             "nativepastedneedle",
         )
         self.assertEqual([result["seq"] for result in native["results"]], [5])
         self.assertEqual(
-            agent_server.search_timeline_index(
+            hyadex_server.search_timeline_index(
                 self.session_id,
                 "Hyadex",
             )["results"],
@@ -227,13 +227,13 @@ class TimelineSearchForkTests(unittest.TestCase):
         partial_notice = task_notification.replace(
             "<tool-use-id>toolu_workflow_42</tool-use-id>\n", ""
         ).replace("internal control needle", "partialpastedneedle")
-        path = agent_server.events_path(self.session_id)
+        path = hyadex_server.events_path(self.session_id)
         with path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(self.event(
                 7,
                 "turn_started",
                 run_id="import_legacy_task",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt=task_notification,
             ), separators=(",", ":")) + "\n")
@@ -241,19 +241,19 @@ class TimelineSearchForkTests(unittest.TestCase):
                 8,
                 "assistant_text",
                 run_id="normal-run",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 text="visible migration needle",
             ), separators=(",", ":")) + "\n")
             stream.write(json.dumps(self.event(
                 9,
                 "turn_started",
                 run_id="import_legacy_lookalike",
-                backend=agent_server.BACKEND_CLAUDE,
+                backend=hyadex_server.BACKEND_CLAUDE,
                 imported=True,
                 prompt=partial_notice,
             ), separators=(",", ":")) + "\n")
 
-        connection = agent_server.history_search_connection()
+        connection = hyadex_server.history_search_connection()
         connection.execute(
             "INSERT INTO history_search(text, session_id, event_id, seq, ts, role) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -277,9 +277,9 @@ class TimelineSearchForkTests(unittest.TestCase):
         connection.commit()
         connection.close()
 
-        migrated = agent_server.history_search_connection()
+        migrated = hyadex_server.history_search_connection()
         try:
-            agent_server.sync_history_search_index(
+            hyadex_server.sync_history_search_index(
                 migrated,
                 {self.session_id},
                 {self.session_id},
@@ -288,7 +288,7 @@ class TimelineSearchForkTests(unittest.TestCase):
             migrated.close()
 
         self.assertEqual(
-            agent_server.search_timeline_index(self.session_id, "control needle")[
+            hyadex_server.search_timeline_index(self.session_id, "control needle")[
                 "results"
             ],
             [],
@@ -296,7 +296,7 @@ class TimelineSearchForkTests(unittest.TestCase):
         self.assertEqual(
             [
                 result["seq"]
-                for result in agent_server.search_timeline_index(
+                for result in hyadex_server.search_timeline_index(
                     self.session_id,
                     "migration needle",
                 )["results"]
@@ -306,7 +306,7 @@ class TimelineSearchForkTests(unittest.TestCase):
         self.assertEqual(
             [
                 result["seq"]
-                for result in agent_server.search_timeline_index(
+                for result in hyadex_server.search_timeline_index(
                     self.session_id, "partialpastedneedle",
                 )["results"]
             ],
@@ -315,7 +315,7 @@ class TimelineSearchForkTests(unittest.TestCase):
 
     def test_initializing_fork_is_not_eligible_for_history_indexing(self) -> None:
         staged_id = "staged-fork"
-        staged_path = agent_server.events_path(staged_id)
+        staged_path = hyadex_server.events_path(staged_id)
         staged_path.parent.mkdir(parents=True, exist_ok=True)
         staged_path.write_text(
             json.dumps({
@@ -340,11 +340,11 @@ class TimelineSearchForkTests(unittest.TestCase):
             },
         }
 
-        with patch.object(agent_server.STORE, "sessions", sessions):
-            active_ids = agent_server.active_history_search_session_ids()
-            connection = agent_server.history_search_connection()
+        with patch.object(hyadex_server.STORE, "sessions", sessions):
+            active_ids = hyadex_server.active_history_search_session_ids()
+            connection = hyadex_server.history_search_connection()
             try:
-                agent_server.sync_history_search_index(
+                hyadex_server.sync_history_search_index(
                     connection,
                     {self.session_id, staged_id},
                     active_ids,
@@ -364,7 +364,7 @@ class TimelineSearchForkTests(unittest.TestCase):
     def test_queries_hide_stale_rows_from_initializing_fork(self) -> None:
         staged_id = "staged-fork"
         removed_id = "removed-staged-fork"
-        connection = agent_server.history_search_connection()
+        connection = hyadex_server.history_search_connection()
         try:
             connection.executemany(
                 "INSERT INTO history_search(text, session_id, event_id, seq, ts, role) "
@@ -408,9 +408,9 @@ class TimelineSearchForkTests(unittest.TestCase):
             self.session_id: {"id": self.session_id},
             staged_id: {"id": staged_id, "_fork_initializing": True},
         }
-        with patch.object(agent_server.STORE, "sessions", sessions):
-            global_results = agent_server.search_all_timelines("sharedneedle")
-            staged_results = agent_server.search_timeline_index(
+        with patch.object(hyadex_server.STORE, "sessions", sessions):
+            global_results = hyadex_server.search_all_timelines("sharedneedle")
+            staged_results = hyadex_server.search_timeline_index(
                 staged_id,
                 "sharedneedle",
             )

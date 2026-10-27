@@ -4,9 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import agent_server
-
-
+from tests import hyadex_server
 def write_events(path: Path, events: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -35,8 +33,8 @@ class AbandonedTurnDetectionTests(unittest.TestCase):
                     "text": "Still working",
                 },
             ])
-            with patch.object(agent_server, "events_path", return_value=path):
-                result = agent_server.abandoned_turn_after_restart(
+            with patch.object(hyadex_server, "events_path", return_value=path):
+                result = hyadex_server.abandoned_turn_after_restart(
                     "chat-1",
                     {"latest_event_type": "reasoning_summary"},
                 )
@@ -54,8 +52,8 @@ class AbandonedTurnDetectionTests(unittest.TestCase):
                 {"seq": 2, "type": "reasoning_summary", "run_id": "run-done"},
                 {"seq": 3, "type": "turn_finished", "run_id": "run-done"},
             ])
-            with patch.object(agent_server, "events_path", return_value=path):
-                result = agent_server.abandoned_turn_after_restart(
+            with patch.object(hyadex_server, "events_path", return_value=path):
+                result = hyadex_server.abandoned_turn_after_restart(
                     "chat-1",
                     {"latest_event_type": "turn_finished"},
                 )
@@ -77,8 +75,8 @@ class AbandonedTurnDetectionTests(unittest.TestCase):
                 {"seq": 4, "type": "turn_started", "run_id": "run-new"},
                 {"seq": 5, "type": "tool_finished", "run_id": "run-new"},
             ])
-            with patch.object(agent_server, "events_path", return_value=path):
-                result = agent_server.abandoned_turn_after_restart(
+            with patch.object(hyadex_server, "events_path", return_value=path):
+                result = hyadex_server.abandoned_turn_after_restart(
                     "chat-1",
                     {"latest_event_type": "tool_finished"},
                 )
@@ -94,8 +92,8 @@ class AbandonedTurnDetectionTests(unittest.TestCase):
                 {"seq": 2, "type": "turn_finished", "run_id": "run-failed"},
                 {"seq": 3, "type": "tool_finished", "run_id": "run-failed"},
             ])
-            with patch.object(agent_server, "events_path", return_value=path):
-                result = agent_server.abandoned_turn_after_restart(
+            with patch.object(hyadex_server, "events_path", return_value=path):
+                result = hyadex_server.abandoned_turn_after_restart(
                     "chat-1",
                     {"latest_event_type": "tool_finished"},
                 )
@@ -109,8 +107,8 @@ class AbandonedTurnDetectionTests(unittest.TestCase):
                 {"seq": 1, "type": "turn_started", "run_id": "run-failed"},
                 {"seq": 2, "type": "error", "run_id": "run-failed"},
             ])
-            with patch.object(agent_server, "events_path", return_value=path):
-                result = agent_server.abandoned_turn_after_restart(
+            with patch.object(hyadex_server, "events_path", return_value=path):
+                result = hyadex_server.abandoned_turn_after_restart(
                     "chat-1",
                     {"latest_event_type": "error"},
                 )
@@ -129,8 +127,8 @@ class AbandonedTurnDetectionTests(unittest.TestCase):
                     "status": {"type": "idle"},
                 },
             ])
-            with patch.object(agent_server, "events_path", return_value=path):
-                result = agent_server.abandoned_turn_after_restart(
+            with patch.object(hyadex_server, "events_path", return_value=path):
+                result = hyadex_server.abandoned_turn_after_restart(
                     "chat-1",
                     {
                         "latest_event_type": "codex_thread_status",
@@ -151,8 +149,8 @@ class AbandonedTurnDetectionTests(unittest.TestCase):
                 {"seq": 1, "type": "turn_started", "run_id": "run-done"},
                 {"seq": 2, "type": "turn_finished", "run_id": "run-done"},
             ])
-            with patch.object(agent_server, "events_path", return_value=path):
-                result = agent_server.abandoned_turn_after_restart(
+            with patch.object(hyadex_server, "events_path", return_value=path):
+                result = hyadex_server.abandoned_turn_after_restart(
                     "chat-1",
                     {
                         "latest_event_type": "codex_thread_status",
@@ -167,12 +165,12 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_session_metadata_persists_active_run_until_terminal(self) -> None:
         sessions = {"chat-1": {"id": "chat-1", "backend": "codex"}}
         save = AsyncMock()
-        with patch.object(agent_server.STORE, "sessions", sessions), patch.object(
-            agent_server.STORE,
+        with patch.object(hyadex_server.STORE, "sessions", sessions), patch.object(
+            hyadex_server.STORE,
             "save",
             save,
         ):
-            await agent_server.update_session_event_metadata("chat-1", {
+            await hyadex_server.update_session_event_metadata("chat-1", {
                 "seq": 1,
                 "ts": "2026-08-01T00:00:00Z",
                 "type": "turn_started",
@@ -188,14 +186,14 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 sessions["chat-1"]["active_run"]["provider_context_mode"],
                 "standalone",
             )
-            await agent_server.update_session_event_metadata("chat-1", {
+            await hyadex_server.update_session_event_metadata("chat-1", {
                 "seq": 2,
                 "ts": "2026-08-01T00:00:01Z",
                 "type": "codex_thread_status",
                 "status": {"type": "idle"},
             })
             self.assertIn("active_run", sessions["chat-1"])
-            await agent_server.update_session_event_metadata("chat-1", {
+            await hyadex_server.update_session_event_metadata("chat-1", {
                 "seq": 3,
                 "ts": "2026-08-01T00:00:02Z",
                 "type": "turn_finished",
@@ -208,7 +206,7 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_persists_stopped_event_without_replaying_prompt(self) -> None:
         append_event = AsyncMock(return_value={})
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "sessions",
             {
                 "chat-1": {
@@ -218,7 +216,7 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 }
             },
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "abandoned_turn_after_restart",
             return_value={
                 "run_id": "run-orphan",
@@ -226,8 +224,8 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 "purpose": "scheduled_job",
                 "job_id": "job-1",
             },
-        ), patch.object(agent_server, "append_event", append_event):
-            recovered = await agent_server.recover_abandoned_turns_after_start()
+        ), patch.object(hyadex_server, "append_event", append_event):
+            recovered = await hyadex_server.recover_abandoned_turns_after_start()
 
         self.assertEqual(recovered, 1)
         append_event.assert_awaited_once()
@@ -242,15 +240,15 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_forced_restart_marks_recovered_turn_as_forcibly_interrupted(self) -> None:
         append_event = AsyncMock(return_value={})
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "sessions",
             {"chat-1": {"id": "chat-1", "backend": "codex"}},
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "abandoned_turn_after_restart",
             return_value={"run_id": "run-orphan", "backend": "codex"},
-        ), patch.object(agent_server, "append_event", append_event):
-            recovered = await agent_server.recover_abandoned_turns_after_start(
+        ), patch.object(hyadex_server, "append_event", append_event):
+            recovered = await hyadex_server.recover_abandoned_turns_after_start(
                 forced_restart_request_id="restart-request-1",
             )
 
@@ -273,18 +271,18 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
             }
         }
         append_event = AsyncMock(return_value={})
-        with patch.object(agent_server.STORE, "sessions", sessions), patch.object(
-            agent_server.STORE, "save", AsyncMock()
+        with patch.object(hyadex_server.STORE, "sessions", sessions), patch.object(
+            hyadex_server.STORE, "save", AsyncMock()
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "abandoned_turn_after_restart",
             return_value={
                 "run_id": "run-orphan",
                 "backend": "opencode",
                 "provider_context_mode": "chat",
             },
-        ), patch.object(agent_server, "append_event", append_event):
-            recovered = await agent_server.recover_abandoned_turns_after_start()
+        ), patch.object(hyadex_server, "append_event", append_event):
+            recovered = await hyadex_server.recover_abandoned_turns_after_start()
 
         self.assertEqual(recovered, 1)
         self.assertEqual(sessions["chat-1"]["opencode_session_id"], "ses-contaminated")
@@ -307,16 +305,16 @@ class AbandonedTurnRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     }
                 }
                 append_event = AsyncMock(return_value={})
-                with patch.object(agent_server.STORE, "sessions", sessions), patch.object(
-                    agent_server,
+                with patch.object(hyadex_server.STORE, "sessions", sessions), patch.object(
+                    hyadex_server,
                     "abandoned_turn_after_restart",
                     return_value={
                         "run_id": "run-orphan",
                         "backend": "opencode",
                         mode_key: "standalone",
                     },
-                ), patch.object(agent_server, "append_event", append_event):
-                    recovered = await agent_server.recover_abandoned_turns_after_start()
+                ), patch.object(hyadex_server, "append_event", append_event):
+                    recovered = await hyadex_server.recover_abandoned_turns_after_start()
 
                 self.assertEqual(recovered, 1)
                 self.assertEqual(

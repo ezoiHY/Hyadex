@@ -1,15 +1,13 @@
 import unittest
 
-import agent_server
-
-
+from tests import hyadex_server
 class AgentPromptFormatTests(unittest.TestCase):
     def test_both_agent_prompts_explain_renderable_latex_delimiters(self) -> None:
-        claude_prompt = agent_server.SYSTEM_PROMPT.format(
+        claude_prompt = hyadex_server.SYSTEM_PROMPT.format(
             manifest_path="/tmp/manifest.json",
             terminal_session="hx_sess_123",
         )
-        codex_prompt = agent_server.CODEX_PROMPT_PRELUDE.format(
+        codex_prompt = hyadex_server.CODEX_PROMPT_PRELUDE.format(
             manifest_path="/tmp/manifest.json",
             terminal_session="hx_sess_123",
             chat_id="sess_123",
@@ -20,8 +18,8 @@ class AgentPromptFormatTests(unittest.TestCase):
             self.assertIn("`$$...$$`", prompt)
 
     def test_provider_prompts_carry_no_cross_chat_protocol(self) -> None:
-        claude_prompt = agent_server.CLAUDE_PROMPT_PRELUDE.format()
-        codex_prompt = agent_server.CODEX_PROMPT_PRELUDE.format(
+        claude_prompt = hyadex_server.CLAUDE_PROMPT_PRELUDE.format()
+        codex_prompt = hyadex_server.CODEX_PROMPT_PRELUDE.format(
             manifest_path="/tmp/manifest.json",
             terminal_session="hx_sess_123",
             chat_id="sess_123",

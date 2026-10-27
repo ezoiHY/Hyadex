@@ -3,9 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 
-import agent_server
-
-
+from tests import hyadex_server
 class TerminalArchiveTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_archiving_pauses_the_chats_scheduled_jobs(self) -> None:
         session_id = "archive-pauses-jobs"
@@ -20,28 +18,28 @@ class TerminalArchiveTests(unittest.IsolatedAsyncioTestCase):
         pause_for_session = AsyncMock(return_value=2)
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: active,
             }),
-            patch.object(agent_server.STORE, "update", update),
+            patch.object(hyadex_server.STORE, "update", update),
             patch.object(
-                agent_server.JOBS,
+                hyadex_server.JOBS,
                 "pause_for_session",
                 pause_for_session,
             ),
-            patch.object(agent_server.asyncio, "to_thread", new_callable=AsyncMock),
+            patch.object(hyadex_server.asyncio, "to_thread", new_callable=AsyncMock),
         ):
-            archive_response = await agent_server.update_session(
+            archive_response = await hyadex_server.update_session(
                 session_id,
-                agent_server.UpdateSessionRequest(archived=True),
+                hyadex_server.UpdateSessionRequest(archived=True),
             )
-            unarchive_response = await agent_server.update_session(
+            unarchive_response = await hyadex_server.update_session(
                 session_id,
-                agent_server.UpdateSessionRequest(archived=False),
+                hyadex_server.UpdateSessionRequest(archived=False),
             )
-            rename_response = await agent_server.update_session(
+            rename_response = await hyadex_server.update_session(
                 session_id,
-                agent_server.UpdateSessionRequest(title="Renamed"),
+                hyadex_server.UpdateSessionRequest(title="Renamed"),
             )
 
         self.assertTrue(archive_response["session"]["archived"])
@@ -68,32 +66,32 @@ class TerminalArchiveTests(unittest.IsolatedAsyncioTestCase):
             side_effect=[OSError("disk full"), OSError("disk full"), 0],
         )
         with (
-            patch.object(agent_server.STORE, "sessions", {session_id: session}),
+            patch.object(hyadex_server.STORE, "sessions", {session_id: session}),
             patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "update",
                 side_effect=update,
             ),
             patch.object(
-                agent_server.JOBS,
+                hyadex_server.JOBS,
                 "pause_for_session",
                 pause_for_session,
             ),
-            patch.object(agent_server.asyncio, "to_thread", new_callable=AsyncMock),
-            patch.object(agent_server.logger, "warning") as warning,
+            patch.object(hyadex_server.asyncio, "to_thread", new_callable=AsyncMock),
+            patch.object(hyadex_server.logger, "warning") as warning,
         ):
-            response = await agent_server.update_session(
+            response = await hyadex_server.update_session(
                 session_id,
-                agent_server.UpdateSessionRequest(archived=True),
+                hyadex_server.UpdateSessionRequest(archived=True),
             )
             with self.assertRaises(HTTPException) as blocked:
-                await agent_server.update_session(
+                await hyadex_server.update_session(
                     session_id,
-                    agent_server.UpdateSessionRequest(archived=False),
+                    hyadex_server.UpdateSessionRequest(archived=False),
                 )
-            unarchived = await agent_server.update_session(
+            unarchived = await hyadex_server.update_session(
                 session_id,
-                agent_server.UpdateSessionRequest(archived=False),
+                hyadex_server.UpdateSessionRequest(archived=False),
             )
 
         self.assertTrue(response["session"]["archived"])
@@ -114,22 +112,22 @@ class TerminalArchiveTests(unittest.IsolatedAsyncioTestCase):
         session = {"id": "archive-test", "title": "Archive test", "backend": "codex", "archived": True}
         update = AsyncMock(return_value=session)
         def threaded(callback, *args):
-            if callback is agent_server.kill_terminal_session:
+            if callback is hyadex_server.kill_terminal_session:
                 return {"killed": True}
             return callback(*args)
         to_thread = AsyncMock(side_effect=threaded)
 
-        with patch.dict(agent_server.STORE.sessions, {"archive-test": session}), \
-             patch.object(agent_server.STORE, "update", update), \
-             patch.object(agent_server.asyncio, "to_thread", to_thread):
-            response = await agent_server.update_session(
+        with patch.dict(hyadex_server.STORE.sessions, {"archive-test": session}), \
+             patch.object(hyadex_server.STORE, "update", update), \
+             patch.object(hyadex_server.asyncio, "to_thread", to_thread):
+            response = await hyadex_server.update_session(
                 "archive-test",
-                agent_server.UpdateSessionRequest(archived=True),
+                hyadex_server.UpdateSessionRequest(archived=True),
             )
 
         self.assertTrue(response["session"]["archived"])
         self.assertIn(
-            unittest.mock.call(agent_server.kill_terminal_session, "archive-test"),
+            unittest.mock.call(hyadex_server.kill_terminal_session, "archive-test"),
             to_thread.await_args_list,
         )
 
@@ -138,13 +136,13 @@ class TerminalArchiveTests(unittest.IsolatedAsyncioTestCase):
         session = {"id": session_id, "title": "Archive test", "backend": "codex", "archived": True}
         update = AsyncMock(return_value=session)
 
-        with patch.dict(agent_server.STORE.sessions, {session_id: session}), \
-             patch.object(agent_server.STORE, "update", update), \
-             patch.object(agent_server.shutil, "which", return_value=None), \
-             patch.object(agent_server, "run_tmux") as run_tmux:
-            response = await agent_server.update_session(
+        with patch.dict(hyadex_server.STORE.sessions, {session_id: session}), \
+             patch.object(hyadex_server.STORE, "update", update), \
+             patch.object(hyadex_server.shutil, "which", return_value=None), \
+             patch.object(hyadex_server, "run_tmux") as run_tmux:
+            response = await hyadex_server.update_session(
                 session_id,
-                agent_server.UpdateSessionRequest(archived=True),
+                hyadex_server.UpdateSessionRequest(archived=True),
             )
 
         self.assertTrue(response["session"]["archived"])
@@ -156,24 +154,24 @@ class TerminalArchiveTests(unittest.IsolatedAsyncioTestCase):
         update = AsyncMock(return_value=session)
         cleanup_error = HTTPException(status_code=500, detail="tmux server failed")
         def threaded(callback, *args):
-            if callback is agent_server.kill_terminal_session:
+            if callback is hyadex_server.kill_terminal_session:
                 raise cleanup_error
             return callback(*args)
         to_thread = AsyncMock(side_effect=threaded)
 
-        with patch.dict(agent_server.STORE.sessions, {session_id: session}), \
-             patch.object(agent_server.STORE, "update", update), \
-             patch.object(agent_server.asyncio, "to_thread", to_thread), \
-             patch.object(agent_server.logger, "warning") as warning:
-            response = await agent_server.update_session(
+        with patch.dict(hyadex_server.STORE.sessions, {session_id: session}), \
+             patch.object(hyadex_server.STORE, "update", update), \
+             patch.object(hyadex_server.asyncio, "to_thread", to_thread), \
+             patch.object(hyadex_server.logger, "warning") as warning:
+            response = await hyadex_server.update_session(
                 session_id,
-                agent_server.UpdateSessionRequest(archived=True),
+                hyadex_server.UpdateSessionRequest(archived=True),
             )
 
         self.assertTrue(response["session"]["archived"])
         update.assert_awaited_once()
         self.assertIn(
-            unittest.mock.call(agent_server.kill_terminal_session, session_id),
+            unittest.mock.call(hyadex_server.kill_terminal_session, session_id),
             to_thread.await_args_list,
         )
         warning.assert_called_once()
@@ -184,11 +182,11 @@ class TerminalArchiveTests(unittest.IsolatedAsyncioTestCase):
         session = {"id": session_id, "title": "Archive test", "backend": "codex"}
         error = HTTPException(status_code=500, detail="tmux server failed")
 
-        with patch.dict(agent_server.STORE.sessions, {session_id: session}), \
-             patch.object(agent_server.shutil, "which", return_value="/usr/bin/tmux"), \
-             patch.object(agent_server, "tmux_session_exists", side_effect=error):
+        with patch.dict(hyadex_server.STORE.sessions, {session_id: session}), \
+             patch.object(hyadex_server.shutil, "which", return_value="/usr/bin/tmux"), \
+             patch.object(hyadex_server, "tmux_session_exists", side_effect=error):
             with self.assertRaises(HTTPException) as raised:
-                agent_server.kill_terminal_session(session_id)
+                hyadex_server.kill_terminal_session(session_id)
 
         self.assertIs(raised.exception, error)
 
@@ -197,21 +195,21 @@ class TerminalArchiveTests(unittest.IsolatedAsyncioTestCase):
         update = AsyncMock(return_value=session)
         to_thread = AsyncMock()
 
-        with patch.object(agent_server.STORE, "update", update), patch.object(agent_server.asyncio, "to_thread", to_thread):
-            await agent_server.update_session(
+        with patch.object(hyadex_server.STORE, "update", update), patch.object(hyadex_server.asyncio, "to_thread", to_thread):
+            await hyadex_server.update_session(
                 "archive-test",
-                agent_server.UpdateSessionRequest(title="Renamed"),
+                hyadex_server.UpdateSessionRequest(title="Renamed"),
             )
 
         to_thread.assert_not_awaited()
 
     async def test_archived_chat_cannot_recreate_a_terminal_session(self) -> None:
         session_id = "archived-terminal-test"
-        with patch.dict(agent_server.STORE.sessions, {
+        with patch.dict(hyadex_server.STORE.sessions, {
             session_id: {"id": session_id, "title": "Archived", "backend": "codex", "archived": True}
         }):
             with self.assertRaises(HTTPException) as raised:
-                agent_server.ensure_terminal_session(session_id)
+                hyadex_server.ensure_terminal_session(session_id)
 
         self.assertEqual(raised.exception.status_code, 409)
 

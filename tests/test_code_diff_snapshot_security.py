@@ -10,9 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import agent_server
-
-
+from tests import hyadex_server
 GIT = shutil.which("git")
 
 
@@ -20,7 +18,7 @@ class CodeDiffStateMixin:
     def isolated_state(self, root: Path):
         state = root / "state"
         return patch.multiple(
-            agent_server,
+            hyadex_server,
             STATE_DIR=state,
             FILES_ROOT=state / "files",
             CODE_DIFFS_ROOT=state / "code_diffs",
@@ -74,7 +72,7 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
                 target_is_directory=True,
             )
 
-            normalized = agent_server._normalize_changed_paths(
+            normalized = hyadex_server._normalize_changed_paths(
                 {
                     str(alias / "tracked.txt"),
                     str(alias / "tracked-link"),
@@ -98,7 +96,7 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
             )
 
             self.assertEqual(
-                agent_server._normalize_changed_paths(
+                hyadex_server._normalize_changed_paths(
                     {missing_home_path},
                     str(repo),
                     str(repo),
@@ -106,7 +104,7 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
                 [],
             )
 
-            normalized = agent_server._normalize_changed_paths(
+            normalized = hyadex_server._normalize_changed_paths(
                 {
                     missing_home_path,
                     "tracked.txt",
@@ -119,7 +117,7 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
 
             with patch.dict(os.environ, {"HOME": str(Path(temporary))}):
                 self.assertEqual(
-                    agent_server._normalize_changed_paths(
+                    hyadex_server._normalize_changed_paths(
                         {"~/repo/tracked.txt"},
                         str(repo),
                         str(repo),
@@ -148,7 +146,7 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
                 os.environ,
                 hostile_pathspec_environment,
             ):
-                baseline = agent_server._capture_git_tree(
+                baseline = hyadex_server._capture_git_tree(
                     "chat",
                     "literal-pathspec",
                     str(repo),
@@ -158,7 +156,7 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
                 for name in attributed | unrelated:
                     (repo / name).write_text(f"changed {name}\n")
 
-                metadata = agent_server._write_turn_code_diff(
+                metadata = hyadex_server._write_turn_code_diff(
                     "chat",
                     "literal-pathspec",
                     "cursor",
@@ -190,7 +188,7 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
             self.git(repo, "commit", "-qm", "base")
 
             with self.isolated_state(root):
-                baseline = agent_server._capture_git_tree(
+                baseline = hyadex_server._capture_git_tree(
                     "chat",
                     "run-weird",
                     str(repo),
@@ -212,7 +210,7 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
                 (repo / "binary.bin").write_bytes(b"\x00changed\x00\xff")
                 real_objects_before = self.loose_objects(repo)
 
-                metadata = agent_server._write_turn_code_diff(
+                metadata = hyadex_server._write_turn_code_diff(
                     "chat",
                     "run-weird",
                     "codex",
@@ -244,34 +242,34 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
                     if item["path"] == "binary.bin"
                 )
                 self.assertTrue(binary["binary"])
-                patch_path = agent_server.code_diffs_dir("chat") / "run-weird.patch"
-                metadata_path = agent_server.code_diffs_dir("chat") / "run-weird.json"
+                patch_path = hyadex_server.code_diffs_dir("chat") / "run-weird.patch"
+                metadata_path = hyadex_server.code_diffs_dir("chat") / "run-weird.json"
                 self.assertGreater(patch_path.stat().st_size, 0)
                 self.assertLessEqual(
                     patch_path.stat().st_size,
-                    agent_server.CODE_DIFF_PATCH_MAX_BYTES,
+                    hyadex_server.CODE_DIFF_PATCH_MAX_BYTES,
                 )
                 self.assertEqual(stat.S_IMODE(patch_path.stat().st_mode), 0o600)
                 self.assertEqual(stat.S_IMODE(metadata_path.stat().st_mode), 0o600)
                 self.assertEqual(self.loose_objects(repo), real_objects_before)
                 self.assertEqual(
-                    list(agent_server.code_diffs_dir("chat").glob(".snapshot-*")),
+                    list(hyadex_server.code_diffs_dir("chat").glob(".snapshot-*")),
                     [],
                 )
                 self.assertEqual(baseline["object_dir"], "")
 
             with self.isolated_state(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "CODE_DIFF_INDEX_MAX_BYTES",
                 8,
             ):
-                self.assertIsNone(agent_server._capture_git_tree(
+                self.assertIsNone(hyadex_server._capture_git_tree(
                     "chat",
                     "oversize-index",
                     str(repo),
                 ))
                 self.assertEqual(
-                    list(agent_server.code_diffs_dir("chat").glob(".snapshot-*")),
+                    list(hyadex_server.code_diffs_dir("chat").glob(".snapshot-*")),
                     [],
                 )
 
@@ -283,24 +281,24 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
             self.git(repo, "add", "tracked.txt")
             self.git(repo, "commit", "-qm", "base")
             with self.isolated_state(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "CODE_DIFF_SNAPSHOT_MAX_FILE_BYTES",
                 8,
             ):
                 (repo / "large-untracked.txt").write_text("x" * 32)
-                self.assertIsNone(agent_server._capture_git_tree(
+                self.assertIsNone(hyadex_server._capture_git_tree(
                     "chat",
                     "oversize-discovery",
                     str(repo),
                 ))
                 self.assertEqual(
-                    list(agent_server.code_diffs_dir("chat").glob(".snapshot-*")),
+                    list(hyadex_server.code_diffs_dir("chat").glob(".snapshot-*")),
                     [],
                 )
 
             (repo / "large-untracked.txt").unlink()
             with self.isolated_state(root):
-                baseline = agent_server._capture_git_tree(
+                baseline = hyadex_server._capture_git_tree(
                     "chat",
                     "oversize-patch",
                     str(repo),
@@ -309,8 +307,8 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
                 (repo / "tracked.txt").write_text(
                     "".join(f"changed line {index}\n" for index in range(200))
                 )
-                with patch.object(agent_server, "CODE_DIFF_PATCH_MAX_BYTES", 128):
-                    result = agent_server._write_turn_code_diff(
+                with patch.object(hyadex_server, "CODE_DIFF_PATCH_MAX_BYTES", 128):
+                    result = hyadex_server._write_turn_code_diff(
                         "chat",
                         "oversize-patch",
                         "codex",
@@ -320,10 +318,10 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
                     )
                 self.assertIsNone(result)
                 self.assertFalse(
-                    (agent_server.code_diffs_dir("chat") / "oversize-patch.patch").exists()
+                    (hyadex_server.code_diffs_dir("chat") / "oversize-patch.patch").exists()
                 )
                 self.assertEqual(
-                    list(agent_server.code_diffs_dir("chat").glob(".snapshot-*")),
+                    list(hyadex_server.code_diffs_dir("chat").glob(".snapshot-*")),
                     [],
                 )
 
@@ -336,13 +334,13 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
             source.write_bytes(b"index bytes")
             old_umask = os.umask(0)
             try:
-                agent_server._copy_private_bounded_file(
+                hyadex_server._copy_private_bounded_file(
                     source,
                     destination,
                     max_bytes=1024,
                     deadline=time.monotonic() + 1,
                 )
-                agent_server._write_nul_pathspec(
+                hyadex_server._write_nul_pathspec(
                     pathspec,
                     [b"space name", b"line\nbreak"],
                     deadline=time.monotonic() + 1,
@@ -359,18 +357,18 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
             root = Path(temporary)
             repo = self.repository(root)
             with self.isolated_state(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "_git_command",
                 side_effect=OSError("spawn failed"),
             ):
-                result = agent_server._capture_git_tree(
+                result = hyadex_server._capture_git_tree(
                     "chat",
                     "spawn-failure",
                     str(repo),
                 )
                 self.assertIsNone(result)
                 self.assertEqual(
-                    list(agent_server.code_diffs_dir("chat").glob(".snapshot-*")),
+                    list(hyadex_server.code_diffs_dir("chat").glob(".snapshot-*")),
                     [],
                 )
 
@@ -382,16 +380,16 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
             # The real capture/finalizer must handle expiry before the next Git
             # command and remove the already-created snapshot directory.
             with self.isolated_state(root), patch.object(
-                agent_server, "_git_stream_stdout",
+                hyadex_server, "_git_stream_stdout",
                 return_value=(0, os.fsencode(repo) + b"\n", False, False),
-            ), patch.object(agent_server.subprocess, "run") as spawn:
-                result = agent_server._capture_git_tree(
+            ), patch.object(hyadex_server.subprocess, "run") as spawn:
+                result = hyadex_server._capture_git_tree(
                     "chat", "expired-between-commands", str(repo),
                     deadline=time.monotonic() - 1,
                 )
                 self.assertIsNone(result)
                 spawn.assert_not_called()
-                self.assertEqual(list(agent_server.code_diffs_dir("chat").iterdir()), [])
+                self.assertEqual(list(hyadex_server.code_diffs_dir("chat").iterdir()), [])
 
     def test_all_git_commands_share_one_wall_clock_budget(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -408,7 +406,7 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
             wrapper.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
             original_path = os.environ.get("PATH", "")
             with self.isolated_state(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "CODE_DIFF_SNAPSHOT_TIMEOUT_SECONDS",
                 0.35,
             ), patch.dict(
@@ -416,7 +414,7 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
                 {"PATH": f"{wrapper_root}{os.pathsep}{original_path}"},
             ):
                 started = time.monotonic()
-                result = agent_server._capture_git_tree(
+                result = hyadex_server._capture_git_tree(
                     "chat",
                     "overall-deadline",
                     str(repo),
@@ -427,7 +425,7 @@ class CodeDiffSnapshotTests(CodeDiffStateMixin, unittest.TestCase):
                 self.assertLess(elapsed, 0.75)
                 self.assertGreater(elapsed, 0.25)
                 self.assertEqual(
-                    list(agent_server.code_diffs_dir("chat").glob(".snapshot-*")),
+                    list(hyadex_server.code_diffs_dir("chat").glob(".snapshot-*")),
                     [],
                 )
 
@@ -444,7 +442,7 @@ class CodeDiffCancellationTests(CodeDiffStateMixin, unittest.IsolatedAsyncioTest
                 _run_id: str,
                 _cwd: str,
             ) -> dict[str, str]:
-                snapshot = agent_server.code_diffs_dir(session_id) / ".snapshot-cancel"
+                snapshot = hyadex_server.code_diffs_dir(session_id) / ".snapshot-cancel"
                 snapshot.mkdir(parents=True)
                 (snapshot / "owned").write_bytes(b"object")
                 started.set()
@@ -457,11 +455,11 @@ class CodeDiffCancellationTests(CodeDiffStateMixin, unittest.IsolatedAsyncioTest
                 }
 
             with self.isolated_state(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "_capture_git_tree",
                 side_effect=delayed_capture,
             ):
-                owner = asyncio.create_task(agent_server.capture_git_baseline(
+                owner = asyncio.create_task(hyadex_server.capture_git_baseline(
                     "chat",
                     "cancel-before-adoption",
                     str(root),
@@ -475,10 +473,10 @@ class CodeDiffCancellationTests(CodeDiffStateMixin, unittest.IsolatedAsyncioTest
                     await owner
 
                 self.assertEqual(
-                    list(agent_server.code_diffs_dir("chat").glob(".snapshot-*")),
+                    list(hyadex_server.code_diffs_dir("chat").glob(".snapshot-*")),
                     [],
                 )
-                self.assertNotIn(owner, agent_server.GIT_BASELINES_BY_TASK)
+                self.assertNotIn(owner, hyadex_server.GIT_BASELINES_BY_TASK)
 
 
 if __name__ == "__main__":

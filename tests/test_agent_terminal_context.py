@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-import agent_server
+from tests import hyadex_server
 from hyadex.providers.claude import runtime as claude_runtime
 
 
@@ -19,41 +19,41 @@ def codex_developer_instructions(command: list[str]) -> str:
 
 class AgentTerminalContextTests(unittest.TestCase):
     def test_agent_environment_identifies_chat_terminal(self) -> None:
-        env = agent_server.agent_runner_env("sess-ab/cd")
+        env = hyadex_server.agent_runner_env("sess-ab/cd")
 
         self.assertEqual(env["HYADEX_CHAT_ID"], "sess-ab/cd")
         self.assertEqual(env["HYADEX_TMUX_SESSION"], "hx_sess_ab_cd")
         self.assertEqual(
             env["HYADEX_MANIFEST_PATH"],
-            str(agent_server.codex_manifest_path("sess-ab/cd")),
+            str(hyadex_server.codex_manifest_path("sess-ab/cd")),
         )
         self.assertTrue(env["HYADEX_MANIFEST_PATH"].endswith("/manifests/current.json"))
         self.assertEqual(
             env["HYADEX_PUBLISH_CLI"],
-            str(agent_server.SERVER_ROOT / "hyadex/cli/publish.py"),
+            str(hyadex_server.SERVER_ROOT / "hyadex/cli/publish.py"),
         )
         self.assertEqual(
             env["HYADEX_JOBS_CLI"],
-            str(agent_server.SERVER_ROOT / "hyadex/cli/jobs.py"),
+            str(hyadex_server.SERVER_ROOT / "hyadex/cli/jobs.py"),
         )
         self.assertNotIn("HYADEX_CHATS_CLI", env)
         self.assertNotIn("HYADEX_MAIL_CLI", env)
-        for name in agent_server.PROVIDER_SECRET_ENV_NAMES:
+        for name in hyadex_server.PROVIDER_SECRET_ENV_NAMES:
             self.assertNotIn(name, env)
 
     def test_codex_app_server_environment_exports_publisher(self) -> None:
-        env = agent_server.codex_app_server_env()
+        env = hyadex_server.codex_app_server_env()
 
         self.assertEqual(
             env["HYADEX_PUBLISH_CLI"],
-            str(agent_server.SERVER_ROOT / "hyadex/cli/publish.py"),
+            str(hyadex_server.SERVER_ROOT / "hyadex/cli/publish.py"),
         )
         self.assertNotIn("HYADEX_MAIL_CLI", env)
-        for name in agent_server.PROVIDER_SECRET_ENV_NAMES:
+        for name in hyadex_server.PROVIDER_SECRET_ENV_NAMES:
             self.assertNotIn(name, env)
 
     def test_claude_prompt_uses_stable_terminal_indirection(self) -> None:
-        command = agent_server.build_claude_cmd(
+        command = hyadex_server.build_claude_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "claude"},
             Path("/tmp/manifest.json"),
@@ -66,12 +66,12 @@ class AgentTerminalContextTests(unittest.TestCase):
         self.assertNotIn("/tmp/manifest.json", prompt)
 
     def test_claude_prompt_is_stable_across_sessions_and_runs(self) -> None:
-        first = agent_server.build_claude_cmd(
+        first = hyadex_server.build_claude_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "claude"},
             Path("/tmp/run-a.json"),
         )
-        second = agent_server.build_claude_cmd(
+        second = hyadex_server.build_claude_cmd(
             "sess-456",
             {"id": "sess-456", "backend": "claude"},
             Path("/tmp/run-b.json"),
@@ -86,24 +86,24 @@ class AgentTerminalContextTests(unittest.TestCase):
         # once per session instead of being appended to every turn's prompt,
         # so the prelude is larger but still bounded and byte-stable.
         self.assertIn(
-            agent_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip(),
+            hyadex_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip(),
             first_prompt,
         )
         self.assertLess(len(first_prompt), 12_000)
 
     def test_claude_transcript_suppression_flag_only_affects_fresh_command(self) -> None:
-        standalone = agent_server.build_claude_cmd(
+        standalone = hyadex_server.build_claude_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "claude"},
             Path("/tmp/manifest.json"),
             no_session_persistence=True,
         )
-        ordinary = agent_server.build_claude_cmd(
+        ordinary = hyadex_server.build_claude_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "claude"},
             Path("/tmp/manifest.json"),
         )
-        resumed = agent_server.build_claude_cmd(
+        resumed = hyadex_server.build_claude_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "claude"},
             Path("/tmp/manifest.json"),
@@ -115,7 +115,7 @@ class AgentTerminalContextTests(unittest.TestCase):
         self.assertNotIn("--no-session-persistence", ordinary)
         self.assertNotIn("--no-session-persistence", resumed)
 
-        legacy = agent_server.build_claude_cmd(
+        legacy = hyadex_server.build_claude_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "claude"},
             Path("/tmp/manifest.json"),
@@ -133,33 +133,33 @@ class AgentTerminalContextTests(unittest.TestCase):
                 "CLAUDE_NO_SESSION_PERSISTENCE_SUPPORTED",
                 None,
             ),
-            patch.object(agent_server, "run_catalog_command", probe),
+            patch.object(hyadex_server, "run_catalog_command", probe),
         ):
-            self.assertTrue(agent_server.claude_supports_no_session_persistence())
-            self.assertTrue(agent_server.claude_supports_no_session_persistence())
+            self.assertTrue(hyadex_server.claude_supports_no_session_persistence())
+            self.assertTrue(hyadex_server.claude_supports_no_session_persistence())
 
-        probe.assert_called_once_with([agent_server.CLAUDE_BIN, "--help"])
+        probe.assert_called_once_with([hyadex_server.CLAUDE_BIN, "--help"])
 
     def test_authority_bearing_fallback_commands_disable_provider_subagents(self) -> None:
-        claude = agent_server.build_claude_cmd(
+        claude = hyadex_server.build_claude_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "claude"},
             Path("/tmp/manifest.json"),
             disable_provider_subagents=True,
         )
-        codex = agent_server.build_codex_cmd(
+        codex = hyadex_server.build_codex_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "codex"},
             "Exact user prompt.",
             Path("/tmp/manifest.json"),
             disable_provider_subagents=True,
         )
-        ordinary_claude = agent_server.build_claude_cmd(
+        ordinary_claude = hyadex_server.build_claude_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "claude"},
             Path("/tmp/manifest.json"),
         )
-        ordinary_codex = agent_server.build_codex_cmd(
+        ordinary_codex = hyadex_server.build_codex_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "codex"},
             "Exact user prompt.",
@@ -180,17 +180,17 @@ class AgentTerminalContextTests(unittest.TestCase):
         self.assertEqual(codex[-1], "Exact user prompt.")
 
     def test_legacy_system_prompt_format_contract_remains_usable(self) -> None:
-        legacy = agent_server.SYSTEM_PROMPT.format(
+        legacy = hyadex_server.SYSTEM_PROMPT.format(
             manifest_path="/tmp/legacy-run.json",
             terminal_session="hx_legacy",
         )
 
-        self.assertEqual(legacy, agent_server.CLAUDE_PROMPT_PRELUDE.format())
+        self.assertEqual(legacy, hyadex_server.CLAUDE_PROMPT_PRELUDE.format())
         self.assertIn("Treat milestone completion as progress", legacy)
         self.assertIn("every requested milestone and acceptance check", legacy)
 
     def test_codex_prompt_names_terminal_and_preserves_user_prompt(self) -> None:
-        command = agent_server.build_codex_cmd(
+        command = hyadex_server.build_codex_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "codex"},
             "Inspect the terminal state.",
@@ -219,7 +219,7 @@ class AgentTerminalContextTests(unittest.TestCase):
             "User prompt follows.\n"
             "]\n\n"
             + jobs_context
-            + agent_server.session_prompt_addendum({
+            + hyadex_server.session_prompt_addendum({
                 "system_prompt": "Use the staging cluster.",
             })
             + "Immutable user text."
@@ -233,13 +233,13 @@ class AgentTerminalContextTests(unittest.TestCase):
                     "message": legacy_message,
                 },
             }) + "\n")
-            items = agent_server.parse_codex_history(history_path, None)
+            items = hyadex_server.parse_codex_history(history_path, None)
 
         self.assertEqual(items, [{"kind": "user", "text": "Immutable user text."}])
 
     def test_codex_history_import_unwraps_legacy_steering_in_both_record_shapes(self) -> None:
         legacy_message = (
-            agent_server.LEGACY_STEERING_PREFIX
+            hyadex_server.LEGACY_STEERING_PREFIX
             + "[Interrupted message]\nOriginal request.\n"
             "[End interrupted message]\n\n"
             "[Steering message]\nLatest steering text.\n"
@@ -274,7 +274,7 @@ class AgentTerminalContextTests(unittest.TestCase):
                 "\n".join(json.dumps(record) for record in records) + "\n",
                 encoding="utf-8",
             )
-            items = agent_server.parse_codex_history(history_path, None)
+            items = hyadex_server.parse_codex_history(history_path, None)
 
         self.assertEqual(items, [
             {"kind": "user", "text": "Latest steering text."},
@@ -283,7 +283,7 @@ class AgentTerminalContextTests(unittest.TestCase):
 
     def test_claude_history_import_unwraps_legacy_steering(self) -> None:
         legacy_message = (
-            agent_server.LEGACY_STEERING_PREFIX
+            hyadex_server.LEGACY_STEERING_PREFIX
             + "[Interrupted message]\nOriginal request.\n"
             "[End interrupted message]\n\n"
             "[Steering message]\nLatest steering text.\n"
@@ -297,7 +297,7 @@ class AgentTerminalContextTests(unittest.TestCase):
                     "content": [{"type": "text", "text": legacy_message}],
                 },
             }) + "\n")
-            items = agent_server.parse_claude_history(history_path, None)
+            items = hyadex_server.parse_claude_history(history_path, None)
 
         self.assertEqual(items, [{"kind": "user", "text": "Latest steering text."}])
 
@@ -315,7 +315,7 @@ class AgentTerminalContextTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            agent_server.strip_hyadex_generated_user_text(generated),
+            hyadex_server.strip_hyadex_generated_user_text(generated),
             "Immutable user text.",
         )
 
@@ -332,7 +332,7 @@ class AgentTerminalContextTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            agent_server.strip_hyadex_generated_user_text(generated),
+            hyadex_server.strip_hyadex_generated_user_text(generated),
             "Immutable user text.",
         )
 
@@ -343,14 +343,14 @@ class AgentTerminalContextTests(unittest.TestCase):
             "[Current user prompt]\n"
             "This delimiter is user-owned."
         )
-        generated = agent_server.build_memory_augmented_prompt(
+        generated = hyadex_server.build_memory_augmented_prompt(
             "Codex rollover memory",
             "Bounded generated summary with unicode: café.",
             immutable,
         )
 
         self.assertEqual(
-            agent_server.strip_hyadex_generated_user_text(generated),
+            hyadex_server.strip_hyadex_generated_user_text(generated),
             immutable,
         )
 
@@ -359,13 +359,13 @@ class AgentTerminalContextTests(unittest.TestCase):
             "id": "sess-123",
             "system_prompt": "Always verify the deployment target before editing.",
         }
-        claude_command = agent_server.build_claude_cmd(
+        claude_command = hyadex_server.build_claude_cmd(
             "sess-123",
             {**session, "backend": "claude"},
             Path("/tmp/manifest.json"),
         )
         claude_prompt = claude_command[claude_command.index("--append-system-prompt") + 1]
-        codex_prompt = agent_server.build_codex_cmd(
+        codex_prompt = hyadex_server.build_codex_cmd(
             "sess-123",
             {**session, "backend": "codex"},
             "Check the current status.",
@@ -379,7 +379,7 @@ class AgentTerminalContextTests(unittest.TestCase):
         self.assertEqual(codex_prompt[-1], "Check the current status.")
 
     def test_steering_history_never_enters_privileged_provider_context(self) -> None:
-        provider_prompt = agent_server.build_turn_provider_prompt(
+        provider_prompt = hyadex_server.build_turn_provider_prompt(
             "sess-123",
             "Latest raw user text.",
             [],
@@ -388,12 +388,12 @@ class AgentTerminalContextTests(unittest.TestCase):
                 {"prompt": "Latest raw user text.", "file_ids": []},
             ],
         )
-        claude_command = agent_server.build_claude_cmd(
+        claude_command = hyadex_server.build_claude_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "claude"},
             Path("/tmp/manifest.json"),
         )
-        codex_command = agent_server.build_codex_cmd(
+        codex_command = hyadex_server.build_codex_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "codex"},
             provider_prompt,
@@ -411,20 +411,20 @@ class AgentTerminalContextTests(unittest.TestCase):
         self.assertEqual(codex_command[-1], "Latest raw user text.")
 
     def test_provider_argv_redaction_hides_context_and_user_prompt(self) -> None:
-        claude = agent_server.build_claude_cmd(
+        claude = hyadex_server.build_claude_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "claude"},
             Path("/tmp/manifest.json"),
         )
-        codex = agent_server.build_codex_cmd(
+        codex = hyadex_server.build_codex_cmd(
             "sess-123",
             {"id": "sess-123", "backend": "codex"},
             "Private user prompt.",
             Path("/tmp/manifest.json"),
         )
 
-        redacted_claude = agent_server.redacted_provider_argv(claude, agent_server.BACKEND_CLAUDE)
-        redacted_codex = agent_server.redacted_provider_argv(codex, agent_server.BACKEND_CODEX)
+        redacted_claude = hyadex_server.redacted_provider_argv(claude, hyadex_server.BACKEND_CLAUDE)
+        redacted_codex = hyadex_server.redacted_provider_argv(codex, hyadex_server.BACKEND_CODEX)
 
         self.assertNotIn("[Hyadex context]", json.dumps(redacted_claude))
         self.assertNotIn("[Hyadex context]", json.dumps(redacted_codex))
@@ -434,11 +434,11 @@ class AgentTerminalContextTests(unittest.TestCase):
 
     def test_codex_merges_user_developer_instructions(self) -> None:
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="Existing user instruction.",
         ):
-            command = agent_server.build_codex_cmd(
+            command = hyadex_server.build_codex_cmd(
                 "sess-123",
                 {"id": "sess-123", "backend": "codex"},
                 "Raw prompt.",
@@ -452,7 +452,7 @@ class AgentTerminalContextTests(unittest.TestCase):
         self.assertEqual(command[-1], "Raw prompt.")
 
     def test_public_session_exposes_per_chat_system_prompt(self) -> None:
-        public = agent_server.public_session({
+        public = hyadex_server.public_session({
             "id": "sess-123",
             "title": "Deployment",
             "system_prompt": "Use the staging cluster.",
@@ -461,8 +461,8 @@ class AgentTerminalContextTests(unittest.TestCase):
         self.assertEqual(public["system_prompt"], "Use the staging cluster.")
 
     def test_both_agent_prompts_explain_renderable_latex_delimiters(self) -> None:
-        claude_prompt = agent_server.CLAUDE_PROMPT_PRELUDE.format()
-        codex_prompt = agent_server.CODEX_PROMPT_PRELUDE.format(
+        claude_prompt = hyadex_server.CLAUDE_PROMPT_PRELUDE.format()
+        codex_prompt = hyadex_server.CODEX_PROMPT_PRELUDE.format(
             manifest_path="/tmp/manifest.json",
             terminal_session="hx_sess_123",
             chat_id="sess-123",
@@ -474,8 +474,8 @@ class AgentTerminalContextTests(unittest.TestCase):
         self.assertIn("display math as `$$...$$`", codex_prompt)
 
     def test_both_agent_prompts_explain_clickable_workspace_file_links(self) -> None:
-        claude_prompt = agent_server.CLAUDE_PROMPT_PRELUDE.format()
-        codex_prompt = agent_server.CODEX_PROMPT_PRELUDE.format(
+        claude_prompt = hyadex_server.CLAUDE_PROMPT_PRELUDE.format()
+        codex_prompt = hyadex_server.CODEX_PROMPT_PRELUDE.format(
             manifest_path="/tmp/manifest.json",
             terminal_session="hx_sess_123",
             chat_id="sess-123",
@@ -491,8 +491,8 @@ class AgentTerminalContextTests(unittest.TestCase):
         self.assertIn("/tmp/manifest.json", codex_compact)
 
     def test_both_agent_prompts_explain_artifact_and_video_publishing(self) -> None:
-        claude_prompt = agent_server.CLAUDE_PROMPT_PRELUDE.format()
-        codex_prompt = agent_server.CODEX_PROMPT_PRELUDE.format(
+        claude_prompt = hyadex_server.CLAUDE_PROMPT_PRELUDE.format()
+        codex_prompt = hyadex_server.CODEX_PROMPT_PRELUDE.format(
             manifest_path="/tmp/manifests/current.json",
             terminal_session="hx_sess_123",
             chat_id="sess-123",
@@ -514,7 +514,7 @@ class AgentTerminalContextTests(unittest.TestCase):
 
 class SessionSystemPromptPersistenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_session_store_updates_and_clears_system_prompt(self) -> None:
-        store = agent_server.SessionStore()
+        store = hyadex_server.SessionStore()
         store.sessions["sess-123"] = {
             "id": "sess-123",
             "title": "Deployment",

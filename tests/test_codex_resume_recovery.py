@@ -1,6 +1,6 @@
 import unittest
 
-from agent_server import (
+from tests.hyadex_server import (
     codex_compaction_retry_mode,
     is_codex_resume_failure,
     is_silent_codex_completion,

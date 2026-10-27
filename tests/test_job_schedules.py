@@ -10,9 +10,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
-import agent_server
-
-
+from tests import hyadex_server
 def timestamp(value: str, timezone_name: str = "UTC") -> float:
     return datetime.fromisoformat(value).replace(tzinfo=ZoneInfo(timezone_name)).timestamp()
 
@@ -25,7 +23,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_pause_for_session_disables_enabled_jobs_and_emits_updates(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs = {
             "job_interval": {
                 "id": "job_interval",
@@ -91,7 +89,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(store, "save", new_callable=AsyncMock) as save,
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             paused = await store.pause_for_session("sess_archived")
 
@@ -134,7 +132,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_pause_for_session_save_failure_stays_safe_in_memory(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs["job_target"] = {
             "id": "job_target",
             "session_id": "sess_archived",
@@ -151,7 +149,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 "save",
                 AsyncMock(side_effect=OSError("disk full")),
             ),
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaisesRegex(OSError, "disk full"):
                 await store.pause_for_session("sess_archived")
@@ -197,16 +195,16 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                     "run_count": 0,
                 },
             }))
-            store = agent_server.JobStore()
+            store = hyadex_server.JobStore()
             sessions = {
                 "sess_archived": {"id": "sess_archived", "archived": True},
                 "sess_active": {"id": "sess_active", "archived": False},
             }
 
             with (
-                patch.object(agent_server, "STATE_DIR", root),
-                patch.object(agent_server, "JOBS_FILE", jobs_file),
-                patch.object(agent_server.STORE, "sessions", sessions),
+                patch.object(hyadex_server, "STATE_DIR", root),
+                patch.object(hyadex_server, "JOBS_FILE", jobs_file),
+                patch.object(hyadex_server.STORE, "sessions", sessions),
             ):
                 await store.load()
 
@@ -220,15 +218,15 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(persisted["job_archived"]["scheduled_run_at"])
 
     async def test_create_rejects_an_archived_parent_session(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_archived_create"
-        request = agent_server.CreateJobRequest(
+        request = hyadex_server.CreateJobRequest(
             session_id=session_id,
             title="Should not exist",
             prompt="Do not schedule",
         )
 
-        with patch.object(agent_server.STORE, "sessions", {
+        with patch.object(hyadex_server.STORE, "sessions", {
             session_id: {"id": session_id, "archived": True},
         }):
             with self.assertRaises(HTTPException) as raised:
@@ -239,7 +237,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.jobs, {})
 
     async def test_revocation_revision_fences_stale_dispatch_and_pause(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         # A job saved before @Chat targets were retired.
         reference = {
             "session_id": "target",
@@ -248,7 +246,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "source_text_end": 7,
             "action": "instruction",
         }
-        old_revision = agent_server.new_job_revision()
+        old_revision = hyadex_server.new_job_revision()
         store.jobs["job_race"] = {
             "id": "job_race",
             "session_id": "source",
@@ -266,14 +264,14 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "_revision": old_revision,
         }
         sessions = {
-            "source": {"id": "source", "backend": agent_server.BACKEND_CODEX},
-            "target": {"id": "target", "backend": agent_server.BACKEND_CODEX},
+            "source": {"id": "source", "backend": hyadex_server.BACKEND_CODEX},
+            "target": {"id": "target", "backend": hyadex_server.BACKEND_CODEX},
         }
         with (
-            patch.object(agent_server.STORE, "sessions", sessions),
-            patch.object(agent_server, "AGENT_TOKEN", "test-token"),
+            patch.object(hyadex_server.STORE, "sessions", sessions),
+            patch.object(hyadex_server, "AGENT_TOKEN", "test-token"),
             patch.object(store, "save", new_callable=AsyncMock),
-            patch.object(agent_server, "append_event", new_callable=AsyncMock),
+            patch.object(hyadex_server, "append_event", new_callable=AsyncMock),
         ):
             revoked = await store.update(
                 "job_race",
@@ -281,7 +279,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertNotEqual(revoked["_revision"], old_revision)
 
-            with self.assertRaises(agent_server.ScheduledJobRevisionChanged):
+            with self.assertRaises(hyadex_server.ScheduledJobRevisionChanged):
                 await store.assert_dispatch_revision(
                     "job_race",
                     "source",
@@ -290,7 +288,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
             paused = await store.pause_for_chat_reference_repair(
                 "job_race",
-                agent_server.ScheduledJobChatReferenceRepairRequired(
+                hyadex_server.ScheduledJobChatReferenceRepairRequired(
                     status_code=409,
                     detail="stale target",
                 ),
@@ -304,8 +302,8 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_admitted_old_occurrence_does_not_advance_edited_schedule(
         self,
     ) -> None:
-        store = agent_server.JobStore()
-        old_revision = agent_server.new_job_revision()
+        store = hyadex_server.JobStore()
+        old_revision = hyadex_server.new_job_revision()
         old_occurrence = 100.0
         edited_occurrence = time.time() + 3_600
         store.jobs["job_schedule_edit_race"] = {
@@ -334,22 +332,22 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 "loop": True,
                 "next_run_at": edited_occurrence,
                 "scheduled_run_at": edited_occurrence,
-                "_revision": agent_server.new_job_revision(),
+                "_revision": hyadex_server.new_job_revision(),
             })
             return {"run_id": "run_old_occurrence"}
 
         sessions = {
             "source": {
                 "id": "source",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
             },
         }
         events = AsyncMock()
         with (
-            patch.object(agent_server.STORE, "sessions", sessions),
-            patch.object(agent_server, "start_turn", side_effect=admit_then_edit),
+            patch.object(hyadex_server.STORE, "sessions", sessions),
+            patch.object(hyadex_server, "start_turn", side_effect=admit_then_edit),
             patch.object(store, "save", new_callable=AsyncMock),
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             result = await store.run_job("job_schedule_edit_race")
 
@@ -373,7 +371,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temporary)
             event_path = root / "source.jsonl"
             jobs_file = root / "jobs.json"
-            revision = agent_server.new_job_revision()
+            revision = hyadex_server.new_job_revision()
             occurrence = 1_000.0
             reference = {
                 "session_id": "target-private-id",
@@ -393,7 +391,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 "chat_references": [reference],
                 "cross_chat_direct_message_ids": ["handoff_admitted"],
             }) + "\n")
-            store = agent_server.JobStore()
+            store = hyadex_server.JobStore()
             store.jobs["job_direct_restart"] = {
                 "id": "job_direct_restart",
                 "session_id": "source",
@@ -414,14 +412,14 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             }
 
             with (
-                patch.object(agent_server, "STATE_DIR", root),
-                patch.object(agent_server, "JOBS_FILE", jobs_file),
+                patch.object(hyadex_server, "STATE_DIR", root),
+                patch.object(hyadex_server, "JOBS_FILE", jobs_file),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "events_path",
                     return_value=event_path,
                 ),
-                patch.object(agent_server.time, "time", return_value=1_001.0),
+                patch.object(hyadex_server.time, "time", return_value=1_001.0),
             ):
                 self.assertEqual(
                     await store.reconcile_admitted_runs_after_restart(),
@@ -450,7 +448,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
                 with (
                     patch.object(
-                        agent_server.asyncio,
+                        hyadex_server.asyncio,
                         "sleep",
                         side_effect=one_scheduler_iteration,
                     ),
@@ -473,7 +471,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temporary)
             event_path = root / "source.jsonl"
             jobs_file = root / "jobs.json"
-            revision = agent_server.new_job_revision()
+            revision = hyadex_server.new_job_revision()
             manual_occurrence = 1_000.0
             future_occurrence = 2_000.0
             event_path.write_text(json.dumps({
@@ -486,7 +484,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 "job_scheduled_run_at": manual_occurrence,
                 "manual_run": True,
             }) + "\n")
-            store = agent_server.JobStore()
+            store = hyadex_server.JobStore()
             store.jobs["job_manual_restart"] = {
                 "id": "job_manual_restart",
                 "session_id": "source",
@@ -506,14 +504,14 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             }
 
             with (
-                patch.object(agent_server, "STATE_DIR", root),
-                patch.object(agent_server, "JOBS_FILE", jobs_file),
+                patch.object(hyadex_server, "STATE_DIR", root),
+                patch.object(hyadex_server, "JOBS_FILE", jobs_file),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "events_path",
                     return_value=event_path,
                 ),
-                patch.object(agent_server.time, "time", return_value=1_001.0),
+                patch.object(hyadex_server.time, "time", return_value=1_001.0),
             ):
                 self.assertEqual(
                     await store.reconcile_admitted_runs_after_restart(),
@@ -547,7 +545,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             event_path = Path(temporary) / "source.jsonl"
-            admitted_revision = agent_server.new_job_revision()
+            admitted_revision = hyadex_server.new_job_revision()
             admitted_occurrence = 1_000.0
             event_path.write_text(json.dumps({
                 "seq": 1,
@@ -562,13 +560,13 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             for label, current_revision, current_occurrence in (
                 (
                     "revision",
-                    agent_server.new_job_revision(),
+                    hyadex_server.new_job_revision(),
                     admitted_occurrence,
                 ),
                 ("occurrence", admitted_revision, 2_000.0),
             ):
                 with self.subTest(edit=label):
-                    store = agent_server.JobStore()
+                    store = hyadex_server.JobStore()
                     store.jobs["job_edited_restart"] = {
                         "id": "job_edited_restart",
                         "session_id": "source",
@@ -588,7 +586,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                     save = AsyncMock()
                     with (
                         patch.object(
-                            agent_server,
+                            hyadex_server,
                             "events_path",
                             return_value=event_path,
                         ),
@@ -610,7 +608,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_stored_chat_target_is_durably_paused_for_repair(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs["job_repair"] = {
             "id": "job_repair",
             "session_id": "source",
@@ -634,11 +632,11 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         sessions = {
             "source": {
                 "id": "source",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
             },
             "target": {
                 "id": "target",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "archived": True,
             },
         }
@@ -646,19 +644,19 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             jobs_file = Path(temporary) / "jobs.json"
             with (
-                patch.object(agent_server.STORE, "sessions", sessions),
-                patch.object(agent_server, "AGENT_TOKEN", "test-token"),
-                patch.object(agent_server, "JOBS_FILE", jobs_file),
-                patch.object(agent_server, "ensure_dirs"),
-                patch.object(agent_server, "append_event", events),
+                patch.object(hyadex_server.STORE, "sessions", sessions),
+                patch.object(hyadex_server, "AGENT_TOKEN", "test-token"),
+                patch.object(hyadex_server, "JOBS_FILE", jobs_file),
+                patch.object(hyadex_server, "ensure_dirs"),
+                patch.object(hyadex_server, "append_event", events),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "start_turn",
                     new_callable=AsyncMock,
                 ) as start_turn,
             ):
                 with self.assertRaises(
-                    agent_server.ScheduledJobChatReferenceRepairRequired
+                    hyadex_server.ScheduledJobChatReferenceRepairRequired
                 ):
                     await store.run_job("job_repair")
 
@@ -697,7 +695,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         }
         for case, target in cases.items():
             with self.subTest(case=case):
-                store = agent_server.JobStore()
+                store = hyadex_server.JobStore()
                 store.jobs["job_repair"] = {
                     "id": "job_repair",
                     "session_id": "source",
@@ -721,28 +719,28 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 sessions = {
                     "source": {
                         "id": "source",
-                        "backend": agent_server.BACKEND_CODEX,
+                        "backend": hyadex_server.BACKEND_CODEX,
                     },
                 }
                 if target is not None:
                     sessions["target"] = target
                 with (
-                    patch.object(agent_server.STORE, "sessions", sessions),
-                    patch.object(agent_server, "AGENT_TOKEN", "test-token"),
+                    patch.object(hyadex_server.STORE, "sessions", sessions),
+                    patch.object(hyadex_server, "AGENT_TOKEN", "test-token"),
                     patch.object(store, "save", new_callable=AsyncMock) as save,
                     patch.object(
-                        agent_server,
+                        hyadex_server,
                         "append_event",
                         new_callable=AsyncMock,
                     ) as events,
                     patch.object(
-                        agent_server,
+                        hyadex_server,
                         "start_turn",
                         new_callable=AsyncMock,
                     ) as start_turn,
                 ):
                     with self.assertRaises(
-                        agent_server.ScheduledJobChatReferenceRepairRequired
+                        hyadex_server.ScheduledJobChatReferenceRepairRequired
                     ):
                         await store.run_job("job_repair")
 
@@ -755,7 +753,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_archived_session_job_cannot_be_enabled_but_can_be_edited(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_archived_update"
         store.jobs["job_paused"] = {
             "id": "job_paused",
@@ -780,11 +778,11 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         events = AsyncMock()
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": True},
             }),
             patch.object(store, "save", save),
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(HTTPException) as raised:
                 await store.update("job_paused", {"enabled": True})
@@ -808,7 +806,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_pauses_due_archived_jobs_without_running_or_deferring(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_archived_due"
         store.jobs["job_due"] = {
             "id": "job_due",
@@ -830,20 +828,20 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         blocker = AsyncMock(return_value=None)
         events = AsyncMock()
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": True},
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=one_scheduler_iteration,
             ),
             patch.object(store, "save", new_callable=AsyncMock),
             patch.object(store, "run_job", new_callable=AsyncMock) as run_job,
             patch.object(store, "defer", new_callable=AsyncMock) as defer,
-            patch.object(agent_server, "scheduled_job_blocker", blocker),
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "scheduled_job_blocker", blocker),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -860,7 +858,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_does_not_dispatch_a_job_paused_during_blocker_check(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_pause_race"
         store.jobs["job_due"] = {
             "id": "job_due",
@@ -891,17 +889,17 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=one_scheduler_iteration,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 side_effect=pause_while_checking,
             ),
@@ -915,9 +913,9 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_does_not_defer_over_a_schedule_edit_during_blocker_check(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_schedule_edit_race"
-        original_revision = agent_server.new_job_revision()
+        original_revision = hyadex_server.new_job_revision()
         store.jobs["job_due"] = {
             "id": "job_due",
             "session_id": session_id,
@@ -954,23 +952,23 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
         events = AsyncMock()
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=one_scheduler_iteration,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 side_effect=edit_while_checking,
             ),
             patch.object(store, "save", new_callable=AsyncMock),
             patch.object(store, "run_job", new_callable=AsyncMock) as run_job,
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -994,10 +992,10 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         schedule_id = "c" * 32
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_update_dispatch_race"
         occurrence = 1.0
-        original_revision = agent_server.new_job_revision()
+        original_revision = hyadex_server.new_job_revision()
         store.jobs["job_due"] = {
             "id": "job_due",
             "session_id": session_id,
@@ -1023,21 +1021,21 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             if sleep_count > 1:
                 raise asyncio.CancelledError
 
-        update_reason = agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL
+        update_reason = hyadex_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL
         events = AsyncMock()
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
-            patch.object(agent_server, "JOB_DEFER_EVENT_MIN_SECONDS", 0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server, "JOB_DEFER_EVENT_MIN_SECONDS", 0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=one_scheduler_iteration,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
@@ -1047,9 +1045,9 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 store,
                 "run_job",
                 new_callable=AsyncMock,
-                side_effect=agent_server.HTTPException(status_code=503, detail=agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL),
+                side_effect=hyadex_server.HTTPException(status_code=503, detail=hyadex_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL),
             ) as run_job,
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -1060,7 +1058,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current["scheduled_run_at"], occurrence)
         self.assertEqual(
             current["next_run_at"],
-            2.0 + max(agent_server.JOB_BUSY_RETRY_SECONDS, 5),
+            2.0 + max(hyadex_server.JOB_BUSY_RETRY_SECONDS, 5),
         )
         self.assertEqual(current["last_defer_reason"], update_reason)
         self.assertNotIn("_update_park_schedule_id", current)
@@ -1073,7 +1071,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_preserves_one_shot_after_typed_admission_race(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_one_shot_admission_race"
         occurrence = 1.0
         store.jobs["job_due"] = {
@@ -1091,7 +1089,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
             "next_run_at": occurrence,
             "scheduled_run_at": occurrence,
-            "_revision": agent_server.new_job_revision(),
+            "_revision": hyadex_server.new_job_revision(),
         }
         sleep_count = 0
 
@@ -1104,18 +1102,18 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         reason = "wait for provider session maintenance to finish"
         events = AsyncMock()
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
-            patch.object(agent_server, "JOB_DEFER_EVENT_MIN_SECONDS", 0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server, "JOB_DEFER_EVENT_MIN_SECONDS", 0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=one_scheduler_iteration,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
@@ -1125,12 +1123,12 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 store,
                 "run_job",
                 new_callable=AsyncMock,
-                side_effect=agent_server.TransientAdmissionWait(
+                side_effect=hyadex_server.TransientAdmissionWait(
                     status_code=409,
                     detail=reason,
                 ),
             ),
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -1141,7 +1139,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current["scheduled_run_at"], occurrence)
         self.assertEqual(
             current["next_run_at"],
-            2.0 + max(agent_server.JOB_BUSY_RETRY_SECONDS, 5),
+            2.0 + max(hyadex_server.JOB_BUSY_RETRY_SECONDS, 5),
         )
         self.assertEqual(current["last_defer_reason"], reason)
         self.assertEqual(events.await_args.args[1], "job_deferred")
@@ -1152,31 +1150,31 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             (409, "wait for session maintenance to finish"),
         ):
             with self.subTest(status_code=status_code):
-                error = agent_server.TransientAdmissionWait(
+                error = hyadex_server.TransientAdmissionWait(
                     status_code=status_code,
                     detail=detail,
                 )
                 self.assertEqual(
-                    agent_server.scheduled_job_lifecycle_admission_defer_reason(
+                    hyadex_server.scheduled_job_lifecycle_admission_defer_reason(
                         error
                     ),
                     detail,
                 )
 
     def test_scheduler_classifies_explicit_stop_race_as_deferral(self) -> None:
-        error = agent_server.TransientAdmissionWait(
+        error = hyadex_server.TransientAdmissionWait(
             status_code=409,
             detail="session already has a running turn",
         )
         self.assertEqual(
-            agent_server.scheduled_job_lifecycle_admission_defer_reason(error),
+            hyadex_server.scheduled_job_lifecycle_admission_defer_reason(error),
             "session already has a running turn",
         )
 
     def test_scheduler_does_not_classify_untyped_conflict_as_deferral(self) -> None:
         error = HTTPException(status_code=409, detail="unrelated conflict")
         self.assertIsNone(
-            agent_server.scheduled_job_lifecycle_admission_defer_reason(error)
+            hyadex_server.scheduled_job_lifecycle_admission_defer_reason(error)
         )
 
     async def test_scheduler_maintenance_race_does_not_defer_over_edited_cron_revision(
@@ -1185,11 +1183,11 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         schedule_id = "d" * 32
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_update_edit_race"
         occurrence = 1.0
         edited_occurrence = 100.0
-        original_revision = agent_server.new_job_revision()
+        original_revision = hyadex_server.new_job_revision()
         store.jobs["job_due"] = {
             "id": "job_due",
             "session_id": session_id,
@@ -1220,22 +1218,22 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 "job_due",
                 {"next_run_at": str(edited_occurrence)},
             )
-            raise agent_server.HTTPException(status_code=503, detail=agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
+            raise hyadex_server.HTTPException(status_code=503, detail=hyadex_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
 
         events = AsyncMock()
         original_defer = store.defer
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=one_scheduler_iteration,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
@@ -1243,7 +1241,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             patch.object(store, "save", new_callable=AsyncMock) as save,
             patch.object(store, "run_job", side_effect=edit_then_reject),
             patch.object(store, "defer", wraps=original_defer) as defer,
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -1260,8 +1258,8 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("_update_park_revision", current)
         defer.assert_awaited_once_with(
             "job_due",
-            agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
-            agent_server.JOB_BUSY_RETRY_SECONDS,
+            hyadex_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
+            hyadex_server.JOB_BUSY_RETRY_SECONDS,
             expected_revision=original_revision,
             expected_next_run_at=occurrence,
         )
@@ -1274,7 +1272,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_does_not_treat_unrelated_503_as_update_fence(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_unrelated_503"
         occurrence = 1.0
         store.jobs["job_due"] = {
@@ -1292,7 +1290,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
             "next_run_at": occurrence,
             "scheduled_run_at": occurrence,
-            "_revision": agent_server.new_job_revision(),
+            "_revision": hyadex_server.new_job_revision(),
         }
         sleep_count = 0
 
@@ -1304,17 +1302,17 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
         events = AsyncMock()
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=one_scheduler_iteration,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
@@ -1329,7 +1327,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                     detail="provider is temporarily unavailable",
                 ),
             ),
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -1348,10 +1346,10 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_durably_retries_runtime_unavailable_same_occurrence(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_runtime_retry"
         occurrence = 1.0
-        original_revision = agent_server.new_job_revision()
+        original_revision = hyadex_server.new_job_revision()
         store.jobs["job_due"] = {
             "id": "job_due",
             "session_id": session_id,
@@ -1391,21 +1389,21 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         events = AsyncMock()
         with tempfile.TemporaryDirectory() as temporary, (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             })
-        ), patch.object(agent_server, "JOBS_FILE", Path(temporary) / "jobs.json"), (
-            patch.object(agent_server, "ensure_dirs", return_value=None)
-        ), patch.object(agent_server.time, "time", return_value=2.0), patch.object(
-            agent_server,
+        ), patch.object(hyadex_server, "JOBS_FILE", Path(temporary) / "jobs.json"), (
+            patch.object(hyadex_server, "ensure_dirs", return_value=None)
+        ), patch.object(hyadex_server.time, "time", return_value=2.0), patch.object(
+            hyadex_server,
             "JOB_DEFER_EVENT_MIN_SECONDS",
             0,
         ), patch.object(
-            agent_server.asyncio,
+            hyadex_server.asyncio,
             "sleep",
             side_effect=one_scheduler_iteration,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "scheduled_job_blocker",
             new_callable=AsyncMock,
             return_value=None,
@@ -1414,7 +1412,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_job",
             new_callable=AsyncMock,
             side_effect=runtime_error,
-        ), patch.object(agent_server, "append_event", events):
+        ), patch.object(hyadex_server, "append_event", events):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
 
@@ -1424,7 +1422,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(current["scheduled_run_at"], occurrence)
             self.assertEqual(
                 current["next_run_at"],
-                2.0 + max(agent_server.JOB_BUSY_RETRY_SECONDS, 5),
+                2.0 + max(hyadex_server.JOB_BUSY_RETRY_SECONDS, 5),
             )
             self.assertEqual(current["_runtime_unavailable_occurrence"], occurrence)
             self.assertEqual(current["_runtime_unavailable_defer_count"], 1)
@@ -1435,7 +1433,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 1,
             )
 
-            restarted = agent_server.JobStore()
+            restarted = hyadex_server.JobStore()
             await restarted.load()
             restarted_job = restarted.jobs["job_due"]
             retry_result = await restarted.defer_runtime_unavailable(
@@ -1459,10 +1457,10 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_runtime_unavailable_exhaustion_advances_occurrence(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_runtime_exhausted"
         occurrence = 1.0
-        revision = agent_server.new_job_revision()
+        revision = hyadex_server.new_job_revision()
         store.jobs["job_due"] = {
             "id": "job_due",
             "session_id": session_id,
@@ -1480,7 +1478,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "scheduled_run_at": occurrence,
             "_runtime_unavailable_occurrence": occurrence,
             "_runtime_unavailable_defer_count": (
-                agent_server.JOB_RUNTIME_UNAVAILABLE_MAX_DEFERS
+                hyadex_server.JOB_RUNTIME_UNAVAILABLE_MAX_DEFERS
             ),
             "_revision": revision,
         }
@@ -1493,14 +1491,14 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 raise asyncio.CancelledError
 
         events = AsyncMock()
-        with patch.object(agent_server.STORE, "sessions", {
+        with patch.object(hyadex_server.STORE, "sessions", {
             session_id: {"id": session_id, "archived": False},
-        }), patch.object(agent_server.time, "time", return_value=2.0), patch.object(
-            agent_server.asyncio,
+        }), patch.object(hyadex_server.time, "time", return_value=2.0), patch.object(
+            hyadex_server.asyncio,
             "sleep",
             side_effect=one_scheduler_iteration,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "scheduled_job_blocker",
             new_callable=AsyncMock,
             return_value=None,
@@ -1515,7 +1513,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                     "message": "Codex runtime is unavailable.",
                 },
             ),
-        ), patch.object(agent_server, "append_event", events):
+        ), patch.object(hyadex_server, "append_event", events):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
 
@@ -1530,9 +1528,9 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_runtime_unavailable_defer_cas_cannot_overwrite_edit_or_delete(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         occurrence = 1.0
-        original_revision = agent_server.new_job_revision()
+        original_revision = hyadex_server.new_job_revision()
         original = {
             "id": "job_due",
             "session_id": "sess_runtime_cas",
@@ -1554,7 +1552,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
         edited = dict(original)
         edited["title"] = "User edit wins"
-        edited["_revision"] = agent_server.new_job_revision()
+        edited["_revision"] = hyadex_server.new_job_revision()
         store.jobs["job_due"] = edited
         with patch.object(store, "save", new_callable=AsyncMock) as save:
             edit_result = await store.defer_runtime_unavailable(
@@ -1582,9 +1580,9 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_generic_failure_cannot_overwrite_concurrent_edit(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_generic_edit_race"
-        original_revision = agent_server.new_job_revision()
+        original_revision = hyadex_server.new_job_revision()
         store.jobs["job_due"] = {
             "id": "job_due",
             "session_id": session_id,
@@ -1616,24 +1614,24 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
         events = AsyncMock()
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=one_scheduler_iteration,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch.object(store, "save", new_callable=AsyncMock) as save,
             patch.object(store, "run_job", side_effect=edit_then_fail),
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -1651,9 +1649,9 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_uses_fresh_revision_after_edit_during_blocker(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_blocker_edit_failure"
-        original_revision = agent_server.new_job_revision()
+        original_revision = hyadex_server.new_job_revision()
         store.jobs["job_due"] = {
             "id": "job_due",
             "session_id": session_id,
@@ -1696,17 +1694,17 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
         events = AsyncMock()
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=two_scheduler_iterations,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 side_effect=edit_on_first_blocker,
             ),
@@ -1717,7 +1715,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("permanent provider failure"),
             ) as run_job,
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -1737,7 +1735,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_treats_a_late_archive_rejection_as_a_pause(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_archive_during_dispatch"
         session = {"id": session_id, "archived": False}
         store.jobs["job_due"] = {
@@ -1768,22 +1766,22 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         pause = AsyncMock(return_value=1)
         events = AsyncMock()
         with (
-            patch.object(agent_server.STORE, "sessions", {session_id: session}),
-            patch.object(agent_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server.STORE, "sessions", {session_id: session}),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=one_scheduler_iteration,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch.object(store, "run_job", side_effect=reject_after_archive),
             patch.object(store, "pause_for_session", pause),
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -1795,7 +1793,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_run_now_rejects_an_archived_session_and_pauses_its_jobs(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_archived_run"
         store.jobs["job_run"] = {
             "id": "job_run",
@@ -1808,11 +1806,11 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": True},
             }),
             patch.object(store, "pause_for_session", new_callable=AsyncMock) as pause,
-            patch.object(agent_server, "start_turn", new_callable=AsyncMock) as start,
+            patch.object(hyadex_server, "start_turn", new_callable=AsyncMock) as start,
         ):
             with self.assertRaises(HTTPException) as raised:
                 await store.request_manual_run("job_run")
@@ -1824,7 +1822,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_manual_run_is_durably_deferred_while_chat_is_busy(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_busy_manual"
         store.jobs["job_manual"] = {
             "id": "job_manual",
@@ -1839,18 +1837,18 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         events = AsyncMock()
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
             patch.object(store, "save", new_callable=AsyncMock),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value="chat already has a running turn",
             ),
-            patch.object(agent_server, "start_turn", new_callable=AsyncMock) as start,
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "start_turn", new_callable=AsyncMock) as start,
+            patch.object(hyadex_server, "append_event", events),
         ):
             result = await store.request_manual_run("job_manual")
             repeated_result = await store.request_manual_run("job_manual")
@@ -1862,7 +1860,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("start automatically", result["message"])
         self.assertTrue(result["job"]["manual_run_pending"])
         self.assertTrue(store.jobs["job_manual"]["manual_run_pending"])
-        self.assertTrue(agent_server.public_job(
+        self.assertTrue(hyadex_server.public_job(
             store.jobs["job_manual"],
         )["manual_run_pending"])
         start.assert_not_awaited()
@@ -1879,7 +1877,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Update retirement rearms exact old occurrences without overwriting edits."""
 
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         live_schedule_id = "1" * 32
         stale_schedule_id = "2" * 32
         live_revision = "job_rev_live_park"
@@ -1923,7 +1921,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        with patch.object(agent_server.time, "time", return_value=2.0), \
+        with patch.object(hyadex_server.time, "time", return_value=2.0), \
              patch.object(store, "save", new_callable=AsyncMock) as save:
             resumed = await store.resume_legacy_update_parked()
 
@@ -1958,7 +1956,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         schedule_id = "3" * 32
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs["job_race"] = {
             "id": "job_race",
             "session_id": "race-chat",
@@ -1985,33 +1983,33 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 raise asyncio.CancelledError
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 "race-chat": {
                     "id": "race-chat",
-                    "backend": agent_server.BACKEND_CODEX,
+                    "backend": hyadex_server.BACKEND_CODEX,
                     "archived": False,
                 },
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=stop_after_iteration,
             ),
             patch.object(store, "save", new_callable=AsyncMock),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "start_turn",
                 new_callable=AsyncMock,
-                side_effect=agent_server.HTTPException(status_code=503, detail=agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL),
+                side_effect=hyadex_server.HTTPException(status_code=503, detail=hyadex_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL),
             ) as start,
-            patch.object(agent_server, "append_event", new_callable=AsyncMock),
+            patch.object(hyadex_server, "append_event", new_callable=AsyncMock),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -2022,13 +2020,13 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job["run_count"], 0)
         self.assertEqual(job["scheduled_run_at"], 1.0)
         self.assertNotIn("_update_park_schedule_id", job)
-        self.assertEqual(job["last_defer_reason"], agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
+        self.assertEqual(job["last_defer_reason"], hyadex_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
         self.assertNotEqual(job["_revision"], "job_rev_race")
 
     async def test_permanent_manual_run_error_clears_pending_and_emits_error(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_invalid_manual"
         store.jobs["job_manual"] = {
             "id": "job_manual",
@@ -2043,18 +2041,18 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         events = AsyncMock()
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
             patch.object(store, "save", new_callable=AsyncMock),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "start_turn",
                 new_callable=AsyncMock,
                 side_effect=HTTPException(
@@ -2062,7 +2060,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                     detail="invalid scheduled job",
                 ),
             ),
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(HTTPException) as raised:
                 await store.request_manual_run("job_manual")
@@ -2080,7 +2078,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_drops_permanently_invalid_pending_manual_run(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_corrupt_pending_manual"
         store.jobs["job_manual"] = {
             "id": "job_manual",
@@ -2103,29 +2101,29 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
         events = AsyncMock()
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=one_scheduler_iteration,
             ),
             patch.object(store, "save", new_callable=AsyncMock),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "start_turn",
                 new_callable=AsyncMock,
                 side_effect=ValueError("corrupt scheduled job"),
             ) as start,
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -2140,7 +2138,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_duplicate_manual_run_taps_coalesce_during_admission(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_duplicate_manual"
         store.jobs["job_manual"] = {
             "id": "job_manual",
@@ -2161,18 +2159,18 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             return {"run_id": "run_once", "queued": False}
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
             patch.object(store, "save", new_callable=AsyncMock),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch.object(agent_server, "start_turn", side_effect=delayed_start) as start,
-            patch.object(agent_server, "append_event", new_callable=AsyncMock),
+            patch.object(hyadex_server, "start_turn", side_effect=delayed_start) as start,
+            patch.object(hyadex_server, "append_event", new_callable=AsyncMock),
         ):
             first_request = asyncio.create_task(
                 store.request_manual_run("job_manual"),
@@ -2193,7 +2191,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_dispatches_pending_manual_run_for_disabled_job(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_deferred_manual"
         store.jobs["job_manual"] = {
             "id": "job_manual",
@@ -2216,29 +2214,29 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 raise asyncio.CancelledError
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=2.0),
+            patch.object(hyadex_server.time, "time", return_value=2.0),
             patch.object(
-                agent_server.asyncio,
+                hyadex_server.asyncio,
                 "sleep",
                 side_effect=one_scheduler_iteration,
             ),
             patch.object(store, "save", new_callable=AsyncMock),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "start_turn",
                 new_callable=AsyncMock,
                 return_value={"run_id": "run_deferred", "queued": False},
             ) as start,
-            patch.object(agent_server, "append_event", new_callable=AsyncMock),
+            patch.object(hyadex_server, "append_event", new_callable=AsyncMock),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await store.scheduler_loop()
@@ -2251,7 +2249,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_manual_run_starts_immediately_when_chat_is_idle(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_idle_manual"
         store.jobs["job_manual"] = {
             "id": "job_manual",
@@ -2270,18 +2268,18 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         events = AsyncMock()
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
             patch.object(store, "save", new_callable=AsyncMock),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch.object(agent_server, "start_turn", start),
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "start_turn", start),
+            patch.object(hyadex_server, "append_event", events),
         ):
             result = await store.request_manual_run("job_manual")
 
@@ -2296,7 +2294,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_early_manual_run_preserves_future_cron_occurrence(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_future_cron"
         future_occurrence = 2_000.0
         store.jobs["job_cron"] = {
@@ -2318,19 +2316,19 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         })
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=1_000.0),
+            patch.object(hyadex_server.time, "time", return_value=1_000.0),
             patch.object(store, "save", new_callable=AsyncMock),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch.object(agent_server, "start_turn", start),
-            patch.object(agent_server, "append_event", new_callable=AsyncMock),
+            patch.object(hyadex_server, "start_turn", start),
+            patch.object(hyadex_server, "append_event", new_callable=AsyncMock),
         ):
             result = await store.request_manual_run("job_cron")
 
@@ -2347,7 +2345,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_manual_run_honors_max_runs_limit(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_manual_limit"
         store.jobs["job_limited"] = {
             "id": "job_limited",
@@ -2365,24 +2363,24 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with (
-            patch.object(agent_server.STORE, "sessions", {
+            patch.object(hyadex_server.STORE, "sessions", {
                 session_id: {"id": session_id, "archived": False},
             }),
-            patch.object(agent_server.time, "time", return_value=1_000.0),
+            patch.object(hyadex_server.time, "time", return_value=1_000.0),
             patch.object(store, "save", new_callable=AsyncMock),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scheduled_job_blocker",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "start_turn",
                 new_callable=AsyncMock,
                 return_value={"run_id": "run_limited", "queued": False},
             ),
-            patch.object(agent_server, "append_event", new_callable=AsyncMock),
+            patch.object(hyadex_server, "append_event", new_callable=AsyncMock),
         ):
             await store.request_manual_run("job_limited")
 
@@ -2393,7 +2391,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_delete_for_session_restores_jobs_when_persistence_fails(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs["job_retry"] = {
             "id": "job_retry",
             "session_id": "missing-chat",
@@ -2419,7 +2417,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_cleanup_failure_does_not_resurrect_missing_session(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs["job_orphan"] = {
             "id": "job_orphan",
             "session_id": "missing-chat",
@@ -2439,12 +2437,12 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with (
-                patch.object(agent_server, "STATE_DIR", root),
-                patch.object(agent_server, "JOBS_FILE", root / "jobs.json"),
-                patch.object(agent_server.STORE, "sessions", {}),
-                patch.object(agent_server.time, "time", return_value=2.0),
+                patch.object(hyadex_server, "STATE_DIR", root),
+                patch.object(hyadex_server, "JOBS_FILE", root / "jobs.json"),
+                patch.object(hyadex_server.STORE, "sessions", {}),
+                patch.object(hyadex_server.time, "time", return_value=2.0),
                 patch.object(
-                    agent_server.asyncio,
+                    hyadex_server.asyncio,
                     "sleep",
                     side_effect=one_scheduler_iteration,
                 ),
@@ -2476,8 +2474,8 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                     "run_count": 7,
                 }
             }))
-            store = agent_server.JobStore()
-            with patch.object(agent_server, "STATE_DIR", root), patch.object(agent_server, "JOBS_FILE", jobs_file):
+            store = hyadex_server.JobStore()
+            with patch.object(hyadex_server, "STATE_DIR", root), patch.object(hyadex_server, "JOBS_FILE", jobs_file):
                 await store.load()
 
             migrated = store.jobs["job_old"]
@@ -2489,11 +2487,11 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(migrated["enabled"])
 
     async def test_explicit_first_cron_run_is_exact_then_returns_to_rule(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         now = timestamp("2026-07-21T08:00:00", "America/Los_Angeles")
         first = timestamp("2026-07-21T10:17:00", "America/Los_Angeles")
-        agent_server.STORE.sessions["sess_test"] = {"id": "sess_test"}
-        request = agent_server.CreateJobRequest(
+        hyadex_server.STORE.sessions["sess_test"] = {"id": "sess_test"}
+        request = hyadex_server.CreateJobRequest(
             session_id="sess_test",
             title="Daily",
             prompt="Check",
@@ -2504,21 +2502,21 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         try:
             with patch.object(store, "save", new_callable=AsyncMock), \
-                    patch.object(agent_server, "append_event", new_callable=AsyncMock), \
-                    patch.object(agent_server.time, "time", return_value=now):
+                    patch.object(hyadex_server, "append_event", new_callable=AsyncMock), \
+                    patch.object(hyadex_server.time, "time", return_value=now):
                 job = await store.create(request)
             self.assertEqual(job["next_run_at"], first)
 
             with patch.object(store, "save", new_callable=AsyncMock), \
-                    patch.object(agent_server.time, "time", return_value=first + 60):
+                    patch.object(hyadex_server.time, "time", return_value=first + 60):
                 await store.mark_ran(job["id"])
             expected = timestamp("2026-07-22T09:00:00", "America/Los_Angeles")
             self.assertEqual(store.jobs[job["id"]]["next_run_at"], expected)
         finally:
-            agent_server.STORE.sessions.pop("sess_test", None)
+            hyadex_server.STORE.sessions.pop("sess_test", None)
 
     async def test_defer_preserves_canonical_interval_cadence(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs["job_1"] = {
             "id": "job_1",
             "session_id": "sess_1",
@@ -2535,7 +2533,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
         }
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=1065.0):
+                patch.object(hyadex_server.time, "time", return_value=1065.0):
             await store.defer("job_1", "busy", delay_seconds=300)
         self.assertEqual(store.jobs["job_1"]["next_run_at"], 1365.0)
         self.assertEqual(store.jobs["job_1"]["scheduled_run_at"], 1060.0)
@@ -2544,21 +2542,21 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         # Repeated busy checks replace the one retry deadline. They must not
         # enqueue multiple catch-up executions for the missed intervals.
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=1100.0):
+                patch.object(hyadex_server.time, "time", return_value=1100.0):
             await store.defer("job_1", "still busy", delay_seconds=300)
         self.assertEqual(store.jobs["job_1"]["next_run_at"], 1400.0)
         self.assertEqual(store.jobs["job_1"]["scheduled_run_at"], 1060.0)
         self.assertEqual(store.jobs["job_1"]["run_count"], 0)
 
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=1405.0):
+                patch.object(hyadex_server.time, "time", return_value=1405.0):
             await store.mark_ran("job_1")
         self.assertEqual(store.jobs["job_1"]["next_run_at"], 1420.0)
         self.assertEqual(store.jobs["job_1"]["scheduled_run_at"], 1420.0)
         self.assertEqual(store.jobs["job_1"]["run_count"], 1)
 
     async def test_scoped_update_delete_enforce_ownership_and_emit_events(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs["job_1"] = {
             "id": "job_1",
             "session_id": "sess_owner",
@@ -2580,7 +2578,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             await store.delete("job_1", expected_session_id="sess_other")
 
         events = AsyncMock()
-        with patch.object(store, "save", new_callable=AsyncMock), patch.object(agent_server, "append_event", events):
+        with patch.object(store, "save", new_callable=AsyncMock), patch.object(hyadex_server, "append_event", events):
             await store.update("job_1", {"title": "Updated"}, expected_session_id="sess_owner")
             await store.delete("job_1", expected_session_id="sess_owner")
         self.assertEqual([call.args[1] for call in events.await_args_list], ["job_updated", "job_deleted"])
@@ -2588,7 +2586,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("prompt", events.await_args_list[1].args[2]["job"])
 
     async def test_legacy_interval_edit_cannot_convert_a_calendar_job(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs["job_cron"] = {
             "id": "job_cron",
             "session_id": "sess_owner",
@@ -2608,7 +2606,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
         }
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server, "append_event", new_callable=AsyncMock):
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock):
             updated = await store.update("job_cron", {
                 "title": "Renamed by a v7 client",
                 "interval_seconds": 3600,
@@ -2622,7 +2620,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated["max_runs"], 3)
 
     async def test_rejected_schedule_update_is_atomic(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs["job_interval"] = {
             "id": "job_interval",
             "session_id": "sess_owner",
@@ -2654,7 +2652,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.jobs["job_interval"], before)
 
     async def test_metadata_only_interval_edit_does_not_reschedule(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs["job_interval"] = {
             "id": "job_interval",
             "session_id": "sess_owner",
@@ -2674,14 +2672,14 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
         }
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server, "append_event", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=2000.25):
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock), \
+                patch.object(hyadex_server.time, "time", return_value=2000.25):
             updated = await store.update("job_interval", {"title": "Renamed", "timezone": None})
         self.assertEqual(updated["schedule_start_at"], 1000.0)
         self.assertEqual(updated["next_run_at"], 4600.0)
 
     async def test_explicit_interval_next_run_reanchors_recurring_cadence(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         selected_run = 10_000.0
         store.jobs["job_interval"] = {
             "id": "job_interval",
@@ -2702,8 +2700,8 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
         }
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server, "append_event", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=5_000.0):
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock), \
+                patch.object(hyadex_server.time, "time", return_value=5_000.0):
             updated = await store.update(
                 "job_interval",
                 {"next_run_at": str(selected_run)},
@@ -2714,7 +2712,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated["next_run_at"], selected_run)
 
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=selected_run + 1):
+                patch.object(hyadex_server.time, "time", return_value=selected_run + 1):
             await store.mark_ran("job_interval")
 
         self.assertEqual(
@@ -2723,7 +2721,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_explicit_interval_next_run_wins_over_duration_change(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         selected_run = 10_000.0
         store.jobs["job_interval"] = {
             "id": "job_interval",
@@ -2744,8 +2742,8 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
         }
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server, "append_event", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=5_000.0):
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock), \
+                patch.object(hyadex_server.time, "time", return_value=5_000.0):
             updated = await store.update("job_interval", {
                 "interval_seconds": 7_200,
                 "next_run_at": str(selected_run),
@@ -2756,7 +2754,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated["next_run_at"], selected_run)
 
     async def test_explicit_null_recomputes_calendar_next_match(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         now = timestamp("2026-07-21T08:15:00")
         stale_override = timestamp("2026-07-21T12:34:00")
         expected = timestamp("2026-07-21T09:00:00")
@@ -2779,15 +2777,15 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
         }
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server, "append_event", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=now):
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock), \
+                patch.object(hyadex_server.time, "time", return_value=now):
             updated = await store.update("job_cron", {"next_run_at": None})
 
         self.assertEqual(updated["next_run_at"], expected)
         self.assertEqual(updated["scheduled_run_at"], expected)
 
     async def test_cron_expression_update_recomputes_next_run(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         now = timestamp("2026-07-21T08:15:00")
         expected = timestamp("2026-07-21T10:30:00")
         store.jobs["job_cron"] = {
@@ -2809,8 +2807,8 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
         }
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server, "append_event", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=now):
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock), \
+                patch.object(hyadex_server.time, "time", return_value=now):
             updated = await store.update(
                 "job_cron",
                 {"cron_expression": "30 10 * * *"},
@@ -2821,7 +2819,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated["scheduled_run_at"], expected)
 
     async def test_explicit_cron_next_run_remains_a_one_off_override(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         now = timestamp("2026-07-21T08:15:00")
         override = timestamp("2026-07-21T12:34:00")
         expected_after_override = timestamp("2026-07-22T09:00:00")
@@ -2845,8 +2843,8 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
         }
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server, "append_event", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=now):
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock), \
+                patch.object(hyadex_server.time, "time", return_value=now):
             updated = await store.update(
                 "job_cron",
                 {"next_run_at": str(override)},
@@ -2856,7 +2854,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated["next_run_at"], override)
 
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=override + 1):
+                patch.object(hyadex_server.time, "time", return_value=override + 1):
             await store.mark_ran("job_cron")
 
         self.assertEqual(
@@ -2865,7 +2863,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_omitted_next_run_preserves_calendar_override(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         override = timestamp("2026-07-21T12:34:00")
         store.jobs["job_cron"] = {
             "id": "job_cron",
@@ -2886,15 +2884,15 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
         }
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server, "append_event", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=timestamp("2026-07-21T08:15:00")):
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock), \
+                patch.object(hyadex_server.time, "time", return_value=timestamp("2026-07-21T08:15:00")):
             updated = await store.update("job_cron", {"title": "Renamed"})
 
         self.assertEqual(updated["next_run_at"], override)
         self.assertEqual(updated["scheduled_run_at"], override)
 
     async def test_schedule_kind_switch_preserves_finite_run_limit(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs["job_finite"] = {
             "id": "job_finite",
             "session_id": "sess_owner",
@@ -2914,8 +2912,8 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "run_count": 0,
         }
         with patch.object(store, "save", new_callable=AsyncMock), \
-                patch.object(agent_server, "append_event", new_callable=AsyncMock), \
-                patch.object(agent_server.time, "time", return_value=2000.25):
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock), \
+                patch.object(hyadex_server.time, "time", return_value=2000.25):
             cron = await store.update("job_finite", {
                 "schedule_kind": "cron",
                 "interval_seconds": None,
@@ -2932,9 +2930,9 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rrule["max_runs"], 3)
 
     async def test_count_one_rrule_schedules_exactly_one_run(self) -> None:
-        store = agent_server.JobStore()
-        agent_server.STORE.sessions["sess_count"] = {"id": "sess_count"}
-        request = agent_server.CreateJobRequest(
+        store = hyadex_server.JobStore()
+        hyadex_server.STORE.sessions["sess_count"] = {"id": "sess_count"}
+        request = hyadex_server.CreateJobRequest(
             session_id="sess_count",
             title="Once",
             prompt="Check",
@@ -2944,18 +2942,18 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         try:
             with patch.object(store, "save", new_callable=AsyncMock), \
-                    patch.object(agent_server, "append_event", new_callable=AsyncMock), \
-                    patch.object(agent_server.time, "time", return_value=2000.25):
+                    patch.object(hyadex_server, "append_event", new_callable=AsyncMock), \
+                    patch.object(hyadex_server.time, "time", return_value=2000.25):
                 job = await store.create(request)
             self.assertEqual(job["next_run_at"], 2001.0)
             with patch.object(store, "save", new_callable=AsyncMock), \
-                    patch.object(agent_server.time, "time", return_value=2001.5):
+                    patch.object(hyadex_server.time, "time", return_value=2001.5):
                 await store.mark_ran(job["id"])
             self.assertEqual(store.jobs[job["id"]]["run_count"], 1)
             self.assertFalse(store.jobs[job["id"]]["enabled"])
             self.assertIsNone(store.jobs[job["id"]]["next_run_at"])
         finally:
-            agent_server.STORE.sessions.pop("sess_count", None)
+            hyadex_server.STORE.sessions.pop("sess_count", None)
 
     async def test_load_defaults_legacy_jobs_to_chat_context(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2974,10 +2972,10 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                     "run_count": 0,
                 }
             }))
-            store = agent_server.JobStore()
+            store = hyadex_server.JobStore()
             with (
-                patch.object(agent_server, "STATE_DIR", root),
-                patch.object(agent_server, "JOBS_FILE", jobs_file),
+                patch.object(hyadex_server, "STATE_DIR", root),
+                patch.object(hyadex_server, "JOBS_FILE", jobs_file),
             ):
                 await store.load()
 
@@ -2986,19 +2984,19 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(persisted["job_old"]["context_mode"], "chat")
 
     async def test_create_and_update_job_context_mode(self) -> None:
-        store = agent_server.JobStore()
-        agent_server.STORE.sessions["sess_context"] = {"id": "sess_context"}
+        store = hyadex_server.JobStore()
+        hyadex_server.STORE.sessions["sess_context"] = {"id": "sess_context"}
         try:
             with (
                 patch.object(store, "save", new_callable=AsyncMock),
-                patch.object(agent_server, "append_event", new_callable=AsyncMock),
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock),
             ):
-                default_job = await store.create(agent_server.CreateJobRequest(
+                default_job = await store.create(hyadex_server.CreateJobRequest(
                     session_id="sess_context",
                     title="Default",
                     prompt="Check",
                 ))
-                standalone_job = await store.create(agent_server.CreateJobRequest(
+                standalone_job = await store.create(hyadex_server.CreateJobRequest(
                     session_id="sess_context",
                     title="Standalone",
                     prompt="Check",
@@ -3013,87 +3011,87 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(standalone_job["context_mode"], "standalone")
             self.assertEqual(updated["context_mode"], "chat")
         finally:
-            agent_server.STORE.sessions.pop("sess_context", None)
+            hyadex_server.STORE.sessions.pop("sess_context", None)
 
     async def test_legacy_create_infers_standalone_for_alternate_backend(self) -> None:
-        store = agent_server.JobStore()
-        agent_server.STORE.sessions["sess_backend_contract"] = {
+        store = hyadex_server.JobStore()
+        hyadex_server.STORE.sessions["sess_backend_contract"] = {
             "id": "sess_backend_contract",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
         }
         try:
             with (
                 patch.object(store, "save", new_callable=AsyncMock),
-                patch.object(agent_server, "append_event", new_callable=AsyncMock),
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock),
             ):
-                inherited = await store.create(agent_server.CreateJobRequest(
+                inherited = await store.create(hyadex_server.CreateJobRequest(
                     session_id="sess_backend_contract",
                     title="Inherited",
                     prompt="Check",
                 ))
-                matching = await store.create(agent_server.CreateJobRequest(
+                matching = await store.create(hyadex_server.CreateJobRequest(
                     session_id="sess_backend_contract",
                     title="Matching",
                     prompt="Check",
-                    backend=agent_server.BACKEND_CODEX,
+                    backend=hyadex_server.BACKEND_CODEX,
                 ))
-                explicit_standalone = await store.create(agent_server.CreateJobRequest(
+                explicit_standalone = await store.create(hyadex_server.CreateJobRequest(
                     session_id="sess_backend_contract",
                     title="Independent Claude",
                     prompt="Check",
-                    backend=agent_server.BACKEND_CLAUDE,
+                    backend=hyadex_server.BACKEND_CLAUDE,
                     context_mode="standalone",
                 ))
-                legacy_standalone = await store.create(agent_server.CreateJobRequest(
+                legacy_standalone = await store.create(hyadex_server.CreateJobRequest(
                     session_id="sess_backend_contract",
                     title="Legacy independent Claude",
                     prompt="Check",
-                    backend=agent_server.BACKEND_CLAUDE,
+                    backend=hyadex_server.BACKEND_CLAUDE,
                 ))
                 with self.assertRaisesRegex(
                     HTTPException,
                     "must use the parent chat backend",
                 ):
-                    await store.create(agent_server.CreateJobRequest(
+                    await store.create(hyadex_server.CreateJobRequest(
                         session_id="sess_backend_contract",
                         title="Invalid same-chat backend",
                         prompt="Check",
-                        backend=agent_server.BACKEND_CLAUDE,
+                        backend=hyadex_server.BACKEND_CLAUDE,
                         context_mode="chat",
                     ))
 
             self.assertIsNone(inherited["backend"])
-            self.assertEqual(matching["backend"], agent_server.BACKEND_CODEX)
+            self.assertEqual(matching["backend"], hyadex_server.BACKEND_CODEX)
             self.assertEqual(
                 explicit_standalone["backend"],
-                agent_server.BACKEND_CLAUDE,
+                hyadex_server.BACKEND_CLAUDE,
             )
             self.assertEqual(explicit_standalone["context_mode"], "standalone")
             self.assertEqual(
                 legacy_standalone["backend"],
-                agent_server.BACKEND_CLAUDE,
+                hyadex_server.BACKEND_CLAUDE,
             )
             self.assertEqual(legacy_standalone["context_mode"], "standalone")
             self.assertEqual(len(store.jobs), 4)
         finally:
-            agent_server.STORE.sessions.pop("sess_backend_contract", None)
+            hyadex_server.STORE.sessions.pop("sess_backend_contract", None)
 
     async def test_context_mode_update_validates_resulting_backend_atomically(self) -> None:
-        store = agent_server.JobStore()
-        agent_server.STORE.sessions["sess_backend_update"] = {
+        store = hyadex_server.JobStore()
+        hyadex_server.STORE.sessions["sess_backend_update"] = {
             "id": "sess_backend_update",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
         }
         try:
             with (
                 patch.object(store, "save", new_callable=AsyncMock),
-                patch.object(agent_server, "append_event", new_callable=AsyncMock),
+                patch.object(hyadex_server, "append_event", new_callable=AsyncMock),
             ):
-                job = await store.create(agent_server.CreateJobRequest(
+                job = await store.create(hyadex_server.CreateJobRequest(
                     session_id="sess_backend_update",
                     title="Independent Claude",
                     prompt="Check",
-                    backend=agent_server.BACKEND_CLAUDE,
+                    backend=hyadex_server.BACKEND_CLAUDE,
                     context_mode="standalone",
                 ))
                 before = dict(store.jobs[job["id"]])
@@ -3106,19 +3104,19 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
 
                 same_chat = await store.update(job["id"], {
                     "context_mode": "chat",
-                    "backend": agent_server.BACKEND_CODEX,
+                    "backend": hyadex_server.BACKEND_CODEX,
                 })
                 self.assertEqual(same_chat["context_mode"], "chat")
-                self.assertEqual(same_chat["backend"], agent_server.BACKEND_CODEX)
+                self.assertEqual(same_chat["backend"], hyadex_server.BACKEND_CODEX)
 
                 legacy_update = await store.update(
                     job["id"],
-                    {"backend": agent_server.BACKEND_CLAUDE},
+                    {"backend": hyadex_server.BACKEND_CLAUDE},
                 )
                 self.assertEqual(legacy_update["context_mode"], "standalone")
                 self.assertEqual(
                     store.jobs[job["id"]]["backend"],
-                    agent_server.BACKEND_CLAUDE,
+                    hyadex_server.BACKEND_CLAUDE,
                 )
 
                 with self.assertRaisesRegex(
@@ -3131,7 +3129,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                     "standalone",
                 )
         finally:
-            agent_server.STORE.sessions.pop("sess_backend_update", None)
+            hyadex_server.STORE.sessions.pop("sess_backend_update", None)
 
     async def test_run_job_forwards_context_mode_and_projects_run_event(self) -> None:
         for stored_mode, expected_mode in (
@@ -3139,7 +3137,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             ("standalone", "standalone"),
         ):
             with self.subTest(stored_mode=stored_mode):
-                store = agent_server.JobStore()
+                store = hyadex_server.JobStore()
                 job = {
                     "id": "job_context",
                     "session_id": "sess_context",
@@ -3156,9 +3154,9 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                 start_turn = AsyncMock(return_value={"run_id": "run_context"})
                 events = AsyncMock()
                 with (
-                    patch.object(agent_server, "start_turn", start_turn),
+                    patch.object(hyadex_server, "start_turn", start_turn),
                     patch.object(store, "mark_ran", new_callable=AsyncMock),
-                    patch.object(agent_server, "append_event", events),
+                    patch.object(hyadex_server, "append_event", events),
                 ):
                     result = await store.run_job(job["id"])
 
@@ -3189,23 +3187,23 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                     "interval_seconds": 60,
                     "timezone": "UTC",
                     "enabled": False,
-                    "backend": agent_server.BACKEND_CLAUDE,
+                    "backend": hyadex_server.BACKEND_CLAUDE,
                     "run_count": 0,
                 }
             }))
-            store = agent_server.JobStore()
+            store = hyadex_server.JobStore()
             parent = {
                 "id": "sess_legacy_codex",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
             }
             start_turn = AsyncMock(return_value={"run_id": "run_legacy"})
             events = AsyncMock()
             with (
-                patch.object(agent_server.STORE, "sessions", {
+                patch.object(hyadex_server.STORE, "sessions", {
                     "sess_legacy_codex": parent,
                 }),
-                patch.object(agent_server, "STATE_DIR", root),
-                patch.object(agent_server, "JOBS_FILE", jobs_file),
+                patch.object(hyadex_server, "STATE_DIR", root),
+                patch.object(hyadex_server, "JOBS_FILE", jobs_file),
             ):
                 await store.load()
                 persisted = json.loads(jobs_file.read_text())
@@ -3214,15 +3212,15 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
                     "standalone",
                 )
                 with (
-                    patch.object(agent_server, "start_turn", start_turn),
+                    patch.object(hyadex_server, "start_turn", start_turn),
                     patch.object(store, "mark_ran", new_callable=AsyncMock),
-                    patch.object(agent_server, "append_event", events),
+                    patch.object(hyadex_server, "append_event", events),
                 ):
                     result = await store.run_job("job_legacy_claude")
 
             self.assertEqual(result["run_id"], "run_legacy")
             turn_request = start_turn.await_args.args[1]
-            self.assertEqual(turn_request.backend, agent_server.BACKEND_CLAUDE)
+            self.assertEqual(turn_request.backend, hyadex_server.BACKEND_CLAUDE)
             self.assertEqual(
                 start_turn.await_args.kwargs["provider_context_mode"],
                 "standalone",
@@ -3231,7 +3229,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_supervisor_restarts_after_escaped_iteration_error(
         self,
     ) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         iteration = AsyncMock(
             side_effect=[RuntimeError("one bad iteration"), asyncio.CancelledError()],
         )
@@ -3241,7 +3239,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(iteration.await_count, 2)
 
     async def test_scheduler_rechecks_deleted_parent_after_blocker_yields(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         session_id = "sess_deleted_during_blocker"
         store.jobs["job_due"] = {
             "id": "job_due",
@@ -3251,7 +3249,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             "enabled": True,
             "next_run_at": 1.0,
             "scheduled_run_at": 1.0,
-            "_revision": agent_server.new_job_revision(),
+            "_revision": hyadex_server.new_job_revision(),
         }
         sleep_count = 0
 
@@ -3267,22 +3265,22 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
             manual: bool = False,
         ) -> None:
             self.assertFalse(manual)
-            agent_server.STORE.sessions.pop(session_id, None)
+            hyadex_server.STORE.sessions.pop(session_id, None)
             return None
 
         cleanup = AsyncMock()
         run_job = AsyncMock()
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "sessions",
             {session_id: {"id": session_id}},
         ), patch.object(
-            agent_server.asyncio,
+            hyadex_server.asyncio,
             "sleep",
             side_effect=one_scheduler_iteration,
-        ), patch.object(agent_server.time, "time", return_value=2.0), \
+        ), patch.object(hyadex_server.time, "time", return_value=2.0), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "scheduled_job_blocker",
                  side_effect=delete_parent_while_checking,
              ), patch.object(store, "delete_for_session", cleanup), \
@@ -3294,7 +3292,7 @@ class JobStoreTests(unittest.IsolatedAsyncioTestCase):
         run_job.assert_not_awaited()
 
     async def test_stop_scheduler_cancels_and_joins_owned_task(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         started = asyncio.Event()
 
         async def scheduler() -> None:

@@ -1,9 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-import agent_server
-
-
+from tests import hyadex_server
 class FakeSubagentManager:
     def __init__(self) -> None:
         self.descendants = [
@@ -46,24 +44,24 @@ class FakeSubagentManager:
 
 class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.previous_sessions = agent_server.STORE.sessions
-        self.previous_index = agent_server.CODEX_SUBAGENT_SESSION_INDEX
-        self.previous_states = agent_server.CODEX_SUBAGENT_STATE
+        self.previous_sessions = hyadex_server.STORE.sessions
+        self.previous_index = hyadex_server.CODEX_SUBAGENT_SESSION_INDEX
+        self.previous_states = hyadex_server.CODEX_SUBAGENT_STATE
         self.session = {
             "id": "chat",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "parent-thread",
             "session_id": "parent-thread",
         }
-        agent_server.STORE.sessions = {"chat": self.session}
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX = {}
-        agent_server.CODEX_SUBAGENT_STATE = {}
+        hyadex_server.STORE.sessions = {"chat": self.session}
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX = {}
+        hyadex_server.CODEX_SUBAGENT_STATE = {}
         self.sequence = 0
 
     async def asyncTearDown(self) -> None:
-        agent_server.STORE.sessions = self.previous_sessions
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX = self.previous_index
-        agent_server.CODEX_SUBAGENT_STATE = self.previous_states
+        hyadex_server.STORE.sessions = self.previous_sessions
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX = self.previous_index
+        hyadex_server.CODEX_SUBAGENT_STATE = self.previous_states
 
     async def append(self, session_id: str, event_type: str, payload: dict[str, object]) -> dict[str, object]:
         self.sequence += 1
@@ -78,10 +76,10 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_current_and_legacy_collaboration_shapes_project_targeted_state(self) -> None:
         with (
-            patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
         ):
-            await agent_server.project_codex_subagent_item(
+            await hyadex_server.project_codex_subagent_item(
                 "chat",
                 "parent-thread",
                 {
@@ -98,7 +96,7 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 run_id="run-1",
                 completed=True,
             )
-            await agent_server.project_codex_subagent_item(
+            await hyadex_server.project_codex_subagent_item(
                 "chat",
                 "parent-thread",
                 {
@@ -114,7 +112,7 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 completed=True,
             )
 
-        state = agent_server.CODEX_SUBAGENT_STATE["child-a"]
+        state = hyadex_server.CODEX_SUBAGENT_STATE["child-a"]
         self.assertEqual(state["subagent_status"], "stopped")
         self.assertEqual(state["subagent_tool_id"], "interrupt-tool")
         self.assertEqual(state["subagent_provider_ref"], "child-a")
@@ -127,15 +125,15 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "context_tokens": 42_000,
             "context_window": 100_000,
         }
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX["child-a"] = "chat"
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX["child-a"] = "chat"
         append_event = AsyncMock()
         record_usage = AsyncMock()
 
         with (
-            patch.object(agent_server, "append_event", append_event),
-            patch.object(agent_server, "record_codex_token_usage", record_usage),
+            patch.object(hyadex_server, "append_event", append_event),
+            patch.object(hyadex_server, "record_codex_token_usage", record_usage),
         ):
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "thread/tokenUsage/updated",
                 "params": {
                     "threadId": "child-a",
@@ -148,7 +146,7 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 },
             })
             for method in ("item/started", "item/completed"):
-                await agent_server.project_codex_notification({
+                await hyadex_server.project_codex_notification({
                     "method": method,
                     "params": {
                         "threadId": "child-a",
@@ -168,36 +166,36 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_root_thread_is_never_classified_as_its_own_subagent(self) -> None:
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX["parent-thread"] = "chat"
-        agent_server.CODEX_SUBAGENT_STATE["parent-thread"] = {
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX["parent-thread"] = "chat"
+        hyadex_server.CODEX_SUBAGENT_STATE["parent-thread"] = {
             "session_id": "chat",
             "subagent_id": "parent-thread",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
         }
 
         self.assertEqual(
-            agent_server.codex_session_id_for_thread("parent-thread"),
+            hyadex_server.codex_session_id_for_thread("parent-thread"),
             "chat",
         )
-        self.assertNotIn("parent-thread", agent_server.CODEX_SUBAGENT_SESSION_INDEX)
-        self.assertNotIn("parent-thread", agent_server.CODEX_SUBAGENT_STATE)
+        self.assertNotIn("parent-thread", hyadex_server.CODEX_SUBAGENT_SESSION_INDEX)
+        self.assertNotIn("parent-thread", hyadex_server.CODEX_SUBAGENT_STATE)
 
     async def test_parked_codex_root_is_not_a_child_after_backend_switch(self) -> None:
         self.session.update({
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "session_id": "claude-thread",
             "claude_session_id": "claude-thread",
         })
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX["parent-thread"] = "chat"
-        agent_server.CODEX_SUBAGENT_STATE["parent-thread"] = {
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX["parent-thread"] = "chat"
+        hyadex_server.CODEX_SUBAGENT_STATE["parent-thread"] = {
             "session_id": "chat",
             "subagent_id": "parent-thread",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
         }
         append_event = AsyncMock()
 
-        with patch.object(agent_server, "append_event", append_event):
-            await agent_server.project_codex_notification({
+        with patch.object(hyadex_server, "append_event", append_event):
+            await hyadex_server.project_codex_notification({
                 "method": "item/started",
                 "params": {
                     "threadId": "parent-thread",
@@ -214,27 +212,27 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
             append_event.await_args.args[:2],
             ("chat", "codex_compaction_started"),
         )
-        self.assertNotIn("parent-thread", agent_server.CODEX_SUBAGENT_SESSION_INDEX)
+        self.assertNotIn("parent-thread", hyadex_server.CODEX_SUBAGENT_SESSION_INDEX)
 
     def test_subagent_ownership_snapshot_is_detached_from_live_index(self) -> None:
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX["child-a"] = "chat"
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX["child-a"] = "chat"
 
-        snapshot = agent_server.codex_subagent_ownership_snapshot()
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX["child-b"] = "chat"
+        snapshot = hyadex_server.codex_subagent_ownership_snapshot()
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX["child-b"] = "chat"
 
         self.assertEqual(snapshot, {"child-a": "chat"})
         self.assertEqual(
-            agent_server.codex_subagent_ownership_snapshot(),
+            hyadex_server.codex_subagent_ownership_snapshot(),
             {"child-a": "chat", "child-b": "chat"},
         )
 
     async def test_parent_stop_interrupts_every_active_descendant_and_confirms_state(self) -> None:
         manager = FakeSubagentManager()
         with (
-            patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
         ):
-            result = await agent_server.stop_codex_descendant_subagents(
+            result = await hyadex_server.stop_codex_descendant_subagents(
                 "chat",
                 "parent-thread",
                 manager=manager,  # type: ignore[arg-type]
@@ -244,7 +242,7 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["requested"], ["child-a"])
         self.assertEqual(result["interrupted"], ["child-a"])
         self.assertEqual(result["pending"], [])
-        self.assertEqual(agent_server.CODEX_SUBAGENT_STATE["child-a"]["subagent_status"], "stopped")
+        self.assertEqual(hyadex_server.CODEX_SUBAGENT_STATE["child-a"]["subagent_status"], "stopped")
 
     async def test_explicit_parent_stop_cascades_even_when_parent_is_idle(self) -> None:
         manager = FakeSubagentManager()
@@ -256,14 +254,14 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "errors": [],
         })
         with (
-            patch.object(agent_server.RUNS, "active", {}),
-            patch.object(agent_server.RUNS, "busy", set()),
-            patch.object(agent_server.PROVIDERS, "codex_manager", manager),
-            patch.object(agent_server, "stop_codex_descendant_subagents", cascade),
-            patch.object(agent_server, "cancel_codex_interactions", AsyncMock()),
-            patch.object(agent_server, "schedule_next_queued_turn"),
+            patch.object(hyadex_server.RUNS, "active", {}),
+            patch.object(hyadex_server.RUNS, "busy", set()),
+            patch.object(hyadex_server.PROVIDERS, "codex_manager", manager),
+            patch.object(hyadex_server, "stop_codex_descendant_subagents", cascade),
+            patch.object(hyadex_server, "cancel_codex_interactions", AsyncMock()),
+            patch.object(hyadex_server, "schedule_next_queued_turn"),
         ):
-            result = await agent_server.stop_turn("chat")
+            result = await hyadex_server.stop_turn("chat")
 
         cascade.assert_awaited_once_with(
             "chat",
@@ -276,10 +274,10 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_targeted_stop_does_not_touch_sibling(self) -> None:
         manager = FakeSubagentManager()
         with (
-            patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
         ):
-            result = await agent_server.stop_codex_descendant_subagents(
+            result = await hyadex_server.stop_codex_descendant_subagents(
                 "chat",
                 "parent-thread",
                 manager=manager,  # type: ignore[arg-type]
@@ -305,23 +303,23 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         manager.list_turns = completed_turns  # type: ignore[method-assign]
         with (
-            patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
         ):
-            result = await agent_server.reconcile_codex_subagents(
+            result = await hyadex_server.reconcile_codex_subagents(
                 "chat",
                 manager,  # type: ignore[arg-type]
             )
 
         self.assertEqual(result["reconciled"], 1)
-        self.assertEqual(agent_server.CODEX_SUBAGENT_STATE["child-a"]["subagent_status"], "completed")
+        self.assertEqual(hyadex_server.CODEX_SUBAGENT_STATE["child-a"]["subagent_status"], "completed")
 
     async def test_emit_preserves_authoritative_identity_over_generated_preview(self) -> None:
         with (
-            patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
         ):
-            await agent_server.emit_codex_subagent_state(
+            await hyadex_server.emit_codex_subagent_state(
                 "chat",
                 "child-a",
                 "running",
@@ -331,7 +329,7 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 agent_path="/root/readonly_round2",
                 activity="Working",
             )
-            await agent_server.emit_codex_subagent_state(
+            await hyadex_server.emit_codex_subagent_state(
                 "chat",
                 "child-a",
                 "completed",
@@ -339,7 +337,7 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 activity="Subagent completed",
             )
 
-        state = agent_server.CODEX_SUBAGENT_STATE["child-a"]
+        state = hyadex_server.CODEX_SUBAGENT_STATE["child-a"]
         self.assertEqual(state["subagent_name"], "Leibniz the 2nd")
         self.assertEqual(state["subagent_nickname"], "Leibniz the 2nd")
         self.assertEqual(state["subagent_path"], "/root/readonly_round2")
@@ -377,20 +375,20 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with (
-            patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
         ):
-            result = await agent_server.reconcile_codex_subagents(
+            result = await hyadex_server.reconcile_codex_subagents(
                 "chat",
                 manager,  # type: ignore[arg-type]
             )
 
         self.assertEqual(result["reconciled"], 2)
-        child_a = agent_server.CODEX_SUBAGENT_STATE["child-a"]
+        child_a = hyadex_server.CODEX_SUBAGENT_STATE["child-a"]
         self.assertEqual(child_a["subagent_name"], "Leibniz the 2nd")
         self.assertEqual(child_a["subagent_nickname"], "Leibniz the 2nd")
         self.assertEqual(child_a["subagent_path"], "/root/readonly_round2")
-        child_b = agent_server.CODEX_SUBAGENT_STATE["child-b"]
+        child_b = hyadex_server.CODEX_SUBAGENT_STATE["child-b"]
         self.assertEqual(child_b["subagent_name"], "Carson the 2nd")
         self.assertEqual(child_b["subagent_nickname"], "Carson the 2nd")
         self.assertEqual(child_b["subagent_path"], "/root/readonly_round2/source_trace")
@@ -398,10 +396,10 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def _seed_running_child(self) -> None:
         with (
-            patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
         ):
-            await agent_server.emit_codex_subagent_state(
+            await hyadex_server.emit_codex_subagent_state(
                 "chat",
                 "child-a",
                 "running",

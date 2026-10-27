@@ -6,22 +6,22 @@ from collections import deque
 from pathlib import Path
 from unittest.mock import patch
 
-import agent_server
+from tests import hyadex_server
 from fastapi import HTTPException
 
 
 class FileContentTypeTests(unittest.TestCase):
     def test_generic_upload_type_falls_back_to_filename(self) -> None:
         self.assertEqual(
-            agent_server.effective_content_type("screenshot.png", "application/octet-stream"),
+            hyadex_server.effective_content_type("screenshot.png", "application/octet-stream"),
             "image/png",
         )
         self.assertEqual(
-            agent_server.effective_content_type("clip.mov", "binary/octet-stream; charset=binary"),
+            hyadex_server.effective_content_type("clip.mov", "binary/octet-stream; charset=binary"),
             "video/quicktime",
         )
         self.assertEqual(
-            agent_server.effective_content_type("notes.txt", "text/plain"),
+            hyadex_server.effective_content_type("notes.txt", "text/plain"),
             "text/plain",
         )
 
@@ -40,10 +40,10 @@ class FileContentTypeTests(unittest.TestCase):
             }
             metadata_path.write_text(json.dumps(metadata))
 
-            with patch.object(agent_server, "FILES_ROOT", root), patch.object(
-                agent_server, "iter_session_events", return_value=iter(())
+            with patch.object(hyadex_server, "FILES_ROOT", root), patch.object(
+                hyadex_server, "iter_session_events", return_value=iter(())
             ):
-                records = agent_server.list_session_file_records("session-1")
+                records = hyadex_server.list_session_file_records("session-1")
 
             self.assertEqual(records[0]["content_type"], "image/png")
             self.assertEqual(json.loads(metadata_path.read_text())["content_type"], "application/octet-stream")
@@ -61,9 +61,9 @@ class FileContentTypeTests(unittest.TestCase):
             },
         }
         with tempfile.TemporaryDirectory() as temporary, patch.object(
-            agent_server, "FILES_ROOT", Path(temporary)
-        ), patch.object(agent_server, "iter_session_events", return_value=iter((event,))):
-            records = agent_server.list_session_file_records("session-1")
+            hyadex_server, "FILES_ROOT", Path(temporary)
+        ), patch.object(hyadex_server, "iter_session_events", return_value=iter((event,))):
+            records = hyadex_server.list_session_file_records("session-1")
 
         self.assertEqual(records[0]["content_type"], "image/jpeg")
         self.assertEqual(records[0]["event_id"], "event-1")
@@ -82,9 +82,9 @@ class FileContentTypeTests(unittest.TestCase):
             },
         }
         with tempfile.TemporaryDirectory() as temporary, patch.object(
-            agent_server, "FILES_ROOT", Path(temporary)
-        ), patch.object(agent_server, "iter_session_events", return_value=iter((event,))):
-            records = agent_server.list_session_file_records("child-session")
+            hyadex_server, "FILES_ROOT", Path(temporary)
+        ), patch.object(hyadex_server, "iter_session_events", return_value=iter((event,))):
+            records = hyadex_server.list_session_file_records("child-session")
 
         self.assertEqual(records, [])
 
@@ -121,8 +121,8 @@ class FileContentTypeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "events.jsonl"
             path.write_text("".join(json.dumps(event) + "\n" for event in events))
-            with patch.object(agent_server, "events_path", return_value=path):
-                result = agent_server.read_events("child-session")
+            with patch.object(hyadex_server, "events_path", return_value=path):
+                result = hyadex_server.read_events("child-session")
 
         self.assertEqual([event["id"] for event in result], ["legacy"])
 
@@ -140,9 +140,9 @@ class FileContentTypeTests(unittest.TestCase):
             },
         }
         with tempfile.TemporaryDirectory() as temporary, patch.object(
-            agent_server, "FILES_ROOT", Path(temporary)
-        ), patch.object(agent_server, "iter_session_events", return_value=iter((event,))):
-            records = agent_server.list_session_file_records("child-session")
+            hyadex_server, "FILES_ROOT", Path(temporary)
+        ), patch.object(hyadex_server, "iter_session_events", return_value=iter((event,))):
+            records = hyadex_server.list_session_file_records("child-session")
 
         self.assertEqual(records, [])
 
@@ -167,25 +167,25 @@ class FileContentTypeEndpointTests(unittest.IsolatedAsyncioTestCase):
                 return value
 
             with patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "sessions",
                 {"session-1": {"id": "session-1"}},
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "list_session_file_records",
                 side_effect=lambda _session_id: off_loop([meta]),
             ) as list_records, patch.object(
-                agent_server,
+                hyadex_server,
                 "session_file_for_link",
                 side_effect=lambda _session_id, _target: off_loop(meta),
             ) as resolve_link:
-                listed = await agent_server.list_session_files(
+                listed = await hyadex_server.list_session_files(
                     "session-1",
                     limit=None,
                     offset=0,
                     content_prefix=None,
                 )
-                linked = await agent_server.get_session_linked_file(
+                linked = await hyadex_server.get_session_linked_file(
                     "session-1",
                     str(path),
                 )
@@ -208,11 +208,11 @@ class FileContentTypeEndpointTests(unittest.IsolatedAsyncioTestCase):
             },
         }
         with tempfile.TemporaryDirectory() as temporary, patch.object(
-            agent_server, "FILES_ROOT", Path(temporary)
-        ), patch.object(agent_server, "iter_session_events", return_value=iter((event,))), patch.object(
-            agent_server.STORE, "sessions", {"session-1": {"id": "session-1"}}
+            hyadex_server, "FILES_ROOT", Path(temporary)
+        ), patch.object(hyadex_server, "iter_session_events", return_value=iter((event,))), patch.object(
+            hyadex_server.STORE, "sessions", {"session-1": {"id": "session-1"}}
         ):
-            response = await agent_server.list_session_files(
+            response = await hyadex_server.list_session_files(
                 "session-1", limit=None, offset=0, content_prefix="image/"
             )
 
@@ -249,8 +249,8 @@ class SessionFileOwnershipTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temporary)
             self.write_file(root, "owned", session_id="session-a", filename="owned.txt")
             self.write_file(root, "foreign", session_id="session-b", filename="foreign.txt")
-            with patch.object(agent_server, "FILES_ROOT", root):
-                lines = agent_server.file_attachment_prompt_lines(
+            with patch.object(hyadex_server, "FILES_ROOT", root):
+                lines = hyadex_server.file_attachment_prompt_lines(
                     "session-a",
                     ["owned", "foreign"],
                 )
@@ -276,15 +276,15 @@ class SessionFileOwnershipTests(unittest.IsolatedAsyncioTestCase):
             def event_path(session_id: str) -> Path:
                 return target_events if session_id == "session-a" else other_events
 
-            with patch.object(agent_server, "FILES_ROOT", root), patch.object(
-                agent_server, "events_path", side_effect=event_path
+            with patch.object(hyadex_server, "FILES_ROOT", root), patch.object(
+                hyadex_server, "events_path", side_effect=event_path
             ):
                 self.assertEqual(
-                    agent_server.validate_session_file_ids("session-a", ["legacy"]),
+                    hyadex_server.validate_session_file_ids("session-a", ["legacy"]),
                     ["legacy"],
                 )
                 with self.assertRaises(HTTPException) as raised:
-                    agent_server.validate_session_file_ids("session-b", ["legacy"])
+                    hyadex_server.validate_session_file_ids("session-b", ["legacy"])
 
         self.assertEqual(raised.exception.status_code, 404)
 
@@ -299,11 +299,11 @@ class SessionFileOwnershipTests(unittest.IsolatedAsyncioTestCase):
                 "type": "turn_started",
                 "file_ids": ["legacy"],
             }) + "\n")
-            with patch.object(agent_server, "FILES_ROOT", root), patch.object(
-                agent_server, "events_path", return_value=events
+            with patch.object(hyadex_server, "FILES_ROOT", root), patch.object(
+                hyadex_server, "events_path", return_value=events
             ):
                 with self.assertRaises(HTTPException) as raised:
-                    agent_server.validate_session_file_ids("session-a", ["legacy"])
+                    hyadex_server.validate_session_file_ids("session-a", ["legacy"])
 
         self.assertEqual(raised.exception.status_code, 404)
 
@@ -320,11 +320,11 @@ class SessionFileOwnershipTests(unittest.IsolatedAsyncioTestCase):
                 "original_session_id": "session-parent",
                 "artifact": {"id": "legacy", "filename": "notes.txt"},
             }) + "\n")
-            with patch.object(agent_server, "FILES_ROOT", root), patch.object(
-                agent_server, "events_path", return_value=events
+            with patch.object(hyadex_server, "FILES_ROOT", root), patch.object(
+                hyadex_server, "events_path", return_value=events
             ):
                 with self.assertRaises(HTTPException) as raised:
-                    agent_server.validate_session_file_ids("session-child", ["legacy"])
+                    hyadex_server.validate_session_file_ids("session-child", ["legacy"])
 
         self.assertEqual(raised.exception.status_code, 404)
 
@@ -334,14 +334,14 @@ class SessionFileOwnershipTests(unittest.IsolatedAsyncioTestCase):
             self.write_file(root, "foreign", session_id="session-b")
             sessions = {"session-a": {"id": "session-a", "backend": "codex"}}
             queued: dict[str, deque] = {}
-            with patch.object(agent_server, "FILES_ROOT", root), patch.object(
-                agent_server.STORE, "sessions", sessions
-            ), patch.object(agent_server.RUNS, "queued", queued):
-                request = agent_server.TurnRequest(prompt="inspect", file_ids=["foreign"])
+            with patch.object(hyadex_server, "FILES_ROOT", root), patch.object(
+                hyadex_server.STORE, "sessions", sessions
+            ), patch.object(hyadex_server.RUNS, "queued", queued):
+                request = hyadex_server.TurnRequest(prompt="inspect", file_ids=["foreign"])
                 with self.assertRaises(HTTPException) as start_error:
-                    await agent_server.start_turn("session-a", request)
+                    await hyadex_server.start_turn("session-a", request)
                 with self.assertRaises(HTTPException) as queue_error:
-                    await agent_server.enqueue_turn("session-a", request, sessions["session-a"])
+                    await hyadex_server.enqueue_turn("session-a", request, sessions["session-a"])
 
         self.assertEqual(start_error.exception.status_code, 404)
         self.assertEqual(queue_error.exception.status_code, 404)
@@ -353,14 +353,14 @@ class SessionFileOwnershipTests(unittest.IsolatedAsyncioTestCase):
             self.write_file(root, "foreign", session_id="session-b")
             item = {"queued_id": "queued-1", "prompt": "keep", "file_ids": []}
             queued = {"session-a": deque([item])}
-            with patch.object(agent_server, "FILES_ROOT", root), patch.object(
-                agent_server.STORE, "sessions", {"session-a": {"id": "session-a"}}
-            ), patch.object(agent_server.RUNS, "queued", queued):
+            with patch.object(hyadex_server, "FILES_ROOT", root), patch.object(
+                hyadex_server.STORE, "sessions", {"session-a": {"id": "session-a"}}
+            ), patch.object(hyadex_server.RUNS, "queued", queued):
                 with self.assertRaises(HTTPException) as raised:
-                    await agent_server.update_queued_turn(
+                    await hyadex_server.update_queued_turn(
                         "session-a",
                         "queued-1",
-                        agent_server.UpdateQueuedTurnRequest(file_ids=["foreign"]),
+                        hyadex_server.UpdateQueuedTurnRequest(file_ids=["foreign"]),
                     )
 
         self.assertEqual(raised.exception.status_code, 404)

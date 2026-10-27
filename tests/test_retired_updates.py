@@ -6,9 +6,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-import agent_server as server
-
-
+from tests import hyadex_server as server
 class RetiredUpdatesTests(unittest.TestCase):
     def test_update_routes_are_absent(self):
         with patch.object(server, 'AGENT_TOKEN', 'native-test-token'), \

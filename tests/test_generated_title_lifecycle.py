@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-import agent_server as server
+from tests import hyadex_server as server
 from tests.runtime_state import patch_server
 
 REAL_AUTONOMOUS_ADMISSION = server.server_lifecycle_admission_blocker

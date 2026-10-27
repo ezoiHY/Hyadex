@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-import agent_server
+from tests import hyadex_server
 from tests.test_provider_history_sync import legacy_provider_authority_block
 
 
@@ -110,17 +110,17 @@ class ForkHistoryCloneTests(unittest.IsolatedAsyncioTestCase):
                 },
             ]
 
-            with patch.object(agent_server, "FILES_ROOT", files_root), patch.object(
-                agent_server,
+            with patch.object(hyadex_server, "FILES_ROOT", files_root), patch.object(
+                hyadex_server,
                 "iter_session_events",
                 side_effect=lambda _session_id: iter(events),
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "append_imported_events",
                 new_callable=AsyncMock,
                 side_effect=lambda _session_id, imported: len(imported),
             ) as append_imported:
-                copied = await agent_server.copy_fork_history(parent_id, child_id)
+                copied = await hyadex_server.copy_fork_history(parent_id, child_id)
 
                 imported = append_imported.await_args.args[1]
                 self.assertEqual(copied, 5)
@@ -167,14 +167,14 @@ class ForkHistoryCloneTests(unittest.IsolatedAsyncioTestCase):
                     b"parent artifact",
                 )
                 self.assertEqual(
-                    agent_server.validate_session_file_ids(
+                    hyadex_server.validate_session_file_ids(
                         child_id,
                         [cloned_upload["id"], cloned_artifact["id"]],
                     ),
                     [cloned_upload["id"], cloned_artifact["id"]],
                 )
-                with self.assertRaises(agent_server.HTTPException):
-                    agent_server.validate_session_file_ids(
+                with self.assertRaises(hyadex_server.HTTPException):
+                    hyadex_server.validate_session_file_ids(
                         child_id,
                         [upload["id"]],
                     )
@@ -198,9 +198,9 @@ class ForkHistoryCloneTests(unittest.IsolatedAsyncioTestCase):
                 "path": str(outside_file),
             }
 
-            with patch.object(agent_server, "FILES_ROOT", files_root):
+            with patch.object(hyadex_server, "FILES_ROOT", files_root):
                 self.assertIsNone(
-                    agent_server.fork_file_source_path("file_parent", record)
+                    hyadex_server.fork_file_source_path("file_parent", record)
                 )
 
     async def test_cancelled_file_clone_joins_worker_and_removes_child_copy(self) -> None:
@@ -224,13 +224,13 @@ class ForkHistoryCloneTests(unittest.IsolatedAsyncioTestCase):
                     "path": str(cloned_path),
                 }
 
-            with patch.object(agent_server, "FILES_ROOT", files_root), patch.object(
-                agent_server,
+            with patch.object(hyadex_server, "FILES_ROOT", files_root), patch.object(
+                hyadex_server,
                 "clone_fork_file_record",
                 side_effect=slow_clone,
             ):
                 task = asyncio.create_task(
-                    agent_server.clone_fork_file_record_async(
+                    hyadex_server.clone_fork_file_record_async(
                         "parent-chat",
                         child_id,
                         {"id": "file_parent"},
@@ -284,20 +284,20 @@ class ForkHistoryCloneTests(unittest.IsolatedAsyncioTestCase):
             },
         ]
         with tempfile.TemporaryDirectory() as temporary, patch.object(
-            agent_server,
+            hyadex_server,
             "FILES_ROOT",
             Path(temporary),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "iter_session_events",
             side_effect=lambda _session_id: iter(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_imported_events",
             new_callable=AsyncMock,
             side_effect=lambda _session_id, imported: len(imported),
         ) as append_imported:
-            copied = await agent_server.copy_fork_history("parent", "child")
+            copied = await hyadex_server.copy_fork_history("parent", "child")
 
         imported = append_imported.await_args.args[1]
         self.assertEqual(copied, 6)
@@ -329,17 +329,17 @@ class ForkHistoryCloneTests(unittest.IsolatedAsyncioTestCase):
                     "ts": "2026-08-01T00:00:00Z",
                 }) + "\n"
             )
-            agent_server.EVENT_SEQ_CACHE.pop(session_id, None)
-            with patch.object(agent_server, "ensure_dirs"), patch.object(
-                agent_server,
+            hyadex_server.EVENT_SEQ_CACHE.pop(session_id, None)
+            with patch.object(hyadex_server, "ensure_dirs"), patch.object(
+                hyadex_server,
                 "events_path",
                 return_value=path,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "update_session_event_metadata",
                 new_callable=AsyncMock,
             ) as update_metadata:
-                copied = await agent_server.append_imported_events(
+                copied = await hyadex_server.append_imported_events(
                     session_id,
                     [
                         (
@@ -368,8 +368,8 @@ class ForkHistoryCloneTests(unittest.IsolatedAsyncioTestCase):
                 ["2026-07-01T00:00:00Z", "2026-07-01T00:01:00Z"],
             )
             update_metadata.assert_not_awaited()
-            self.assertEqual(agent_server.EVENT_SEQ_CACHE[session_id], 3)
-            agent_server.EVENT_SEQ_CACHE.pop(session_id, None)
+            self.assertEqual(hyadex_server.EVENT_SEQ_CACHE[session_id], 3)
+            hyadex_server.EVENT_SEQ_CACHE.pop(session_id, None)
 
 
 class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
@@ -400,16 +400,16 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 + "\n"
             )
             session = {
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
                 "claude_session_id": provider_id,
                 "claude_session_cwd": str(cwd),
             }
 
-            with patch.object(agent_server, "CLAUDE_PROJECTS_ROOT", projects_root):
-                expected = agent_server.claude_resume_file_for_cwd(provider_id, str(cwd))
+            with patch.object(hyadex_server, "CLAUDE_PROJECTS_ROOT", projects_root):
+                expected = hyadex_server.claude_resume_file_for_cwd(provider_id, str(cwd))
                 self.assertNotEqual(expected, transcript)
                 self.assertFalse(expected.exists())
-                resolved = agent_server.resolve_claude_resume_provider(session, str(cwd))
+                resolved = hyadex_server.resolve_claude_resume_provider(session, str(cwd))
 
         self.assertEqual(resolved, (provider_id, None))
 
@@ -436,13 +436,13 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 + "\n"
             )
             session = {
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
                 "claude_session_id": provider_id,
                 "claude_session_cwd": str(cwd),
             }
 
-            with patch.object(agent_server, "CLAUDE_PROJECTS_ROOT", projects_root):
-                resolved, warning = agent_server.resolve_claude_resume_provider(session, str(cwd))
+            with patch.object(hyadex_server, "CLAUDE_PROJECTS_ROOT", projects_root):
+                resolved, warning = hyadex_server.resolve_claude_resume_provider(session, str(cwd))
 
         self.assertIsNone(resolved)
         self.assertIn("is not available for cwd", warning or "")
@@ -461,23 +461,23 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 "id": parent_id,
                 "title": "Claude parent",
                 "cwd": str(cwd),
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
                 "session_id": provider_id,
                 "claude_session_id": provider_id,
                 "claude_session_cwd": str(cwd),
             }
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "CLAUDE_PROJECTS_ROOT",
                 projects_root,
             ):
-                transcript = agent_server.claude_resume_file_for_cwd(
+                transcript = hyadex_server.claude_resume_file_for_cwd(
                     provider_id,
                     str(cwd),
                 )
                 transcript.parent.mkdir(parents=True)
                 transcript.write_text("{}\n")
-                resolved = agent_server.validated_claude_fork_provider_id(
+                resolved = hyadex_server.validated_claude_fork_provider_id(
                     parent,
                     parent_id,
                     str(cwd),
@@ -490,11 +490,11 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                     "fork_from": resolved,
                     "fork_resume_session_at": "completed-message-uuid",
                 }
-                print_cmd = agent_server.build_claude_cmd(
+                print_cmd = hyadex_server.build_claude_cmd(
                     child["id"],
                     child,
                     root / "manifest.json",
-                    provider_id=agent_server.resolve_claude_resume_provider(
+                    provider_id=hyadex_server.resolve_claude_resume_provider(
                         child,
                         str(cwd),
                     )[0],
@@ -506,15 +506,15 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                     return kwargs
 
                 with patch.object(
-                    agent_server,
+                    hyadex_server,
                     "claude_sdk_cli_path",
                     return_value="/usr/bin/claude",
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "create_claude_agent_options",
                     side_effect=capture_options,
                 ):
-                    agent_server.build_claude_sdk_options(
+                    hyadex_server.build_claude_sdk_options(
                         child["id"],
                         child,
                         str(cwd),
@@ -546,29 +546,29 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 "id": parent_id,
                 "title": "Claude parent",
                 "cwd": str(cwd),
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
                 "session_id": "claude-provider-missing",
                 "claude_session_id": "claude-provider-missing",
                 "claude_session_cwd": str(cwd),
             }
             create = AsyncMock()
             with patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "sessions",
                 {parent_id: parent},
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "create",
                 create,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "CLAUDE_PROJECTS_ROOT",
                 projects_root,
             ):
-                with self.assertRaises(agent_server.HTTPException) as raised:
-                    await agent_server._fork_session_locked(
+                with self.assertRaises(hyadex_server.HTTPException) as raised:
+                    await hyadex_server._fork_session_locked(
                         parent_id,
-                        agent_server.ForkSessionRequest(),
+                        hyadex_server.ForkSessionRequest(),
                     )
 
         self.assertEqual(raised.exception.status_code, 409)
@@ -587,25 +587,25 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 "id": parent_id,
                 "title": "Claude parent",
                 "cwd": str(current_cwd),
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
                 "session_id": "claude-provider-old-cwd",
                 "claude_session_id": "claude-provider-old-cwd",
                 "claude_session_cwd": str(root / "old-workspace"),
             }
             create = AsyncMock()
             with patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "sessions",
                 {parent_id: parent},
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "create",
                 create,
             ):
-                with self.assertRaises(agent_server.HTTPException) as raised:
-                    await agent_server._fork_session_locked(
+                with self.assertRaises(hyadex_server.HTTPException) as raised:
+                    await hyadex_server._fork_session_locked(
                         parent_id,
-                        agent_server.ForkSessionRequest(),
+                        hyadex_server.ForkSessionRequest(),
                     )
 
         self.assertEqual(raised.exception.status_code, 409)
@@ -619,27 +619,27 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "id": parent_id,
             "title": "Claude parent",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
         }
         create = AsyncMock()
         events = [{"type": "turn_started", "prompt": "Existing question"}]
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "sessions",
             {parent_id: parent},
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "create",
             create,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "iter_session_events",
             return_value=iter(events),
         ):
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                await agent_server._fork_session_locked(
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                await hyadex_server._fork_session_locked(
                     parent_id,
-                    agent_server.ForkSessionRequest(),
+                    hyadex_server.ForkSessionRequest(),
                 )
 
         self.assertEqual(raised.exception.status_code, 409)
@@ -652,14 +652,14 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "id": session_id,
             "title": "Parent",
             "cwd": "/old-workspace",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
         }
         fork_started = asyncio.Event()
         release_fork = asyncio.Event()
 
         async def blocked_fork(
             requested_session_id: str,
-            _request: agent_server.ForkSessionRequest,
+            _request: hyadex_server.ForkSessionRequest,
             **_kwargs,
         ) -> dict:
             self.assertEqual(requested_session_id, session_id)
@@ -678,27 +678,27 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             return parent
 
         update = AsyncMock(side_effect=apply_update)
-        with patch.object(agent_server.STORE, "sessions", {session_id: parent}), patch.object(
-            agent_server,
+        with patch.object(hyadex_server.STORE, "sessions", {session_id: parent}), patch.object(
+            hyadex_server,
             "_fork_session_locked",
             new_callable=AsyncMock,
             side_effect=blocked_fork,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "update",
             update,
         ):
             fork_task = asyncio.create_task(
-                agent_server.fork_session(
+                hyadex_server.fork_session(
                     session_id,
-                    agent_server.ForkSessionRequest(),
+                    hyadex_server.ForkSessionRequest(),
                 )
             )
             await asyncio.wait_for(fork_started.wait(), timeout=1)
             update_task = asyncio.create_task(
-                agent_server.update_session(
+                hyadex_server.update_session(
                     session_id,
-                    agent_server.UpdateSessionRequest(cwd="/new-workspace"),
+                    hyadex_server.UpdateSessionRequest(cwd="/new-workspace"),
                 )
             )
             await asyncio.sleep(0)
@@ -714,7 +714,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
 
     def test_all_provider_policy_updates_use_the_lifecycle_lock(self) -> None:
         self.assertEqual(
-            agent_server.SESSION_LIFECYCLE_UPDATE_FIELDS,
+            hyadex_server.SESSION_LIFECYCLE_UPDATE_FIELDS,
             frozenset({
                 "cwd",
                 "backend",
@@ -737,19 +737,19 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "id": child_id,
             "title": "Fork of Parent",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "_fork_initializing": True,
         }
-        with patch.object(agent_server.STORE, "sessions", {child_id: child}), patch.object(
-            agent_server.STORE,
+        with patch.object(hyadex_server.STORE, "sessions", {child_id: child}), patch.object(
+            hyadex_server.STORE,
             "ensure_sort_orders",
             new_callable=AsyncMock,
         ):
-            listed = await agent_server.list_sessions()
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                await agent_server.start_turn(
+            listed = await hyadex_server.list_sessions()
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                await hyadex_server.start_turn(
                     child_id,
-                    agent_server.TurnRequest(prompt="Do not run yet"),
+                    hyadex_server.TurnRequest(prompt="Do not run yet"),
                 )
 
         self.assertEqual(listed["sessions"], [])
@@ -764,7 +764,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "title": "Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "subagent_limit": 3,
         }
         child = {
@@ -772,7 +772,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "title": "Fork of Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "_fork_initializing": True,
         }
         sessions = {parent_id: parent}
@@ -784,43 +784,43 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             return child
 
         cleanup_state: dict[str, str | None] = {}
-        with patch.object(agent_server.STORE, "sessions", sessions), patch.object(
-            agent_server.STORE,
+        with patch.object(hyadex_server.STORE, "sessions", sessions), patch.object(
+            hyadex_server.STORE,
             "_lock",
             asyncio.Lock(),
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "create",
             new_callable=AsyncMock,
             side_effect=create_child,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "reorder",
             new_callable=AsyncMock,
             return_value=[parent, child],
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "update",
             new_callable=AsyncMock,
             return_value=child,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             new_callable=AsyncMock,
         ) as save, patch.object(
-            agent_server,
+            hyadex_server,
             "copy_fork_history",
             new_callable=AsyncMock,
             return_value=12,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             new_callable=AsyncMock,
             return_value={},
         ):
-            result = await agent_server._fork_session_locked(
+            result = await hyadex_server._fork_session_locked(
                 parent_id,
-                agent_server.ForkSessionRequest(),
+                hyadex_server.ForkSessionRequest(),
                 cleanup_state=cleanup_state,
             )
 
@@ -842,14 +842,14 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "title": "Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
         }
         child = {
             "id": child_id,
             "title": "Fork of Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "_fork_initializing": True,
         }
         sessions = {parent_id: parent}
@@ -868,44 +868,44 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 order.append("parent-audit")
             return {}
 
-        with patch.object(agent_server.STORE, "sessions", sessions), patch.object(
-            agent_server.STORE,
+        with patch.object(hyadex_server.STORE, "sessions", sessions), patch.object(
+            hyadex_server.STORE,
             "_lock",
             asyncio.Lock(),
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "create",
             new_callable=AsyncMock,
             side_effect=create_child,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "reorder",
             new_callable=AsyncMock,
             return_value=[parent, child],
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "update",
             new_callable=AsyncMock,
             return_value=child,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             new_callable=AsyncMock,
             side_effect=save_sessions,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "copy_fork_history",
             new_callable=AsyncMock,
             return_value=4,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             new_callable=AsyncMock,
             side_effect=append_fork_event,
         ):
-            await agent_server._fork_session_locked(
+            await hyadex_server._fork_session_locked(
                 parent_id,
-                agent_server.ForkSessionRequest(),
+                hyadex_server.ForkSessionRequest(),
             )
 
         self.assertEqual(order, ["publish", "parent-audit"])
@@ -920,14 +920,14 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "title": "Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
         }
         child = {
             "id": child_id,
             "title": "Fork of Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "_fork_initializing": True,
         }
         sessions = {parent_id: parent}
@@ -938,44 +938,44 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             return child
 
         append_event = AsyncMock(return_value={})
-        with patch.object(agent_server.STORE, "sessions", sessions), patch.object(
-            agent_server.STORE,
+        with patch.object(hyadex_server.STORE, "sessions", sessions), patch.object(
+            hyadex_server.STORE,
             "_lock",
             asyncio.Lock(),
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "create",
             new_callable=AsyncMock,
             side_effect=create_child,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "reorder",
             new_callable=AsyncMock,
             return_value=[parent, child],
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "update",
             new_callable=AsyncMock,
             return_value=child,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             new_callable=AsyncMock,
             side_effect=OSError("state unavailable"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "copy_fork_history",
             new_callable=AsyncMock,
             return_value=4,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ):
             with self.assertRaisesRegex(OSError, "state unavailable"):
-                await agent_server._fork_session_locked(
+                await hyadex_server._fork_session_locked(
                     parent_id,
-                    agent_server.ForkSessionRequest(),
+                    hyadex_server.ForkSessionRequest(),
                     cleanup_state=cleanup_state,
                 )
 
@@ -994,14 +994,14 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "id": parent_id,
             "title": "Parent",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "thread-parent",
         }
         child = {
             "id": child_id,
             "title": "Fork of Parent",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "session_id": None,
             "codex_thread_id": None,
             "_fork_initializing": True,
@@ -1016,14 +1016,14 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
 
         async def fork_provider(*_args, **_kwargs) -> str:
             self.assertTrue(
-                await agent_server.persist_abandoned_fork_provider_thread(
+                await hyadex_server.persist_abandoned_fork_provider_thread(
                     provider_id
                 )
             )
             order.append("journal")
             return provider_id
 
-        original_forget = agent_server.forget_abandoned_fork_provider_thread
+        original_forget = hyadex_server.forget_abandoned_fork_provider_thread
 
         async def forget_provider(thread_id: str) -> bool:
             self.assertEqual(thread_id, provider_id)
@@ -1035,7 +1035,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
         async def bind_provider(*_args, **_kwargs) -> tuple[str, str]:
             self.assertNotIn(
                 provider_id,
-                agent_server.ABANDONED_FORK_PROVIDER_THREADS,
+                hyadex_server.ABANDONED_FORK_PROVIDER_THREADS,
             )
             self.assertEqual(child["codex_thread_id"], provider_id)
             order.append("bind")
@@ -1044,68 +1044,68 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             cleanup_ledger = Path(temporary) / "abandoned-forks.json"
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
-            self.addCleanup(agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
+            self.addCleanup(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "ABANDONED_FORK_THREADS_FILE",
                 cleanup_ledger,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "sessions",
                 sessions,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "_lock",
                 asyncio.Lock(),
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "create",
                 new_callable=AsyncMock,
                 side_effect=create_child,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "reorder",
                 new_callable=AsyncMock,
                 return_value=[parent, child],
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "update",
                 new_callable=AsyncMock,
                 return_value=child,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "save",
                 new_callable=AsyncMock,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "fork_codex_thread",
                 new_callable=AsyncMock,
                 side_effect=fork_provider,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "forget_abandoned_fork_provider_thread",
                 new_callable=AsyncMock,
                 side_effect=forget_provider,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "bind_forked_codex_thread",
                 new_callable=AsyncMock,
                 side_effect=bind_provider,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "copy_fork_history",
                 new_callable=AsyncMock,
                 return_value=3,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "append_event",
                 new_callable=AsyncMock,
                 return_value={},
             ):
-                result = await agent_server._fork_session_locked(
+                result = await hyadex_server._fork_session_locked(
                     parent_id,
-                    agent_server.ForkSessionRequest(),
+                    hyadex_server.ForkSessionRequest(),
                     cleanup_state=cleanup_state,
                 )
             ledger_ids = json.loads(cleanup_ledger.read_text())["thread_ids"]
@@ -1125,14 +1125,14 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "id": parent_id,
             "title": "Parent",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "thread-parent",
         }
         child = {
             "id": child_id,
             "title": "Fork of Parent",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "session_id": None,
             "codex_thread_id": None,
             "_fork_initializing": True,
@@ -1145,7 +1145,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
 
         async def fork_provider(*_args, **_kwargs) -> str:
             self.assertTrue(
-                await agent_server.persist_abandoned_fork_provider_thread(
+                await hyadex_server.persist_abandoned_fork_provider_thread(
                     provider_id
                 )
             )
@@ -1156,78 +1156,78 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             cleanup_ledger = Path(temporary) / "abandoned-forks.json"
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
-            self.addCleanup(agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
+            self.addCleanup(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "ABANDONED_FORK_THREADS_FILE",
                 cleanup_ledger,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "sessions",
                 sessions,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "_lock",
                 asyncio.Lock(),
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "create",
                 new_callable=AsyncMock,
                 side_effect=create_child,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "reorder",
                 new_callable=AsyncMock,
                 return_value=[parent, child],
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "update",
                 new_callable=AsyncMock,
                 side_effect=update_child,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "save",
                 new_callable=AsyncMock,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "fork_codex_thread",
                 new_callable=AsyncMock,
                 side_effect=fork_provider,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "bind_forked_codex_thread",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("policy bind failed"),
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "retire_failed_codex_fork",
                 new_callable=AsyncMock,
                 return_value=False,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "build_fork_memory",
                 return_value="bounded parent memory",
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "copy_fork_history",
                 new_callable=AsyncMock,
                 return_value=8,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "append_event",
                 new_callable=AsyncMock,
                 return_value={},
             ):
-                result = await agent_server._fork_session_locked(
+                result = await hyadex_server._fork_session_locked(
                     parent_id,
-                    agent_server.ForkSessionRequest(),
+                    hyadex_server.ForkSessionRequest(),
                 )
             ledger_ids = json.loads(cleanup_ledger.read_text())["thread_ids"]
 
         self.assertEqual(ledger_ids, [provider_id])
         self.assertEqual(
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS,
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS,
             {provider_id},
         )
         self.assertIsNone(child["session_id"])
@@ -1246,42 +1246,42 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                     "id": "normal",
                     "title": "Normal",
                     "cwd": "/tmp",
-                    "backend": agent_server.BACKEND_CODEX,
+                    "backend": hyadex_server.BACKEND_CODEX,
                 },
                 "staged": {
                     "id": "staged",
                     "title": "Incomplete fork",
                     "cwd": "/tmp",
-                    "backend": agent_server.BACKEND_CODEX,
+                    "backend": hyadex_server.BACKEND_CODEX,
                     "codex_thread_id": "thread-staged",
                     "_fork_initializing": True,
                 },
             }))
             cleanup_ledger = root / "abandoned-fork-threads.json"
-            store = agent_server.SessionStore()
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
-            self.addCleanup(agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
-            with patch.object(agent_server, "SESSIONS_FILE", sessions_file), patch.object(
-                agent_server,
+            store = hyadex_server.SessionStore()
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
+            self.addCleanup(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
+            with patch.object(hyadex_server, "SESSIONS_FILE", sessions_file), patch.object(
+                hyadex_server,
                 "ABANDONED_FORK_THREADS_FILE",
                 cleanup_ledger,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_dirs",
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "session_dir",
                 side_effect=lambda session_id: root / session_id,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "delete_session_owned_file_records",
                 return_value=0,
             ) as delete_files, patch.object(
-                agent_server,
+                hyadex_server,
                 "forget_event_seq",
                 new_callable=AsyncMock,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "rebuild_codex_subagent_indexes",
             ), patch.object(
                 store,
@@ -1297,7 +1297,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
         delete_files.assert_called_once_with("staged")
         self.assertEqual(cleanup_thread_ids, ["thread-staged"])
         self.assertEqual(
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS,
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS,
             {"thread-staged"},
         )
 
@@ -1312,19 +1312,19 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 "thread-parked",
                 "thread-retry",
             }
-            agent_server.write_abandoned_fork_thread_ids(pending, cleanup_ledger)
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS.update(pending)
-            self.addCleanup(agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
+            hyadex_server.write_abandoned_fork_thread_ids(pending, cleanup_ledger)
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.update(pending)
+            self.addCleanup(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
             sessions = {
                 "real-chat": {
                     "id": "real-chat",
-                    "backend": agent_server.BACKEND_CODEX,
+                    "backend": hyadex_server.BACKEND_CODEX,
                     "codex_thread_id": "thread-owned",
                 },
                 "parked-chat": {
                     "id": "parked-chat",
-                    "backend": agent_server.BACKEND_CLAUDE,
+                    "backend": hyadex_server.BACKEND_CLAUDE,
                     "claude_session_id": "claude-active",
                     "session_id": "claude-active",
                     "codex_thread_id": "thread-parked",
@@ -1334,17 +1334,17 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             async def retire(thread_id: str) -> bool:
                 return thread_id == "thread-orphan"
 
-            with patch.object(agent_server.STORE, "sessions", sessions), patch.object(
-                agent_server,
+            with patch.object(hyadex_server.STORE, "sessions", sessions), patch.object(
+                hyadex_server,
                 "ABANDONED_FORK_THREADS_FILE",
                 cleanup_ledger,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "retire_failed_codex_fork",
                 new_callable=AsyncMock,
                 side_effect=retire,
             ) as retire_fork:
-                await agent_server.cleanup_abandoned_fork_provider_threads()
+                await hyadex_server.cleanup_abandoned_fork_provider_threads()
 
             self.assertEqual(
                 {call.args[0] for call in retire_fork.await_args_list},
@@ -1355,7 +1355,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 ["thread-retry"],
             )
             self.assertEqual(
-                agent_server.ABANDONED_FORK_PROVIDER_THREADS,
+                hyadex_server.ABANDONED_FORK_PROVIDER_THREADS,
                 {"thread-retry"},
             )
 
@@ -1363,31 +1363,31 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             cleanup_ledger = Path(temporary) / "abandoned-fork-threads.json"
             pending = {"thread-startup", "thread-new-fork"}
-            agent_server.write_abandoned_fork_thread_ids(pending, cleanup_ledger)
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS.update(pending)
-            self.addCleanup(agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
+            hyadex_server.write_abandoned_fork_thread_ids(pending, cleanup_ledger)
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.update(pending)
+            self.addCleanup(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "ABANDONED_FORK_THREADS_FILE",
                 cleanup_ledger,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "sessions",
                 {},
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "retire_failed_codex_fork",
                 new_callable=AsyncMock,
                 return_value=True,
             ) as retire:
-                await agent_server.cleanup_abandoned_fork_provider_threads(
+                await hyadex_server.cleanup_abandoned_fork_provider_threads(
                     {"thread-startup"}
                 )
 
             retire.assert_awaited_once_with("thread-startup")
             self.assertEqual(
-                agent_server.ABANDONED_FORK_PROVIDER_THREADS,
+                hyadex_server.ABANDONED_FORK_PROVIDER_THREADS,
                 {"thread-new-fork"},
             )
             self.assertEqual(
@@ -1401,41 +1401,41 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             cleanup_ledger = Path(temporary) / "abandoned-fork-threads.json"
             pending = {"thread-orphan"}
-            agent_server.write_abandoned_fork_thread_ids(pending, cleanup_ledger)
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS.update(pending)
-            self.addCleanup(agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
+            hyadex_server.write_abandoned_fork_thread_ids(pending, cleanup_ledger)
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.update(pending)
+            self.addCleanup(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
             cleanup_started = asyncio.Event()
             finish_cleanup = asyncio.Event()
-            store = agent_server.SessionStore()
+            store = hyadex_server.SessionStore()
 
             async def retire(_thread_id: str) -> bool:
                 cleanup_started.set()
                 await finish_cleanup.wait()
                 return True
 
-            with patch.object(agent_server.STORE, "sessions", {}), patch.object(
-                agent_server,
+            with patch.object(hyadex_server.STORE, "sessions", {}), patch.object(
+                hyadex_server,
                 "ABANDONED_FORK_THREADS_FILE",
                 cleanup_ledger,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "retire_failed_codex_fork",
                 new_callable=AsyncMock,
                 side_effect=retire,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_dirs",
             ) as ensure_dirs:
                 cleanup_task = asyncio.create_task(
-                    agent_server.cleanup_abandoned_fork_provider_threads()
+                    hyadex_server.cleanup_abandoned_fork_provider_threads()
                 )
                 try:
                     await asyncio.wait_for(cleanup_started.wait(), timeout=1)
-                    with self.assertRaises(agent_server.HTTPException) as raised:
+                    with self.assertRaises(hyadex_server.HTTPException) as raised:
                         await store.create(
-                            agent_server.CreateSessionRequest(
-                                backend=agent_server.BACKEND_CODEX,
+                            hyadex_server.CreateSessionRequest(
+                                backend=hyadex_server.BACKEND_CODEX,
                                 codex_thread_id="thread-orphan",
                             )
                         )
@@ -1443,10 +1443,10 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn("interrupted fork", str(raised.exception.detail))
                     ensure_dirs.assert_not_called()
 
-                    with self.assertRaises(agent_server.HTTPException) as parked_raised:
+                    with self.assertRaises(hyadex_server.HTTPException) as parked_raised:
                         await store.create(
-                            agent_server.CreateSessionRequest(
-                                backend=agent_server.BACKEND_CLAUDE,
+                            hyadex_server.CreateSessionRequest(
+                                backend=hyadex_server.BACKEND_CLAUDE,
                                 claude_session_id="claude-active",
                                 codex_thread_id="thread-orphan",
                             )
@@ -1454,18 +1454,18 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(parked_raised.exception.status_code, 409)
                     ensure_dirs.assert_not_called()
 
-                    with self.assertRaises(agent_server.HTTPException) as save_raised:
+                    with self.assertRaises(hyadex_server.HTTPException) as save_raised:
                         await store.save_provider_session(
                             "some-chat",
                             "thread-orphan",
-                            agent_server.BACKEND_CODEX,
+                            hyadex_server.BACKEND_CODEX,
                         )
                     self.assertEqual(save_raised.exception.status_code, 409)
                 finally:
                     finish_cleanup.set()
                     await cleanup_task
 
-            self.assertEqual(agent_server.ABANDONED_FORK_PROVIDER_THREADS, set())
+            self.assertEqual(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS, set())
             self.assertEqual(
                 json.loads(cleanup_ledger.read_text())["thread_ids"],
                 [],
@@ -1481,31 +1481,31 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 "staged": {
                     "id": "staged",
                     "cwd": "/tmp",
-                    "backend": agent_server.BACKEND_CODEX,
+                    "backend": hyadex_server.BACKEND_CODEX,
                     "codex_thread_id": "thread-staged",
                     "_fork_initializing": True,
                     "sort_order": 1000,
                 }
             }))
-            store = agent_server.SessionStore()
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
-            self.addCleanup(agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
-            with patch.object(agent_server, "SESSIONS_FILE", sessions_file), patch.object(
-                agent_server,
+            store = hyadex_server.SessionStore()
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
+            self.addCleanup(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
+            with patch.object(hyadex_server, "SESSIONS_FILE", sessions_file), patch.object(
+                hyadex_server,
                 "ABANDONED_FORK_THREADS_FILE",
                 root / "abandoned-fork-threads.json",
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "write_abandoned_fork_thread_ids",
                 side_effect=OSError("read-only state"),
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_dirs",
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "delete_session_owned_file_records",
             ) as delete_files, patch.object(
-                agent_server,
+                hyadex_server,
                 "rebuild_codex_subagent_indexes",
             ), patch.object(
                 store,
@@ -1516,7 +1516,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("staged", store.sessions)
         delete_files.assert_not_called()
-        self.assertEqual(agent_server.ABANDONED_FORK_PROVIDER_THREADS, set())
+        self.assertEqual(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS, set())
 
     async def test_cancelled_session_created_append_rolls_back_child_and_provider(
         self,
@@ -1527,94 +1527,94 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "title": "Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "thread-parent",
         }
         sessions = {parent_id: parent}
 
         with tempfile.TemporaryDirectory() as temporary, patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "sessions",
             sessions,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "_lock",
             asyncio.Lock(),
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             new_callable=AsyncMock,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "ensure_dirs",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "session_dir",
             return_value=Path(temporary) / "child-session",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "delete_session_owned_file_records",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "forget_event_seq",
             new_callable=AsyncMock,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             new_callable=AsyncMock,
             side_effect=asyncio.CancelledError,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "fork_codex_thread",
             new_callable=AsyncMock,
             return_value="thread-child",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "retire_failed_codex_fork",
             new_callable=AsyncMock,
             return_value=True,
         ) as retire:
             with self.assertRaises(asyncio.CancelledError):
-                await agent_server.fork_session(
+                await hyadex_server.fork_session(
                     parent_id,
-                    agent_server.ForkSessionRequest(),
+                    hyadex_server.ForkSessionRequest(),
                 )
 
         self.assertEqual(sessions, {parent_id: parent})
         retire.assert_awaited_once_with("thread-child")
 
     async def test_session_create_save_failure_rolls_back_in_memory_record(self) -> None:
-        store = agent_server.SessionStore()
+        store = hyadex_server.SessionStore()
         with tempfile.TemporaryDirectory() as temporary, patch.object(
             store,
             "save",
             new_callable=AsyncMock,
             side_effect=[OSError("disk full"), None],
         ) as save, patch.object(
-            agent_server,
+            hyadex_server,
             "ensure_dirs",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "session_dir",
             return_value=Path(temporary) / "new-session",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "delete_session_owned_file_records",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "forget_event_seq",
             new_callable=AsyncMock,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             new_callable=AsyncMock,
         ) as append_event:
             with self.assertRaisesRegex(OSError, "disk full"):
                 await store.create(
-                    agent_server.CreateSessionRequest(
+                    hyadex_server.CreateSessionRequest(
                         title="Failed child",
                         cwd="/tmp",
-                        backend=agent_server.BACKEND_CODEX,
+                        backend=hyadex_server.BACKEND_CODEX,
                     )
                 )
 
@@ -1626,16 +1626,16 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
         parent_id = "parent-chat"
         child_id = "child-chat"
         self.addCleanup(
-            agent_server.DELETED_SESSION_TOMBSTONES.discard,
+            hyadex_server.DELETED_SESSION_TOMBSTONES.discard,
             child_id,
         )
-        self.addCleanup(agent_server.DELETING_SESSIONS.discard, child_id)
+        self.addCleanup(hyadex_server.DELETING_SESSIONS.discard, child_id)
         parent = {
             "id": parent_id,
             "title": "Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "thread-parent",
         }
         child = {
@@ -1643,7 +1643,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "title": "Fork of Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "_fork_initializing": True,
         }
         sessions = {parent_id: parent}
@@ -1655,46 +1655,46 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
         async def delete_child(session_id: str) -> bool:
             return sessions.pop(session_id, None) is not None
 
-        with patch.object(agent_server.STORE, "sessions", sessions), patch.object(
-            agent_server.STORE,
+        with patch.object(hyadex_server.STORE, "sessions", sessions), patch.object(
+            hyadex_server.STORE,
             "create",
             new_callable=AsyncMock,
             side_effect=create_child,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "delete",
             new_callable=AsyncMock,
             side_effect=delete_child,
         ) as delete_session, patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "reorder",
             new_callable=AsyncMock,
             return_value=[parent, child],
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "fork_codex_thread",
             new_callable=AsyncMock,
             return_value="thread-child",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "bind_forked_codex_thread",
             new_callable=AsyncMock,
             return_value=("thread-child", "policy-hash"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "copy_fork_history",
             new_callable=AsyncMock,
             side_effect=RuntimeError("history storage failed"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "retire_failed_codex_fork",
             new_callable=AsyncMock,
             return_value=True,
         ) as retire:
             with self.assertRaisesRegex(RuntimeError, "history storage failed"):
-                await agent_server.fork_session(
+                await hyadex_server.fork_session(
                     parent_id,
-                    agent_server.ForkSessionRequest(),
+                    hyadex_server.ForkSessionRequest(),
                 )
 
         self.assertEqual(sessions, {parent_id: parent})
@@ -1720,26 +1720,26 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             return True
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "DELETING_SESSIONS",
             deleting_sessions,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "DELETED_SESSION_TOMBSTONES",
             deleted_tombstones,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "delete",
             new_callable=AsyncMock,
             side_effect=delete_child,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "retire_failed_codex_fork",
             new_callable=AsyncMock,
             side_effect=retire_provider,
         ):
             cleanup = asyncio.create_task(
-                agent_server.cleanup_aborted_session_fork({
+                hyadex_server.cleanup_aborted_session_fork({
                     "child_session_id": "child-chat",
                     "provider_thread_id": "thread-child",
                 })
@@ -1756,40 +1756,40 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         child_id = "child-chat"
         thread_id = "thread-child"
-        self.addCleanup(agent_server.DELETING_SESSIONS.discard, child_id)
-        self.addCleanup(agent_server.DELETED_SESSION_TOMBSTONES.discard, child_id)
+        self.addCleanup(hyadex_server.DELETING_SESSIONS.discard, child_id)
+        self.addCleanup(hyadex_server.DELETED_SESSION_TOMBSTONES.discard, child_id)
         sessions = {
             child_id: {
                 "id": child_id,
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": thread_id,
                 "_fork_initializing": True,
             }
         }
         with tempfile.TemporaryDirectory() as temporary:
             cleanup_ledger = Path(temporary) / "abandoned-fork-threads.json"
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
-            self.addCleanup(agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
+            self.addCleanup(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
 
             async def delete_child(session_id: str) -> bool:
                 return sessions.pop(session_id, None) is not None
 
-            with patch.object(agent_server.STORE, "sessions", sessions), patch.object(
-                agent_server.STORE,
+            with patch.object(hyadex_server.STORE, "sessions", sessions), patch.object(
+                hyadex_server.STORE,
                 "delete",
                 new_callable=AsyncMock,
                 side_effect=delete_child,
             ) as delete_session, patch.object(
-                agent_server,
+                hyadex_server,
                 "ABANDONED_FORK_THREADS_FILE",
                 cleanup_ledger,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "retire_failed_codex_fork",
                 new_callable=AsyncMock,
                 return_value=False,
             ):
-                await agent_server.cleanup_aborted_session_fork({
+                await hyadex_server.cleanup_aborted_session_fork({
                     "child_session_id": child_id,
                     "provider_thread_id": thread_id,
                 })
@@ -1797,7 +1797,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             delete_session.assert_awaited_once_with(child_id)
             self.assertEqual(sessions, {})
             self.assertEqual(
-                agent_server.ABANDONED_FORK_PROVIDER_THREADS,
+                hyadex_server.ABANDONED_FORK_PROVIDER_THREADS,
                 {thread_id},
             )
             self.assertEqual(
@@ -1810,33 +1810,33 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         child_id = "child-chat"
         thread_id = "thread-child"
-        self.addCleanup(agent_server.DELETING_SESSIONS.discard, child_id)
-        self.addCleanup(agent_server.DELETED_SESSION_TOMBSTONES.discard, child_id)
+        self.addCleanup(hyadex_server.DELETING_SESSIONS.discard, child_id)
+        self.addCleanup(hyadex_server.DELETED_SESSION_TOMBSTONES.discard, child_id)
         sessions = {
             child_id: {
                 "id": child_id,
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": thread_id,
                 "_fork_initializing": True,
             }
         }
-        agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
-        self.addCleanup(agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
-        with patch.object(agent_server.STORE, "sessions", sessions), patch.object(
-            agent_server.STORE,
+        hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
+        self.addCleanup(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
+        with patch.object(hyadex_server.STORE, "sessions", sessions), patch.object(
+            hyadex_server.STORE,
             "delete",
             new_callable=AsyncMock,
         ) as delete_session, patch.object(
-            agent_server,
+            hyadex_server,
             "retire_failed_codex_fork",
             new_callable=AsyncMock,
             return_value=False,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "write_abandoned_fork_thread_ids",
             side_effect=OSError("read-only state"),
         ):
-            await agent_server.cleanup_aborted_session_fork({
+            await hyadex_server.cleanup_aborted_session_fork({
                 "child_session_id": child_id,
                 "provider_thread_id": thread_id,
             })
@@ -1844,7 +1844,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
         delete_session.assert_not_awaited()
         self.assertIn(child_id, sessions)
         self.assertTrue(sessions[child_id]["_fork_initializing"])
-        self.assertIn(thread_id, agent_server.ABANDONED_FORK_PROVIDER_THREADS)
+        self.assertIn(thread_id, hyadex_server.ABANDONED_FORK_PROVIDER_THREADS)
 
     async def test_cancelled_bound_fork_fences_late_provider_notification(
         self,
@@ -1857,7 +1857,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "title": "Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "thread-parent",
         }
         child = {
@@ -1865,7 +1865,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "title": "Fork of Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "session_id": None,
             "codex_thread_id": None,
             "_fork_initializing": True,
@@ -1910,14 +1910,14 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(provider_id, thread_index)
                 shutil.rmtree(child_root)
 
-                await agent_server.project_codex_notification({
+                await hyadex_server.project_codex_notification({
                     "method": "thread/status/changed",
                     "params": {
                         "threadId": provider_id,
                         "status": {"type": "idle"},
                     },
                 })
-                late_append_results.append(await agent_server.append_event(
+                late_append_results.append(await hyadex_server.append_event(
                     child_id,
                     "codex_thread_status",
                     {"status": {"type": "idle"}},
@@ -1926,76 +1926,76 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
                 return True
 
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "DELETING_SESSIONS",
                 deleting_sessions,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "DELETED_SESSION_TOMBSTONES",
                 deleted_tombstones,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "CODEX_THREAD_SESSION_INDEX",
                 thread_index,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "sessions",
                 sessions,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "_lock",
                 asyncio.Lock(),
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "save",
                 new_callable=AsyncMock,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "create",
                 new_callable=AsyncMock,
                 side_effect=create_child,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "delete",
                 new_callable=AsyncMock,
                 side_effect=delete_child,
             ) as delete_session, patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "reorder",
                 new_callable=AsyncMock,
                 return_value=[parent, child],
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "fork_codex_thread",
                 new_callable=AsyncMock,
                 return_value=provider_id,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "bind_forked_codex_thread",
                 new_callable=AsyncMock,
                 side_effect=bind_child,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "copy_fork_history",
                 new_callable=AsyncMock,
                 side_effect=block_history,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "retire_failed_codex_fork",
                 new_callable=AsyncMock,
                 return_value=True,
             ) as retire, patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_dirs",
                 side_effect=ensure_test_dirs,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "events_path",
                 side_effect=lambda session_id: root / session_id / "events.jsonl",
             ):
-                task = asyncio.create_task(agent_server.fork_session(
+                task = asyncio.create_task(hyadex_server.fork_session(
                     parent_id,
-                    agent_server.ForkSessionRequest(),
+                    hyadex_server.ForkSessionRequest(),
                 ))
                 await asyncio.wait_for(history_started.wait(), timeout=1)
                 task.cancel()
@@ -2021,7 +2021,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "title": "Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": None,
             "session_id": None,
             "pinned": False,
@@ -2032,7 +2032,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "title": "Fork of Parent",
             "folder": "General",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": None,
             "session_id": None,
             "parent_id": parent_id,
@@ -2046,51 +2046,51 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             child["updated_at"] = "2026-08-03T01:00:00Z"
             return child
 
-        with patch.object(agent_server.STORE, "sessions", sessions), patch.object(
-            agent_server.STORE,
+        with patch.object(hyadex_server.STORE, "sessions", sessions), patch.object(
+            hyadex_server.STORE,
             "_lock",
             asyncio.Lock(),
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "create",
             new_callable=AsyncMock,
             return_value=child,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "reorder",
             new_callable=AsyncMock,
             return_value=[parent, child],
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             new_callable=AsyncMock,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "update",
             new_callable=AsyncMock,
             side_effect=update_child,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "fork_codex_thread",
             new_callable=AsyncMock,
         ) as fork_codex_thread, patch.object(
-            agent_server,
+            hyadex_server,
             "build_fork_memory",
             return_value="bounded parent memory",
         ) as build_fork_memory, patch.object(
-            agent_server,
+            hyadex_server,
             "copy_fork_history",
             new_callable=AsyncMock,
             return_value=17,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             new_callable=AsyncMock,
             return_value={},
         ) as append_event:
-            result = await agent_server.fork_session(
+            result = await hyadex_server.fork_session(
                 parent_id,
-                agent_server.ForkSessionRequest(),
+                hyadex_server.ForkSessionRequest(),
             )
 
         fork_codex_thread.assert_not_awaited()
@@ -2117,20 +2117,20 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "backend": "cursor",
             "codex_thread_id": "thread-parent",
         }
-        with patch.object(agent_server.STORE, "sessions", {parent_id: parent}), patch.object(
-            agent_server,
+        with patch.object(hyadex_server.STORE, "sessions", {parent_id: parent}), patch.object(
+            hyadex_server,
             "fork_codex_thread",
             new_callable=AsyncMock,
         ) as fork_codex_thread:
-            agent_server.RUNS.busy.add(parent_id)
+            hyadex_server.RUNS.busy.add(parent_id)
             try:
-                with self.assertRaises(agent_server.HTTPException) as raised:
-                    await agent_server.fork_session(
+                with self.assertRaises(hyadex_server.HTTPException) as raised:
+                    await hyadex_server.fork_session(
                         parent_id,
-                        agent_server.ForkSessionRequest(),
+                        hyadex_server.ForkSessionRequest(),
                     )
             finally:
-                agent_server.RUNS.busy.discard(parent_id)
+                hyadex_server.RUNS.busy.discard(parent_id)
 
         self.assertEqual(raised.exception.status_code, 410)
         fork_codex_thread.assert_not_awaited()
@@ -2141,18 +2141,18 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "id": parent_id,
             "title": "Bad cwd",
             "cwd": "relative/path",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "thread-parent",
         }
-        with patch.object(agent_server.STORE, "sessions", {parent_id: parent}), patch.object(
-            agent_server,
+        with patch.object(hyadex_server.STORE, "sessions", {parent_id: parent}), patch.object(
+            hyadex_server,
             "fork_codex_thread",
             new_callable=AsyncMock,
         ) as fork_codex_thread:
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                await agent_server.fork_session(
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                await hyadex_server.fork_session(
                     parent_id,
-                    agent_server.ForkSessionRequest(),
+                    hyadex_server.ForkSessionRequest(),
                 )
 
         self.assertEqual(raised.exception.status_code, 409)
@@ -2164,7 +2164,7 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "id": parent_id,
             "title": "Parent",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "thread-parent",
         }
         create_started = asyncio.Event()
@@ -2174,26 +2174,26 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Future()
             raise AssertionError("unreachable")
 
-        with patch.object(agent_server.STORE, "sessions", {parent_id: parent}), patch.object(
-            agent_server.STORE,
+        with patch.object(hyadex_server.STORE, "sessions", {parent_id: parent}), patch.object(
+            hyadex_server.STORE,
             "create",
             new_callable=AsyncMock,
             side_effect=blocked_create,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "fork_codex_thread",
             new_callable=AsyncMock,
             return_value="thread-child",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "retire_failed_codex_fork",
             new_callable=AsyncMock,
             return_value=True,
         ) as retire:
             task = asyncio.create_task(
-                agent_server.fork_session(
+                hyadex_server.fork_session(
                     parent_id,
-                    agent_server.ForkSessionRequest(),
+                    hyadex_server.ForkSessionRequest(),
                 )
             )
             await asyncio.wait_for(create_started.wait(), timeout=2)
@@ -2212,32 +2212,32 @@ class ForkSessionFallbackTests(unittest.IsolatedAsyncioTestCase):
             "id": parent_id,
             "title": "Parent",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "thread-parent",
         }
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "sessions",
             {parent_id: parent},
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "create",
             new_callable=AsyncMock,
         ) as create, patch.object(
-            agent_server,
+            hyadex_server,
             "fork_codex_thread",
             new_callable=AsyncMock,
-            side_effect=agent_server.CodexForkCleanupError(provider_id),
+            side_effect=hyadex_server.CodexForkCleanupError(provider_id),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "retire_failed_codex_fork",
             new_callable=AsyncMock,
             return_value=True,
         ) as retire:
-            with self.assertRaises(agent_server.CodexForkCleanupError):
-                await agent_server.fork_session(
+            with self.assertRaises(hyadex_server.CodexForkCleanupError):
+                await hyadex_server.fork_session(
                     parent_id,
-                    agent_server.ForkSessionRequest(),
+                    hyadex_server.ForkSessionRequest(),
                 )
 
         create.assert_not_awaited()
@@ -2249,14 +2249,14 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         self._cleanup_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self._cleanup_directory.cleanup)
         self._cleanup_ledger_patch = patch.object(
-            agent_server,
+            hyadex_server,
             "ABANDONED_FORK_THREADS_FILE",
             Path(self._cleanup_directory.name) / "abandoned-forks.json",
         )
         self._cleanup_ledger_patch.start()
         self.addCleanup(self._cleanup_ledger_patch.stop)
-        agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
-        self.addCleanup(agent_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
+        hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear()
+        self.addCleanup(hyadex_server.ABANDONED_FORK_PROVIDER_THREADS.clear)
 
     async def test_retire_failed_fork_clears_route_before_first_await(self) -> None:
         thread_id = "thread-child"
@@ -2269,16 +2269,16 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
             return manager
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CODEX_THREAD_SESSION_INDEX",
             thread_index,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager_for_thread",
             new_callable=AsyncMock,
             side_effect=get_manager,
         ):
-            await agent_server.retire_failed_codex_fork(thread_id)
+            await hyadex_server.retire_failed_codex_fork(thread_id)
 
         manager.delete_thread.assert_awaited_once_with(thread_id)
 
@@ -2292,18 +2292,18 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         })
         manager.delete_thread = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "touch_codex_app_server_thread",
             new_callable=AsyncMock,
         ):
-            result = await agent_server.fork_codex_thread(
+            result = await hyadex_server.fork_codex_thread(
                 "thread-parent",
-                {"cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                {"cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
             )
 
         self.assertEqual(result, "thread-child")
@@ -2317,7 +2317,7 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         )
         manager.delete_thread.assert_not_awaited()
         self.assertEqual(
-            agent_server.ABANDONED_FORK_PROVIDER_THREADS,
+            hyadex_server.ABANDONED_FORK_PROVIDER_THREADS,
             {"thread-child"},
         )
 
@@ -2343,23 +2343,23 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
             return True
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_abandoned_fork_provider_thread",
             new_callable=AsyncMock,
             side_effect=persist_thread,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "touch_codex_app_server_thread",
             new_callable=AsyncMock,
         ):
-            result = await agent_server.fork_codex_thread(
+            result = await hyadex_server.fork_codex_thread(
                 "thread-parent",
-                {"cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                {"cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
             )
 
         self.assertEqual(result, "thread-child")
@@ -2375,23 +2375,23 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         persist = AsyncMock(return_value=True)
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_abandoned_fork_provider_thread",
             persist,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "retire_or_record_failed_codex_fork",
             new_callable=AsyncMock,
         ) as cleanup:
             with self.assertRaises(asyncio.TimeoutError) as raised:
-                await agent_server.fork_codex_thread(
+                await hyadex_server.fork_codex_thread(
                     "thread-parent",
-                    {"cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                    {"cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
                 )
 
         self.assertIs(raised.exception, timeout)
@@ -2408,19 +2408,19 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         persist = AsyncMock(return_value=True)
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_abandoned_fork_provider_thread",
             persist,
         ):
             with self.assertRaises(asyncio.CancelledError) as raised:
-                await agent_server.fork_codex_thread(
+                await hyadex_server.fork_codex_thread(
                     "thread-parent",
-                    {"cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                    {"cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
                 )
 
         self.assertIs(raised.exception, cancellation)
@@ -2433,25 +2433,25 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         manager.fork_thread = AsyncMock(side_effect=timeout)
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_abandoned_fork_provider_thread",
             new_callable=AsyncMock,
             return_value=False,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "retire_or_record_failed_codex_fork",
             new_callable=AsyncMock,
             return_value=False,
         ):
-            with self.assertRaises(agent_server.CodexForkCleanupError) as raised:
-                await agent_server.fork_codex_thread(
+            with self.assertRaises(hyadex_server.CodexForkCleanupError) as raised:
+                await hyadex_server.fork_codex_thread(
                     "thread-parent",
-                    {"cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                    {"cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
                 )
 
         self.assertEqual(raised.exception.thread_id, "thread-late")
@@ -2463,25 +2463,25 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         manager.fork_thread = AsyncMock(return_value="thread-child")
         manager.read_thread = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_abandoned_fork_provider_thread",
             new_callable=AsyncMock,
             return_value=False,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "retire_or_record_failed_codex_fork",
             new_callable=AsyncMock,
             return_value=False,
         ):
-            with self.assertRaises(agent_server.CodexForkCleanupError) as raised:
-                await agent_server.fork_codex_thread(
+            with self.assertRaises(hyadex_server.CodexForkCleanupError) as raised:
+                await hyadex_server.fork_codex_thread(
                     "thread-parent",
-                    {"cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                    {"cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
                 )
 
         self.assertEqual(raised.exception.thread_id, "thread-child")
@@ -2494,25 +2494,25 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         manager.fork_thread = AsyncMock(return_value="thread-child")
         manager.read_thread = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_abandoned_fork_provider_thread",
             new_callable=AsyncMock,
             side_effect=OSError("state unavailable"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "retire_or_record_failed_codex_fork",
             new_callable=AsyncMock,
             return_value=False,
         ):
-            with self.assertRaises(agent_server.CodexForkCleanupError) as raised:
-                await agent_server.fork_codex_thread(
+            with self.assertRaises(hyadex_server.CodexForkCleanupError) as raised:
+                await hyadex_server.fork_codex_thread(
                     "thread-parent",
-                    {"cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                    {"cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
                 )
 
         self.assertEqual(raised.exception.thread_id, "thread-child")
@@ -2532,23 +2532,23 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
 
         cleanup = AsyncMock(return_value=True)
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_abandoned_fork_provider_thread",
             new_callable=AsyncMock,
             side_effect=persist_thread,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "retire_or_record_failed_codex_fork",
             cleanup,
         ):
-            task = asyncio.create_task(agent_server.fork_codex_thread(
+            task = asyncio.create_task(hyadex_server.fork_codex_thread(
                 "thread-parent",
-                {"cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                {"cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
             ))
             await asyncio.wait_for(journal_started.wait(), timeout=1)
             task.cancel()
@@ -2574,31 +2574,31 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
             raise OSError("state unavailable")
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_abandoned_fork_provider_thread",
             new_callable=AsyncMock,
             side_effect=persist_thread,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "retire_or_record_failed_codex_fork",
             new_callable=AsyncMock,
             return_value=False,
         ) as cleanup:
-            task = asyncio.create_task(agent_server.fork_codex_thread(
+            task = asyncio.create_task(hyadex_server.fork_codex_thread(
                 "thread-parent",
-                {"cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                {"cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
             ))
             await asyncio.wait_for(journal_started.wait(), timeout=1)
             task.cancel()
             await asyncio.sleep(0)
             self.assertFalse(task.done())
             release_journal.set()
-            with self.assertRaises(agent_server.CodexForkCleanupError) as raised:
+            with self.assertRaises(hyadex_server.CodexForkCleanupError) as raised:
                 await asyncio.wait_for(task, timeout=1)
 
         self.assertEqual(raised.exception.thread_id, "thread-child")
@@ -2617,15 +2617,15 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         manager.is_thread_loaded.return_value = True
         manager.unsubscribe_thread = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ):
-            with self.assertRaises(agent_server.CodexAppServerProtocolError):
-                await agent_server.fork_codex_thread(
+            with self.assertRaises(hyadex_server.CodexAppServerProtocolError):
+                await hyadex_server.fork_codex_thread(
                     "thread-parent",
-                    {"cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                    {"cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
                 )
 
         manager.delete_thread.assert_awaited_once_with("thread-child")
@@ -2645,15 +2645,15 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
                 manager.is_thread_loaded.return_value = True
                 manager.unsubscribe_thread = AsyncMock()
                 with patch.object(
-                    agent_server,
+                    hyadex_server,
                     "codex_app_server_manager",
                     new_callable=AsyncMock,
                     return_value=manager,
                 ):
-                    with self.assertRaises(agent_server.CodexAppServerProtocolError):
-                        await agent_server.fork_codex_thread(
+                    with self.assertRaises(hyadex_server.CodexAppServerProtocolError):
+                        await hyadex_server.fork_codex_thread(
                             "thread-parent",
-                            {"cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                            {"cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
                         )
 
                 manager.delete_thread.assert_awaited_once_with("thread-child")
@@ -2664,7 +2664,7 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         child = {
             "id": session_id,
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "session_id": None,
             "codex_thread_id": None,
             "codex_goal": {
@@ -2698,50 +2698,50 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
             _backend: str,
             **_kwargs,
         ) -> None:
-            current = agent_server.STORE.sessions[requested_session_id]
+            current = hyadex_server.STORE.sessions[requested_session_id]
             current["session_id"] = provider_id
             current["codex_thread_id"] = provider_id
 
-        with patch.object(agent_server.STORE, "sessions", {session_id: child}), patch.object(
-            agent_server.STORE,
+        with patch.object(hyadex_server.STORE, "sessions", {session_id: child}), patch.object(
+            hyadex_server.STORE,
             "_lock",
             asyncio.Lock(),
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             new_callable=AsyncMock,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save_provider_session",
             new_callable=AsyncMock,
             side_effect=save_provider_session,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "codex_thread_instructions",
             return_value="child policy",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "codex_thread_instruction_hash",
             return_value="policy-hash",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "pin_codex_app_server_thread",
             new_callable=AsyncMock,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "unpin_codex_app_server_thread",
             new_callable=AsyncMock,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "touch_codex_app_server_thread",
             new_callable=AsyncMock,
         ):
-            bound_id, _ = await agent_server.bind_forked_codex_thread(
+            bound_id, _ = await hyadex_server.bind_forked_codex_thread(
                 session_id,
                 thread_id,
                 child,
@@ -2766,7 +2766,7 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         child = {
             "id": session_id,
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "session_id": None,
             "codex_thread_id": None,
             "codex_goal": {"objective": "Finish work", "status": "paused"},
@@ -2784,51 +2784,51 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
             _backend: str,
             **_kwargs,
         ) -> None:
-            current = agent_server.STORE.sessions[requested_session_id]
+            current = hyadex_server.STORE.sessions[requested_session_id]
             current["session_id"] = provider_id
             current["codex_thread_id"] = provider_id
 
-        with patch.object(agent_server.STORE, "sessions", {session_id: child}), patch.object(
-            agent_server.STORE,
+        with patch.object(hyadex_server.STORE, "sessions", {session_id: child}), patch.object(
+            hyadex_server.STORE,
             "_lock",
             asyncio.Lock(),
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             new_callable=AsyncMock,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save_provider_session",
             new_callable=AsyncMock,
             side_effect=save_provider_session,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "codex_thread_instructions",
             return_value="child policy",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "codex_thread_instruction_hash",
             return_value="policy-hash",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "pin_codex_app_server_thread",
             new_callable=AsyncMock,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "unpin_codex_app_server_thread",
             new_callable=AsyncMock,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "codex_goal_api_is_unsupported",
             return_value=True,
         ):
             with self.assertRaises(RuntimeError):
-                await agent_server.bind_forked_codex_thread(
+                await hyadex_server.bind_forked_codex_thread(
                     session_id,
                     thread_id,
                     child,
@@ -2844,21 +2844,21 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
         thread_id = "thread-child"
         child = {
             "id": session_id,
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "session_id": thread_id,
             "codex_thread_id": thread_id,
             "codex_goal": {"objective": "Finish work", "status": "paused"},
         }
         manager = Mock(generation=9)
         manager.get_thread_goal = AsyncMock(return_value=None)
-        agent_server.CODEX_GOAL_SYNC_GENERATIONS.pop(session_id, None)
+        hyadex_server.CODEX_GOAL_SYNC_GENERATIONS.pop(session_id, None)
 
-        with patch.object(agent_server.STORE, "sessions", {session_id: child}):
+        with patch.object(hyadex_server.STORE, "sessions", {session_id: child}):
             with self.assertRaisesRegex(
-                agent_server.CodexAppServerProtocolError,
+                hyadex_server.CodexAppServerProtocolError,
                 "did not preserve the inherited goal",
             ):
-                await agent_server.reconcile_codex_thread_goal(
+                await hyadex_server.reconcile_codex_thread_goal(
                     manager,
                     session_id,
                     thread_id,
@@ -2869,7 +2869,7 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
                     },
                 )
 
-        agent_server.CODEX_GOAL_SYNC_GENERATIONS.pop(session_id, None)
+        hyadex_server.CODEX_GOAL_SYNC_GENERATIONS.pop(session_id, None)
 
     async def test_inherited_goal_validation_rejects_field_mismatches(self) -> None:
         expected = {
@@ -2898,12 +2898,12 @@ class NativeCodexForkSafetyTests(unittest.IsolatedAsyncioTestCase):
 
         for field, native in mismatches.items():
             with self.subTest(field=field), self.assertRaises(
-                agent_server.CodexAppServerProtocolError
+                hyadex_server.CodexAppServerProtocolError
             ):
-                agent_server.validate_inherited_codex_goal(expected, native)
+                hyadex_server.validate_inherited_codex_goal(expected, native)
 
     async def test_active_inherited_goal_validates_as_paused(self) -> None:
-        agent_server.validate_inherited_codex_goal(
+        hyadex_server.validate_inherited_codex_goal(
             {
                 "objective": "Finish work",
                 "status": "active",
@@ -2959,15 +2959,15 @@ class ForkMemoryTests(unittest.TestCase):
             "id": parent_id,
             "title": "Parent",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
         }
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "iter_session_events",
             side_effect=lambda _session_id: iter(events),
         ) as iter_events:
-            memory = agent_server.build_fork_memory(parent, parent_id)
+            memory = hyadex_server.build_fork_memory(parent, parent_id)
 
         self.assertEqual(iter_events.call_count, 2)
         self.assertIn("Please inspect this image", memory)
@@ -2990,7 +2990,7 @@ class ForkMemoryTests(unittest.TestCase):
         common = {
             "session_id": parent_id,
             "run_id": "import_memory_projection",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "imported": True,
         }
         events = [
@@ -3014,14 +3014,14 @@ class ForkMemoryTests(unittest.TestCase):
             "id": parent_id,
             "title": "Parent",
             "cwd": "/tmp",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
         }
         with patch.object(
-            agent_server,
+            hyadex_server,
             "iter_session_events",
             side_effect=lambda _session_id: iter(events),
         ):
-            memory = agent_server.build_fork_memory(parent, parent_id)
+            memory = hyadex_server.build_fork_memory(parent, parent_id)
 
         self.assertIn("Retained memory request", memory)
         self.assertIn("Retained answer after empty boundary", memory)
@@ -3042,17 +3042,17 @@ class ForkMemoryTests(unittest.TestCase):
             "session_id": parent_id,
             "type": "turn_started",
             "run_id": "import_providerless_projection",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "imported": True,
             "prompt": notice,
         }
         with patch.object(
-            agent_server,
+            hyadex_server,
             "iter_session_events",
             return_value=iter([event]),
         ):
             self.assertFalse(
-                agent_server.claude_fork_has_conversation(parent_id)
+                hyadex_server.claude_fork_has_conversation(parent_id)
             )
 
 

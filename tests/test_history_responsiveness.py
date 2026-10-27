@@ -15,7 +15,7 @@ import unittest
 import uuid
 from unittest.mock import AsyncMock, patch
 
-import agent_server as server
+from tests import hyadex_server as server
 from tests.runtime_state import patch_server_multiple
 from hyadex.providers.codex.history_repair import (
     CodexNativeHistoryRepairCache,

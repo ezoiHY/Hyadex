@@ -3,9 +3,7 @@ import threading
 import unittest
 from unittest.mock import ANY, MagicMock, patch
 
-import agent_server
-
-
+from tests import hyadex_server
 class RecordingWebSocket:
     def __init__(self) -> None:
         self.calls: list[tuple[str, int | None]] = []
@@ -58,33 +56,33 @@ class HeldTerminalWebSocket(RecordingWebSocket):
 
 class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
     def test_non_ascii_token_candidate_is_rejected_without_type_error(self) -> None:
-        with patch.object(agent_server, "AGENT_TOKEN", "server-token"):
-            self.assertFalse(agent_server.token_matches("not-the-token-é"))
+        with patch.object(hyadex_server, "AGENT_TOKEN", "server-token"):
+            self.assertFalse(hyadex_server.token_matches("not-the-token-é"))
 
     async def test_capable_client_gets_fixed_protocol_before_terminal_close(self) -> None:
-        encoded = agent_server.base64.urlsafe_b64encode(
+        encoded = hyadex_server.base64.urlsafe_b64encode(
             b"server-token",
         ).decode("ascii").rstrip("=")
         offered = f"hyadex-token.{encoded}"
         websocket = RecordingWebSocket()
         websocket.headers = {
             "sec-websocket-protocol": (
-                f"{agent_server.TERMINAL_WEBSOCKET_PROTOCOL}, {offered}"
+                f"{hyadex_server.TERMINAL_WEBSOCKET_PROTOCOL}, {offered}"
             ),
         }
         with patch.object(
-            agent_server,
+            hyadex_server,
             "AGENT_TOKEN",
             "server-token",
-        ), patch.dict(agent_server.STORE.sessions, {}, clear=True):
-            await agent_server.session_terminal(  # type: ignore[arg-type]
+        ), patch.dict(hyadex_server.STORE.sessions, {}, clear=True):
+            await hyadex_server.session_terminal(  # type: ignore[arg-type]
                 "missing-terminal",
                 websocket,
             )
 
         self.assertEqual(
             websocket.accepted_subprotocol,
-            agent_server.TERMINAL_WEBSOCKET_PROTOCOL,
+            hyadex_server.TERMINAL_WEBSOCKET_PROTOCOL,
         )
         self.assertEqual(websocket.calls, [
             ("accept", None),
@@ -94,29 +92,29 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_token_still_gets_fixed_protocol_before_unauthorized_close(
         self,
     ) -> None:
-        encoded = agent_server.base64.urlsafe_b64encode(
+        encoded = hyadex_server.base64.urlsafe_b64encode(
             b"wrong-token",
         ).decode("ascii").rstrip("=")
         websocket = RecordingWebSocket()
         websocket.headers = {
             "sec-websocket-protocol": (
-                f"{agent_server.TERMINAL_WEBSOCKET_PROTOCOL}, "
+                f"{hyadex_server.TERMINAL_WEBSOCKET_PROTOCOL}, "
                 f"hyadex-token.{encoded}"
             ),
         }
         with patch.object(
-            agent_server,
+            hyadex_server,
             "AGENT_TOKEN",
             "server-token",
-        ), patch.dict(agent_server.STORE.sessions, {}, clear=True):
-            await agent_server.session_terminal(  # type: ignore[arg-type]
+        ), patch.dict(hyadex_server.STORE.sessions, {}, clear=True):
+            await hyadex_server.session_terminal(  # type: ignore[arg-type]
                 "unauthorized-terminal",
                 websocket,
             )
 
         self.assertEqual(
             websocket.accepted_subprotocol,
-            agent_server.TERMINAL_WEBSOCKET_PROTOCOL,
+            hyadex_server.TERMINAL_WEBSOCKET_PROTOCOL,
         )
         self.assertEqual(websocket.calls, [
             ("accept", None),
@@ -133,9 +131,9 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         websocket = RecordingWebSocket()
         sessions = {session_id: session} if session is not None else {}
-        with patch.object(agent_server, "websocket_authorized", return_value=authorized), \
-             patch.dict(agent_server.STORE.sessions, sessions, clear=True):
-            await agent_server.session_terminal(session_id, websocket)  # type: ignore[arg-type]
+        with patch.object(hyadex_server, "websocket_authorized", return_value=authorized), \
+             patch.dict(hyadex_server.STORE.sessions, sessions, clear=True):
+            await hyadex_server.session_terminal(session_id, websocket)  # type: ignore[arg-type]
 
         self.assertEqual(websocket.calls, [
             ("accept", None),
@@ -166,9 +164,9 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_unauthorized_events_accepts_before_custom_close(self) -> None:
         websocket = RecordingWebSocket()
-        with patch.object(agent_server, "websocket_authorized", return_value=False), \
-             patch.dict(agent_server.STORE.sessions, {}, clear=True):
-            await agent_server.session_events(  # type: ignore[arg-type]
+        with patch.object(hyadex_server, "websocket_authorized", return_value=False), \
+             patch.dict(hyadex_server.STORE.sessions, {}, clear=True):
+            await hyadex_server.session_events(  # type: ignore[arg-type]
                 "unauthorized-events",
                 websocket,
             )
@@ -178,25 +176,25 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
         ])
 
     async def test_missing_chat_events_selects_fixed_protocol_then_4404(self) -> None:
-        encoded = agent_server.base64.urlsafe_b64encode(
+        encoded = hyadex_server.base64.urlsafe_b64encode(
             b"server-token",
         ).decode("ascii").rstrip("=")
         websocket = RecordingWebSocket()
         websocket.headers = {
             "sec-websocket-protocol": (
-                f"{agent_server.EVENTS_WEBSOCKET_PROTOCOL}, "
+                f"{hyadex_server.EVENTS_WEBSOCKET_PROTOCOL}, "
                 f"hyadex-token.{encoded}"
             ),
         }
-        with patch.object(agent_server, "AGENT_TOKEN", "server-token"), \
-             patch.dict(agent_server.STORE.sessions, {}, clear=True):
-            await agent_server.session_events(  # type: ignore[arg-type]
+        with patch.object(hyadex_server, "AGENT_TOKEN", "server-token"), \
+             patch.dict(hyadex_server.STORE.sessions, {}, clear=True):
+            await hyadex_server.session_events(  # type: ignore[arg-type]
                 "missing-events",
                 websocket,
             )
         self.assertEqual(
             websocket.accepted_subprotocol,
-            agent_server.EVENTS_WEBSOCKET_PROTOCOL,
+            hyadex_server.EVENTS_WEBSOCKET_PROTOCOL,
         )
         self.assertEqual(websocket.calls, [
             ("accept", None),
@@ -204,22 +202,22 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
         ])
 
     async def test_unauthorized_emergency_accepts_fixed_protocol_then_4401(self) -> None:
-        encoded = agent_server.base64.urlsafe_b64encode(
+        encoded = hyadex_server.base64.urlsafe_b64encode(
             b"wrong-token",
         ).decode("ascii").rstrip("=")
         websocket = RecordingWebSocket()
         websocket.headers = {
             "sec-websocket-protocol": (
-                f"{agent_server.EMERGENCY_WEBSOCKET_PROTOCOL}, "
+                f"{hyadex_server.EMERGENCY_WEBSOCKET_PROTOCOL}, "
                 f"hyadex-token.{encoded}"
             ),
         }
-        with patch.object(agent_server, "AGENT_TOKEN", "server-token"):
-            await agent_server.emergency_alert_events(websocket)  # type: ignore[arg-type]
+        with patch.object(hyadex_server, "AGENT_TOKEN", "server-token"):
+            await hyadex_server.emergency_alert_events(websocket)  # type: ignore[arg-type]
 
         self.assertEqual(
             websocket.accepted_subprotocol,
-            agent_server.EMERGENCY_WEBSOCKET_PROTOCOL,
+            hyadex_server.EMERGENCY_WEBSOCKET_PROTOCOL,
         )
         self.assertEqual(websocket.calls, [
             ("accept", None),
@@ -227,14 +225,14 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
         ])
 
     async def test_emergency_missing_fixed_protocol_accepts_token_then_4406(self) -> None:
-        encoded = agent_server.base64.urlsafe_b64encode(
+        encoded = hyadex_server.base64.urlsafe_b64encode(
             b"server-token",
         ).decode("ascii").rstrip("=")
         token_protocol = f"hyadex-token.{encoded}"
         websocket = RecordingWebSocket()
         websocket.headers = {"sec-websocket-protocol": token_protocol}
-        with patch.object(agent_server, "AGENT_TOKEN", "server-token"):
-            await agent_server.emergency_alert_events(websocket)  # type: ignore[arg-type]
+        with patch.object(hyadex_server, "AGENT_TOKEN", "server-token"):
+            await hyadex_server.emergency_alert_events(websocket)  # type: ignore[arg-type]
 
         self.assertEqual(websocket.accepted_subprotocol, token_protocol)
         self.assertEqual(websocket.calls, [
@@ -250,22 +248,22 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
             return b""
 
-        with patch.object(agent_server, "websocket_authorized", return_value=True), \
+        with patch.object(hyadex_server, "websocket_authorized", return_value=True), \
              patch.dict(
-                 agent_server.STORE.sessions,
+                 hyadex_server.STORE.sessions,
                  {session_id: {"id": session_id, "archived": False, "cwd": "/workspace"}},
                  clear=True,
              ), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "spawn_terminal_client",
                  return_value=(object(), 91, "hx_scrolling-terminal"),
              ), \
-             patch.object(agent_server, "read_terminal_output", side_effect=wait_for_output), \
-             patch.object(agent_server, "scroll_terminal_history", return_value=True) as scroll, \
-             patch.object(agent_server, "exit_terminal_auto_scroll") as exit_scroll, \
-             patch.object(agent_server, "stop_terminal_client") as stop_client:
-            await agent_server.session_terminal(session_id, websocket)  # type: ignore[arg-type]
+             patch.object(hyadex_server, "read_terminal_output", side_effect=wait_for_output), \
+             patch.object(hyadex_server, "scroll_terminal_history", return_value=True) as scroll, \
+             patch.object(hyadex_server, "exit_terminal_auto_scroll") as exit_scroll, \
+             patch.object(hyadex_server, "stop_terminal_client") as stop_client:
+            await hyadex_server.session_terminal(session_id, websocket)  # type: ignore[arg-type]
 
         scroll.assert_called_once_with(session_id, -4, managed=False)
         exit_scroll.assert_called_once_with(session_id)
@@ -273,7 +271,7 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_update_fence_drains_attachment_and_rejects_reconnect(self) -> None:
         session_id = "terminal-update-drain"
-        registry = agent_server.TerminalAttachmentRegistry()
+        registry = hyadex_server.TerminalAttachmentRegistry()
         first = HeldTerminalWebSocket()
         reconnect = RecordingWebSocket()
         process = MagicMock()
@@ -282,34 +280,34 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
             return b""
 
-        with patch.object(agent_server, "TERMINAL_ATTACHMENTS", registry), \
-             patch.object(agent_server, "websocket_authorized", return_value=True), \
+        with patch.object(hyadex_server, "TERMINAL_ATTACHMENTS", registry), \
+             patch.object(hyadex_server, "websocket_authorized", return_value=True), \
              patch.dict(
-                 agent_server.STORE.sessions,
+                 hyadex_server.STORE.sessions,
                  {session_id: {"id": session_id, "archived": False, "cwd": "/workspace"}},
                  clear=True,
              ), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "spawn_terminal_client",
                  return_value=(process, 91, "hx_terminal-update-drain"),
              ) as spawn, \
-             patch.object(agent_server, "read_terminal_output", side_effect=wait_for_output), \
-             patch.object(agent_server, "stop_terminal_client") as stop_client, \
-             patch.object(agent_server, "run_tmux") as run_tmux, \
+             patch.object(hyadex_server, "read_terminal_output", side_effect=wait_for_output), \
+             patch.object(hyadex_server, "stop_terminal_client") as stop_client, \
+             patch.object(hyadex_server, "run_tmux") as run_tmux, \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "execution_maintenance_blocks_work",
                  side_effect=[False, True],
              ):
             owner = asyncio.create_task(
-                agent_server.session_terminal(session_id, first)  # type: ignore[arg-type]
+                hyadex_server.session_terminal(session_id, first)  # type: ignore[arg-type]
             )
             await asyncio.wait_for(first.ready.wait(), timeout=1)
 
             retired = await registry.close_admission_and_all()
             await asyncio.gather(owner, return_exceptions=True)
-            await agent_server.session_terminal(  # type: ignore[arg-type]
+            await hyadex_server.session_terminal(  # type: ignore[arg-type]
                 session_id,
                 reconnect,
             )
@@ -334,7 +332,7 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_update_fence_reaps_cross_device_spawn_after_double_cancel(self) -> None:
         session_id = "terminal-cross-device-race"
-        registry = agent_server.TerminalAttachmentRegistry()
+        registry = hyadex_server.TerminalAttachmentRegistry()
         websocket = HeldTerminalWebSocket()
         process = MagicMock()
         loop = asyncio.get_running_loop()
@@ -350,28 +348,28 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
             return b""
 
-        with patch.object(agent_server, "TERMINAL_ATTACHMENTS", registry), \
-             patch.object(agent_server, "websocket_authorized", return_value=True), \
+        with patch.object(hyadex_server, "TERMINAL_ATTACHMENTS", registry), \
+             patch.object(hyadex_server, "websocket_authorized", return_value=True), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "execution_maintenance_blocks_work",
                  return_value=False,
              ), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "managed_server_restart_blocks_work",
                  return_value=False,
              ), \
              patch.dict(
-                 agent_server.STORE.sessions,
+                 hyadex_server.STORE.sessions,
                  {session_id: {"id": session_id, "archived": False, "cwd": "/workspace"}},
                  clear=True,
              ), \
-             patch.object(agent_server, "spawn_terminal_client", side_effect=slow_spawn), \
-             patch.object(agent_server, "read_terminal_output", side_effect=wait_for_output), \
-             patch.object(agent_server, "stop_terminal_client") as stop_client:
+             patch.object(hyadex_server, "spawn_terminal_client", side_effect=slow_spawn), \
+             patch.object(hyadex_server, "read_terminal_output", side_effect=wait_for_output), \
+             patch.object(hyadex_server, "stop_terminal_client") as stop_client:
             owner = asyncio.create_task(
-                agent_server.session_terminal(session_id, websocket)  # type: ignore[arg-type]
+                hyadex_server.session_terminal(session_id, websocket)  # type: ignore[arg-type]
             )
             await asyncio.wait_for(spawn_entered.wait(), timeout=1)
             drain = asyncio.create_task(registry.close_admission_and_all())
@@ -402,15 +400,15 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_terminal_admission_self_heals_after_update_is_terminal(self) -> None:
-        registry = agent_server.TerminalAttachmentRegistry()
+        registry = hyadex_server.TerminalAttachmentRegistry()
         websocket = RecordingWebSocket()
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "execution_maintenance_blocks_work",
             return_value=False,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "managed_server_restart_blocks_work",
             return_value=False,
         ):
@@ -422,15 +420,15 @@ class TerminalWebSocketRejectionTests(unittest.IsolatedAsyncioTestCase):
         await registry.release(websocket)  # type: ignore[arg-type]
 
     async def test_lifespan_terminal_shutdown_cannot_self_heal(self) -> None:
-        registry = agent_server.TerminalAttachmentRegistry()
+        registry = hyadex_server.TerminalAttachmentRegistry()
         websocket = RecordingWebSocket()
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "execution_maintenance_blocks_work",
             return_value=False,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "managed_server_restart_blocks_work",
             return_value=False,
         ):

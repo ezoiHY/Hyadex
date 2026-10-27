@@ -14,9 +14,7 @@ from unittest.mock import AsyncMock, patch
 import uvicorn
 from websockets.asyncio.client import connect
 
-import agent_server
-
-
+from tests import hyadex_server
 class EventStreamStressTests(unittest.IsolatedAsyncioTestCase):
     async def test_concurrent_clients_catch_up_reconnect_and_receive_live_tail(self):
         sid = "isolated-sync-stress"
@@ -25,7 +23,7 @@ class EventStreamStressTests(unittest.IsolatedAsyncioTestCase):
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
-        server = uvicorn.Server(uvicorn.Config(agent_server.app, lifespan="off", log_level="critical"))
+        server = uvicorn.Server(uvicorn.Config(hyadex_server.app, lifespan="off", log_level="critical"))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.jsonl"
             with path.open("w") as output:
@@ -34,16 +32,16 @@ class EventStreamStressTests(unittest.IsolatedAsyncioTestCase):
                         "type": "raw_event" if seq % 7 == 0 else "assistant_text",
                         "ts": "2026-10-01T00:00:00Z", "text": f"Item {seq}: " + "x" * 200}) + "\n")
             with (
-                patch.object(agent_server, "AGENT_TOKEN", "isolated-test-token"),
-                patch.object(agent_server, "HUB", agent_server.SubscriberHub()),
-                patch.dict(agent_server.STORE.sessions, {sid: {"id": sid}}, clear=True),
-                patch.object(agent_server, "events_path", return_value=path),
-                patch.object(agent_server, "ensure_dirs"),
-                patch.object(agent_server, "prepare_provider_history_metadata_repair"),
-                patch.object(agent_server, "fork_internal_run_ids", return_value=set()),
-                patch.object(agent_server, "update_session_event_metadata", new=AsyncMock()),
-                patch.dict(agent_server.EVENT_SEQ_CACHE, {sid: total}, clear=True),
-                patch.object(agent_server, "EVENT_STREAM_HEARTBEAT_SECONDS", 0.1),
+                patch.object(hyadex_server, "AGENT_TOKEN", "isolated-test-token"),
+                patch.object(hyadex_server, "HUB", hyadex_server.SubscriberHub()),
+                patch.dict(hyadex_server.STORE.sessions, {sid: {"id": sid}}, clear=True),
+                patch.object(hyadex_server, "events_path", return_value=path),
+                patch.object(hyadex_server, "ensure_dirs"),
+                patch.object(hyadex_server, "prepare_provider_history_metadata_repair"),
+                patch.object(hyadex_server, "fork_internal_run_ids", return_value=set()),
+                patch.object(hyadex_server, "update_session_event_metadata", new=AsyncMock()),
+                patch.dict(hyadex_server.EVENT_SEQ_CACHE, {sid: total}, clear=True),
+                patch.object(hyadex_server, "EVENT_STREAM_HEARTBEAT_SECONDS", 0.1),
             ):
                 task = asyncio.create_task(server.serve(sockets=[listener]))
                 sockets = []
@@ -85,7 +83,7 @@ class EventStreamStressTests(unittest.IsolatedAsyncioTestCase):
 
                     async def append_tail():
                         await asyncio.gather(*(event.wait() for event in ready))
-                        await agent_server.append_durable_event_batch(sid, [
+                        await hyadex_server.append_durable_event_batch(sid, [
                             ("assistant_text", {"text": f"Live tail {n}"}) for n in range(40)
                         ])
 
@@ -97,7 +95,7 @@ class EventStreamStressTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(received, expected)
                     # Wait for endpoint finally blocks, including all 18 dropped connections.
                     async with asyncio.timeout(5):
-                        while agent_server.HUB._subscribers or agent_server.HUB._reservations:
+                        while hyadex_server.HUB._subscribers or hyadex_server.HUB._reservations:
                             await asyncio.sleep(0.01)
                 finally:
                     for ws in sockets:

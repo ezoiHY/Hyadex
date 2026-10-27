@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import agent_server
+from tests import hyadex_server
 from hyadex.providers.codex.app_server import CodexAppServerClient
 from tests.test_codex_app_server import FakeProcessFactory
 from tests.test_server_restart_endpoints import (
@@ -47,7 +47,7 @@ def provider_child_entry(
         "process_start_identity": f"start-{pid}",
         "executable_identity": "/usr/bin/node",
         "command_fingerprint": (
-            agent_server.provider_child_command_fingerprint(command)
+            hyadex_server.provider_child_command_fingerprint(command)
         ),
     }
 
@@ -59,23 +59,23 @@ class RestartWatchdogTests(unittest.TestCase):
             request_id = str(uuid.uuid4())
             watchdog = MagicMock()
             with restart_environment(root), \
-                 patch.object(agent_server.time, "sleep"), \
-                 patch.object(agent_server.os, "getpid", return_value=321), \
-                 patch.object(agent_server.os, "kill") as kill, \
-                 patch.object(agent_server.threading, "Thread", return_value=watchdog) as thread:
-                agent_server.write_server_restart_status(
+                 patch.object(hyadex_server.time, "sleep"), \
+                 patch.object(hyadex_server.os, "getpid", return_value=321), \
+                 patch.object(hyadex_server.os, "kill") as kill, \
+                 patch.object(hyadex_server.threading, "Thread", return_value=watchdog) as thread:
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=request_id,
                     _source_instance_id=SERVER_INSTANCE_ID,
                 )
-                agent_server.signal_managed_server_restart(request_id)
+                hyadex_server.signal_managed_server_restart(request_id)
 
         thread.assert_called_once_with(
-            target=agent_server.force_kill_managed_server_after_deadline,
+            target=hyadex_server.force_kill_managed_server_after_deadline,
             args=(
                 request_id,
                 321,
-                agent_server.SERVER_RESTART_GRACEFUL_KILL_DELAY_SECONDS,
+                hyadex_server.SERVER_RESTART_GRACEFUL_KILL_DELAY_SECONDS,
             ),
             daemon=True,
             name="hyadex-server-force-restart",
@@ -83,29 +83,29 @@ class RestartWatchdogTests(unittest.TestCase):
         watchdog.start.assert_called_once_with()
         kill.assert_called_once_with(321, signal.SIGTERM)
         self.assertGreater(
-            agent_server.SERVER_RESTART_GRACEFUL_KILL_DELAY_SECONDS,
-            agent_server.SERVER_RESTART_FORCE_KILL_DELAY_SECONDS,
+            hyadex_server.SERVER_RESTART_GRACEFUL_KILL_DELAY_SECONDS,
+            hyadex_server.SERVER_RESTART_FORCE_KILL_DELAY_SECONDS,
         )
 
     def test_watchdog_sleeps_for_requested_delay(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), \
-                 patch.object(agent_server.time, "sleep") as sleep, \
-                 patch.object(agent_server.os, "getpid", return_value=321), \
-                 patch.object(agent_server.os, "kill"):
-                agent_server.force_kill_managed_server_after_deadline(
+                 patch.object(hyadex_server.time, "sleep") as sleep, \
+                 patch.object(hyadex_server.os, "getpid", return_value=321), \
+                 patch.object(hyadex_server.os, "kill"):
+                hyadex_server.force_kill_managed_server_after_deadline(
                     "req",
                     321,
-                    agent_server.SERVER_RESTART_GRACEFUL_KILL_DELAY_SECONDS,
+                    hyadex_server.SERVER_RESTART_GRACEFUL_KILL_DELAY_SECONDS,
                 )
-                agent_server.force_kill_managed_server_after_deadline("req", 321)
+                hyadex_server.force_kill_managed_server_after_deadline("req", 321)
 
         self.assertEqual(
             [call.args[0] for call in sleep.call_args_list],
             [
-                agent_server.SERVER_RESTART_GRACEFUL_KILL_DELAY_SECONDS,
-                agent_server.SERVER_RESTART_FORCE_KILL_DELAY_SECONDS,
+                hyadex_server.SERVER_RESTART_GRACEFUL_KILL_DELAY_SECONDS,
+                hyadex_server.SERVER_RESTART_FORCE_KILL_DELAY_SECONDS,
             ],
         )
 
@@ -125,40 +125,40 @@ class RestartWatchdogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), \
-                 patch.object(agent_server, "PROVIDER_CHILD_PROC_ROOT", root / "no-proc"), \
-                 patch.object(agent_server.time, "sleep"), \
-                 patch.object(agent_server.os, "getpid", return_value=321), \
-                 patch.object(agent_server.os, "kill", side_effect=record_kill), \
-                 patch.object(agent_server.os, "killpg", side_effect=record_killpg), \
+                 patch.object(hyadex_server, "PROVIDER_CHILD_PROC_ROOT", root / "no-proc"), \
+                 patch.object(hyadex_server.time, "sleep"), \
+                 patch.object(hyadex_server.os, "getpid", return_value=321), \
+                 patch.object(hyadex_server.os, "kill", side_effect=record_kill), \
+                 patch.object(hyadex_server.os, "killpg", side_effect=record_killpg), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_host_boot_identity",
                      return_value="test-boot",
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_child_process_start_identity",
                      side_effect=lambda pid: f"start-{pid}",
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_child_executable_identity",
                      return_value="/usr/bin/node",
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "process_group_for_pid",
                      side_effect=lambda pid: pid,
                  ), \
                  patch.object(
-                     agent_server.subprocess,
+                     hyadex_server.subprocess,
                      "run",
                      side_effect=fake_ps({
                          4321: {"command": "node codex app-server --listen stdio://"},
                          4444: {"command": "python unrelated-daemon"},
                      }),
                  ):
-                agent_server.write_provider_children_registry([
+                hyadex_server.write_provider_children_registry([
                     provider_child_entry(4321),
                     # Recycled pid now running something else: never signal.
                     provider_child_entry(4444),
@@ -166,7 +166,7 @@ class RestartWatchdogTests(unittest.TestCase):
                     # PGID; it may have been reused after a reboot/hard kill.
                     provider_child_entry(4555),
                 ])
-                agent_server.force_kill_managed_server_after_deadline("req", 321)
+                hyadex_server.force_kill_managed_server_after_deadline("req", 321)
 
         self.assertEqual(
             order,
@@ -180,20 +180,20 @@ class RestartWatchdogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), \
-                 patch.object(agent_server, "PROVIDER_CHILD_PROC_ROOT", root / "no-proc"), \
-                 patch.object(agent_server.time, "sleep"), \
-                 patch.object(agent_server.os, "getpid", return_value=321), \
-                 patch.object(agent_server.os, "kill") as kill, \
-                 patch.object(agent_server.os, "killpg") as killpg, \
+                 patch.object(hyadex_server, "PROVIDER_CHILD_PROC_ROOT", root / "no-proc"), \
+                 patch.object(hyadex_server.time, "sleep"), \
+                 patch.object(hyadex_server.os, "getpid", return_value=321), \
+                 patch.object(hyadex_server.os, "kill") as kill, \
+                 patch.object(hyadex_server.os, "killpg") as killpg, \
                  patch.object(
-                     agent_server.subprocess,
+                     hyadex_server.subprocess,
                      "run",
                      side_effect=subprocess.TimeoutExpired("ps", 1.0),
                  ):
-                agent_server.write_provider_children_registry([
+                hyadex_server.write_provider_children_registry([
                     {"pid": 4321, "pgid": 4321, "kind": "codex-app-server"},
                 ])
-                agent_server.force_kill_managed_server_after_deadline("req", 321)
+                hyadex_server.force_kill_managed_server_after_deadline("req", 321)
 
         killpg.assert_not_called()
         self.assertEqual(kill.call_args_list[-1].args, (321, signal.SIGKILL))
@@ -203,37 +203,37 @@ class ProviderChildRegistryTests(unittest.TestCase):
     def test_register_and_unregister_round_trip(self):
         with tempfile.TemporaryDirectory() as temporary:
             registry = Path(temporary) / "admin" / "provider-children.json"
-            with patch.object(agent_server, "PROVIDER_CHILDREN_FILE", registry), \
+            with patch.object(hyadex_server, "PROVIDER_CHILDREN_FILE", registry), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_host_boot_identity",
                      return_value="test-boot",
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_child_process_start_identity",
                      return_value="start-4321",
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_child_executable_identity",
                      return_value="/usr/bin/node",
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_child_command_line",
                      return_value="node codex app-server --listen stdio://",
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "process_group_for_pid",
                      return_value=4321,
                  ):
-                agent_server.register_provider_child(4321, 4321)
-                children = agent_server.read_provider_children_registry()
+                hyadex_server.register_provider_child(4321, 4321)
+                children = hyadex_server.read_provider_children_registry()
                 on_disk = json.loads(registry.read_text())
-                agent_server.unregister_provider_child(4321)
-                after_remove = agent_server.read_provider_children_registry()
+                hyadex_server.unregister_provider_child(4321)
+                after_remove = hyadex_server.read_provider_children_registry()
                 after_remove_on_disk = json.loads(registry.read_text())
 
         self.assertEqual(len(children), 1)
@@ -253,9 +253,9 @@ class ProviderChildRegistryTests(unittest.TestCase):
     def test_register_requires_owned_process_group(self):
         with tempfile.TemporaryDirectory() as temporary:
             registry = Path(temporary) / "admin" / "provider-children.json"
-            with patch.object(agent_server, "PROVIDER_CHILDREN_FILE", registry):
-                agent_server.register_provider_child(4321, None)
-                registered = agent_server.read_provider_children_registry()
+            with patch.object(hyadex_server, "PROVIDER_CHILDREN_FILE", registry):
+                hyadex_server.register_provider_child(4321, None)
+                registered = hyadex_server.read_provider_children_registry()
                 exists = registry.exists()
 
         self.assertEqual(registered, [])
@@ -273,11 +273,11 @@ class ProviderChildRegistryTests(unittest.TestCase):
                     {"pid": 7, "pgid": 7, "kind": "codex-app-server"},
                 ],
             }))
-            with patch.object(agent_server, "PROVIDER_CHILDREN_FILE", registry):
-                children = agent_server.read_provider_children_registry()
+            with patch.object(hyadex_server, "PROVIDER_CHILDREN_FILE", registry):
+                children = hyadex_server.read_provider_children_registry()
             registry.write_text("{not json")
-            with patch.object(agent_server, "PROVIDER_CHILDREN_FILE", registry):
-                corrupt = agent_server.read_provider_children_registry()
+            with patch.object(hyadex_server, "PROVIDER_CHILDREN_FILE", registry):
+                corrupt = hyadex_server.read_provider_children_registry()
 
         self.assertEqual([entry["pid"] for entry in children], [7])
         self.assertEqual(corrupt, [])
@@ -288,32 +288,32 @@ class ProviderChildSweepTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             registry = root / "admin" / "provider-children.json"
-            with patch.object(agent_server, "PROVIDER_CHILDREN_FILE", registry), \
-                 patch.object(agent_server, "PROVIDER_CHILD_PROC_ROOT", root / "no-proc"), \
-                 patch.object(agent_server.os, "kill") as kill, \
-                 patch.object(agent_server.os, "killpg") as killpg, \
+            with patch.object(hyadex_server, "PROVIDER_CHILDREN_FILE", registry), \
+                 patch.object(hyadex_server, "PROVIDER_CHILD_PROC_ROOT", root / "no-proc"), \
+                 patch.object(hyadex_server.os, "kill") as kill, \
+                 patch.object(hyadex_server.os, "killpg") as killpg, \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_host_boot_identity",
                      return_value="test-boot",
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_child_process_start_identity",
                      side_effect=lambda pid: f"start-{pid}",
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_child_executable_identity",
                      return_value="/usr/bin/node",
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "process_group_for_pid",
                      side_effect=lambda pid: pid,
                  ), \
                  patch.object(
-                     agent_server.subprocess,
+                     hyadex_server.subprocess,
                      "run",
                      side_effect=fake_ps({
                          5000: {"ppid": "1", "command": "codex app-server --listen stdio://"},
@@ -322,8 +322,8 @@ class ProviderChildSweepTests(unittest.TestCase):
                          7000: {"ppid": "1", "command": "sleep 100"},
                      }),
                 ), \
-                 self.assertLogs(agent_server.logger, level="WARNING") as logs:
-                agent_server.write_provider_children_registry([
+                 self.assertLogs(hyadex_server.logger, level="WARNING") as logs:
+                hyadex_server.write_provider_children_registry([
                     provider_child_entry(
                         5000,
                         command="codex app-server --listen stdio://",
@@ -331,8 +331,8 @@ class ProviderChildSweepTests(unittest.TestCase):
                     provider_child_entry(6000, command="codex app-server"),
                     provider_child_entry(7000),
                 ])
-                reaped = agent_server.sweep_orphaned_provider_children()
-                remaining = agent_server.read_provider_children_registry()
+                reaped = hyadex_server.sweep_orphaned_provider_children()
+                remaining = hyadex_server.read_provider_children_registry()
 
         self.assertEqual(reaped, 1)
         killpg.assert_called_once_with(5000, signal.SIGKILL)
@@ -351,16 +351,16 @@ class ProviderChildSweepTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             registry = root / "admin" / "provider-children.json"
-            with patch.object(agent_server, "PROVIDER_CHILDREN_FILE", registry), \
-                 patch.object(agent_server.os, "kill", side_effect=dead), \
-                 patch.object(agent_server.os, "killpg") as killpg:
-                self.assertEqual(agent_server.sweep_orphaned_provider_children(), 0)
+            with patch.object(hyadex_server, "PROVIDER_CHILDREN_FILE", registry), \
+                 patch.object(hyadex_server.os, "kill", side_effect=dead), \
+                 patch.object(hyadex_server.os, "killpg") as killpg:
+                self.assertEqual(hyadex_server.sweep_orphaned_provider_children(), 0)
                 self.assertFalse(registry.exists())
-                agent_server.write_provider_children_registry([
+                hyadex_server.write_provider_children_registry([
                     provider_child_entry(5000),
                 ])
-                self.assertEqual(agent_server.sweep_orphaned_provider_children(), 0)
-                remaining = agent_server.read_provider_children_registry()
+                self.assertEqual(hyadex_server.sweep_orphaned_provider_children(), 0)
+                remaining = hyadex_server.read_provider_children_registry()
 
         # A dead leader cannot prove the numeric group still belongs to this
         # boot/process. Dropping the stale row is safer than killpg reuse.
@@ -415,8 +415,8 @@ class BoundedShutdownPhaseTests(unittest.IsolatedAsyncioTestCase):
         async def never() -> None:
             await asyncio.sleep(3600)
 
-        with self.assertLogs(agent_server.logger, level="WARNING") as logs:
-            completed = await agent_server.bounded_shutdown_phase(
+        with self.assertLogs(hyadex_server.logger, level="WARNING") as logs:
+            completed = await hyadex_server.bounded_shutdown_phase(
                 "stuck", never(), timeout=0.01,
             )
         self.assertFalse(completed)
@@ -429,14 +429,14 @@ class BoundedShutdownPhaseTests(unittest.IsolatedAsyncioTestCase):
         async def fine() -> str:
             return "ok"
 
-        with self.assertLogs(agent_server.logger, level="WARNING"):
-            self.assertFalse(await agent_server.bounded_shutdown_phase("broken", broken()))
-        self.assertTrue(await agent_server.bounded_shutdown_phase("fine", fine()))
+        with self.assertLogs(hyadex_server.logger, level="WARNING"):
+            self.assertFalse(await hyadex_server.bounded_shutdown_phase("broken", broken()))
+        self.assertTrue(await hyadex_server.bounded_shutdown_phase("fine", fine()))
 
     async def test_phase_suppressing_cancellation_cannot_defeat_deadline(self):
         release = asyncio.Event()
         cancellation_suppressed = asyncio.Event()
-        prior_stragglers = set(agent_server.SERVER_SHUTDOWN_STRAGGLERS)
+        prior_stragglers = set(hyadex_server.SERVER_SHUTDOWN_STRAGGLERS)
 
         async def stubborn() -> None:
             try:
@@ -447,7 +447,7 @@ class BoundedShutdownPhaseTests(unittest.IsolatedAsyncioTestCase):
 
         loop = asyncio.get_running_loop()
         started = loop.time()
-        completed = await agent_server.bounded_shutdown_phase(
+        completed = await hyadex_server.bounded_shutdown_phase(
             "stubborn",
             stubborn(),
             timeout=0.01,
@@ -455,7 +455,7 @@ class BoundedShutdownPhaseTests(unittest.IsolatedAsyncioTestCase):
         elapsed = loop.time() - started
         await asyncio.wait_for(cancellation_suppressed.wait(), timeout=1)
         retained = (
-            set(agent_server.SERVER_SHUTDOWN_STRAGGLERS) - prior_stragglers
+            set(hyadex_server.SERVER_SHUTDOWN_STRAGGLERS) - prior_stragglers
         )
 
         self.assertFalse(completed)
@@ -465,7 +465,7 @@ class BoundedShutdownPhaseTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(*retained, return_exceptions=True)
         await asyncio.sleep(0)
         self.assertFalse(
-            retained.intersection(agent_server.SERVER_SHUTDOWN_STRAGGLERS)
+            retained.intersection(hyadex_server.SERVER_SHUTDOWN_STRAGGLERS)
         )
 
     async def test_join_cancelled_tasks_swallows_cancellation(self):
@@ -475,7 +475,7 @@ class BoundedShutdownPhaseTests(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(forever())
         await asyncio.sleep(0)
         task.cancel()
-        await agent_server.join_cancelled_tasks(task)
+        await hyadex_server.join_cancelled_tasks(task)
         self.assertTrue(task.cancelled())
 
 
@@ -484,17 +484,17 @@ class UvicornShutdownSettingTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("HYADEX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS", None)
             os.environ.pop("ZENITHBOT_UVICORN_GRACEFUL_SHUTDOWN_SECONDS", None)
-            self.assertEqual(agent_server.uvicorn_graceful_shutdown_seconds(), 20)
+            self.assertEqual(hyadex_server.uvicorn_graceful_shutdown_seconds(), 20)
         with patch.dict(
             os.environ,
             {"HYADEX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS": "45"},
         ):
-            self.assertEqual(agent_server.uvicorn_graceful_shutdown_seconds(), 45)
+            self.assertEqual(hyadex_server.uvicorn_graceful_shutdown_seconds(), 45)
         with patch.dict(
             os.environ,
             {"HYADEX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS": "not-a-number"},
         ):
-            self.assertEqual(agent_server.uvicorn_graceful_shutdown_seconds(), 20)
+            self.assertEqual(hyadex_server.uvicorn_graceful_shutdown_seconds(), 20)
 
     def test_override_is_finite_and_capped_to_installer_stop_budget(self):
         for configured in ("600", "inf", "nan"):
@@ -502,17 +502,17 @@ class UvicornShutdownSettingTests(unittest.TestCase):
                 os.environ,
                 {"HYADEX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS": configured},
             ):
-                value = agent_server.uvicorn_graceful_shutdown_seconds()
+                value = hyadex_server.uvicorn_graceful_shutdown_seconds()
                 self.assertGreaterEqual(value, 1)
                 self.assertLessEqual(
                     value,
-                    agent_server.MAX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS,
+                    hyadex_server.MAX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS,
                 )
 
         watchdog_budget = (
-            agent_server.MAX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS
-            + agent_server.SERVER_SHUTDOWN_PHASE_COUNT
-            * agent_server.SERVER_SHUTDOWN_PHASE_TIMEOUT_SECONDS
+            hyadex_server.MAX_UVICORN_GRACEFUL_SHUTDOWN_SECONDS
+            + hyadex_server.SERVER_SHUTDOWN_PHASE_COUNT
+            * hyadex_server.SERVER_SHUTDOWN_PHASE_TIMEOUT_SECONDS
             + 5.0
         )
         from hyadex.ops.execution.manage import NativeServices

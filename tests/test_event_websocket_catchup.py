@@ -7,9 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import agent_server
-
-
+from tests import hyadex_server
 class FakeWebSocket:
     def __init__(self) -> None:
         self.events: list[dict[str, object]] = []
@@ -26,7 +24,7 @@ class FakeWebSocket:
         self.accepted_subprotocol = subprotocol
 
     async def receive_text(self) -> str:
-        raise agent_server.WebSocketDisconnect()
+        raise hyadex_server.WebSocketDisconnect()
 
 
 class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
@@ -34,15 +32,15 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
         sid = "projection-reconnect"
         socket = FakeWebSocket()
         with tempfile.TemporaryDirectory() as root, \
-                patch.object(agent_server, "AGENT_TOKEN", ""), \
-                patch.dict(agent_server.STORE.sessions, {sid: {"id": sid}}, clear=True), \
-                patch.object(agent_server, "events_path", return_value=Path(root) / "events.jsonl"), \
-                patch.object(agent_server, "schedule_provider_history_sync"), \
-                patch.dict(agent_server.HISTORY_PROJECTION_REVISIONS, {sid: 7}, clear=True):
+                patch.object(hyadex_server, "AGENT_TOKEN", ""), \
+                patch.dict(hyadex_server.STORE.sessions, {sid: {"id": sid}}, clear=True), \
+                patch.object(hyadex_server, "events_path", return_value=Path(root) / "events.jsonl"), \
+                patch.object(hyadex_server, "schedule_provider_history_sync"), \
+                patch.dict(hyadex_server.HISTORY_PROJECTION_REVISIONS, {sid: 7}, clear=True):
             (Path(root) / "events.jsonl").write_text("")
-            await agent_server.session_events(sid, socket, visible=True, history_projection=True)
+            await hyadex_server.session_events(sid, socket, visible=True, history_projection=True)
         self.assertEqual(socket.events, [{"type": "history_projection_changed", "session_id": sid,
-            "revision": f"{agent_server.SERVER_INSTANCE_ID}:7"}])
+            "revision": f"{hyadex_server.SERVER_INSTANCE_ID}:7"}])
 
     def setUp(self) -> None:
         super().setUp()
@@ -54,48 +52,48 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
     async def test_projection_notice_and_liveness_share_one_caught_up_stream(self) -> None:
         socket = FakeWebSocket()
         with (
-            patch.object(agent_server, "HUB", agent_server.SubscriberHub()),
-            patch.object(agent_server, "websocket_authorized", return_value=True),
-            patch.dict(agent_server.STORE.sessions, {"chat": {"id": "chat"}}, clear=True),
-            patch.object(agent_server, "schedule_provider_history_sync"),
-            patch.object(agent_server, "last_event_seq_from_file", return_value=5),
-            patch.object(agent_server, "send_event_catchup", new=AsyncMock(return_value=5)),
-            patch.dict(agent_server.HISTORY_PROJECTION_REVISIONS, {"chat": 7}, clear=True),
+            patch.object(hyadex_server, "HUB", hyadex_server.SubscriberHub()),
+            patch.object(hyadex_server, "websocket_authorized", return_value=True),
+            patch.dict(hyadex_server.STORE.sessions, {"chat": {"id": "chat"}}, clear=True),
+            patch.object(hyadex_server, "schedule_provider_history_sync"),
+            patch.object(hyadex_server, "last_event_seq_from_file", return_value=5),
+            patch.object(hyadex_server, "send_event_catchup", new=AsyncMock(return_value=5)),
+            patch.dict(hyadex_server.HISTORY_PROJECTION_REVISIONS, {"chat": 7}, clear=True),
         ):
-            await agent_server.session_events("chat", socket, after=5, liveness=True, history_projection=True)
+            await hyadex_server.session_events("chat", socket, after=5, liveness=True, history_projection=True)
             self.assertEqual(socket.events, [
                 {"type": "event_stream_status", "version": 1, "session_id": "chat", "phase": "ready"},
                 {"type": "history_projection_changed", "session_id": "chat",
-                 "revision": f"{agent_server.SERVER_INSTANCE_ID}:7"},
+                 "revision": f"{hyadex_server.SERVER_INSTANCE_ID}:7"},
             ])
-            self.assertFalse(agent_server.HUB._subscribers)
-            self.assertFalse(agent_server.HUB._reservations)
+            self.assertFalse(hyadex_server.HUB._subscribers)
+            self.assertFalse(hyadex_server.HUB._reservations)
 
     async def test_opted_in_liveness_confirms_catchup_then_heartbeats_without_log_scans(self) -> None:
         class ListeningSocket(FakeWebSocket):
             async def receive_text(self) -> str:
                 if len(self.events) >= 3:
-                    raise agent_server.WebSocketDisconnect()
+                    raise hyadex_server.WebSocketDisconnect()
                 await asyncio.sleep(10)
                 return ""
 
         socket = ListeningSocket()
         with (
-            patch.object(agent_server, "HUB", agent_server.SubscriberHub()),
-            patch.object(agent_server, "websocket_authorized", return_value=True),
-            patch.dict(agent_server.STORE.sessions, {"chat": {"id": "chat"}}, clear=True),
-            patch.object(agent_server, "prepare_provider_history_metadata_repair"),
-            patch.object(agent_server, "last_event_seq_from_file", return_value=5) as scan,
-            patch.object(agent_server, "send_event_catchup", new=AsyncMock(return_value=5)),
-            patch.object(agent_server, "EVENT_STREAM_HEARTBEAT_SECONDS", 0.01),
+            patch.object(hyadex_server, "HUB", hyadex_server.SubscriberHub()),
+            patch.object(hyadex_server, "websocket_authorized", return_value=True),
+            patch.dict(hyadex_server.STORE.sessions, {"chat": {"id": "chat"}}, clear=True),
+            patch.object(hyadex_server, "prepare_provider_history_metadata_repair"),
+            patch.object(hyadex_server, "last_event_seq_from_file", return_value=5) as scan,
+            patch.object(hyadex_server, "send_event_catchup", new=AsyncMock(return_value=5)),
+            patch.object(hyadex_server, "EVENT_STREAM_HEARTBEAT_SECONDS", 0.01),
         ):
-            await asyncio.wait_for(agent_server.session_events("chat", socket, after=5, liveness=True), timeout=2)
+            await asyncio.wait_for(hyadex_server.session_events("chat", socket, after=5, liveness=True), timeout=2)
             self.assertEqual([e["phase"] for e in socket.events], ["ready", "heartbeat", "heartbeat"])
             self.assertTrue(all(e == {"type": "event_stream_status", "version": 1,
                 "session_id": "chat", "phase": e["phase"]} for e in socket.events))
             self.assertEqual(scan.call_count, 2)  # No history scan for heartbeats.
-            self.assertFalse(agent_server.HUB._subscribers)
-            self.assertFalse(agent_server.HUB._reservations)
+            self.assertFalse(hyadex_server.HUB._subscribers)
+            self.assertFalse(hyadex_server.HUB._reservations)
 
     async def test_ready_is_not_sent_before_all_catchup_pages_and_registration(self) -> None:
         socket = FakeWebSocket()
@@ -104,14 +102,14 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(any(e.get("phase") == "ready" for e in ws.events))
             return kw["through"]
         with (
-            patch.object(agent_server, "HUB", agent_server.SubscriberHub()),
-            patch.object(agent_server, "websocket_authorized", return_value=True),
-            patch.dict(agent_server.STORE.sessions, {"chat": {"id": "chat"}}, clear=True),
-            patch.object(agent_server, "prepare_provider_history_metadata_repair"),
-            patch.object(agent_server, "last_event_seq_from_file", side_effect=[500, 1000, 1000]),
-            patch.object(agent_server, "send_event_catchup", side_effect=catchup),
+            patch.object(hyadex_server, "HUB", hyadex_server.SubscriberHub()),
+            patch.object(hyadex_server, "websocket_authorized", return_value=True),
+            patch.dict(hyadex_server.STORE.sessions, {"chat": {"id": "chat"}}, clear=True),
+            patch.object(hyadex_server, "prepare_provider_history_metadata_repair"),
+            patch.object(hyadex_server, "last_event_seq_from_file", side_effect=[500, 1000, 1000]),
+            patch.object(hyadex_server, "send_event_catchup", side_effect=catchup),
         ):
-            await agent_server.session_events("chat", socket, liveness=True)
+            await hyadex_server.session_events("chat", socket, liveness=True)
         self.assertEqual([e.get("seq") for e in socket.events], [500, 1000, None])
         self.assertEqual(socket.events[-1]["phase"], "ready")
 
@@ -124,19 +122,19 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
                 self.closed = True
         socket = BlockedSocket()
         with (
-            patch.object(agent_server, "HUB", agent_server.SubscriberHub()),
-            patch.object(agent_server, "websocket_authorized", return_value=True),
-            patch.dict(agent_server.STORE.sessions, {"chat": {"id": "chat"}}, clear=True),
-            patch.object(agent_server, "prepare_provider_history_metadata_repair"),
-            patch.object(agent_server, "last_event_seq_from_file", return_value=0),
+            patch.object(hyadex_server, "HUB", hyadex_server.SubscriberHub()),
+            patch.object(hyadex_server, "websocket_authorized", return_value=True),
+            patch.dict(hyadex_server.STORE.sessions, {"chat": {"id": "chat"}}, clear=True),
+            patch.object(hyadex_server, "prepare_provider_history_metadata_repair"),
+            patch.object(hyadex_server, "last_event_seq_from_file", return_value=0),
         ):
-            await agent_server.session_events("chat", socket, liveness=True)
+            await hyadex_server.session_events("chat", socket, liveness=True)
             self.assertTrue(socket.closed)
-            self.assertFalse(agent_server.HUB._subscribers)
-            self.assertFalse(agent_server.HUB._reservations)
+            self.assertFalse(hyadex_server.HUB._subscribers)
+            self.assertFalse(hyadex_server.HUB._reservations)
 
     async def test_live_summary_is_opt_in_and_preserves_plaintext_subscription(self) -> None:
-        hub = agent_server.SubscriberHub()
+        hub = hyadex_server.SubscriberHub()
         legacy, opted, plaintext = FakeWebSocket(), FakeWebSocket(), FakeWebSocket()
         await hub.register_accepted("chat", legacy)
         await hub.register_accepted("chat", opted, reasoning_stream=True)
@@ -160,20 +158,20 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
         socket = FakeWebSocket()
         with (
             tempfile.TemporaryDirectory() as root,
-            patch.object(agent_server, "AGENT_TOKEN", ""),
-            patch.dict(agent_server.STORE.sessions, {session_id: {"id": session_id}}, clear=True),
-            patch.object(agent_server, "events_path", return_value=Path(root) / "events.jsonl"),
-            patch.object(agent_server, "prepare_provider_history_metadata_repair"),
-            patch.object(agent_server, "fork_internal_run_ids", return_value=set()),
-            patch.dict(agent_server.EVENT_SEQ_CACHE, {session_id: 1}, clear=True),
-            patch.dict(agent_server.REASONING_SUMMARY_STREAMS, {}, clear=True),
+            patch.object(hyadex_server, "AGENT_TOKEN", ""),
+            patch.dict(hyadex_server.STORE.sessions, {session_id: {"id": session_id}}, clear=True),
+            patch.object(hyadex_server, "events_path", return_value=Path(root) / "events.jsonl"),
+            patch.object(hyadex_server, "prepare_provider_history_metadata_repair"),
+            patch.object(hyadex_server, "fork_internal_run_ids", return_value=set()),
+            patch.dict(hyadex_server.EVENT_SEQ_CACHE, {session_id: 1}, clear=True),
+            patch.dict(hyadex_server.REASONING_SUMMARY_STREAMS, {}, clear=True),
         ):
             event = {"seq": 1, "id": "start", "session_id": session_id, "type": "turn_started",
                 "ts": "2026-09-20T00:00:00Z", "run_id": "run", "prompt": "Question"}
             (Path(root) / "events.jsonl").write_text(json.dumps(event) + "\n")
-            await agent_server.update_reasoning_summary_stream(session_id, "run", "thought", {"delta": "Visible while thinking"})
-            await agent_server.update_reasoning_summary_stream(session_id, "run", "thought", {"delta": "Provider plaintext"}, phase="reasoning")
-            await agent_server.session_events(session_id, socket, after=0, reasoning_stream=True)
+            await hyadex_server.update_reasoning_summary_stream(session_id, "run", "thought", {"delta": "Visible while thinking"})
+            await hyadex_server.update_reasoning_summary_stream(session_id, "run", "thought", {"delta": "Provider plaintext"}, phase="reasoning")
+            await hyadex_server.session_events(session_id, socket, after=0, reasoning_stream=True)
             self.assertEqual([packet["type"] for packet in socket.events], ["turn_started", "reasoning_summary_stream"])
             live = socket.events[-1]
             self.assertNotIn("seq", live)
@@ -181,12 +179,12 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(live["items"][0]["text"], "Visible while thinking")
             self.assertEqual(len(live["items"]), 1)
             opted = FakeWebSocket()
-            await agent_server.session_events(session_id, opted, after=1, reasoning_stream=True, reasoning_text=True)
+            await hyadex_server.session_events(session_id, opted, after=1, reasoning_stream=True, reasoning_text=True)
             self.assertEqual([item["phase"] for item in opted.events[-1]["items"]], ["summary", "reasoning"])
-            self.assertEqual(agent_server.EVENT_SEQ_CACHE[session_id], 1)
-            await agent_server.clear_reasoning_summary_stream(session_id, "run")
+            self.assertEqual(hyadex_server.EVENT_SEQ_CACHE[session_id], 1)
+            await hyadex_server.clear_reasoning_summary_stream(session_id, "run")
             reopened = FakeWebSocket()
-            await agent_server.session_events(session_id, reopened, after=1, reasoning_stream=True)
+            await hyadex_server.session_events(session_id, reopened, after=1, reasoning_stream=True)
             self.assertEqual(len(reopened.events), 1)
             self.assertEqual(reopened.events[0]["items"], [])
             self.assertGreater(reopened.events[0]["revision"], live["revision"])
@@ -229,25 +227,25 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
             ("turn_finished", {**common, "imported": True}),
         ]
         producer = catchup = None
-        agent_server.EVENT_SEQ_CACHE.pop(session_id, None)
+        hyadex_server.EVENT_SEQ_CACHE.pop(session_id, None)
         try:
             with (
                 tempfile.TemporaryDirectory() as root,
-                patch.dict(agent_server.STORE.sessions, {session_id: {"id": session_id}}, clear=True),
-                patch.object(agent_server, "events_path", return_value=Path(root) / "events.jsonl"),
-                patch.object(agent_server, "ensure_dirs"),
-                patch.object(agent_server, "event_delivery_lock", return_value=delivery_lock),
-                patch.object(agent_server, "prepare_provider_history_metadata_repair"),
-                patch.object(agent_server, "prepare_claude_history_metadata_repair", side_effect=refresh),
-                patch.object(agent_server, "project_provider_history_event_for_egress", side_effect=project),
-                patch.object(agent_server, "update_session_event_metadata", new=AsyncMock()),
-                patch.object(agent_server, "event_files_belong_to_session", return_value=True),
-                patch.object(agent_server, "fork_internal_run_ids", return_value=set()),
-                patch.object(agent_server, "websocket_authorized", return_value=True),
+                patch.dict(hyadex_server.STORE.sessions, {session_id: {"id": session_id}}, clear=True),
+                patch.object(hyadex_server, "events_path", return_value=Path(root) / "events.jsonl"),
+                patch.object(hyadex_server, "ensure_dirs"),
+                patch.object(hyadex_server, "event_delivery_lock", return_value=delivery_lock),
+                patch.object(hyadex_server, "prepare_provider_history_metadata_repair"),
+                patch.object(hyadex_server, "prepare_claude_history_metadata_repair", side_effect=refresh),
+                patch.object(hyadex_server, "project_provider_history_event_for_egress", side_effect=project),
+                patch.object(hyadex_server, "update_session_event_metadata", new=AsyncMock()),
+                patch.object(hyadex_server, "event_files_belong_to_session", return_value=True),
+                patch.object(hyadex_server, "fork_internal_run_ids", return_value=set()),
+                patch.object(hyadex_server, "websocket_authorized", return_value=True),
             ):
-                producer = asyncio.create_task(agent_server.append_durable_event_batch(session_id, specs))
+                producer = asyncio.create_task(hyadex_server.append_durable_event_batch(session_id, specs))
                 await asyncio.wait_for(refresh_started.wait(), timeout=3)
-                catchup = asyncio.create_task(agent_server.session_events(session_id, socket, visible=True))
+                catchup = asyncio.create_task(hyadex_server.session_events(session_id, socket, visible=True))
                 # Before the fix this lock wait occurs AFTER replaying the raw
                 # import. With the fix it precedes the initial replay boundary.
                 await asyncio.wait_for(lock_waiter.wait(), timeout=3)
@@ -259,7 +257,7 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
                 if task is not None and not task.done():
                     task.cancel()
             await asyncio.gather(*(task for task in (producer, catchup) if task is not None), return_exceptions=True)
-            agent_server.EVENT_SEQ_CACHE.pop(session_id, None)
+            hyadex_server.EVENT_SEQ_CACHE.pop(session_id, None)
 
         imported = [event for event in socket.events if event["type"] == "turn_started"]
         self.assertEqual(len(imported), 1)
@@ -267,34 +265,34 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(imported[0]["prompt"], "")
 
     async def test_token_only_client_gets_its_authenticated_protocol_selected(self) -> None:
-        encoded = agent_server.base64.urlsafe_b64encode(
+        encoded = hyadex_server.base64.urlsafe_b64encode(
             b"server-token",
         ).decode("ascii").rstrip("=")
         offered = f"hyadex-token.{encoded}"
         socket = FakeWebSocket()
         socket.headers = {
             "sec-websocket-protocol": (
-                f"{agent_server.EVENTS_WEBSOCKET_PROTOCOL}, {offered}"
+                f"{hyadex_server.EVENTS_WEBSOCKET_PROTOCOL}, {offered}"
             ),
         }
         with tempfile.TemporaryDirectory() as root, patch.object(
-            agent_server,
+            hyadex_server,
             "AGENT_TOKEN",
             "server-token",
         ), patch.dict(
-            agent_server.STORE.sessions,
+            hyadex_server.STORE.sessions,
             {"protocol-chat": {"id": "protocol-chat"}},
             clear=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "events_path",
             return_value=Path(root) / "events.jsonl",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "fork_internal_run_ids",
             return_value=set(),
         ):
-            await agent_server.session_events(
+            await hyadex_server.session_events(
                 "protocol-chat",
                 socket,  # type: ignore[arg-type]
                 visible=True,
@@ -303,32 +301,32 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(socket.accepted)
         self.assertEqual(
             socket.accepted_subprotocol,
-            agent_server.EVENTS_WEBSOCKET_PROTOCOL,
+            hyadex_server.EVENTS_WEBSOCKET_PROTOCOL,
         )
 
     async def test_unauthenticated_server_still_selects_fixed_event_protocol(self) -> None:
         socket = FakeWebSocket()
         socket.headers = {
-            "sec-websocket-protocol": agent_server.EVENTS_WEBSOCKET_PROTOCOL,
+            "sec-websocket-protocol": hyadex_server.EVENTS_WEBSOCKET_PROTOCOL,
         }
         with tempfile.TemporaryDirectory() as root, patch.object(
-            agent_server,
+            hyadex_server,
             "AGENT_TOKEN",
             "",
         ), patch.dict(
-            agent_server.STORE.sessions,
+            hyadex_server.STORE.sessions,
             {"protocol-chat": {"id": "protocol-chat"}},
             clear=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "events_path",
             return_value=Path(root) / "events.jsonl",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "fork_internal_run_ids",
             return_value=set(),
         ):
-            await agent_server.session_events(
+            await hyadex_server.session_events(
                 "protocol-chat",
                 socket,  # type: ignore[arg-type]
                 visible=True,
@@ -336,7 +334,7 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             socket.accepted_subprotocol,
-            agent_server.EVENTS_WEBSOCKET_PROTOCOL,
+            hyadex_server.EVENTS_WEBSOCKET_PROTOCOL,
         )
 
     async def test_opted_in_boundary_scans_run_off_the_event_loop(self) -> None:
@@ -349,27 +347,27 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
             return 0
 
         with tempfile.TemporaryDirectory() as root, patch.dict(
-            agent_server.STORE.sessions,
+            hyadex_server.STORE.sessions,
             {"off-loop-chat": {"id": "off-loop-chat"}},
             clear=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "events_path",
             return_value=Path(root) / "events.jsonl",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "last_event_seq_from_file",
             side_effect=scan,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "fork_internal_run_ids",
             return_value=set(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "websocket_authorized",
             return_value=True,
         ):
-            await agent_server.session_events(
+            await hyadex_server.session_events(
                 "off-loop-chat",
                 socket,  # type: ignore[arg-type]
                 visible=True,
@@ -395,10 +393,10 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
 
             socket = FakeWebSocket()
             with (
-                patch.object(agent_server, "events_path", return_value=path),
-                patch.object(agent_server, "fork_internal_run_ids", return_value=set()),
+                patch.object(hyadex_server, "events_path", return_value=path),
+                patch.object(hyadex_server, "fork_internal_run_ids", return_value=set()),
             ):
-                cursor = await agent_server.send_event_catchup(
+                cursor = await hyadex_server.send_event_catchup(
                     "chat",
                     socket,  # type: ignore[arg-type]
                     after=0,
@@ -427,25 +425,25 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
                     }) + "\n")
 
             socket = FakeWebSocket()
-            agent_server.EVENT_DELIVERY_LOCKS.pop("legacy-chat", None)
+            hyadex_server.EVENT_DELIVERY_LOCKS.pop("legacy-chat", None)
             with (
                 patch.dict(
-                    agent_server.STORE.sessions,
+                    hyadex_server.STORE.sessions,
                     {"legacy-chat": {"id": "legacy-chat"}},
                 ),
-                patch.object(agent_server, "events_path", return_value=path),
+                patch.object(hyadex_server, "events_path", return_value=path),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "fork_internal_run_ids",
                     return_value=set(),
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "websocket_authorized",
                     return_value=True,
                 ),
             ):
-                await agent_server.session_events(
+                await hyadex_server.session_events(
                     "legacy-chat",
                     socket,  # type: ignore[arg-type]
                     after=0,
@@ -480,28 +478,28 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
                 "text": "first",
             }) + "\n", encoding="utf-8")
             socket = SlowWebSocket()
-            agent_server.EVENT_DELIVERY_LOCKS.pop(session_id, None)
+            hyadex_server.EVENT_DELIVERY_LOCKS.pop(session_id, None)
             try:
                 with (
                     patch.dict(
-                        agent_server.STORE.sessions,
+                        hyadex_server.STORE.sessions,
                         {session_id: {"id": session_id}},
                         clear=True,
                     ),
-                    patch.object(agent_server, "events_path", return_value=path),
+                    patch.object(hyadex_server, "events_path", return_value=path),
                     patch.object(
-                        agent_server,
+                        hyadex_server,
                         "fork_internal_run_ids",
                         return_value=set(),
                     ),
                     patch.object(
-                        agent_server,
+                        hyadex_server,
                         "websocket_authorized",
                         return_value=True,
                     ),
                 ):
                     catchup = asyncio.create_task(
-                        agent_server.session_events(
+                        hyadex_server.session_events(
                             session_id,
                             socket,  # type: ignore[arg-type]
                             after=0,
@@ -511,7 +509,7 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.wait_for(send_started.wait(), timeout=1)
 
                     async def acquire_delivery_lock() -> None:
-                        async with agent_server.event_delivery_lock(session_id):
+                        async with hyadex_server.event_delivery_lock(session_id):
                             return
 
                     await asyncio.wait_for(acquire_delivery_lock(), timeout=0.1)
@@ -519,7 +517,7 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.wait_for(catchup, timeout=1)
             finally:
                 release_send.set()
-                agent_server.EVENT_DELIVERY_LOCKS.pop(session_id, None)
+                hyadex_server.EVENT_DELIVERY_LOCKS.pop(session_id, None)
 
         self.assertEqual([event["seq"] for event in socket.events], [1])
 
@@ -542,52 +540,52 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
                     await super().send_json(event)
                     if event["seq"] == 1 and not self.injected:
                         self.injected = True
-                        await agent_server.append_event(
+                        await hyadex_server.append_event(
                             "race-chat",
                             "reasoning_summary",
                             {"text": "raced"},
                         )
 
                 async def receive_text(self) -> str:
-                    await agent_server.append_event(
+                    await hyadex_server.append_event(
                         "race-chat",
                         "reasoning_summary",
                         {"text": "live"},
                     )
-                    raise agent_server.WebSocketDisconnect()
+                    raise hyadex_server.WebSocketDisconnect()
 
             socket = RacingWebSocket()
-            agent_server.EVENT_SEQ_CACHE.pop("race-chat", None)
-            agent_server.EVENT_DELIVERY_LOCKS.pop("race-chat", None)
+            hyadex_server.EVENT_SEQ_CACHE.pop("race-chat", None)
+            hyadex_server.EVENT_DELIVERY_LOCKS.pop("race-chat", None)
             with (
                 patch.dict(
-                    agent_server.STORE.sessions,
+                    hyadex_server.STORE.sessions,
                     {"race-chat": {"id": "race-chat"}},
                 ),
-                patch.object(agent_server, "ensure_dirs"),
-                patch.object(agent_server, "events_path", return_value=path),
+                patch.object(hyadex_server, "ensure_dirs"),
+                patch.object(hyadex_server, "events_path", return_value=path),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "fork_internal_run_ids",
                     return_value=set(),
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "websocket_authorized",
                     return_value=True,
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "update_session_event_metadata",
                     new=AsyncMock(),
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "event_files_belong_to_session",
                     return_value=True,
                 ),
             ):
-                await agent_server.session_events(
+                await hyadex_server.session_events(
                     "race-chat",
                     socket,  # type: ignore[arg-type]
                     after=0,
@@ -614,29 +612,29 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
             async def broadcast(_session_id: str, event: dict[str, object]) -> None:
                 delivered.append(int(event["seq"]))
 
-            agent_server.EVENT_SEQ_CACHE.pop("ordered-chat", None)
-            agent_server.EVENT_DELIVERY_LOCKS.pop("ordered-chat", None)
+            hyadex_server.EVENT_SEQ_CACHE.pop("ordered-chat", None)
+            hyadex_server.EVENT_DELIVERY_LOCKS.pop("ordered-chat", None)
             with (
-                patch.object(agent_server, "ensure_dirs"),
-                patch.object(agent_server, "events_path", return_value=path),
+                patch.object(hyadex_server, "ensure_dirs"),
+                patch.object(hyadex_server, "events_path", return_value=path),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "update_session_event_metadata",
                     side_effect=update_metadata,
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "event_files_belong_to_session",
                     return_value=True,
                 ),
                 patch.object(
-                    agent_server.HUB,
+                    hyadex_server.HUB,
                     "broadcast",
                     side_effect=broadcast,
                 ),
             ):
                 first = asyncio.create_task(
-                    agent_server.append_event(
+                    hyadex_server.append_event(
                         "ordered-chat",
                         "reasoning_summary",
                         {"text": "first"},
@@ -644,7 +642,7 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
                 )
                 await first_metadata_started.wait()
                 second = asyncio.create_task(
-                    agent_server.append_event(
+                    hyadex_server.append_event(
                         "ordered-chat",
                         "reasoning_summary",
                         {"text": "second"},
@@ -666,28 +664,28 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
     async def test_append_event_bounds_tool_output_once_with_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "events.jsonl"
-            agent_server.EVENT_SEQ_CACHE.pop("bounded-chat", None)
-            agent_server.EVENT_DELIVERY_LOCKS.pop("bounded-chat", None)
+            hyadex_server.EVENT_SEQ_CACHE.pop("bounded-chat", None)
+            hyadex_server.EVENT_DELIVERY_LOCKS.pop("bounded-chat", None)
             with (
-                patch.object(agent_server, "ensure_dirs"),
-                patch.object(agent_server, "events_path", return_value=path),
+                patch.object(hyadex_server, "ensure_dirs"),
+                patch.object(hyadex_server, "events_path", return_value=path),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "update_session_event_metadata",
                     new=AsyncMock(),
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "event_files_belong_to_session",
                     return_value=False,
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "CODEX_APP_SERVER_TOOL_OUTPUT_MAX_CHARS",
                     80,
                 ),
             ):
-                event = await agent_server.append_event(
+                event = await hyadex_server.append_event(
                     "bounded-chat",
                     "tool_finished",
                     {"output": "x" * 200},

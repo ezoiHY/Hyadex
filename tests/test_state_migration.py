@@ -4,9 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import agent_server
-
-
+from tests import hyadex_server
 class StateMigrationTests(unittest.TestCase):
     def test_default_legacy_directory_moves_to_hyadex(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -14,8 +12,8 @@ class StateMigrationTests(unittest.TestCase):
             legacy = home / ".zenithbot-agent"
             legacy.mkdir()
             (legacy / "sessions.json").write_text('{"kept": true}\n')
-            with patch.dict(os.environ, {}, clear=True), patch.object(agent_server.Path, "home", return_value=home):
-                resolved = agent_server.resolve_state_dir()
+            with patch.dict(os.environ, {}, clear=True), patch.object(hyadex_server.Path, "home", return_value=home):
+                resolved = hyadex_server.resolve_state_dir()
 
             canonical = home / ".hyadex"
             self.assertEqual(resolved, canonical)
@@ -32,13 +30,13 @@ class StateMigrationTests(unittest.TestCase):
                 "HYADEX_STATE_DIR": str(canonical),
                 "ZENITHBOT_AGENT_DIR": str(legacy),
             }, clear=True):
-                self.assertEqual(agent_server.resolve_state_dir(), canonical)
+                self.assertEqual(hyadex_server.resolve_state_dir(), canonical)
 
     def test_legacy_custom_state_override_remains_supported(self):
         with tempfile.TemporaryDirectory() as temporary:
             custom = Path(temporary) / "custom-state"
             with patch.dict(os.environ, {"ZENITHBOT_AGENT_DIR": str(custom)}, clear=True):
-                self.assertEqual(agent_server.resolve_state_dir(), custom)
+                self.assertEqual(hyadex_server.resolve_state_dir(), custom)
 
 
 if __name__ == "__main__":

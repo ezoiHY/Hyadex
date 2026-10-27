@@ -4,9 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import agent_server
-
-
+from tests import hyadex_server
 class ArtifactManifestContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_stable_manifest_accepts_paths_and_titled_video_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -30,23 +28,23 @@ class ArtifactManifestContractTests(unittest.IsolatedAsyncioTestCase):
                 ],
             }))
             with (
-                patch.object(agent_server, "STATE_DIR", root / "state"),
-                patch.object(agent_server, "FILES_ROOT", root / "published"),
-                patch.object(agent_server, "CODE_DIFFS_ROOT", root / "code-diffs"),
+                patch.object(hyadex_server, "STATE_DIR", root / "state"),
+                patch.object(hyadex_server, "FILES_ROOT", root / "published"),
+                patch.object(hyadex_server, "CODE_DIFFS_ROOT", root / "code-diffs"),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "PROVIDER_AUTHORITY_ROOT",
                     root / "cross-chat-authority",
                 ),
-                patch.object(agent_server, "EVENT_SEQ_CACHE", {}),
-                patch.object(agent_server.HUB, "broadcast", AsyncMock()),
+                patch.object(hyadex_server, "EVENT_SEQ_CACHE", {}),
+                patch.object(hyadex_server.HUB, "broadcast", AsyncMock()),
                 patch.dict(
-                    agent_server.STORE.sessions,
+                    hyadex_server.STORE.sessions,
                     {"sess-artifacts": {"id": "sess-artifacts"}},
                     clear=True,
                 ),
             ):
-                await agent_server.collect_manifest(
+                await hyadex_server.collect_manifest(
                     "sess-artifacts",
                     "run-artifacts",
                     manifest,

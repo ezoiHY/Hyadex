@@ -6,9 +6,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-import agent_server as server
-
-
+from tests import hyadex_server as server
 class RetiredTeamNetworkTests(unittest.IsolatedAsyncioTestCase):
     def test_new_requests_reject_retired_authority(self):
         for model, fields in (

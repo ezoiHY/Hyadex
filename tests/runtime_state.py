@@ -1,11 +1,11 @@
-"""Patch agent_server globals by name, including state that now lives on objects."""
+"""Patch server names through tests.hyadex_server, including state kept on objects."""
 from contextlib import ExitStack
 from unittest.mock import patch
 
 from hyadex.core import runs, server
 from hyadex.providers import state as providers
 
-# Old module global -> (state object attribute on agent_server, field)
+# Old module global -> (state object name in the namespace, field)
 LEGACY = {**{name: ("RUNS", field) for name, field in runs.LEGACY_NAMES.items()},
           **{name: ("SERVER", field) for name, field in server.LEGACY_NAMES.items()},
           **{name: ("PROVIDERS", field) for name, field in providers.LEGACY_NAMES.items()}}
@@ -19,7 +19,7 @@ def patch_server(module, name: str, value):
 
 
 def patch_server_multiple(module, **values):
-    """``patch.multiple`` for agent_server, routing moved state to its object."""
+    """``patch.multiple`` for the server namespace, routing state names to their object."""
     stack = ExitStack()
     grouped: dict[str, dict] = {}
     for name, value in values.items():
@@ -32,7 +32,7 @@ def patch_server_multiple(module, **values):
 
 def patch_server_namespace(module, values: dict):
     """Like ``patch.dict(module.__dict__, values)``, but through the facade so
-    modules split out of agent_server see the same replacements."""
+    every server module sees the same replacements."""
     stack = ExitStack()
     for name, value in values.items():
         holder, field = LEGACY.get(name, (None, name))
@@ -42,7 +42,7 @@ def patch_server_namespace(module, values: dict):
 
 
 class ServerNamespace:
-    """``agent_server.__dict__`` for tests that index it, writing through the
+    """The server namespace for tests that index it like a dict, writing through the
     facade so split modules see assignments. ``close`` restores them."""
 
     def __init__(self, module):

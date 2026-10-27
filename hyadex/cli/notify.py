@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import re
 import sys
 import urllib.error
@@ -15,7 +16,6 @@ from typing import Any
 
 if __package__ in (None, ""):
     # Run by path: make the repository importable for the shared helpers.
-    from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from hyadex.cli.emergency import (

@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 from unittest.mock import AsyncMock, patch
 
-import agent_server as server
+from tests import hyadex_server as server
 from hyadex.providers.codex.app_server import CodexAppServerClient, CodexAppServerRequestError
 
 

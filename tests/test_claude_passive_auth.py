@@ -8,9 +8,7 @@ from unittest.mock import patch
 from fastapi import HTTPException
 import httpx
 
-import agent_server as server
-
-
+from tests import hyadex_server as server
 class PassiveClaudeAuthTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.enterContext(patch.dict(server.RUNTIME_DIAGNOSTICS, {}, clear=True))

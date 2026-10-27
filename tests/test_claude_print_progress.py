@@ -6,9 +6,7 @@ from collections import deque
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-import agent_server
-
-
+from tests import hyadex_server
 class FakeStdin:
     def __init__(self) -> None:
         self.writes: list[bytes] = []
@@ -67,15 +65,15 @@ class ClaudePrintProgressTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with tempfile.TemporaryDirectory() as cwd, patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "stopped_runs",
             {run_id} if stopped else set(),
         ), patch.dict(
-            agent_server.RUNS.run_metadata,
+            hyadex_server.RUNS.run_metadata,
             {run_id: metadata},
             clear=True,
         ), patch.multiple(
-            agent_server,
+            hyadex_server,
             resolve_claude_resume_provider=Mock(return_value=(None, None)),
             capture_git_baseline=AsyncMock(return_value={"head": "base"}),
             build_claude_cmd=Mock(return_value=["claude", "-p"]),
@@ -96,17 +94,17 @@ class ClaudePrintProgressTests(unittest.IsolatedAsyncioTestCase):
             record_runtime_failure=Mock(),
             finalize_owned_turn_finished=finalize,
         ), patch.object(
-            agent_server.asyncio,
+            hyadex_server.asyncio,
             "create_subprocess_exec",
             AsyncMock(return_value=process),
         ):
-            await agent_server.run_claude_print(
+            await hyadex_server.run_claude_print(
                 "chat-print",
                 run_id,
                 "Prompt",
                 {
                     "id": "chat-print",
-                    "backend": agent_server.BACKEND_CLAUDE,
+                    "backend": hyadex_server.BACKEND_CLAUDE,
                     "cwd": cwd,
                 },
                 Path(cwd) / ".manifest.json",
@@ -141,7 +139,7 @@ class ClaudePrintProgressTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(visible_text, [{
             "run_id": "run-print",
             "text": "I am checking the release.",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "purpose": "scheduled_job",
             "job_id": "job-1",
         }])

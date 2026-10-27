@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
 
-from agent_server import HISTORY_MAINTENANCE_STATE, public_session, session_provider_id
+from tests.hyadex_server import HISTORY_MAINTENANCE_STATE, public_session, session_provider_id
 
 
 class SessionSummaryTests(unittest.TestCase):

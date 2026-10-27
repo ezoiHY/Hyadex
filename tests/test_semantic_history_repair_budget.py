@@ -6,9 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import agent_server as server
-
-
+from tests import hyadex_server as server
 class SemanticHistoryRepairBudgetTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-import agent_server as server
+from tests import hyadex_server as server
 from hyadex import inventory
 from hyadex.providers import runtime
 

@@ -1,6 +1,6 @@
 import unittest
 
-from agent_server import terminal_dimensions
+from tests.hyadex_server import terminal_dimensions
 
 
 class TerminalGeometryTests(unittest.TestCase):

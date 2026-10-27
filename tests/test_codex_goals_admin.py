@@ -9,36 +9,34 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
-import agent_server
-
-
+from tests import hyadex_server
 class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.previous_enabled = agent_server.CODEX_GOALS_ENABLED
-        self.previous_reconfiguring = agent_server.CODEX_GOALS_RECONFIGURING
-        self.previous_manager = agent_server.PROVIDERS.codex_manager
-        self.previous_sessions = agent_server.STORE.sessions
-        self.previous_busy = agent_server.RUNS.busy
-        self.previous_active = agent_server.RUNS.active
-        self.previous_current = agent_server.RUNS.current_turns
-        self.previous_maintenance = agent_server.RUNS.maintenance
-        self.previous_queued = agent_server.RUNS.queued
-        self.previous_run_now = agent_server.RUNS.run_now
-        self.previous_pending = agent_server.CODEX_PENDING_INTERACTIONS
-        self.previous_actions = agent_server.CODEX_NATIVE_ACTION_TASKS
-        self.previous_subagents = agent_server.CODEX_SUBAGENT_STATE
-        self.previous_subagent_index = agent_server.CODEX_SUBAGENT_SESSION_INDEX
+        self.previous_enabled = hyadex_server.CODEX_GOALS_ENABLED
+        self.previous_reconfiguring = hyadex_server.CODEX_GOALS_RECONFIGURING
+        self.previous_manager = hyadex_server.PROVIDERS.codex_manager
+        self.previous_sessions = hyadex_server.STORE.sessions
+        self.previous_busy = hyadex_server.RUNS.busy
+        self.previous_active = hyadex_server.RUNS.active
+        self.previous_current = hyadex_server.RUNS.current_turns
+        self.previous_maintenance = hyadex_server.RUNS.maintenance
+        self.previous_queued = hyadex_server.RUNS.queued
+        self.previous_run_now = hyadex_server.RUNS.run_now
+        self.previous_pending = hyadex_server.CODEX_PENDING_INTERACTIONS
+        self.previous_actions = hyadex_server.CODEX_NATIVE_ACTION_TASKS
+        self.previous_subagents = hyadex_server.CODEX_SUBAGENT_STATE
+        self.previous_subagent_index = hyadex_server.CODEX_SUBAGENT_SESSION_INDEX
         self.previous_live_generations = (
-            agent_server.CODEX_SUBAGENT_LIVE_GENERATIONS
+            hyadex_server.CODEX_SUBAGENT_LIVE_GENERATIONS
         )
 
-        agent_server.CODEX_GOALS_ENABLED = True
-        agent_server.CODEX_GOALS_RECONFIGURING = False
-        agent_server.PROVIDERS.codex_manager = None
-        agent_server.STORE.sessions = {
+        hyadex_server.CODEX_GOALS_ENABLED = True
+        hyadex_server.CODEX_GOALS_RECONFIGURING = False
+        hyadex_server.PROVIDERS.codex_manager = None
+        hyadex_server.STORE.sessions = {
             "chat": {
                 "id": "chat",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": "thread",
                 "codex_goal": {
                     "objective": "Finish the work",
@@ -46,34 +44,34 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
                 },
             }
         }
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.current_turns = {}
-        agent_server.RUNS.maintenance = set()
-        agent_server.RUNS.queued = {}
-        agent_server.RUNS.run_now = {}
-        agent_server.CODEX_PENDING_INTERACTIONS = {}
-        agent_server.CODEX_NATIVE_ACTION_TASKS = {}
-        agent_server.CODEX_SUBAGENT_STATE = {}
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX = {}
-        agent_server.CODEX_SUBAGENT_LIVE_GENERATIONS = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.current_turns = {}
+        hyadex_server.RUNS.maintenance = set()
+        hyadex_server.RUNS.queued = {}
+        hyadex_server.RUNS.run_now = {}
+        hyadex_server.CODEX_PENDING_INTERACTIONS = {}
+        hyadex_server.CODEX_NATIVE_ACTION_TASKS = {}
+        hyadex_server.CODEX_SUBAGENT_STATE = {}
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX = {}
+        hyadex_server.CODEX_SUBAGENT_LIVE_GENERATIONS = {}
 
     async def asyncTearDown(self) -> None:
-        agent_server.CODEX_GOALS_ENABLED = self.previous_enabled
-        agent_server.CODEX_GOALS_RECONFIGURING = self.previous_reconfiguring
-        agent_server.PROVIDERS.codex_manager = self.previous_manager
-        agent_server.STORE.sessions = self.previous_sessions
-        agent_server.RUNS.busy = self.previous_busy
-        agent_server.RUNS.active = self.previous_active
-        agent_server.RUNS.current_turns = self.previous_current
-        agent_server.RUNS.maintenance = self.previous_maintenance
-        agent_server.RUNS.queued = self.previous_queued
-        agent_server.RUNS.run_now = self.previous_run_now
-        agent_server.CODEX_PENDING_INTERACTIONS = self.previous_pending
-        agent_server.CODEX_NATIVE_ACTION_TASKS = self.previous_actions
-        agent_server.CODEX_SUBAGENT_STATE = self.previous_subagents
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX = self.previous_subagent_index
-        agent_server.CODEX_SUBAGENT_LIVE_GENERATIONS = (
+        hyadex_server.CODEX_GOALS_ENABLED = self.previous_enabled
+        hyadex_server.CODEX_GOALS_RECONFIGURING = self.previous_reconfiguring
+        hyadex_server.PROVIDERS.codex_manager = self.previous_manager
+        hyadex_server.STORE.sessions = self.previous_sessions
+        hyadex_server.RUNS.busy = self.previous_busy
+        hyadex_server.RUNS.active = self.previous_active
+        hyadex_server.RUNS.current_turns = self.previous_current
+        hyadex_server.RUNS.maintenance = self.previous_maintenance
+        hyadex_server.RUNS.queued = self.previous_queued
+        hyadex_server.RUNS.run_now = self.previous_run_now
+        hyadex_server.CODEX_PENDING_INTERACTIONS = self.previous_pending
+        hyadex_server.CODEX_NATIVE_ACTION_TASKS = self.previous_actions
+        hyadex_server.CODEX_SUBAGENT_STATE = self.previous_subagents
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX = self.previous_subagent_index
+        hyadex_server.CODEX_SUBAGENT_LIVE_GENERATIONS = (
             self.previous_live_generations
         )
 
@@ -91,18 +89,18 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
             "server": ("127.0.0.1", 7870),
             "client": ("127.0.0.1", 41000),
         })
-        with patch.object(agent_server, "AGENT_TOKEN", "test-secret"):
+        with patch.object(hyadex_server, "AGENT_TOKEN", "test-secret"):
             with self.assertRaises(HTTPException) as raised:
-                await agent_server.put_codex_goals_admin_endpoint(
-                    agent_server.CodexGoalsAdminRequest(enabled=False),
+                await hyadex_server.put_codex_goals_admin_endpoint(
+                    hyadex_server.CodexGoalsAdminRequest(enabled=False),
                     request,
                 )
 
         self.assertEqual(raised.exception.status_code, 401)
 
     def test_admin_routes_reject_query_and_browser_credentials_before_parsing(self) -> None:
-        with patch.object(agent_server, "AGENT_TOKEN", "test-secret"):
-            client = TestClient(agent_server.app)
+        with patch.object(hyadex_server, "AGENT_TOKEN", "test-secret"):
+            client = TestClient(hyadex_server.app)
             cases = (
                 ("GET", "/api/admin/codex/goals?token=test-secret", {}, None, 401),
                 (
@@ -157,8 +155,8 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
                 ("X-ZenithDock-Token", "test-secret"),
             ],
         )
-        with patch.object(agent_server, "AGENT_TOKEN", "test-secret"):
-            client = TestClient(agent_server.app)
+        with patch.object(hyadex_server, "AGENT_TOKEN", "test-secret"):
+            client = TestClient(hyadex_server.app)
             for headers in cases:
                 with self.subTest(headers=headers):
                     response = client.get(
@@ -200,8 +198,8 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
                 413,
             ),
         )
-        with patch.object(agent_server, "AGENT_TOKEN", "test-secret"):
-            client = TestClient(agent_server.app)
+        with patch.object(hyadex_server, "AGENT_TOKEN", "test-secret"):
+            client = TestClient(hyadex_server.app)
             for headers, body, expected in cases:
                 with self.subTest(headers=headers, expected=expected):
                     response = client.put(
@@ -213,8 +211,8 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(response.status_code, expected)
 
     def test_admin_routes_keep_both_current_native_client_headers(self) -> None:
-        with patch.object(agent_server, "AGENT_TOKEN", "test-secret"):
-            client = TestClient(agent_server.app)
+        with patch.object(hyadex_server, "AGENT_TOKEN", "test-secret"):
+            client = TestClient(hyadex_server.app)
             for name in ("X-Hyadex-Token", "X-ZenithDock-Token"):
                 with self.subTest(header=name):
                     response = client.get(
@@ -228,31 +226,31 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "codex-settings.json"
             with patch.dict("os.environ", {"CODEX_GOALS_ENABLED": "false"}):
-                self.assertTrue(agent_server.CODEX_GOALS_DEFAULT_ENABLED)
-                self.assertTrue(agent_server.read_codex_goals_enabled(path))
+                self.assertTrue(hyadex_server.CODEX_GOALS_DEFAULT_ENABLED)
+                self.assertTrue(hyadex_server.read_codex_goals_enabled(path))
                 self.assertFalse(path.exists())
                 for content in ('{"goals_enabled":false,"other":"preserved"}', '{'):
                     path.write_text(content)
-                    self.assertTrue(agent_server.read_codex_goals_enabled(path))
+                    self.assertTrue(hyadex_server.read_codex_goals_enabled(path))
                     self.assertEqual(path.read_text(), content)
 
     async def test_legacy_goal_switch_cannot_change_settings_or_chat_goals(self) -> None:
-        agent_server.STORE.sessions["paused"] = {
-            "id": "paused", "backend": agent_server.BACKEND_CODEX,
+        hyadex_server.STORE.sessions["paused"] = {
+            "id": "paused", "backend": hyadex_server.BACKEND_CODEX,
             "codex_goal": {"objective": "Wait for explicit resume", "status": "paused"},
         }
-        before_sessions = json.dumps(agent_server.STORE.sessions, sort_keys=True)
+        before_sessions = json.dumps(hyadex_server.STORE.sessions, sort_keys=True)
         with tempfile.TemporaryDirectory() as temporary:
             settings_file = Path(temporary) / "codex-settings.json"
             contents = '{"goals_enabled":false,"thread_config":{"agents":{"max_threads":4}}}'
             settings_file.write_text(contents)
             with (
-                patch.object(agent_server, "CODEX_SETTINGS_FILE", settings_file),
-                patch.object(agent_server, "settle_idle_codex_goal_for_stop", AsyncMock()) as settle,
-                patch.object(agent_server, "close_codex_app_server_manager", AsyncMock()) as close_manager,
-                patch.object(agent_server, "AGENT_TOKEN", "test-secret"),
+                patch.object(hyadex_server, "CODEX_SETTINGS_FILE", settings_file),
+                patch.object(hyadex_server, "settle_idle_codex_goal_for_stop", AsyncMock()) as settle,
+                patch.object(hyadex_server, "close_codex_app_server_manager", AsyncMock()) as close_manager,
+                patch.object(hyadex_server, "AGENT_TOKEN", "test-secret"),
             ):
-                client = TestClient(agent_server.app)
+                client = TestClient(hyadex_server.app)
                 headers = {"X-Hyadex-Token": "test-secret"}
                 read = client.get("/api/admin/codex/goals", headers=headers)
                 self.assertEqual(read.status_code, 200)
@@ -267,26 +265,26 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
                 settle.assert_not_awaited()
                 close_manager.assert_not_awaited()
             self.assertEqual(settings_file.read_text(), contents)
-        self.assertTrue(agent_server.CODEX_GOALS_ENABLED)
-        self.assertEqual(json.dumps(agent_server.STORE.sessions, sort_keys=True), before_sessions)
+        self.assertTrue(hyadex_server.CODEX_GOALS_ENABLED)
+        self.assertEqual(json.dumps(hyadex_server.STORE.sessions, sort_keys=True), before_sessions)
 
     async def test_disabling_does_not_load_ordinary_codex_threads(self) -> None:
         for index in range(500):
-            agent_server.STORE.sessions[f"ordinary-{index}"] = {
+            hyadex_server.STORE.sessions[f"ordinary-{index}"] = {
                 "id": f"ordinary-{index}",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": f"thread-{index}",
                 "codex_goal": None,
             }
-        agent_server.STORE.sessions["chat"]["codex_goal"]["status"] = "paused"
+        hyadex_server.STORE.sessions["chat"]["codex_goal"]["status"] = "paused"
         settle = AsyncMock(return_value={})
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "settle_idle_codex_goal_for_stop",
             settle,
         ):
-            result = await agent_server.pause_idle_codex_goals_before_disable()
+            result = await hyadex_server.pause_idle_codex_goals_before_disable()
 
         self.assertEqual(result, {
             "paused_goal_count": 0,
@@ -295,10 +293,10 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
         settle.assert_awaited_once_with("chat")
 
     async def test_disabling_checks_only_loaded_uncached_provider_threads(self) -> None:
-        agent_server.STORE.sessions["chat"]["codex_goal"] = None
-        agent_server.STORE.sessions["ordinary"] = {
+        hyadex_server.STORE.sessions["chat"]["codex_goal"] = None
+        hyadex_server.STORE.sessions["ordinary"] = {
             "id": "ordinary",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "unloaded-thread",
             "codex_goal": None,
         }
@@ -306,30 +304,30 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
         manager.is_thread_loaded.side_effect = (
             lambda thread_id: thread_id == "thread"
         )
-        agent_server.PROVIDERS.codex_manager = manager
+        hyadex_server.PROVIDERS.codex_manager = manager
         settle = AsyncMock(return_value={})
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "settle_idle_codex_goal_for_stop",
             settle,
         ):
-            await agent_server.pause_idle_codex_goals_before_disable()
+            await hyadex_server.pause_idle_codex_goals_before_disable()
 
         settle.assert_awaited_once_with("chat")
 
     async def test_goal_mutation_is_rejected_when_disabled(self) -> None:
-        agent_server.CODEX_GOALS_ENABLED = False
+        hyadex_server.CODEX_GOALS_ENABLED = False
         acquire = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "acquire_codex_control_thread",
             acquire,
         ):
             with self.assertRaises(HTTPException) as raised:
-                await agent_server._put_codex_goal_locked(
+                await hyadex_server._put_codex_goal_locked(
                     "chat",
-                    agent_server.CodexGoalRequest(
+                    hyadex_server.CodexGoalRequest(
                         objective="A new objective",
                     ),
                 )
@@ -341,42 +339,42 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
     async def test_goal_budget_does_not_block_turns_when_goals_are_disabled(
         self,
     ) -> None:
-        session = agent_server.STORE.sessions["chat"]
+        session = hyadex_server.STORE.sessions["chat"]
         session["codex_goal_time_budget_seconds"] = 1
         session["codex_goal_time_budget_exhausted"] = True
-        agent_server.CODEX_GOALS_ENABLED = False
+        hyadex_server.CODEX_GOALS_ENABLED = False
 
         self.assertFalse(
-            agent_server.provider_context_goal_is_exhausted(session, "chat")
+            hyadex_server.provider_context_goal_is_exhausted(session, "chat")
         )
 
     async def test_health_advertises_the_effective_goal_capability(self) -> None:
-        agent_server.CODEX_GOALS_ENABLED = False
+        hyadex_server.CODEX_GOALS_ENABLED = False
         with (
-            patch.object(agent_server, "host_pressure_snapshot", return_value={}),
+            patch.object(hyadex_server, "host_pressure_snapshot", return_value={}),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "tmux_capability",
                 return_value={"available": False},
             ),
-            patch.object(agent_server, "runtime_diagnostics_snapshot", return_value={}),
+            patch.object(hyadex_server, "runtime_diagnostics_snapshot", return_value={}),
         ):
-            response = await agent_server.health()
+            response = await hyadex_server.health()
 
         self.assertFalse(
             response["capabilities"]["codex_controls"]["features"]["goals"]
         )
 
     async def test_disabled_manager_launches_with_native_goal_feature_off(self) -> None:
-        agent_server.CODEX_GOALS_ENABLED = False
+        hyadex_server.CODEX_GOALS_ENABLED = False
         manager = Mock()
         manager.add_notification_handler = Mock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CodexAppServerManager",
             return_value=manager,
         ) as manager_type:
-            created = await agent_server.codex_app_server_manager()
+            created = await hyadex_server.codex_app_server_manager()
 
         self.assertIs(created, manager)
         self.assertEqual(
@@ -385,26 +383,26 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_exec_command_applies_native_goal_feature_off(self) -> None:
-        agent_server.CODEX_GOALS_ENABLED = False
+        hyadex_server.CODEX_GOALS_ENABLED = False
 
-        command = agent_server.build_codex_cmd(
+        command = hyadex_server.build_codex_cmd(
             "chat",
-            agent_server.STORE.sessions["chat"],
+            hyadex_server.STORE.sessions["chat"],
             "Do the work",
             Path("/tmp/current.json"),
         )
 
         self.assertEqual(command[:4], [
-            agent_server.CODEX_BIN,
+            hyadex_server.CODEX_BIN,
             "exec",
             "--disable",
             "goals",
         ])
 
     def test_exec_command_omits_goal_override_when_enabled(self) -> None:
-        command = agent_server.build_codex_cmd(
+        command = hyadex_server.build_codex_cmd(
             "chat",
-            agent_server.STORE.sessions["chat"],
+            hyadex_server.STORE.sessions["chat"],
             "Do the work",
             Path("/tmp/current.json"),
         )
@@ -416,18 +414,18 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
         release = asyncio.Event()
 
         async def reconfigure_provider() -> None:
-            async with agent_server.CODEX_GOALS_CONFIG_LOCK:
+            async with hyadex_server.CODEX_GOALS_CONFIG_LOCK:
                 entered.set()
                 await release.wait()
 
         manager = Mock()
         manager.add_notification_handler = Mock()
-        with patch.object(agent_server, "CodexAppServerManager", return_value=manager) as manager_type:
+        with patch.object(hyadex_server, "CodexAppServerManager", return_value=manager) as manager_type:
             reconfigure = asyncio.create_task(reconfigure_provider())
             create_manager = None
             try:
                 await asyncio.wait_for(entered.wait(), timeout=2)
-                create_manager = asyncio.create_task(agent_server.codex_app_server_manager())
+                create_manager = asyncio.create_task(hyadex_server.codex_app_server_manager())
                 await asyncio.sleep(0)
                 self.assertFalse(create_manager.done())
                 release.set()
@@ -464,21 +462,21 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
             "seq": 12,
             "ts": "2026-08-02T12:00:02Z",
         }
-        with patch.object(agent_server.STORE, "save", AsyncMock()):
-            await agent_server.update_session_event_metadata("chat", start)
+        with patch.object(hyadex_server.STORE, "save", AsyncMock()):
+            await hyadex_server.update_session_event_metadata("chat", start)
             self.assertIn(
                 "codex:compaction:compact-1",
-                agent_server.STORE.sessions["chat"][
+                hyadex_server.STORE.sessions["chat"][
                     "_active_codex_compactions"
                 ],
             )
-            await agent_server.update_session_event_metadata("chat", completed)
-            await agent_server.update_session_event_metadata(
+            await hyadex_server.update_session_event_metadata("chat", completed)
+            await hyadex_server.update_session_event_metadata(
                 "chat",
                 late_duplicate,
             )
 
-        session = agent_server.STORE.sessions["chat"]
+        session = hyadex_server.STORE.sessions["chat"]
         self.assertNotIn("_active_codex_compactions", session)
         self.assertIn(
             "codex:compaction:compact-1",
@@ -486,7 +484,7 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_start_only_compaction_is_recovered_after_restart(self) -> None:
-        agent_server.STORE.sessions["chat"]["_active_codex_compactions"] = {
+        hyadex_server.STORE.sessions["chat"]["_active_codex_compactions"] = {
             "codex:compaction:compact-1": {
                 "lifecycle_key": "codex:compaction:compact-1",
                 "operation_id": "compact-1",
@@ -510,15 +508,15 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
                 **payload,
             }
             recorded.append(event)
-            await agent_server.update_session_event_metadata(session_id, event)
+            await hyadex_server.update_session_event_metadata(session_id, event)
             return event
 
         with (
-            patch.object(agent_server, "append_event", side_effect=append_recovery),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", side_effect=append_recovery),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
         ):
             recovered = (
-                await agent_server.recover_abandoned_codex_compactions_after_start()
+                await hyadex_server.recover_abandoned_codex_compactions_after_start()
             )
 
         self.assertEqual(recovered, 1)
@@ -527,7 +525,7 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(recorded[0]["recovered_after_restart"])
         self.assertNotIn(
             "_active_codex_compactions",
-            agent_server.STORE.sessions["chat"],
+            hyadex_server.STORE.sessions["chat"],
         )
 
 

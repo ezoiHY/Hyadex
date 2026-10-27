@@ -1,4 +1,4 @@
-"""Structural rules for agent_server.py that keep its parts decoupled.
+"""Structural rules for the server modules that keep their parts decoupled.
 
 These are cheap source checks; they fail when a change reintroduces a
 coupling that was removed on purpose.
@@ -48,14 +48,14 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertEqual(re.findall(r'"/api/[^"]+"', body), [])
 
     def test_agent_and_admin_routes_declare_their_auth(self):
-        import agent_server
+        from tests import hyadex_server
         from tests.test_route_inventory import registered_routes
 
-        for method, path in sorted(registered_routes(agent_server.app)):
+        for method, path in sorted(registered_routes(hyadex_server.app)):
             if method in {"HEAD", "WS"} or not path.startswith(("/api/agent/", "/api/admin/")):
                 continue
             with self.subTest(route=f"{method} {path}"):
-                auth = agent_server.route_auth_for_scope(agent_server.app, method, path)
+                auth = hyadex_server.route_auth_for_scope(hyadex_server.app, method, path)
                 expected = ({"agent_helper", "provider_mcp"} if path.startswith("/api/agent/")
                             else {"native_admin", "restart"})
                 self.assertIn(auth.kind, expected)
@@ -70,15 +70,15 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         names = "|".join([*runs.LEGACY_NAMES, *server.LEGACY_NAMES, *providers.LEGACY_NAMES])
         definitions = re.findall(rf"^({names})\s*[:=]", SOURCE, re.M)
         self.assertEqual(definitions, [])
-        pattern = re.compile(rf"(?:agent_server|server)\.({names})\b|patch\.object\(\s*(?:agent_server|server)\s*,\s*[\"']({names})[\"']")
+        pattern = re.compile(rf"(?:hyadex_server|server)\.({names})\b|patch\.object\(\s*(?:hyadex_server|server)\s*,\s*[\"']({names})[\"']")
         for path in (ROOT / "tests").glob("*.py"):
             with self.subTest(test=path.name):
                 self.assertEqual(pattern.findall(path.read_text()), [])
 
 
     def test_split_modules_resolve_every_global_they_use(self):
-        # Code moved out of agent_server.py must not keep using a name that
-        # only agent_server defines; that would fail at call time.
+        # A server module must not use a name it neither defines nor
+        # imports; that would fail only at call time.
         import builtins
         import importlib
         import symtable
@@ -86,7 +86,8 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         from tests import server_source
 
         missing = []
-        for relative in server_source.EXTRACTED:
+        modules = sorted(str(p.relative_to(ROOT)) for p in (ROOT / "hyadex").rglob("*.py"))
+        for relative in modules:
             module = importlib.import_module(relative[:-3].replace("/", "."))
             source = (ROOT / relative).read_text()
 
@@ -105,15 +106,14 @@ class ArchitectureBoundaryTests(unittest.TestCase):
 
     def test_rebound_globals_are_not_reexported(self):
         # A global its module rebinds at run time would go stale as an
-        # imported copy in agent_server; tests must patch the owner.
-        import agent_server
-
+        # imported copy in the test namespace; tests must patch the owner.
+        from tests import hyadex_server
         reexported = []
         for relative in server_source.EXTRACTED:
             tree = ast.parse((ROOT / relative).read_text())
             for node in ast.walk(tree):
                 if isinstance(node, ast.Global):
-                    reexported += [f"{relative}: {name}" for name in node.names if name in vars(agent_server)]
+                    reexported += [f"{relative}: {name}" for name in node.names if name in vars(hyadex_server)]
         self.assertEqual(reexported, [])
 
 
@@ -134,13 +134,13 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         # one; routes of included routers (groups) must be recognised too.
         from starlette.requests import Request
 
-        import agent_server
+        from tests import hyadex_server
         from hyadex.core.http import request_route_parses_body
 
         def parses(method: str, path: str) -> bool:
             return request_route_parses_body(Request({
                 "type": "http", "method": method, "path": path, "root_path": "",
-                "headers": [], "query_string": b"", "app": agent_server.app}))
+                "headers": [], "query_string": b"", "app": hyadex_server.app}))
 
         self.assertTrue(parses("POST", "/api/groups"))
         self.assertTrue(parses("POST", "/api/groups/g_1/messages"))

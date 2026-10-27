@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import BackgroundTasks, HTTPException, Request
 from fastapi.responses import Response
 
-import agent_server
+from tests import hyadex_server
 from hyadex.ops import lifecycle
 from tests.runtime_state import patch_server
 
@@ -60,7 +60,7 @@ def http_request(
         for name, value in (extra_headers or {}).items()
     )
     return Request({
-        "type": "http", "app": agent_server.app,
+        "type": "http", "app": hyadex_server.app,
         "http_version": "1.1",
         "method": method,
         "scheme": "http",
@@ -81,7 +81,7 @@ def restart_body(
     force: bool = False,
     blocker_revision: str | None = None,
     omit_revision: bool = False,
-) -> agent_server.ServerRestartRequest:
+) -> hyadex_server.ServerRestartRequest:
     fields = {
         "request_id": request_id or uuid.uuid4(),
         "expected_server_identity": server_identity,
@@ -96,11 +96,11 @@ def restart_body(
         if not omit_revision:
             fields["expected_blocker_revision"] = (
                 blocker_revision
-                or agent_server.server_restart_blocker_snapshot_locked()[
+                or hyadex_server.server_restart_blocker_snapshot_locked()[
                     "revision"
                 ]
             )
-    return agent_server.ServerRestartRequest(
+    return hyadex_server.ServerRestartRequest(
         **fields,
     )
 
@@ -109,35 +109,35 @@ def restart_body(
 def restart_environment(root: Path):
     with ExitStack() as stack:
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "SERVER_RESTART_STATUS_FILE",
             root / "admin" / "server-restart.json",
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "SERVER_LIFECYCLE_OPERATION_LOCK",
             asyncio.Lock(),
         ))
         # The hard-kill watchdog consults the provider-child registry before
         # SIGKILL; keep the test from reading the real state directory.
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_CHILDREN_FILE",
             root / "admin" / "provider-children.json",
         ))
-        stack.enter_context(patch.object(agent_server, "AGENT_TOKEN", TOKEN))
+        stack.enter_context(patch.object(hyadex_server, "AGENT_TOKEN", TOKEN))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "SERVER_INSTANCE_ID",
             SERVER_INSTANCE_ID,
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "server_identity",
             return_value=SERVER_IDENTITY,
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "detect_managed_server_service_kind",
             return_value="systemd-user",
         ))
@@ -148,39 +148,39 @@ def restart_environment(root: Path):
             "MANAGED_SERVER_SERVICE_KIND_CACHE",
             None,
         ))
-        stack.enter_context(patch.object(agent_server.RUNS, "busy", set()))
+        stack.enter_context(patch.object(hyadex_server.RUNS, "busy", set()))
         stack.enter_context(patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "maintenance",
             set(),
         ))
-        stack.enter_context(patch.object(agent_server, "DELETING_SESSIONS", set()))
+        stack.enter_context(patch.object(hyadex_server, "DELETING_SESSIONS", set()))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "CODEX_GOALS_RECONFIGURING",
             False,
         ))
-        stack.enter_context(patch.object(agent_server.RUNS, "queued", {}))
-        stack.enter_context(patch.object(agent_server.RUNS, "run_now", {}))
+        stack.enter_context(patch.object(hyadex_server.RUNS, "queued", {}))
+        stack.enter_context(patch.object(hyadex_server.RUNS, "run_now", {}))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "provider_background_work_labels_from_snapshot",
             return_value=[],
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "server_restart_tmux_cgroup_state",
             return_value=tmux_restart_state(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "UNSAFE_HTTP_MUTATION_TASKS",
             {},
         ))
         # The forced path signals from a real thread that would SIGTERM the
         # test runner. Stub the thread starter and hand it back for assertions.
         forced_signal = stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "start_forced_server_restart_signal_thread",
         ))
         yield forced_signal
@@ -192,7 +192,7 @@ class ServerRestartStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                private = agent_server.write_server_restart_status(
+                private = hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=str(uuid.uuid4()),
                     _source_instance_id=SERVER_INSTANCE_ID,
@@ -200,8 +200,8 @@ class ServerRestartStateTests(unittest.TestCase):
                     pid=4242,
                     message="x" * 800,
                 )
-                public = agent_server.public_server_restart_status(private)
-                mode = os.stat(agent_server.SERVER_RESTART_STATUS_FILE).st_mode & 0o777
+                public = hyadex_server.public_server_restart_status(private)
+                mode = os.stat(hyadex_server.SERVER_RESTART_STATUS_FILE).st_mode & 0o777
 
         self.assertEqual(mode, 0o600)
         self.assertEqual(len(public["message"]), 500)
@@ -216,7 +216,7 @@ class ServerRestartStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                private = agent_server.write_server_restart_status(
+                private = hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=str(uuid.uuid4()),
                     _source_instance_id=SERVER_INSTANCE_ID,
@@ -232,7 +232,7 @@ class ServerRestartStateTests(unittest.TestCase):
                         "tmux_server_cgroup_unknown": False,
                     },
                 )
-                public = agent_server.public_server_restart_status(private)
+                public = hyadex_server.public_server_restart_status(private)
 
         self.assertTrue(public["forced"])
         self.assertEqual(public["interrupted_work"], {
@@ -253,13 +253,13 @@ class ServerRestartStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                agent_server.write_server_restart_status(
+                hyadex_server.write_server_restart_status(
                     phase="signaling",
                     request_id=str(uuid.uuid4()),
                     _source_instance_id="b" * 32,
                     requested_at="2026-08-19T00:00:00Z",
                 )
-                status = agent_server.reconcile_server_restart_status_after_startup()
+                status = hyadex_server.reconcile_server_restart_status_after_startup()
 
         self.assertEqual(status["phase"], "complete")
         self.assertEqual(status["message"], "HyadexServer restarted successfully.")
@@ -269,29 +269,29 @@ class ServerRestartStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                original = agent_server.write_server_restart_status(
+                original = hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=str(uuid.uuid4()),
                     _source_instance_id=SERVER_INSTANCE_ID,
                     requested_at="2026-08-19T00:00:00Z",
                 )
-                status = agent_server.reconcile_server_restart_status_after_startup()
+                status = hyadex_server.reconcile_server_restart_status_after_startup()
 
         self.assertEqual(status, original)
-        self.assertTrue(agent_server.managed_server_restart_blocks_work(status))
+        self.assertTrue(hyadex_server.managed_server_restart_blocks_work(status))
 
     def test_incomplete_active_restart_record_fails_closed_then_unfences(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                agent_server.write_server_restart_status(
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=str(uuid.uuid4()),
                 )
-                status = agent_server.reconcile_server_restart_status_after_startup()
+                status = hyadex_server.reconcile_server_restart_status_after_startup()
 
         self.assertEqual(status["phase"], "failed")
-        self.assertFalse(agent_server.managed_server_restart_blocks_work(status))
+        self.assertFalse(hyadex_server.managed_server_restart_blocks_work(status))
 
     def test_signal_worker_marks_signaling_and_sends_sigterm_to_self(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -301,17 +301,17 @@ class ServerRestartStateTests(unittest.TestCase):
             # watchdog thread. With time.sleep patched a real thread would
             # SIGKILL the test runner, so the thread is stubbed here.
             with restart_environment(root), \
-                 patch.object(agent_server.time, "sleep"), \
-                 patch.object(agent_server.threading, "Thread"), \
-                 patch.object(agent_server.os, "getpid", return_value=321), \
-                 patch.object(agent_server.os, "kill") as kill:
-                agent_server.write_server_restart_status(
+                 patch.object(hyadex_server.time, "sleep"), \
+                 patch.object(hyadex_server.threading, "Thread"), \
+                 patch.object(hyadex_server.os, "getpid", return_value=321), \
+                 patch.object(hyadex_server.os, "kill") as kill:
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=request_id,
                     _source_instance_id=SERVER_INSTANCE_ID,
                 )
-                agent_server.signal_managed_server_restart(request_id)
-                status = agent_server.read_server_restart_status()
+                hyadex_server.signal_managed_server_restart(request_id)
+                status = hyadex_server.read_server_restart_status()
 
         kill.assert_called_once_with(321, signal.SIGTERM)
         self.assertEqual(status["phase"], "signaling")
@@ -321,19 +321,19 @@ class ServerRestartStateTests(unittest.TestCase):
             root = Path(temporary)
             request_id = str(uuid.uuid4())
             with restart_environment(root), \
-                 patch.object(agent_server.time, "sleep"), \
-                 patch.object(agent_server.threading, "Thread"), \
-                 patch.object(agent_server.os, "kill", side_effect=OSError("denied")):
-                agent_server.write_server_restart_status(
+                 patch.object(hyadex_server.time, "sleep"), \
+                 patch.object(hyadex_server.threading, "Thread"), \
+                 patch.object(hyadex_server.os, "kill", side_effect=OSError("denied")):
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=request_id,
                     _source_instance_id=SERVER_INSTANCE_ID,
                 )
-                agent_server.signal_managed_server_restart(request_id)
-                status = agent_server.read_server_restart_status()
+                hyadex_server.signal_managed_server_restart(request_id)
+                status = hyadex_server.read_server_restart_status()
 
         self.assertEqual(status["phase"], "failed")
-        self.assertFalse(agent_server.managed_server_restart_blocks_work(status))
+        self.assertFalse(hyadex_server.managed_server_restart_blocks_work(status))
         self.assertNotIn("denied", status["message"])
 
     def test_forced_signal_arms_hard_kill_watchdog_before_sigterm(self):
@@ -342,26 +342,26 @@ class ServerRestartStateTests(unittest.TestCase):
             request_id = str(uuid.uuid4())
             watchdog = MagicMock()
             with restart_environment(root), \
-                 patch.object(agent_server.time, "sleep"), \
-                 patch.object(agent_server.os, "getpid", return_value=321), \
-                 patch.object(agent_server.os, "kill") as kill, \
-                 patch.object(agent_server.threading, "Thread", return_value=watchdog) as thread:
-                agent_server.write_server_restart_status(
+                 patch.object(hyadex_server.time, "sleep"), \
+                 patch.object(hyadex_server.os, "getpid", return_value=321), \
+                 patch.object(hyadex_server.os, "kill") as kill, \
+                 patch.object(hyadex_server.threading, "Thread", return_value=watchdog) as thread:
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=request_id,
                     _source_instance_id=SERVER_INSTANCE_ID,
                     _forced=True,
                 )
-                agent_server.signal_managed_server_restart(request_id)
+                hyadex_server.signal_managed_server_restart(request_id)
 
         # Behavior change: the watchdog is now armed for every managed
         # restart; a forced restart selects the short emergency deadline.
         thread.assert_called_once_with(
-            target=agent_server.force_kill_managed_server_after_deadline,
+            target=hyadex_server.force_kill_managed_server_after_deadline,
             args=(
                 request_id,
                 321,
-                agent_server.SERVER_RESTART_FORCE_KILL_DELAY_SECONDS,
+                hyadex_server.SERVER_RESTART_FORCE_KILL_DELAY_SECONDS,
             ),
             daemon=True,
             name="hyadex-server-force-restart",
@@ -377,30 +377,30 @@ class ServerRestartStateTests(unittest.TestCase):
             root = Path(temporary)
             request_id = str(uuid.uuid4())
             with restart_environment(root), \
-                 patch.object(agent_server.time, "sleep"), \
-                 patch.object(agent_server.os, "getpid", return_value=321), \
-                 patch.object(agent_server.os, "kill") as kill:
-                agent_server.write_server_restart_status(
+                 patch.object(hyadex_server.time, "sleep"), \
+                 patch.object(hyadex_server.os, "getpid", return_value=321), \
+                 patch.object(hyadex_server.os, "kill") as kill:
+                hyadex_server.write_server_restart_status(
                     phase="signaling",
                     request_id="different-request",
                     _source_instance_id="other-instance",
                     _forced=False,
                 )
-                agent_server.force_kill_managed_server_after_deadline(
+                hyadex_server.force_kill_managed_server_after_deadline(
                     request_id,
                     321,
                 )
                 with patch.object(
-                    agent_server,
+                    hyadex_server,
                     "read_server_restart_status",
                     side_effect=OSError("journal unreadable"),
                 ):
-                    agent_server.force_kill_managed_server_after_deadline(
+                    hyadex_server.force_kill_managed_server_after_deadline(
                         request_id,
                         321,
                     )
                 # Never signal a pid other than the process that armed it.
-                agent_server.force_kill_managed_server_after_deadline(
+                hyadex_server.force_kill_managed_server_after_deadline(
                     request_id,
                     999,
                 )
@@ -416,28 +416,28 @@ class ServerRestartStateTests(unittest.TestCase):
             request_id = str(uuid.uuid4())
             watchdog = MagicMock()
             with restart_environment(root), \
-                 patch.object(agent_server.time, "sleep"), \
-                 patch.object(agent_server.os, "getpid", return_value=321), \
-                 patch.object(agent_server.os, "kill") as kill, \
+                 patch.object(hyadex_server.time, "sleep"), \
+                 patch.object(hyadex_server.os, "getpid", return_value=321), \
+                 patch.object(hyadex_server.os, "kill") as kill, \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "read_server_restart_status",
                      side_effect=OSError("journal unreadable"),
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "write_server_restart_status",
                      side_effect=OSError("disk full"),
                  ), \
                  patch.object(
-                     agent_server.threading,
+                     hyadex_server.threading,
                      "Thread",
                      return_value=watchdog,
                  ) as thread:
-                agent_server.signal_forced_server_restart(request_id)
+                hyadex_server.signal_forced_server_restart(request_id)
 
         thread.assert_called_once_with(
-            target=agent_server.force_kill_managed_server_after_deadline,
+            target=hyadex_server.force_kill_managed_server_after_deadline,
             args=(request_id, 321),
             daemon=True,
             name="hyadex-server-force-restart",
@@ -450,16 +450,16 @@ class ServerRestartStateTests(unittest.TestCase):
             root = Path(temporary)
             request_id = str(uuid.uuid4())
             with restart_environment(root), \
-                 patch.object(agent_server.time, "sleep"), \
-                 patch.object(agent_server.os, "kill") as kill, \
-                 patch.object(agent_server.threading, "Thread") as thread:
-                agent_server.write_server_restart_status(
+                 patch.object(hyadex_server.time, "sleep"), \
+                 patch.object(hyadex_server.os, "kill") as kill, \
+                 patch.object(hyadex_server.threading, "Thread") as thread:
+                hyadex_server.write_server_restart_status(
                     phase="signaling",
                     request_id=request_id,
                     _source_instance_id=SERVER_INSTANCE_ID,
                     _forced=True,
                 )
-                agent_server.signal_forced_server_restart(request_id)
+                hyadex_server.signal_forced_server_restart(request_id)
 
         thread.assert_not_called()
         kill.assert_not_called()
@@ -469,18 +469,18 @@ class ServerRestartStateTests(unittest.TestCase):
             root = Path(temporary)
             request_id = str(uuid.uuid4())
             with restart_environment(root), \
-                 patch.object(agent_server.time, "sleep"), \
-                 patch.object(agent_server.threading, "Thread"), \
-                 patch.object(agent_server.os, "getpid", return_value=321), \
-                 patch.object(agent_server.os, "kill") as kill:
-                agent_server.write_server_restart_status(
+                 patch.object(hyadex_server.time, "sleep"), \
+                 patch.object(hyadex_server.threading, "Thread"), \
+                 patch.object(hyadex_server.os, "getpid", return_value=321), \
+                 patch.object(hyadex_server.os, "kill") as kill:
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=request_id,
                     _source_instance_id=SERVER_INSTANCE_ID,
                 )
-                agent_server.signal_managed_server_restart(request_id)
-                agent_server.signal_managed_server_restart(request_id)
-                status = agent_server.read_server_restart_status()
+                hyadex_server.signal_managed_server_restart(request_id)
+                hyadex_server.signal_managed_server_restart(request_id)
+                status = hyadex_server.read_server_restart_status()
 
         kill.assert_called_once_with(321, signal.SIGTERM)
         self.assertEqual(status["phase"], "signaling")
@@ -489,17 +489,17 @@ class ServerRestartStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "server_restart_status_age_seconds",
-                return_value=agent_server.SERVER_RESTART_ACCEPTED_STALE_SECONDS,
+                return_value=hyadex_server.SERVER_RESTART_ACCEPTED_STALE_SECONDS,
             ):
-                agent_server.write_server_restart_status(
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=str(uuid.uuid4()),
                     _source_instance_id=SERVER_INSTANCE_ID,
                 )
-                blocked = agent_server.managed_server_restart_blocks_work()
-                status = agent_server.read_server_restart_status()
+                blocked = hyadex_server.managed_server_restart_blocks_work()
+                status = hyadex_server.read_server_restart_status()
 
         self.assertFalse(blocked)
         self.assertEqual(status["phase"], "failed")
@@ -509,16 +509,16 @@ class ServerRestartStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "server_restart_status_age_seconds",
-                return_value=agent_server.SERVER_RESTART_ACCEPTED_STALE_SECONDS,
+                return_value=hyadex_server.SERVER_RESTART_ACCEPTED_STALE_SECONDS,
             ):
-                agent_server.write_server_restart_status(
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=str(uuid.uuid4()),
                     _source_instance_id=SERVER_INSTANCE_ID,
                 )
-                status = agent_server.public_server_restart_status()
+                status = hyadex_server.public_server_restart_status()
 
         self.assertEqual(status["phase"], "failed")
         self.assertIn("could not begin", status["message"])
@@ -536,20 +536,20 @@ class ManagedServerProofTests(unittest.TestCase):
             stdout="4242\n",
             stderr="",
         )
-        with patch.object(agent_server.sys, "platform", "linux"), patch.object(
-            agent_server,
+        with patch.object(hyadex_server.sys, "platform", "linux"), patch.object(
+            hyadex_server,
             "hyadex_server_systemd_cgroup",
             return_value=service_cgroup,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_tmux",
             return_value=probe,
         ) as run_tmux, patch.object(
-            agent_server,
+            hyadex_server,
             "process_cgroup_paths",
             return_value=(service_cgroup,),
         ):
-            inside = agent_server.server_restart_tmux_cgroup_state()
+            inside = hyadex_server.server_restart_tmux_cgroup_state()
         self.assertTrue(inside["tmux_server_in_service_cgroup"])
         self.assertFalse(inside["tmux_server_cgroup_unknown"])
         self.assertEqual(inside["_tmux_server_pid"], 4242)
@@ -558,33 +558,33 @@ class ManagedServerProofTests(unittest.TestCase):
             check=False,
         )
 
-        with patch.object(agent_server.sys, "platform", "linux"), patch.object(
-            agent_server,
+        with patch.object(hyadex_server.sys, "platform", "linux"), patch.object(
+            hyadex_server,
             "hyadex_server_systemd_cgroup",
             return_value=service_cgroup,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_tmux",
             return_value=probe,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "process_cgroup_paths",
             return_value=(),
         ):
-            unknown = agent_server.server_restart_tmux_cgroup_state()
+            unknown = hyadex_server.server_restart_tmux_cgroup_state()
         self.assertFalse(unknown["tmux_server_in_service_cgroup"])
         self.assertTrue(unknown["tmux_server_cgroup_unknown"])
 
-        with patch.object(agent_server.sys, "platform", "linux"), patch.object(
-            agent_server,
+        with patch.object(hyadex_server.sys, "platform", "linux"), patch.object(
+            hyadex_server,
             "hyadex_server_systemd_cgroup",
             return_value=None,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_tmux",
             return_value=probe,
-        ), patch.object(agent_server, "process_cgroup_paths") as daemon_paths:
-            server_unknown = agent_server.server_restart_tmux_cgroup_state()
+        ), patch.object(hyadex_server, "process_cgroup_paths") as daemon_paths:
+            server_unknown = hyadex_server.server_restart_tmux_cgroup_state()
         self.assertFalse(server_unknown["tmux_server_in_service_cgroup"])
         self.assertTrue(server_unknown["tmux_server_cgroup_unknown"])
         self.assertEqual(
@@ -599,24 +599,24 @@ class ManagedServerProofTests(unittest.TestCase):
             stdout="",
             stderr="server lookup failed",
         )
-        with patch.object(agent_server.sys, "platform", "linux"), patch.object(
-            agent_server,
+        with patch.object(hyadex_server.sys, "platform", "linux"), patch.object(
+            hyadex_server,
             "hyadex_server_systemd_cgroup",
             return_value=service_cgroup,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_tmux",
             return_value=failed_probe,
         ), patch.object(
-            agent_server.Path,
+            hyadex_server.Path,
             "lstat",
             return_value=MagicMock(st_mode=0),
         ), patch.object(
-            agent_server.stat,
+            hyadex_server.stat,
             "S_ISSOCK",
             return_value=True,
         ):
-            lookup_failed = agent_server.server_restart_tmux_cgroup_state()
+            lookup_failed = hyadex_server.server_restart_tmux_cgroup_state()
         self.assertFalse(lookup_failed["tmux_server_in_service_cgroup"])
         self.assertTrue(lookup_failed["tmux_server_cgroup_unknown"])
         self.assertEqual(
@@ -624,31 +624,31 @@ class ManagedServerProofTests(unittest.TestCase):
             "lookup-failed-with-socket",
         )
 
-        with patch.object(agent_server.sys, "platform", "linux"), patch.object(
-            agent_server,
+        with patch.object(hyadex_server.sys, "platform", "linux"), patch.object(
+            hyadex_server,
             "hyadex_server_systemd_cgroup",
         ) as absent_service, patch.object(
-            agent_server,
+            hyadex_server,
             "run_tmux",
             return_value=failed_probe,
         ), patch.object(
-            agent_server.Path,
+            hyadex_server.Path,
             "lstat",
             side_effect=FileNotFoundError,
         ):
-            absent = agent_server.server_restart_tmux_cgroup_state()
+            absent = hyadex_server.server_restart_tmux_cgroup_state()
         self.assertFalse(absent["tmux_server_in_service_cgroup"])
         self.assertFalse(absent["tmux_server_cgroup_unknown"])
         absent_service.assert_not_called()
 
-        with patch.object(agent_server.sys, "platform", "darwin"), patch.object(
-            agent_server,
+        with patch.object(hyadex_server.sys, "platform", "darwin"), patch.object(
+            hyadex_server,
             "hyadex_server_systemd_cgroup",
         ) as unmanaged_cgroup, patch.object(
-            agent_server,
+            hyadex_server,
             "run_tmux",
         ) as unmanaged_probe:
-            unmanaged = agent_server.server_restart_tmux_cgroup_state()
+            unmanaged = hyadex_server.server_restart_tmux_cgroup_state()
         self.assertFalse(unmanaged["tmux_server_in_service_cgroup"])
         self.assertFalse(unmanaged["tmux_server_cgroup_unknown"])
         unmanaged_cgroup.assert_not_called()
@@ -664,10 +664,10 @@ class ManagedServerProofTests(unittest.TestCase):
                 os.environ,
                 {"HYADEX_SERVER_INSTALL_DIR": str(install_root)},
                 clear=False,
-            ), patch.object(agent_server, "SERVER_ROOT", release.resolve()), \
-                 patch.object(agent_server.sys, "platform", "linux"), \
+            ), patch.object(hyadex_server, "SERVER_ROOT", release.resolve()), \
+                 patch.object(hyadex_server.sys, "platform", "linux"), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "hyadex_server_systemd_cgroup",
                      return_value=(
                          "/user.slice/user-1000.slice/user@1000.service/"
@@ -675,16 +675,16 @@ class ManagedServerProofTests(unittest.TestCase):
                      ),
                  ):
                 self.assertEqual(
-                    agent_server.detect_managed_server_service_kind(),
+                    hyadex_server.detect_managed_server_service_kind(),
                     "systemd-user",
                 )
                 with patch.object(
-                    agent_server,
+                    hyadex_server,
                     "hyadex_server_systemd_cgroup",
                     return_value=None,
                 ):
                     self.assertIsNone(
-                        agent_server.detect_managed_server_service_kind()
+                        hyadex_server.detect_managed_server_service_kind()
                     )
 
     def test_release_tree_must_resolve_through_installer_current_link(self):
@@ -696,24 +696,24 @@ class ManagedServerProofTests(unittest.TestCase):
                 os.environ,
                 {"HYADEX_SERVER_INSTALL_DIR": str(install_root)},
                 clear=False,
-            ), patch.object(agent_server, "SERVER_ROOT", install_root / "other"):
-                self.assertFalse(agent_server.official_server_release_tree())
+            ), patch.object(hyadex_server, "SERVER_ROOT", install_root / "other"):
+                self.assertFalse(hyadex_server.official_server_release_tree())
 
     def test_macos_launchctl_must_report_only_the_exact_serving_pid(self):
         completed = MagicMock(
             returncode=0,
             stdout="state = running\n\tpid = 4242\n",
         )
-        with patch.object(agent_server.sys, "platform", "darwin"), \
-             patch.object(agent_server.Path, "is_file", return_value=True), \
-             patch.object(agent_server.os, "getuid", return_value=501), \
-             patch.object(agent_server.os, "getpid", return_value=4242), \
+        with patch.object(hyadex_server.sys, "platform", "darwin"), \
+             patch.object(hyadex_server.Path, "is_file", return_value=True), \
+             patch.object(hyadex_server.os, "getuid", return_value=501), \
+             patch.object(hyadex_server.os, "getpid", return_value=4242), \
              patch.object(
-                 agent_server.subprocess,
+                 hyadex_server.subprocess,
                  "run",
                  return_value=completed,
              ) as run:
-            self.assertTrue(agent_server.macos_launchd_owns_current_process())
+            self.assertTrue(hyadex_server.macos_launchd_owns_current_process())
 
         self.assertEqual(run.call_args.args[0], [
             "/bin/launchctl",
@@ -722,26 +722,26 @@ class ManagedServerProofTests(unittest.TestCase):
         ])
 
         completed.stdout = "state = running\n\tpid = 9999\n"
-        with patch.object(agent_server.sys, "platform", "darwin"), \
-             patch.object(agent_server.Path, "is_file", return_value=True), \
-             patch.object(agent_server.os, "getpid", return_value=4242), \
-             patch.object(agent_server.subprocess, "run", return_value=completed):
-            self.assertFalse(agent_server.macos_launchd_owns_current_process())
+        with patch.object(hyadex_server.sys, "platform", "darwin"), \
+             patch.object(hyadex_server.Path, "is_file", return_value=True), \
+             patch.object(hyadex_server.os, "getpid", return_value=4242), \
+             patch.object(hyadex_server.subprocess, "run", return_value=completed):
+            self.assertFalse(hyadex_server.macos_launchd_owns_current_process())
 
     def test_capability_requires_both_authentication_and_managed_ownership(self):
-        with patch.object(agent_server, "AGENT_TOKEN", ""), \
-             patch.object(agent_server, "managed_server_service_kind") as managed:
-            capability = agent_server.server_restart_capability()
+        with patch.object(hyadex_server, "AGENT_TOKEN", ""), \
+             patch.object(hyadex_server, "managed_server_service_kind") as managed:
+            capability = hyadex_server.server_restart_capability()
         self.assertFalse(capability["available"])
         managed.assert_not_called()
 
-        with patch.object(agent_server, "AGENT_TOKEN", TOKEN), \
-             patch.object(agent_server, "managed_server_service_kind", return_value=None):
-            self.assertFalse(agent_server.server_restart_capability()["available"])
+        with patch.object(hyadex_server, "AGENT_TOKEN", TOKEN), \
+             patch.object(hyadex_server, "managed_server_service_kind", return_value=None):
+            self.assertFalse(hyadex_server.server_restart_capability()["available"])
 
-        with patch.object(agent_server, "AGENT_TOKEN", TOKEN), \
-             patch.object(agent_server, "managed_server_service_kind", return_value="launch-agent"):
-            capability = agent_server.server_restart_capability()
+        with patch.object(hyadex_server, "AGENT_TOKEN", TOKEN), \
+             patch.object(hyadex_server, "managed_server_service_kind", return_value="launch-agent"):
+            capability = hyadex_server.server_restart_capability()
         self.assertTrue(capability["available"])
         self.assertEqual(capability["version"], 2)
         self.assertTrue(capability["force_restart"])
@@ -764,14 +764,14 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         # capability contract must be asserted against an isolated snapshot.
         with tempfile.TemporaryDirectory() as temporary, \
              restart_environment(Path(temporary)), \
-             patch.object(agent_server, "SERVER_INSTANCE_ID", SERVER_INSTANCE_ID), \
-             patch.object(agent_server, "server_restart_capability", capability_builder), \
+             patch.object(hyadex_server, "SERVER_INSTANCE_ID", SERVER_INSTANCE_ID), \
+             patch.object(hyadex_server, "server_restart_capability", capability_builder), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "server_restart_tmux_cgroup_state",
                  return_value=tmux_restart_state(),
              ):
-            health = await agent_server.health()
+            health = await hyadex_server.health()
 
         self.assertEqual(health["server_instance_id"], SERVER_INSTANCE_ID)
         self.assertEqual(health["capabilities"]["server_restart"], capability)
@@ -785,21 +785,21 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), \
-                 patch.object(agent_server.RUNS, "busy", {"private-chat-id"}), \
+                 patch.object(hyadex_server.RUNS, "busy", {"private-chat-id"}), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_background_work_labels_from_snapshot",
                      return_value=["private provider label"],
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "active_provider_background_work_labels",
                      return_value=["private provider label"],
                  ):
-                first = await agent_server.server_restart_status_endpoint(
+                first = await hyadex_server.server_restart_status_endpoint(
                     http_request()
                 )
-                second = await agent_server.server_restart_status_endpoint(
+                second = await hyadex_server.server_restart_status_endpoint(
                     http_request()
                 )
 
@@ -817,13 +817,13 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                agent_server.require_server_restart_control(http_request())
+                hyadex_server.require_server_restart_control(http_request())
                 query_only = http_request(token=None, query=f"token={TOKEN}")
                 with self.assertRaises(HTTPException) as unauthorized:
-                    agent_server.require_server_restart_control(query_only)
+                    hyadex_server.require_server_restart_control(query_only)
                 self.assertEqual(unauthorized.exception.status_code, 401)
                 with patch.object(
-                    agent_server,
+                    hyadex_server,
                     "detect_managed_server_service_kind",
                     return_value=None,
                 ), patch.object(
@@ -831,16 +831,16 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                     "MANAGED_SERVER_SERVICE_KIND_CACHE",
                     None,
                 ), self.assertRaises(HTTPException) as unmanaged:
-                    agent_server.require_server_restart_control(http_request())
+                    hyadex_server.require_server_restart_control(http_request())
                 self.assertEqual(unmanaged.exception.status_code, 503)
                 self.assertEqual(
                     unmanaged.exception.detail["code"],
                     "server_restart_unmanaged",
                 )
 
-            with patch.object(agent_server, "AGENT_TOKEN", ""):
+            with patch.object(hyadex_server, "AGENT_TOKEN", ""):
                 with self.assertRaises(HTTPException) as unavailable:
-                    agent_server.require_server_restart_control(
+                    hyadex_server.require_server_restart_control(
                         http_request(token=None)
                     )
                 self.assertEqual(unavailable.exception.status_code, 503)
@@ -858,7 +858,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                     with self.subTest(accepted=headers):
                         request = http_request(token=None)
                         request.scope["headers"] = headers
-                        agent_server.require_server_restart_control(request)
+                        hyadex_server.require_server_restart_control(request)
 
                 rejected = (
                     [
@@ -881,14 +881,14 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                         ) as unauthorized:
                             request = http_request(token=None)
                             request.scope["headers"] = headers
-                            agent_server.require_server_restart_control(request)
+                            hyadex_server.require_server_restart_control(request)
                         self.assertEqual(
                             unauthorized.exception.status_code,
                             401,
                         )
 
                 with self.assertRaises(HTTPException) as query_ambiguity:
-                    agent_server.require_server_restart_control(
+                    hyadex_server.require_server_restart_control(
                         http_request(query=f"token={TOKEN}")
                     )
                 self.assertEqual(query_ambiguity.exception.status_code, 401)
@@ -906,13 +906,13 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                     with self.subTest(headers=headers), self.assertRaises(
                         HTTPException
                     ) as raised:
-                        agent_server.require_server_restart_control(
+                        hyadex_server.require_server_restart_control(
                             http_request(extra_headers=headers)
                         )
                     self.assertEqual(raised.exception.status_code, 403)
                     self.assertEqual(raised.exception.detail, "forbidden")
 
-                agent_server.require_server_restart_control(
+                hyadex_server.require_server_restart_control(
                     http_request(extra_headers={"sec-fetch-site": "none"})
                 )
 
@@ -927,14 +927,14 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     http_request(method="POST"),
                     call_next,
                 )
                 self.assertEqual(response.status_code, 415)
                 self.assertFalse(called)
 
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     http_request(
                         method="POST",
                         extra_headers={"content-type": "application/json"},
@@ -944,7 +944,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 411)
                 self.assertFalse(called)
 
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     http_request(
                         method="POST",
                         extra_headers={
@@ -958,7 +958,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 400)
                 self.assertFalse(called)
 
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     http_request(
                         method="POST",
                         extra_headers={
@@ -982,7 +982,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 duplicate_length.scope["headers"].append(
                     (b"content-length", b"256")
                 )
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     duplicate_length,
                     call_next,
                 )
@@ -991,7 +991,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
 
                 for invalid_length in ("+10", "1_0"):
                     with self.subTest(content_length=invalid_length):
-                        response = await agent_server.require_agent_token(
+                        response = await hyadex_server.require_agent_token(
                             http_request(
                                 method="POST",
                                 extra_headers={
@@ -1004,13 +1004,13 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(response.status_code, 400)
                         self.assertFalse(called)
 
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     http_request(
                         method="POST",
                         extra_headers={
                             "content-type": "application/json",
                             "content-length": str(
-                                agent_server.SERVER_RESTART_MAX_BODY_BYTES + 1
+                                hyadex_server.SERVER_RESTART_MAX_BODY_BYTES + 1
                             ),
                         },
                     ),
@@ -1019,7 +1019,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 413)
                 self.assertFalse(called)
 
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     http_request(
                         method="POST",
                         extra_headers={
@@ -1045,7 +1045,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     http_request(
                         method="POST",
                         token=None,
@@ -1067,15 +1067,15 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temporary)
             queued = deque([{"queued_id": "kept", "_durable": True}])
             with restart_environment(root), \
-                 patch.object(agent_server.RUNS, "queued", {"chat": queued}):
+                 patch.object(hyadex_server.RUNS, "queued", {"chat": queued}):
                 body = restart_body()
                 tasks = BackgroundTasks()
-                status = await agent_server.restart_server_endpoint(
+                status = await hyadex_server.restart_server_endpoint(
                     body,
                     http_request(method="POST"),
                     tasks,
                 )
-                private = agent_server.read_server_restart_status()
+                private = hyadex_server.read_server_restart_status()
 
         self.assertEqual(status["phase"], "accepted")
         self.assertEqual(status["request_id"], str(body.request_id))
@@ -1089,13 +1089,13 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             request_id = uuid.uuid4()
             with restart_environment(root):
                 first_tasks = BackgroundTasks()
-                first = await agent_server.restart_server_endpoint(
+                first = await hyadex_server.restart_server_endpoint(
                     restart_body(request_id),
                     http_request(method="POST"),
                     first_tasks,
                 )
                 replay_tasks = BackgroundTasks()
-                replay = await agent_server.restart_server_endpoint(
+                replay = await hyadex_server.restart_server_endpoint(
                     restart_body(request_id),
                     http_request(method="POST"),
                     replay_tasks,
@@ -1110,7 +1110,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temporary)
             request_id = uuid.uuid4()
             with restart_environment(root):
-                await agent_server.restart_server_endpoint(
+                await hyadex_server.restart_server_endpoint(
                     restart_body(request_id),
                     http_request(method="POST"),
                     BackgroundTasks(),
@@ -1126,7 +1126,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                     with self.subTest(body=body), self.assertRaises(
                         HTTPException
                     ) as raised:
-                        await agent_server.restart_server_endpoint(
+                        await hyadex_server.restart_server_endpoint(
                             body,
                             http_request(method="POST"),
                             BackgroundTasks(),
@@ -1148,7 +1148,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     http_request(
                         method="POST",
                         path="/api/agent/sessions/chat/jobs",
@@ -1157,7 +1157,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                     ),
                     call_next,
                 )
-                in_flight = agent_server.unsafe_http_mutation_count_locked()
+                in_flight = hyadex_server.unsafe_http_mutation_count_locked()
 
         self.assertEqual(response.status_code, 403)
         self.assertFalse(called)
@@ -1167,13 +1167,13 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                await agent_server.restart_server_endpoint(
+                await hyadex_server.restart_server_endpoint(
                     restart_body(),
                     http_request(method="POST"),
                     BackgroundTasks(),
                 )
                 with self.assertRaises(HTTPException) as raised:
-                    await agent_server.restart_server_endpoint(
+                    await hyadex_server.restart_server_endpoint(
                         restart_body(),
                         http_request(method="POST"),
                         BackgroundTasks(),
@@ -1188,25 +1188,25 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_different_request_can_start_after_stale_acceptance_reconciles(self):
         def status_age(status: dict[str, object]) -> float:
             return (
-                agent_server.SERVER_RESTART_ACCEPTED_STALE_SECONDS
+                hyadex_server.SERVER_RESTART_ACCEPTED_STALE_SECONDS
                 if status.get("phase") == "accepted"
-                else agent_server.SERVER_RESTART_COOLDOWN_SECONDS + 1
+                else hyadex_server.SERVER_RESTART_COOLDOWN_SECONDS + 1
             )
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "server_restart_status_age_seconds",
                 side_effect=status_age,
             ):
-                agent_server.write_server_restart_status(
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=str(uuid.uuid4()),
                     _source_instance_id=SERVER_INSTANCE_ID,
                 )
                 tasks = BackgroundTasks()
-                status = await agent_server.restart_server_endpoint(
+                status = await hyadex_server.restart_server_endpoint(
                     restart_body(),
                     http_request(method="POST"),
                     tasks,
@@ -1220,17 +1220,17 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temporary)
             with restart_environment(root), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "server_restart_status_age_seconds",
                      return_value=2,
                  ):
-                agent_server.write_server_restart_status(
+                hyadex_server.write_server_restart_status(
                     phase="complete",
                     request_id=str(uuid.uuid4()),
                     requested_at="2026-08-19T00:00:00Z",
                 )
                 with self.assertRaises(HTTPException) as raised:
-                    await agent_server.restart_server_endpoint(
+                    await hyadex_server.restart_server_endpoint(
                         restart_body(),
                         http_request(method="POST"),
                         BackgroundTasks(),
@@ -1259,7 +1259,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                     root = Path(temporary)
                     with restart_environment(root):
                         with self.assertRaises(HTTPException) as raised:
-                            await agent_server.restart_server_endpoint(
+                            await hyadex_server.restart_server_endpoint(
                                 body,
                                 http_request(method="POST"),
                                 BackgroundTasks(),
@@ -1276,13 +1276,13 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             with restart_environment(root):
                 maintenance = MagicMock()
                 maintenance.is_held.return_value = True
-                with patch.object(agent_server.SERVER, "execution_maintenance", maintenance):
-                    self.assertTrue(agent_server.execution_maintenance_blocks_work())
-                maintenance_patch = patch.object(agent_server.SERVER, "execution_maintenance", maintenance)
+                with patch.object(hyadex_server.SERVER, "execution_maintenance", maintenance):
+                    self.assertTrue(hyadex_server.execution_maintenance_blocks_work())
+                maintenance_patch = patch.object(hyadex_server.SERVER, "execution_maintenance", maintenance)
                 maintenance_patch.start()
                 self.addCleanup(maintenance_patch.stop)
                 with self.assertRaises(HTTPException) as raised:
-                    await agent_server.restart_server_endpoint(
+                    await hyadex_server.restart_server_endpoint(
                         restart_body(),
                         http_request(method="POST"),
                         BackgroundTasks(),
@@ -1300,12 +1300,12 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             with restart_environment(root) as forced_signal:
                 maintenance = MagicMock()
                 maintenance.is_held.return_value = True
-                with patch.object(agent_server.SERVER, "execution_maintenance", maintenance):
-                    self.assertTrue(agent_server.execution_maintenance_blocks_work())
-                maintenance_patch = patch.object(agent_server.SERVER, "execution_maintenance", maintenance)
+                with patch.object(hyadex_server.SERVER, "execution_maintenance", maintenance):
+                    self.assertTrue(hyadex_server.execution_maintenance_blocks_work())
+                maintenance_patch = patch.object(hyadex_server.SERVER, "execution_maintenance", maintenance)
                 maintenance_patch.start()
                 self.addCleanup(maintenance_patch.stop)
-                status = await agent_server.restart_server_endpoint(
+                status = await hyadex_server.restart_server_endpoint(
                     restart_body(force=True),
                     http_request(method="POST"),
                     BackgroundTasks(),
@@ -1337,9 +1337,9 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 root = Path(temporary)
                 with restart_environment(root), ExitStack() as stack:
                     for name, value in changes.items():
-                        stack.enter_context(patch_server(agent_server, name, value))
+                        stack.enter_context(patch_server(hyadex_server, name, value))
                     with self.assertRaises(HTTPException) as raised:
-                        await agent_server.restart_server_endpoint(
+                        await hyadex_server.restart_server_endpoint(
                             restart_body(),
                             http_request(method="POST"),
                             BackgroundTasks(),
@@ -1350,12 +1350,12 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "provider_background_work_labels_from_snapshot",
                 return_value=["private provider label"],
             ):
                 with self.assertRaises(HTTPException) as raised:
-                    await agent_server.restart_server_endpoint(
+                    await hyadex_server.restart_server_endpoint(
                         restart_body(),
                         http_request(method="POST"),
                         BackgroundTasks(),
@@ -1367,16 +1367,16 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), \
-                 patch.object(agent_server.RUNS, "busy", {"chat"}), \
+                 patch.object(hyadex_server.RUNS, "busy", {"chat"}), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "active_provider_background_work_labels",
                      return_value=[
                          "active chat chat",
                          "private provider background",
                      ],
                  ):
-                snapshot = agent_server.server_restart_blocker_snapshot_locked()
+                snapshot = hyadex_server.server_restart_blocker_snapshot_locked()
 
         self.assertEqual(snapshot["active_count"], 1)
         self.assertEqual(snapshot["provider_background_count"], 1)
@@ -1385,48 +1385,48 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                agent_server.RUNS.busy.add("private-chat-id")
-                agent_server.RUNS.current_turns["private-chat-id"] = {
+                hyadex_server.RUNS.busy.add("private-chat-id")
+                hyadex_server.RUNS.current_turns["private-chat-id"] = {
                     "run_id": "private-run-a",
                     "_server_restart_admission_id": "private-admission-a",
                 }
-                first_run = agent_server.server_restart_blocker_snapshot_locked()
+                first_run = hyadex_server.server_restart_blocker_snapshot_locked()
 
-                agent_server.RUNS.current_turns["private-chat-id"]["run_id"] = (
+                hyadex_server.RUNS.current_turns["private-chat-id"]["run_id"] = (
                     "private-run-b"
                 )
                 replacement_run = (
-                    agent_server.server_restart_blocker_snapshot_locked()
+                    hyadex_server.server_restart_blocker_snapshot_locked()
                 )
 
-                agent_server.RUNS.current_turns["private-chat-id"] = {
+                hyadex_server.RUNS.current_turns["private-chat-id"] = {
                     "run_id": None,
                     "_server_restart_admission_id": "private-admission-b",
                 }
                 first_prebind = (
-                    agent_server.server_restart_blocker_snapshot_locked()
+                    hyadex_server.server_restart_blocker_snapshot_locked()
                 )
-                agent_server.RUNS.current_turns["private-chat-id"] = {
+                hyadex_server.RUNS.current_turns["private-chat-id"] = {
                     "run_id": None,
                     "_server_restart_admission_id": "private-admission-c",
                 }
                 replacement_prebind = (
-                    agent_server.server_restart_blocker_snapshot_locked()
+                    hyadex_server.server_restart_blocker_snapshot_locked()
                 )
 
-                agent_server.RUNS.current_turns["private-chat-id"] = {
+                hyadex_server.RUNS.current_turns["private-chat-id"] = {
                     "run_id": None,
                     "codex_control_reservation_id": "private-control-a",
                 }
                 first_control = (
-                    agent_server.server_restart_blocker_snapshot_locked()
+                    hyadex_server.server_restart_blocker_snapshot_locked()
                 )
-                agent_server.RUNS.current_turns["private-chat-id"] = {
+                hyadex_server.RUNS.current_turns["private-chat-id"] = {
                     "run_id": None,
                     "codex_control_reservation_id": "private-control-b",
                 }
                 replacement_control = (
-                    agent_server.server_restart_blocker_snapshot_locked()
+                    hyadex_server.server_restart_blocker_snapshot_locked()
                 )
 
         snapshots = (
@@ -1468,15 +1468,15 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                agent_server.UNSAFE_HTTP_MUTATION_TASKS["private-mutation-a"] = (
+                hyadex_server.UNSAFE_HTTP_MUTATION_TASKS["private-mutation-a"] = (
                     first_task
                 )
-                first = agent_server.server_restart_blocker_snapshot_locked()
-                agent_server.UNSAFE_HTTP_MUTATION_TASKS.clear()
-                agent_server.UNSAFE_HTTP_MUTATION_TASKS["private-mutation-b"] = (
+                first = hyadex_server.server_restart_blocker_snapshot_locked()
+                hyadex_server.UNSAFE_HTTP_MUTATION_TASKS.clear()
+                hyadex_server.UNSAFE_HTTP_MUTATION_TASKS["private-mutation-b"] = (
                     replacement_task
                 )
-                replacement = agent_server.server_restart_blocker_snapshot_locked()
+                replacement = hyadex_server.server_restart_blocker_snapshot_locked()
 
         self.assertEqual(first["mutation_count"], 1)
         self.assertEqual(replacement["mutation_count"], 1)
@@ -1502,15 +1502,15 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 root = Path(temporary)
                 with restart_environment(root) as forced_signal, ExitStack() as stack:
                     for name, value in changes.items():
-                        stack.enter_context(patch_server(agent_server, name, value))
+                        stack.enter_context(patch_server(hyadex_server, name, value))
                     with self.assertRaises(HTTPException) as raised:
-                        await agent_server.restart_server_endpoint(
+                        await hyadex_server.restart_server_endpoint(
                             restart_body(),
                             http_request(method="POST"),
                             BackgroundTasks(),
                         )
                     forced_signal.assert_not_called()
-                    forced = await agent_server.restart_server_endpoint(
+                    forced = await hyadex_server.restart_server_endpoint(
                         restart_body(force=True),
                         http_request(method="POST"),
                         BackgroundTasks(),
@@ -1535,26 +1535,26 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             ])
             run_now = {"queued_id": "unsafe-2", "_update_transitioning": True}
             with restart_environment(root) as forced_signal, \
-                 patch.object(agent_server.RUNS, "busy", {"chat-1", "chat-2"}), \
-                 patch.object(agent_server.RUNS, "queued", {"chat-1": queued}), \
-                 patch.object(agent_server.RUNS, "run_now", {"chat-5": run_now}), \
+                 patch.object(hyadex_server.RUNS, "busy", {"chat-1", "chat-2"}), \
+                 patch.object(hyadex_server.RUNS, "queued", {"chat-1": queued}), \
+                 patch.object(hyadex_server.RUNS, "run_now", {"chat-5": run_now}), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "provider_background_work_labels_from_snapshot",
                      return_value=["private provider label"],
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "active_provider_background_work_labels",
                      return_value=["private provider label"],
                  ):
                 tasks = BackgroundTasks()
-                status = await agent_server.restart_server_endpoint(
+                status = await hyadex_server.restart_server_endpoint(
                     restart_body(force=True),
                     http_request(method="POST"),
                     tasks,
                 )
-                private = agent_server.read_server_restart_status()
+                private = hyadex_server.read_server_restart_status()
                 forced_signal.assert_called_once_with(status["request_id"])
 
         self.assertEqual(status["phase"], "accepted")
@@ -1597,13 +1597,13 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root) as forced_signal:
-                confirmed = agent_server.server_restart_blocker_snapshot_locked()
+                confirmed = hyadex_server.server_restart_blocker_snapshot_locked()
                 body = restart_body(
                     force=True,
                     blocker_revision=confirmed["revision"],
                 )
-                agent_server.RUNS.busy.add("newly-started-chat")
-                status = await agent_server.restart_server_endpoint(
+                hyadex_server.RUNS.busy.add("newly-started-chat")
+                status = await hyadex_server.restart_server_endpoint(
                     body,
                     http_request(method="POST"),
                     BackgroundTasks(),
@@ -1621,7 +1621,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root) as forced_signal:
-                status = await agent_server.restart_server_endpoint(
+                status = await hyadex_server.restart_server_endpoint(
                     restart_body(force=True, omit_revision=True),
                     http_request(method="POST"),
                     BackgroundTasks(),
@@ -1635,17 +1635,17 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root) as forced_signal:
-                pending = await agent_server.restart_server_endpoint(
+                pending = await hyadex_server.restart_server_endpoint(
                     restart_body(),
                     http_request(method="POST"),
                     BackgroundTasks(),
                 )
-                status = await agent_server.restart_server_endpoint(
+                status = await hyadex_server.restart_server_endpoint(
                     restart_body(force=True),
                     http_request(method="POST"),
                     BackgroundTasks(),
                 )
-                private = agent_server.read_server_restart_status()
+                private = hyadex_server.read_server_restart_status()
                 forced_signal.assert_called_once_with(status["request_id"])
 
         self.assertEqual(pending["phase"], "accepted")
@@ -1660,33 +1660,33 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             # Contending the module-level locks would bind them to this test's
             # event loop; use fresh instances so other test loops stay clean.
             with restart_environment(root) as forced_signal, \
-                 patch.object(agent_server.RUNS, "active_lock", asyncio.Lock()), \
-                 patch.object(agent_server.RUNS, "queue_lock", asyncio.Lock()), \
+                 patch.object(hyadex_server.RUNS, "active_lock", asyncio.Lock()), \
+                 patch.object(hyadex_server.RUNS, "queue_lock", asyncio.Lock()), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "UNSAFE_HTTP_MUTATION_ADMISSION_LOCK",
                      asyncio.Lock(),
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "SERVER_LIFECYCLE_OPERATION_LOCK",
                      asyncio.Lock(),
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "SERVER_RESTART_FORCE_LOCK_TIMEOUT_SECONDS",
                      0.05,
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "SERVER_RESTART_STATUS_LOCK_TIMEOUT_SECONDS",
                      0.05,
                  ):
-                await agent_server.RUNS.active_lock.acquire()
-                await agent_server.SERVER_LIFECYCLE_OPERATION_LOCK.acquire()
+                await hyadex_server.RUNS.active_lock.acquire()
+                await hyadex_server.SERVER_LIFECYCLE_OPERATION_LOCK.acquire()
                 try:
                     status = await asyncio.wait_for(
-                        agent_server.restart_server_endpoint(
+                        hyadex_server.restart_server_endpoint(
                             restart_body(force=True),
                             http_request(method="POST"),
                             BackgroundTasks(),
@@ -1694,12 +1694,12 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                         timeout=5,
                     )
                     degraded_snapshot = await asyncio.wait_for(
-                        agent_server.current_server_restart_blocker_snapshot(),
+                        hyadex_server.current_server_restart_blocker_snapshot(),
                         timeout=5,
                     )
                 finally:
-                    agent_server.RUNS.active_lock.release()
-                    agent_server.SERVER_LIFECYCLE_OPERATION_LOCK.release()
+                    hyadex_server.RUNS.active_lock.release()
+                    hyadex_server.SERVER_LIFECYCLE_OPERATION_LOCK.release()
                 forced_signal.assert_called_once_with(status["request_id"])
 
         self.assertEqual(status["phase"], "accepted")
@@ -1719,11 +1719,11 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root) as forced_signal, patch.object(
-                agent_server,
+                hyadex_server,
                 "write_server_restart_status",
                 side_effect=OSError("disk full"),
             ):
-                status = await agent_server.restart_server_endpoint(
+                status = await hyadex_server.restart_server_endpoint(
                     restart_body(force=True),
                     http_request(method="POST"),
                     BackgroundTasks(),
@@ -1757,16 +1757,16 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 with restart_environment(root), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "server_restart_tmux_cgroup_state",
                     return_value=state,
                 ):
-                    snapshot = agent_server.server_restart_blocker_snapshot_locked()
+                    snapshot = hyadex_server.server_restart_blocker_snapshot_locked()
                     public_json = json.dumps(snapshot)
                     self.assertNotIn("4242", public_json)
                     self.assertNotIn(service_cgroup, public_json)
                     with self.assertRaises(HTTPException) as safe:
-                        await agent_server.restart_server_endpoint(
+                        await hyadex_server.restart_server_endpoint(
                             restart_body(),
                             http_request(method="POST"),
                             BackgroundTasks(),
@@ -1775,7 +1775,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                         safe.exception.detail["code"],
                         "server_restart_busy",
                     )
-                    forced = await agent_server.restart_server_endpoint(
+                    forced = await hyadex_server.restart_server_endpoint(
                         restart_body(
                             force=True,
                             blocker_revision=snapshot["revision"],
@@ -1807,11 +1807,11 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "server_restart_tmux_cgroup_state",
                 return_value=confirmed_state,
             ):
-                confirmed = agent_server.server_restart_blocker_snapshot_locked()
+                confirmed = hyadex_server.server_restart_blocker_snapshot_locked()
                 body = restart_body(
                     force=True,
                     blocker_revision=confirmed["revision"],
@@ -1821,17 +1821,17 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                 # probe fixture into an unrelated probe-timeout scenario.
                 with (
                     patch.object(
-                        agent_server,
+                        hyadex_server,
                         "server_restart_tmux_cgroup_state",
                         return_value=changed_state,
                     ),
                     patch.object(
-                        agent_server,
+                        hyadex_server,
                         "SERVER_RESTART_FORCE_PROBE_TIMEOUT_SECONDS",
                         15.0,
                     ),
                 ):
-                    status = await agent_server.restart_server_endpoint(
+                    status = await hyadex_server.restart_server_endpoint(
                         body,
                         http_request(method="POST"),
                         BackgroundTasks(),
@@ -1846,11 +1846,11 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), patch.object(
-                agent_server,
+                hyadex_server,
                 "provider_background_work_labels_from_snapshot",
                 return_value=["private provider label", "second private label"],
             ):
-                status = await agent_server.restart_server_endpoint(
+                status = await hyadex_server.restart_server_endpoint(
                     restart_body(force=True),
                     http_request(method="POST"),
                     BackgroundTasks(),
@@ -1866,16 +1866,16 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root) as forced_signal, patch.object(
-                agent_server,
+                hyadex_server,
                 "server_restart_status_age_seconds",
                 return_value=2,
             ):
-                agent_server.write_server_restart_status(
+                hyadex_server.write_server_restart_status(
                     phase="failed",
                     request_id=str(uuid.uuid4()),
                     failed_at="2026-08-19T00:00:00Z",
                 )
-                status = await agent_server.restart_server_endpoint(
+                status = await hyadex_server.restart_server_endpoint(
                     restart_body(force=True),
                     http_request(method="POST"),
                     BackgroundTasks(),
@@ -1898,18 +1898,18 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
 
             with restart_environment(root):
                 mutation_task = asyncio.create_task(
-                    agent_server.require_agent_token(
+                    hyadex_server.require_agent_token(
                         http_request(method="DELETE", path="/api/sessions/chat"),
                         call_next,
                     )
                 )
                 await entered.wait()
                 self.assertEqual(
-                    agent_server.unsafe_http_mutation_count_locked(),
+                    hyadex_server.unsafe_http_mutation_count_locked(),
                     1,
                 )
                 with self.assertRaises(HTTPException) as raised:
-                    await agent_server.restart_server_endpoint(
+                    await hyadex_server.restart_server_endpoint(
                         restart_body(),
                         http_request(method="POST"),
                         BackgroundTasks(),
@@ -1919,7 +1919,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(raised.exception.detail["mutation_count"], 1)
-        self.assertEqual(agent_server.unsafe_http_mutation_count_locked(), 0)
+        self.assertEqual(hyadex_server.unsafe_http_mutation_count_locked(), 0)
 
     async def test_new_http_mutations_are_rejected_after_restart_drain(self):
         called = False
@@ -1932,12 +1932,12 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                agent_server.write_server_restart_status(
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=str(uuid.uuid4()),
                     _source_instance_id=SERVER_INSTANCE_ID,
                 )
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     http_request(method="DELETE", path="/api/sessions/chat"),
                     call_next,
                 )
@@ -1950,13 +1950,13 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                agent_server.write_server_restart_status(
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=str(uuid.uuid4()),
                     _source_instance_id=SERVER_INSTANCE_ID,
                 )
-                turn_blocker = await agent_server.turn_start_blocker()
-                job_blocker = await agent_server.scheduled_job_blocker("chat")
+                turn_blocker = await hyadex_server.turn_start_blocker()
+                job_blocker = await hyadex_server.scheduled_job_blocker("chat")
 
         self.assertEqual(turn_blocker, "HyadexServer is restarting")
         self.assertEqual(job_blocker, "HyadexServer is restarting")
@@ -1966,13 +1966,13 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
 
         async def call_next(_request: Request) -> Response:
             nonlocal observed_count
-            observed_count = agent_server.unsafe_http_mutation_count_locked()
+            observed_count = hyadex_server.unsafe_http_mutation_count_locked()
             return Response("accepted", status_code=202)
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root):
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     http_request(
                         method="POST",
                         extra_headers={
@@ -1998,24 +1998,24 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             root = Path(temporary)
             request_id = str(uuid.uuid4())
             with restart_environment(root), \
-                 patch.object(agent_server.time, "sleep"), \
-                 patch.object(agent_server.threading, "Thread"), \
+                 patch.object(hyadex_server.time, "sleep"), \
+                 patch.object(hyadex_server.threading, "Thread"), \
                  patch.object(
-                     agent_server.os,
+                     hyadex_server.os,
                      "kill",
                      side_effect=OSError("denied"),
                  ):
-                agent_server.write_server_restart_status(
+                hyadex_server.write_server_restart_status(
                     phase="accepted",
                     request_id=request_id,
                     _source_instance_id=SERVER_INSTANCE_ID,
                 )
-                agent_server.signal_managed_server_restart(request_id)
-                response = await agent_server.require_agent_token(
+                hyadex_server.signal_managed_server_restart(request_id)
+                response = await hyadex_server.require_agent_token(
                     http_request(method="PATCH", path="/api/sessions/chat"),
                     call_next,
                 )
-                status = agent_server.read_server_restart_status()
+                status = hyadex_server.read_server_restart_status()
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(called)
@@ -2024,7 +2024,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
     def test_post_route_declares_202_and_confirmations_are_literal_true(self):
         route = next(
             route
-            for route in agent_server.app.routes
+            for route in hyadex_server.app.routes
             if getattr(route, "path", None) == "/api/admin/restart"
             and "POST" in getattr(route, "methods", set())
         )
@@ -2033,7 +2033,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(confirmed=invalid_confirmation), self.assertRaises(
                 Exception
             ):
-                agent_server.ServerRestartRequest(
+                hyadex_server.ServerRestartRequest(
                     request_id=uuid.uuid4(),
                     expected_server_identity=SERVER_IDENTITY,
                     expected_server_instance_id=SERVER_INSTANCE_ID,
@@ -2078,7 +2078,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             },
         ):
             with self.subTest(changes=changes), self.assertRaises(Exception):
-                agent_server.ServerRestartRequest(
+                hyadex_server.ServerRestartRequest(
                     request_id=uuid.uuid4(),
                     expected_server_identity=SERVER_IDENTITY,
                     expected_server_instance_id=SERVER_INSTANCE_ID,
@@ -2086,7 +2086,7 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
                     **changes,
                 )
         with self.assertRaises(Exception):
-            agent_server.ServerRestartRequest(
+            hyadex_server.ServerRestartRequest(
                 request_id=uuid.uuid4(),
                 expected_server_identity=SERVER_IDENTITY,
                 expected_server_instance_id=SERVER_INSTANCE_ID,

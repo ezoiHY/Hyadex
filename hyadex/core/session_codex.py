@@ -49,16 +49,11 @@ def codex_provider_mcp_connection_host(bind_address: str | None = None) -> str:
     return str(address)
 
 
-# Set only by the independently managed execution entrypoint, before startup.
-# Public bind/port remain unchanged for native client discovery.
-PROVIDER_CALLBACK_ORIGIN: str | None = None
-
-
 def provider_helper_server_origin() -> str:
     """Return the exact same-host origin used by provider helper transports."""
 
-    if PROVIDER_CALLBACK_ORIGIN is not None:
-        return PROVIDER_CALLBACK_ORIGIN
+    if SERVER.provider_callback_origin is not None:
+        return SERVER.provider_callback_origin
     host = codex_provider_mcp_connection_host()
     url_host = (
         f"[{host}]"

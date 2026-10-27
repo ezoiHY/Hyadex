@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import APIRouter, HTTPException
 from hyadex.api.app import ApplicationBindings, create_app
-import agent_server
+from tests import hyadex_server
 from tests.runtime_state import ServerNamespace, patch_server_namespace
 import httpx
 from pydantic import BaseModel, Field
@@ -51,19 +51,19 @@ def load_routes(add_cleanup):
         {"support": {"available": True}}, inventory))
     ns["claude_runtime_snapshot"] = AsyncMock(return_value={"available": True, "goal": None})
     ns["claude_sdk_manager"] = AsyncMock(return_value=SimpleNamespace(clear_goal=AsyncMock()))
-    overrides = patch_server_namespace(agent_server, ns)
+    overrides = patch_server_namespace(hyadex_server, ns)
     add_cleanup(overrides.close)
-    runs = patch.multiple(agent_server.RUNS, active={}, active_lock=asyncio.Lock())
+    runs = patch.multiple(hyadex_server.RUNS, active={}, active_lock=asyncio.Lock())
     runs.start()
     add_cleanup(runs.stop)
     router = APIRouter()
-    router.add_api_route("/api/sessions/{session_id}/claude/goal", agent_server.put_claude_goal, methods=["PUT"])
-    router.add_api_route("/api/sessions/{session_id}/claude/goal", agent_server.delete_claude_goal, methods=["DELETE"])
+    router.add_api_route("/api/sessions/{session_id}/claude/goal", hyadex_server.put_claude_goal, methods=["PUT"])
+    router.add_api_route("/api/sessions/{session_id}/claude/goal", hyadex_server.delete_claude_goal, methods=["DELETE"])
 
     async def authorize(request, call_next):
         return await call_next(request)
 
-    namespace = ServerNamespace(agent_server)
+    namespace = ServerNamespace(hyadex_server)
     add_cleanup(namespace.close)
     namespace["app"] = create_app(ApplicationBindings(router, authorize))
     return namespace

@@ -158,7 +158,7 @@ settings_class = next(node for node in settings_tree.body if isinstance(node, as
 settings_ns = {"unittest": unittest, "tempfile": tempfile, "Path": Path, "json": json,
                "DEFAULT_CONFIG": {}}
 exec(code, settings_ns := {**settings_ns, "logger": logging.getLogger(__name__)})
-settings_ns["agent_server"] = SimpleNamespace(**settings_ns)
+settings_ns["hyadex_server"] = SimpleNamespace(**settings_ns)
 exec(compile(ast.Module(body=[settings_class], type_ignores=[]), str(settings_source), "exec"), settings_ns)
 CodexThreadConfigSettingsTests = settings_ns["CodexThreadConfigSettingsTests"]
 

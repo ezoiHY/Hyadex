@@ -4,26 +4,24 @@ import time
 import unittest
 from pathlib import Path
 
-import agent_server
-
-
+from tests import hyadex_server
 class TimelineIndexJobTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.previous_state_dir = agent_server.STATE_DIR
-        agent_server.STATE_DIR = Path(self.temporary.name)
-        agent_server.TIMELINE_INDEX_CACHE.clear()
-        agent_server.TIMELINE_INDEX_LOCKS.clear()
+        self.previous_state_dir = hyadex_server.STATE_DIR
+        hyadex_server.STATE_DIR = Path(self.temporary.name)
+        hyadex_server.TIMELINE_INDEX_CACHE.clear()
+        hyadex_server.TIMELINE_INDEX_LOCKS.clear()
 
     def tearDown(self) -> None:
-        agent_server.TIMELINE_INDEX_CACHE.clear()
-        agent_server.TIMELINE_INDEX_LOCKS.clear()
-        agent_server.STATE_DIR = self.previous_state_dir
+        hyadex_server.TIMELINE_INDEX_CACHE.clear()
+        hyadex_server.TIMELINE_INDEX_LOCKS.clear()
+        hyadex_server.STATE_DIR = self.previous_state_dir
         self.temporary.cleanup()
 
     def test_job_event_storm_does_not_rescan_all_ordinary_turns(self) -> None:
         session_id = "chat-job-storm"
-        path = agent_server.events_path(session_id)
+        path = hyadex_server.events_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as target:
             seq = 0
@@ -35,7 +33,7 @@ class TimelineIndexJobTests(unittest.TestCase):
                 seq += 1
                 target.write(json.dumps(self.event(seq, "assistant_text", run_id="scheduled-run", job_id="job-storm", text="Progress")) + "\n")
         started = time.monotonic()
-        index = agent_server.build_timeline_index(session_id)
+        index = hyadex_server.build_timeline_index(session_id)
         elapsed = time.monotonic() - started
         self.assertEqual(len(index["landmarks"]), 4001)
         self.assertEqual(index["landmarks"][-1]["key"], "job:job-storm")
@@ -43,7 +41,7 @@ class TimelineIndexJobTests(unittest.TestCase):
 
     def test_scheduled_run_stays_at_its_original_timeline_position(self) -> None:
         session_id = "chat-1"
-        path = agent_server.events_path(session_id)
+        path = hyadex_server.events_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         events = [
             self.event(1, "job_created", job_id="job-1", job={"id": "job-1", "title": "Status check"}),
@@ -61,7 +59,7 @@ class TimelineIndexJobTests(unittest.TestCase):
         ]
         path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
 
-        index = agent_server.build_timeline_index(session_id)
+        index = hyadex_server.build_timeline_index(session_id)
 
         self.assertEqual([item["key"] for item in index["landmarks"]], ["job:job-1", "turn:user-run"])
         job = index["landmarks"][0]
@@ -74,7 +72,7 @@ class TimelineIndexJobTests(unittest.TestCase):
 
     def test_intervening_chat_splits_same_job_without_moving_late_completion(self) -> None:
         session_id = "chat-1"
-        path = agent_server.events_path(session_id)
+        path = hyadex_server.events_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("".join(json.dumps(event) + "\n" for event in [
             self.event(1, "turn_started", run_id="job-run-1", purpose="scheduled_job", job_id="job-1"),
@@ -83,7 +81,7 @@ class TimelineIndexJobTests(unittest.TestCase):
             self.event(4, "turn_finished", run_id="human-run", result_text="Not yet."),
         ]), encoding="utf-8")
 
-        initial = agent_server.build_timeline_index(session_id)
+        initial = hyadex_server.build_timeline_index(session_id)
         self.assertEqual(
             [item["key"] for item in initial["landmarks"]],
             ["job:job-1", "turn:human-run"],
@@ -96,7 +94,7 @@ class TimelineIndexJobTests(unittest.TestCase):
                 self.event(7, "turn_finished", run_id="job-run-2", job_id="job-1", result_text="Second result"),
             ]))
 
-        refreshed = agent_server.build_timeline_index(session_id)
+        refreshed = hyadex_server.build_timeline_index(session_id)
 
         self.assertEqual(
             [item["key"] for item in refreshed["landmarks"]],
@@ -114,7 +112,7 @@ class TimelineIndexJobTests(unittest.TestCase):
 
     def test_different_job_is_a_hard_boundary_but_consecutive_runs_fold(self) -> None:
         session_id = "chat-1"
-        path = agent_server.events_path(session_id)
+        path = hyadex_server.events_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         events = [
             self.event(1, "turn_started", run_id="a-1", purpose="scheduled_job", job_id="job-a"),
@@ -128,7 +126,7 @@ class TimelineIndexJobTests(unittest.TestCase):
         ]
         path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
 
-        index = agent_server.build_timeline_index(session_id)
+        index = hyadex_server.build_timeline_index(session_id)
 
         self.assertEqual(
             [item["key"] for item in index["landmarks"]],
@@ -141,7 +139,7 @@ class TimelineIndexJobTests(unittest.TestCase):
 
     def test_visible_system_item_splits_jobs_but_hidden_bookkeeping_does_not(self) -> None:
         session_id = "chat-1"
-        path = agent_server.events_path(session_id)
+        path = hyadex_server.events_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         events = [
             self.event(1, "job_started", run_id="a-1", job_id="job-a"),
@@ -155,7 +153,7 @@ class TimelineIndexJobTests(unittest.TestCase):
         ]
         path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
 
-        index = agent_server.build_timeline_index(session_id)
+        index = hyadex_server.build_timeline_index(session_id)
 
         self.assertEqual(
             [item["key"] for item in index["landmarks"]],
@@ -165,7 +163,7 @@ class TimelineIndexJobTests(unittest.TestCase):
 
     def test_forked_internal_digest_run_is_not_a_landmark(self) -> None:
         session_id = "forked-chat"
-        path = agent_server.events_path(session_id)
+        path = hyadex_server.events_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         events = [
             self.event(1, "turn_started", run_id="digest-run", purpose="handoff_digest", digest_job_id="digest-1", forked=True, prompt="Generate digest"),
@@ -176,7 +174,7 @@ class TimelineIndexJobTests(unittest.TestCase):
         ]
         path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
 
-        index = agent_server.build_timeline_index(session_id)
+        index = hyadex_server.build_timeline_index(session_id)
 
         self.assertEqual([item["key"] for item in index["landmarks"]], ["turn:normal-run"])
         self.assertEqual(index["event_count"], 2)

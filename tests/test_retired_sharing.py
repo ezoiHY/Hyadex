@@ -5,9 +5,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-import agent_server as server
-
-
+from tests import hyadex_server as server
 class RetiredSharingTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.object(server, "AGENT_TOKEN", "native-test-token"))

@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-import agent_server
+from tests import hyadex_server
 # Reuse the runner fixtures through the module so unittest discovery of this
 # file does not also collect the runner's own TestCase classes.
 from tests import test_codex_app_server_runner as runner_fixtures
@@ -23,24 +23,24 @@ DEFAULT_CONFIG = {}
 
 class CodexThreadConfigSettingsTests(unittest.TestCase):
     def setUp(self) -> None:
-        agent_server._CODEX_THREAD_CONFIG_WARNED_KEYS.clear()
+        hyadex_server._CODEX_THREAD_CONFIG_WARNED_KEYS.clear()
 
     def test_missing_settings_file_leaves_provider_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "codex-settings.json"
-            config = agent_server.read_codex_thread_config_overrides(path)
+            config = hyadex_server.read_codex_thread_config_overrides(path)
 
         self.assertEqual(config, DEFAULT_CONFIG)
         # Callers may mutate the result; the module default must stay intact.
         config["agents"] = {"max_concurrent_threads_per_session": 99}
-        self.assertEqual(agent_server.CODEX_THREAD_CONFIG_DEFAULTS, DEFAULT_CONFIG)
+        self.assertEqual(hyadex_server.CODEX_THREAD_CONFIG_DEFAULTS, DEFAULT_CONFIG)
 
     def test_settings_without_thread_config_keep_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "codex-settings.json"
             path.write_text(json.dumps({"goals_enabled": False}))
             self.assertEqual(
-                agent_server.read_codex_thread_config_overrides(path),
+                hyadex_server.read_codex_thread_config_overrides(path),
                 DEFAULT_CONFIG,
             )
 
@@ -61,7 +61,7 @@ class CodexThreadConfigSettingsTests(unittest.TestCase):
                     "model_auto_compact_token_limit_scope": "thread",
                 },
             }))
-            config = agent_server.read_codex_thread_config_overrides(path)
+            config = hyadex_server.read_codex_thread_config_overrides(path)
 
         self.assertEqual(config, {
             "agents": {
@@ -89,9 +89,9 @@ class CodexThreadConfigSettingsTests(unittest.TestCase):
                     "sandbox_mode": "danger-full-access",
                 },
             }))
-            with self.assertLogs(agent_server.logger, level="WARNING") as first:
-                config = agent_server.read_codex_thread_config_overrides(path)
-                again = agent_server.read_codex_thread_config_overrides(path)
+            with self.assertLogs(hyadex_server.logger, level="WARNING") as first:
+                config = hyadex_server.read_codex_thread_config_overrides(path)
+                again = hyadex_server.read_codex_thread_config_overrides(path)
 
         self.assertEqual(config, DEFAULT_CONFIG)
         self.assertEqual(again, DEFAULT_CONFIG)
@@ -111,19 +111,19 @@ class CodexThreadConfigSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "codex-settings.json"
             path.write_text(json.dumps({"thread_config": ["agents"]}))
-            with self.assertLogs(agent_server.logger, level="WARNING"):
-                config = agent_server.read_codex_thread_config_overrides(path)
+            with self.assertLogs(hyadex_server.logger, level="WARNING"):
+                config = hyadex_server.read_codex_thread_config_overrides(path)
 
         self.assertEqual(config, DEFAULT_CONFIG)
 
     def test_legacy_max_threads_alias_is_canonicalized(self) -> None:
-        clean = agent_server.sanitize_codex_thread_config(
+        clean = hyadex_server.sanitize_codex_thread_config(
             {"agents": {"max_threads": 3}},
             source="test",
         )
         self.assertEqual(clean, {"agents": {"max_concurrent_threads_per_session": 3}})
 
-        explicit = agent_server.sanitize_codex_thread_config(
+        explicit = hyadex_server.sanitize_codex_thread_config(
             {"agents": {"max_threads": 3, "max_concurrent_threads_per_session": 5}},
             source="test",
         )
@@ -136,25 +136,25 @@ class CodexThreadConfigSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "codex-settings.json"
             path.write_text("{not json")
-            with self.assertLogs(agent_server.logger, level="WARNING"):
-                config = agent_server.read_codex_thread_config_overrides(path)
+            with self.assertLogs(hyadex_server.logger, level="WARNING"):
+                config = hyadex_server.read_codex_thread_config_overrides(path)
 
         self.assertEqual(config, DEFAULT_CONFIG)
 
 
 class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        agent_server._CODEX_THREAD_CONFIG_WARNED_KEYS.clear()
+        hyadex_server._CODEX_THREAD_CONFIG_WARNED_KEYS.clear()
         self.temporary = tempfile.TemporaryDirectory()
         self.settings_file = Path(self.temporary.name) / "admin" / "codex-settings.json"
         self.settings_patch = patch.object(
-            agent_server,
+            hyadex_server,
             "CODEX_SETTINGS_FILE",
             self.settings_file,
         )
         self.settings_patch.start()
         self.defaults_patch = patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_config_defaults",
             return_value=("", "", ""),
         )
@@ -166,13 +166,13 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
         self.temporary.cleanup()
 
     async def asyncTearDown(self) -> None:
-        for event in agent_server.CODEX_APP_SERVER_EVICTING_THREADS.values():
+        for event in hyadex_server.CODEX_APP_SERVER_EVICTING_THREADS.values():
             event.set()
-        agent_server.CODEX_APP_SERVER_EVICTING_THREADS.clear()
-        agent_server.CODEX_APP_SERVER_PINNED_THREADS.clear()
-        agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS.clear()
-        agent_server.CODEX_APP_SERVER_INVALIDATED_THREADS.clear()
-        agent_server.CODEX_APP_SERVER_THREAD_LRU.clear()
+        hyadex_server.CODEX_APP_SERVER_EVICTING_THREADS.clear()
+        hyadex_server.CODEX_APP_SERVER_PINNED_THREADS.clear()
+        hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS.clear()
+        hyadex_server.CODEX_APP_SERVER_INVALIDATED_THREADS.clear()
+        hyadex_server.CODEX_APP_SERVER_THREAD_LRU.clear()
 
     def write_settings(self, thread_config: dict[str, object]) -> None:
         self.settings_file.parent.mkdir(parents=True, exist_ok=True)
@@ -182,10 +182,10 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
         }))
 
     def expected_config(self, config: dict[str, object]) -> dict[str, object]:
-        return {**config, **agent_server.codex_provider_mcp_config()}
+        return {**config, **hyadex_server.codex_provider_mcp_config()}
 
     def test_thread_params_do_not_inject_a_subagent_cap_without_settings(self) -> None:
-        params = agent_server.codex_thread_params({"id": "chat"}, "/repo")
+        params = hyadex_server.codex_thread_params({"id": "chat"}, "/repo")
 
         # Sent as dotted -c style keys so only the leaf is overridden.
         self.assertEqual(
@@ -196,9 +196,9 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["cwd"], "/repo")
         self.assertEqual(
             params["approvalPolicy"],
-            agent_server.CODEX_NONINTERACTIVE_APPROVAL_POLICY,
+            hyadex_server.CODEX_NONINTERACTIVE_APPROVAL_POLICY,
         )
-        self.assertEqual(params["sandbox"], agent_server.CODEX_DEFAULT_SANDBOX_MODE)
+        self.assertEqual(params["sandbox"], hyadex_server.CODEX_DEFAULT_SANDBOX_MODE)
 
     def test_session_overrides_win_over_settings_which_win_over_defaults(self) -> None:
         self.write_settings({
@@ -218,8 +218,8 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        with self.assertLogs(agent_server.logger, level="WARNING") as logs:
-            params = agent_server.codex_thread_params(session, "/repo")
+        with self.assertLogs(hyadex_server.logger, level="WARNING") as logs:
+            params = hyadex_server.codex_thread_params(session, "/repo")
 
         self.assertEqual(params["config"], self.expected_config({
             "agents.max_concurrent_threads_per_session": 2,
@@ -235,7 +235,7 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
     def test_settings_file_alone_changes_the_ceiling(self) -> None:
         self.write_settings({"agents": {"max_concurrent_threads_per_session": 1}})
 
-        params = agent_server.codex_thread_params({"id": "chat"}, "/repo")
+        params = hyadex_server.codex_thread_params({"id": "chat"}, "/repo")
 
         self.assertEqual(
             params["config"],
@@ -246,7 +246,7 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
 
     def test_reserved_provider_mcp_does_not_replace_user_hyadex_server(self) -> None:
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_effective_thread_config",
             return_value={
                 "mcp_servers": {
@@ -258,10 +258,10 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
                 },
             },
         ):
-            params = agent_server.codex_thread_params({"id": "chat"}, "/repo")
+            params = hyadex_server.codex_thread_params({"id": "chat"}, "/repo")
 
         config = params["config"]
-        prefix = f"mcp_servers.{agent_server.CODEX_PROVIDER_MCP_NAME}"
+        prefix = f"mcp_servers.{hyadex_server.CODEX_PROVIDER_MCP_NAME}"
         self.assertEqual(
             config["mcp_servers.hyadex.command"],
             "/tmp/untrusted",
@@ -275,15 +275,15 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             config[f"{prefix}.url"],
             (
-                f"http://127.0.0.1:{agent_server.SERVER.port}"
-                f"{agent_server.CODEX_PROVIDER_MCP_PATH}"
+                f"http://127.0.0.1:{hyadex_server.SERVER.port}"
+                f"{hyadex_server.CODEX_PROVIDER_MCP_PATH}"
             ),
         )
         self.assertEqual(
             config[f"{prefix}.http_headers"],
             {
-                agent_server.CODEX_PROVIDER_MCP_HEADER_NAME:
-                    agent_server.CODEX_PROVIDER_MCP_HEADER_SECRET,
+                hyadex_server.CODEX_PROVIDER_MCP_HEADER_NAME:
+                    hyadex_server.CODEX_PROVIDER_MCP_HEADER_SECRET,
             },
         )
 
@@ -294,24 +294,24 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
         })
         session = {
             "id": "chat-1",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "cwd": "/repo",
         }
         manager = FakeCodexAppServerManager()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "touch_codex_app_server_thread",
             AsyncMock(),
         ):
-            await agent_server.ensure_codex_app_server_thread(
+            await hyadex_server.ensure_codex_app_server_thread(
                 manager,  # type: ignore[arg-type]
                 "chat-1",
                 session,
@@ -323,7 +323,7 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
                 "codex_thread_id": "thread-existing",
                 "codex_instruction_hash": "stale-hash",
             }
-            await agent_server.ensure_codex_app_server_thread(
+            await hyadex_server.ensure_codex_app_server_thread(
                 manager,  # type: ignore[arg-type]
                 "chat-1",
                 resumed,
@@ -346,18 +346,18 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
         })
         manager.delete_thread = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             new_callable=AsyncMock,
             return_value=manager,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "touch_codex_app_server_thread",
             new_callable=AsyncMock,
         ):
-            await agent_server.fork_codex_thread(
+            await hyadex_server.fork_codex_thread(
                 "thread-parent",
-                {"id": "chat-fork", "cwd": "/tmp", "backend": agent_server.BACKEND_CODEX},
+                {"id": "chat-fork", "cwd": "/tmp", "backend": hyadex_server.BACKEND_CODEX},
             )
 
         params = manager.fork_thread.await_args.args[1]
@@ -372,21 +372,21 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
     async def test_runtime_snapshot_exposes_session_overrides_read_only(self) -> None:
         session = {
             "id": "chat",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "cwd": "/tmp",
             "codex_config_overrides": {
                 "agents": {"max_concurrent_threads_per_session": 2, "nope": 1},
             },
         }
-        previous_sessions = agent_server.STORE.sessions
-        previous_manager = agent_server.PROVIDERS.codex_manager
-        agent_server.STORE.sessions = {"chat": session}
-        agent_server.PROVIDERS.codex_manager = None
+        previous_sessions = hyadex_server.STORE.sessions
+        previous_manager = hyadex_server.PROVIDERS.codex_manager
+        hyadex_server.STORE.sessions = {"chat": session}
+        hyadex_server.PROVIDERS.codex_manager = None
         try:
-            snapshot = await agent_server.codex_runtime_snapshot("chat")
+            snapshot = await hyadex_server.codex_runtime_snapshot("chat")
         finally:
-            agent_server.STORE.sessions = previous_sessions
-            agent_server.PROVIDERS.codex_manager = previous_manager
+            hyadex_server.STORE.sessions = previous_sessions
+            hyadex_server.PROVIDERS.codex_manager = previous_manager
 
         self.assertEqual(
             snapshot["config_overrides"],
@@ -403,13 +403,13 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
 class CodexForkTurnsInstructionTests(unittest.TestCase):
     def test_developer_instructions_forbid_full_history_forks(self) -> None:
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ):
-            instructions = agent_server.codex_thread_instructions(
+            instructions = hyadex_server.codex_thread_instructions(
                 "chat-1",
-                {"id": "chat-1", "backend": agent_server.BACKEND_CODEX, "cwd": "/repo"},
+                {"id": "chat-1", "backend": hyadex_server.BACKEND_CODEX, "cwd": "/repo"},
             )
 
         self.assertIn("spawn_agent", instructions)
@@ -419,13 +419,13 @@ class CodexForkTurnsInstructionTests(unittest.TestCase):
         # The core prelude stays compact; the static provider-authority
         # addendum (moved out of every per-turn prompt) follows it.
         core = instructions.split(
-            agent_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip(),
+            hyadex_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip(),
             1,
         )[0]
         self.assertLessEqual(len(core.strip().splitlines()), 18)
 
     def test_policy_version_bumped_so_existing_threads_migrate(self) -> None:
-        self.assertEqual(agent_server.CODEX_THREAD_POLICY_VERSION, "11")
+        self.assertEqual(hyadex_server.CODEX_THREAD_POLICY_VERSION, "11")
 
 
 class FakeFinalizationManager:
@@ -471,34 +471,34 @@ class FakeFinalizationManager:
 
 class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.previous_sessions = agent_server.STORE.sessions
-        self.previous_index = agent_server.CODEX_SUBAGENT_SESSION_INDEX
-        self.previous_states = agent_server.CODEX_SUBAGENT_STATE
-        self.previous_thread_index = agent_server.CODEX_THREAD_SESSION_INDEX
-        self.previous_busy = agent_server.RUNS.busy
-        self.previous_active = agent_server.RUNS.active
+        self.previous_sessions = hyadex_server.STORE.sessions
+        self.previous_index = hyadex_server.CODEX_SUBAGENT_SESSION_INDEX
+        self.previous_states = hyadex_server.CODEX_SUBAGENT_STATE
+        self.previous_thread_index = hyadex_server.CODEX_THREAD_SESSION_INDEX
+        self.previous_busy = hyadex_server.RUNS.busy
+        self.previous_active = hyadex_server.RUNS.active
         self.session = {
             "id": "chat",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "parent-thread",
             "session_id": "parent-thread",
         }
-        agent_server.STORE.sessions = {"chat": self.session}
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX = {}
-        agent_server.CODEX_SUBAGENT_STATE = {}
-        agent_server.CODEX_THREAD_SESSION_INDEX = {"parent-thread": "chat"}
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.active = {}
+        hyadex_server.STORE.sessions = {"chat": self.session}
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX = {}
+        hyadex_server.CODEX_SUBAGENT_STATE = {}
+        hyadex_server.CODEX_THREAD_SESSION_INDEX = {"parent-thread": "chat"}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.active = {}
         self.sequence = 0
         self.events: list[tuple[str, str, dict[str, object]]] = []
 
     async def asyncTearDown(self) -> None:
-        agent_server.STORE.sessions = self.previous_sessions
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX = self.previous_index
-        agent_server.CODEX_SUBAGENT_STATE = self.previous_states
-        agent_server.CODEX_THREAD_SESSION_INDEX = self.previous_thread_index
-        agent_server.RUNS.busy = self.previous_busy
-        agent_server.RUNS.active = self.previous_active
+        hyadex_server.STORE.sessions = self.previous_sessions
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX = self.previous_index
+        hyadex_server.CODEX_SUBAGENT_STATE = self.previous_states
+        hyadex_server.CODEX_THREAD_SESSION_INDEX = self.previous_thread_index
+        hyadex_server.RUNS.busy = self.previous_busy
+        hyadex_server.RUNS.active = self.previous_active
 
     async def append(
         self,
@@ -519,8 +519,8 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
 
     def patches(self):
         return (
-            patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
         )
 
     async def test_post_run_unloads_terminal_children_and_keeps_running_ones(self) -> None:
@@ -529,7 +529,7 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
         )
         append_patch, save_patch = self.patches()
         with append_patch, save_patch:
-            summary = await agent_server.finalize_codex_subagents_after_run(
+            summary = await hyadex_server.finalize_codex_subagents_after_run(
                 "chat",
                 manager,  # type: ignore[arg-type]
             )
@@ -545,16 +545,16 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_finalization_never_unloads_a_chat_root_thread(self) -> None:
         manager = FakeFinalizationManager(loaded={"child-done", "adopted"})
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX["adopted"] = "chat"
-        agent_server.CODEX_SUBAGENT_STATE["adopted"] = {
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX["adopted"] = "chat"
+        hyadex_server.CODEX_SUBAGENT_STATE["adopted"] = {
             "session_id": "chat",
             "subagent_id": "adopted",
             "subagent_status": "completed",
         }
-        agent_server.CODEX_THREAD_SESSION_INDEX["adopted"] = "other-chat"
+        hyadex_server.CODEX_THREAD_SESSION_INDEX["adopted"] = "other-chat"
         append_patch, save_patch = self.patches()
         with append_patch, save_patch:
-            await agent_server.finalize_codex_subagents_after_run(
+            await hyadex_server.finalize_codex_subagents_after_run(
                 "chat",
                 manager,  # type: ignore[arg-type]
             )
@@ -566,7 +566,7 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
         manager.list_descendant_threads = AsyncMock(side_effect=RuntimeError("boom"))
         append_patch, save_patch = self.patches()
         with append_patch, save_patch:
-            summary = await agent_server.finalize_codex_subagents_after_run(
+            summary = await hyadex_server.finalize_codex_subagents_after_run(
                 "chat",
                 manager,
             )
@@ -574,8 +574,8 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary, {"reconciled": 0, "unloaded": [], "active": []})
 
     async def test_idle_parent_drops_running_child_notifications(self) -> None:
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX["child-a"] = "chat"
-        agent_server.CODEX_SUBAGENT_STATE["child-a"] = {
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX["child-a"] = "chat"
+        hyadex_server.CODEX_SUBAGENT_STATE["child-a"] = {
             "session_id": "chat",
             "subagent_id": "child-a",
             "subagent_status": "completed",
@@ -583,7 +583,7 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
         }
         append_patch, save_patch = self.patches()
         with append_patch, save_patch:
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "thread/status/changed",
                 "params": {
                     "threadId": "child-a",
@@ -593,13 +593,13 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.events, [])
         self.assertEqual(
-            agent_server.CODEX_SUBAGENT_STATE["child-a"]["subagent_status"],
+            hyadex_server.CODEX_SUBAGENT_STATE["child-a"]["subagent_status"],
             "completed",
         )
 
     async def test_idle_parent_records_terminal_child_once_without_finished_run(self) -> None:
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX["child-a"] = "chat"
-        agent_server.CODEX_SUBAGENT_STATE["child-a"] = {
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX["child-a"] = "chat"
+        hyadex_server.CODEX_SUBAGENT_STATE["child-a"] = {
             "session_id": "chat",
             "subagent_id": "child-a",
             "subagent_status": "running",
@@ -607,7 +607,7 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
         }
         append_patch, save_patch = self.patches()
         with append_patch, save_patch:
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "turn/completed",
                 "params": {
                     "threadId": "child-a",
@@ -615,7 +615,7 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
                     "turn": {"id": "child-turn", "status": "completed"},
                 },
             })
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "thread/status/changed",
                 "params": {"threadId": "child-a", "status": {"type": "idle"}},
             })
@@ -627,9 +627,9 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(payload["run_id"])
 
     async def test_active_parent_keeps_attributing_child_transitions(self) -> None:
-        agent_server.RUNS.busy = {"chat"}
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX["child-a"] = "chat"
-        agent_server.CODEX_SUBAGENT_STATE["child-a"] = {
+        hyadex_server.RUNS.busy = {"chat"}
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX["child-a"] = "chat"
+        hyadex_server.CODEX_SUBAGENT_STATE["child-a"] = {
             "session_id": "chat",
             "subagent_id": "child-a",
             "subagent_status": "starting",
@@ -637,7 +637,7 @@ class CodexSubagentFinalizationTests(unittest.IsolatedAsyncioTestCase):
         }
         append_patch, save_patch = self.patches()
         with append_patch, save_patch:
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "thread/status/changed",
                 "params": {
                     "threadId": "child-a",
@@ -660,8 +660,8 @@ class CodexRunnerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         # The shared runner fixture installs fake sessions on the real STORE;
         # never let the run persist them to the operator's sessions.json.
         self._save_patches = [
-            patch.object(agent_server.STORE, "save", AsyncMock()),
-            patch.object(agent_server.STORE, "save_provider_session", AsyncMock()),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server.STORE, "save_provider_session", AsyncMock()),
         ]
         for patcher in self._save_patches:
             patcher.start()
@@ -687,11 +687,11 @@ class CodexRunnerFinalizationTests(unittest.IsolatedAsyncioTestCase):
             return {"reconciled": 0, "unloaded": [], "active": []}
 
         with stack, patch.object(
-            agent_server,
+            hyadex_server,
             "finalize_codex_subagents_after_run",
             AsyncMock(side_effect=finalize),
         ) as finalizer:
-            await agent_server.run_codex_app_server(
+            await hyadex_server.run_codex_app_server(
                 "chat-native",
                 "run-original",
                 "Fork some helpers",
@@ -702,7 +702,7 @@ class CodexRunnerFinalizationTests(unittest.IsolatedAsyncioTestCase):
             # Finalization is detached and bounded so it can never hold the
             # turn slot; join it here before asserting.
             await asyncio.gather(
-                *list(agent_server.CODEX_SUBAGENT_FINALIZE_TASKS.values()),
+                *list(hyadex_server.CODEX_SUBAGENT_FINALIZE_TASKS.values()),
                 return_exceptions=True,
             )
 
@@ -717,11 +717,11 @@ class CodexRunnerFinalizationTests(unittest.IsolatedAsyncioTestCase):
         manager = runner_fixtures.FakeManager(turn)
         stack, _events, finished, _exec_fallback = self.fixture.runner_patches(manager)
         with stack, patch.object(
-            agent_server,
+            hyadex_server,
             "finalize_codex_subagents_after_run",
             AsyncMock(side_effect=RuntimeError("app-server went away")),
         ):
-            await agent_server.run_codex_app_server(
+            await hyadex_server.run_codex_app_server(
                 "chat-native",
                 "run-original",
                 "Fork some helpers",

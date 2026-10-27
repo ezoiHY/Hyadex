@@ -14,14 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from starlette.datastructures import Headers, UploadFile
 
-import agent_server
-
-
+from tests import hyadex_server
 class IsolatedServerStateMixin:
     def isolated_state(self, root: Path):
         state = root / "state"
         return patch.multiple(
-            agent_server,
+            hyadex_server,
             STATE_DIR=state,
             FILES_ROOT=state / "files",
             CODE_DIFFS_ROOT=state / "code_diffs",
@@ -44,15 +42,15 @@ class UploadLifecycleTests(IsolatedServerStateMixin, unittest.IsolatedAsyncioTes
             old_umask = os.umask(0)
             try:
                 with self.isolated_state(root), patch.dict(
-                    agent_server.STORE.sessions,
+                    hyadex_server.STORE.sessions,
                     {"chat": {"id": "chat", "archived": False}},
                     clear=True,
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "append_durable_event",
                     AsyncMock(return_value={"seq": 1}),
                 ) as append_event:
-                    result = await agent_server.upload_file("chat", uploaded)
+                    result = await hyadex_server.upload_file("chat", uploaded)
             finally:
                 os.umask(old_umask)
 
@@ -73,34 +71,34 @@ class UploadLifecycleTests(IsolatedServerStateMixin, unittest.IsolatedAsyncioTes
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with self.isolated_state(root), patch.dict(
-                agent_server.STORE.sessions,
+                hyadex_server.STORE.sessions,
                 {"chat": {"id": "chat", "archived": False}},
                 clear=True,
-            ), patch.object(agent_server, "MAX_UPLOAD_BYTES", 4):
+            ), patch.object(hyadex_server, "MAX_UPLOAD_BYTES", 4):
                 with self.assertRaises(HTTPException) as oversized:
-                    await agent_server.upload_file("chat", self.upload(b"too large"))
+                    await hyadex_server.upload_file("chat", self.upload(b"too large"))
                 self.assertEqual(oversized.exception.status_code, 413)
-                self.assertEqual(list(agent_server.FILES_ROOT.iterdir()), [])
+                self.assertEqual(list(hyadex_server.FILES_ROOT.iterdir()), [])
 
             with self.isolated_state(root), patch.dict(
-                agent_server.STORE.sessions,
+                hyadex_server.STORE.sessions,
                 {"chat": {"id": "chat", "archived": False}},
                 clear=True,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "append_durable_event",
                 AsyncMock(side_effect=OSError("event write failed")),
             ):
                 with self.assertRaises(OSError):
-                    await agent_server.upload_file("chat", self.upload(b"content"))
-                self.assertEqual(list(agent_server.FILES_ROOT.iterdir()), [])
+                    await hyadex_server.upload_file("chat", self.upload(b"content"))
+                self.assertEqual(list(hyadex_server.FILES_ROOT.iterdir()), [])
 
     async def test_repeated_cancel_during_metadata_worker_leaves_no_orphan(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             metadata_started = threading.Event()
             release_metadata = threading.Event()
-            real_write = agent_server.write_upload_metadata_sync
+            real_write = hyadex_server.write_upload_metadata_sync
 
             def delayed_metadata(path: Path, metadata: dict) -> None:
                 metadata_started.set()
@@ -108,15 +106,15 @@ class UploadLifecycleTests(IsolatedServerStateMixin, unittest.IsolatedAsyncioTes
                 real_write(path, metadata)
 
             with self.isolated_state(root), patch.dict(
-                agent_server.STORE.sessions,
+                hyadex_server.STORE.sessions,
                 {"chat": {"id": "chat", "archived": False}},
                 clear=True,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "write_upload_metadata_sync",
                 side_effect=delayed_metadata,
             ):
-                request = asyncio.create_task(agent_server.upload_file(
+                request = asyncio.create_task(hyadex_server.upload_file(
                     "chat",
                     self.upload(b"cancel me"),
                 ))
@@ -127,14 +125,14 @@ class UploadLifecycleTests(IsolatedServerStateMixin, unittest.IsolatedAsyncioTes
                 release_metadata.set()
                 with self.assertRaises(asyncio.CancelledError):
                     await request
-                self.assertEqual(list(agent_server.FILES_ROOT.iterdir()), [])
+                self.assertEqual(list(hyadex_server.FILES_ROOT.iterdir()), [])
 
     async def test_delete_winning_copy_race_rejects_and_cleans_staging(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             copied = threading.Event()
             release_copy = threading.Event()
-            real_stage = agent_server.stage_upload_file_sync
+            real_stage = hyadex_server.stage_upload_file_sync
 
             def delayed_stage(source, destination: Path) -> int:
                 size = real_stage(source, destination)
@@ -143,32 +141,32 @@ class UploadLifecycleTests(IsolatedServerStateMixin, unittest.IsolatedAsyncioTes
                 return size
 
             with self.isolated_state(root), patch.dict(
-                agent_server.STORE.sessions,
+                hyadex_server.STORE.sessions,
                 {"chat": {"id": "chat", "archived": False}},
                 clear=True,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "stage_upload_file_sync",
                 side_effect=delayed_stage,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "append_durable_event",
                 AsyncMock(),
             ) as append_event:
-                request = asyncio.create_task(agent_server.upload_file(
+                request = asyncio.create_task(hyadex_server.upload_file(
                     "chat",
                     self.upload(b"racing"),
                 ))
                 self.assertTrue(await asyncio.to_thread(copied.wait, 2))
-                async with agent_server.session_lifecycle_lock("chat"):
-                    agent_server.STORE.sessions.pop("chat", None)
-                    agent_server.DELETING_SESSIONS.add("chat")
+                async with hyadex_server.session_lifecycle_lock("chat"):
+                    hyadex_server.STORE.sessions.pop("chat", None)
+                    hyadex_server.DELETING_SESSIONS.add("chat")
                 release_copy.set()
                 with self.assertRaises(HTTPException):
                     await request
-                self.assertEqual(list(agent_server.FILES_ROOT.iterdir()), [])
+                self.assertEqual(list(hyadex_server.FILES_ROOT.iterdir()), [])
                 append_event.assert_not_awaited()
-            agent_server.DELETING_SESSIONS.discard("chat")
+            hyadex_server.DELETING_SESSIONS.discard("chat")
 
 
 class FileLinkAndForkTests(IsolatedServerStateMixin, unittest.TestCase):
@@ -176,8 +174,8 @@ class FileLinkAndForkTests(IsolatedServerStateMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with self.isolated_state(root):
-                first = agent_server.FILES_ROOT / "art_first" / "report.pdf"
-                second = agent_server.FILES_ROOT / "art_second" / "report.pdf"
+                first = hyadex_server.FILES_ROOT / "art_first" / "report.pdf"
+                second = hyadex_server.FILES_ROOT / "art_second" / "report.pdf"
                 first.parent.mkdir(parents=True)
                 second.parent.mkdir(parents=True)
                 first.write_bytes(b"first")
@@ -187,16 +185,16 @@ class FileLinkAndForkTests(IsolatedServerStateMixin, unittest.TestCase):
                     {"id": "art_first", "session_id": "chat", "path": str(first), "source_path": "/work/one/report.pdf", "filename": "report.pdf"},
                 ]
                 with patch.object(
-                    agent_server,
+                    hyadex_server,
                     "list_session_file_records",
                     return_value=records,
                 ):
-                    exact = agent_server.session_file_for_link(
+                    exact = hyadex_server.session_file_for_link(
                         "chat",
                         "/work/one/report.pdf",
                     )
                     with self.assertRaises(HTTPException) as ambiguous:
-                        agent_server.session_file_for_link("chat", "report.pdf")
+                        hyadex_server.session_file_for_link("chat", "report.pdf")
 
         self.assertEqual(exact["id"], "art_first")
         self.assertEqual(ambiguous.exception.status_code, 409)
@@ -205,26 +203,26 @@ class FileLinkAndForkTests(IsolatedServerStateMixin, unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with self.isolated_state(root):
-                parent = agent_server.code_diffs_dir("parent")
+                parent = hyadex_server.code_diffs_dir("parent")
                 parent.mkdir(parents=True)
                 (parent / "run-1.patch").write_bytes(b"patch")
                 (parent / "run-1.json").write_text('{"run_id":"run-1"}')
-                copied = agent_server.clone_fork_code_diffs(
+                copied = hyadex_server.clone_fork_code_diffs(
                     "parent",
                     "child",
                     ["run-1"],
                 )
-                child = agent_server.code_diffs_dir("child")
+                child = hyadex_server.code_diffs_dir("child")
                 self.assertEqual(copied, ["run-1.patch", "run-1.json"])
                 self.assertEqual((child / "run-1.patch").read_bytes(), b"patch")
                 self.assertEqual(
                     stat.S_IMODE((child / "run-1.patch").stat().st_mode),
                     0o600,
                 )
-                agent_server.session_dir("child").mkdir(parents=True)
-                agent_server.delete_session_local_roots("child")
+                hyadex_server.session_dir("child").mkdir(parents=True)
+                hyadex_server.delete_session_local_roots("child")
                 self.assertFalse(child.exists())
-                self.assertFalse(agent_server.session_dir("child").exists())
+                self.assertFalse(hyadex_server.session_dir("child").exists())
 
 
 class ArtifactPublicationLifecycleTests(
@@ -238,7 +236,7 @@ class ArtifactPublicationLifecycleTests(
             source.write_text("artifact\n")
             copied = threading.Event()
             release_copy = threading.Event()
-            real_prepare = agent_server.prepare_artifact_records
+            real_prepare = hyadex_server.prepare_artifact_records
 
             def delayed_prepare(session_id: str, entries: list[dict]) -> list[dict]:
                 records = real_prepare(session_id, entries)
@@ -246,45 +244,45 @@ class ArtifactPublicationLifecycleTests(
                 release_copy.wait(timeout=5)
                 return records
 
-            entries = agent_server.normalize_artifact_entries([
+            entries = hyadex_server.normalize_artifact_entries([
                 {"path": str(source)},
             ])
             with self.isolated_state(root), patch.dict(
-                agent_server.STORE.sessions,
+                hyadex_server.STORE.sessions,
                 {"chat": {"id": "chat", "archived": False}},
                 clear=True,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "prepare_artifact_records",
                 side_effect=delayed_prepare,
             ):
                 publication = asyncio.create_task(
-                    agent_server._publish_artifact_entries_unlocked(
+                    hyadex_server._publish_artifact_entries_unlocked(
                         "chat",
                         "run-1",
                         entries,
                     )
                 )
                 self.assertTrue(await asyncio.to_thread(copied.wait, 2))
-                async with agent_server.session_lifecycle_lock("chat"):
-                    agent_server.STORE.sessions.pop("chat", None)
-                    agent_server.DELETING_SESSIONS.add("chat")
-                    agent_server.DELETED_SESSION_TOMBSTONES.add("chat")
+                async with hyadex_server.session_lifecycle_lock("chat"):
+                    hyadex_server.STORE.sessions.pop("chat", None)
+                    hyadex_server.DELETING_SESSIONS.add("chat")
+                    hyadex_server.DELETED_SESSION_TOMBSTONES.add("chat")
                 release_copy.set()
-                with self.assertRaises(agent_server.ArtifactPublicationError):
+                with self.assertRaises(hyadex_server.ArtifactPublicationError):
                     await publication
-                self.assertFalse(agent_server.events_path("chat").exists())
-                self.assertEqual(list(agent_server.FILES_ROOT.iterdir()), [])
-            agent_server.DELETING_SESSIONS.discard("chat")
-            agent_server.DELETED_SESSION_TOMBSTONES.discard("chat")
+                self.assertFalse(hyadex_server.events_path("chat").exists())
+                self.assertEqual(list(hyadex_server.FILES_ROOT.iterdir()), [])
+            hyadex_server.DELETING_SESSIONS.discard("chat")
+            hyadex_server.DELETED_SESSION_TOMBSTONES.discard("chat")
 
 
 class SubscriberHubCapacityTests(unittest.IsolatedAsyncioTestCase):
     async def test_concurrent_per_session_and_global_reservations_are_atomic(self) -> None:
-        hub = agent_server.SubscriberHub()
+        hub = hyadex_server.SubscriberHub()
         first, second, third = object(), object(), object()
-        with patch.object(agent_server, "EVENT_WEBSOCKET_MAX_ACTIVE_GLOBAL", 2), patch.object(
-            agent_server,
+        with patch.object(hyadex_server, "EVENT_WEBSOCKET_MAX_ACTIVE_GLOBAL", 2), patch.object(
+            hyadex_server,
             "EVENT_WEBSOCKET_MAX_ACTIVE_PER_SESSION",
             1,
         ):
@@ -321,45 +319,45 @@ class SubscriberHubCapacityTests(unittest.IsolatedAsyncioTestCase):
                 self.closes.append((code, reason))
 
             async def receive_text(self) -> str:
-                raise agent_server.WebSocketDisconnect()
+                raise hyadex_server.WebSocketDisconnect()
 
             async def send_json(self, _event: dict) -> None:
                 return None
 
-        hub = agent_server.SubscriberHub()
+        hub = hyadex_server.SubscriberHub()
         blocker = Socket()
         rejected = Socket()
         reconnect = Socket()
         with tempfile.TemporaryDirectory() as temporary, patch.object(
-            agent_server,
+            hyadex_server,
             "HUB",
             hub,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "EVENT_WEBSOCKET_MAX_ACTIVE_GLOBAL",
             1,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "EVENT_WEBSOCKET_MAX_ACTIVE_PER_SESSION",
             1,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "websocket_authorized",
             return_value=True,
         ), patch.dict(
-            agent_server.STORE.sessions,
+            hyadex_server.STORE.sessions,
             {"chat": {"id": "chat"}},
             clear=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "events_path",
             return_value=Path(temporary) / "events.jsonl",
         ):
             self.assertTrue(await hub.reserve("chat", blocker))  # type: ignore[arg-type]
-            await agent_server.session_events("chat", rejected)  # type: ignore[arg-type]
+            await hyadex_server.session_events("chat", rejected)  # type: ignore[arg-type]
             self.assertEqual(rejected.closes[0][0], 1013)
             await hub.unsubscribe("chat", blocker)  # type: ignore[arg-type]
-            await agent_server.session_events("chat", reconnect)  # type: ignore[arg-type]
+            await hyadex_server.session_events("chat", reconnect)  # type: ignore[arg-type]
 
         self.assertEqual(hub._subscribers, {})
         self.assertEqual(hub._reservations, {})
@@ -367,7 +365,7 @@ class SubscriberHubCapacityTests(unittest.IsolatedAsyncioTestCase):
 
 class JobDeleteRollbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_ordinary_save_failure_restores_exact_popped_job(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         job = {"id": "job-1", "session_id": "chat", "nested": {"value": 1}}
         store.jobs[job["id"]] = job
         with patch.object(
@@ -380,7 +378,7 @@ class JobDeleteRollbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(store.jobs[job["id"]], job)
 
     async def test_cancellation_after_save_commit_keeps_job_deleted(self) -> None:
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         job = {"id": "job-1", "session_id": "chat"}
         store.jobs[job["id"]] = job
         with patch.object(
@@ -410,33 +408,33 @@ class TerminalLifecycleTests(unittest.IsolatedAsyncioTestCase):
             return {"session_id": session_id}
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "_ensure_terminal_session_locked",
             side_effect=inner,
         ):
             await asyncio.gather(
-                asyncio.to_thread(agent_server.ensure_terminal_session, "chat"),
-                asyncio.to_thread(agent_server.ensure_terminal_session, "chat"),
+                asyncio.to_thread(hyadex_server.ensure_terminal_session, "chat"),
+                asyncio.to_thread(hyadex_server.ensure_terminal_session, "chat"),
             )
         self.assertEqual(maximum, 1)
 
     async def test_http_controls_do_not_resurrect_missing_terminal(self) -> None:
         with patch.dict(
-            agent_server.STORE.sessions,
+            hyadex_server.STORE.sessions,
             {"chat": {"id": "chat", "archived": False}},
             clear=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "tmux_session_exists",
             return_value=False,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "ensure_terminal_session",
         ) as ensure:
             for operation in (
-                lambda: agent_server.send_terminal_input("chat", "text"),
-                lambda: agent_server.resize_terminal_pane("chat", 100, 30),
-                lambda: agent_server.terminal_action("chat", "new-window"),
+                lambda: hyadex_server.send_terminal_input("chat", "text"),
+                lambda: hyadex_server.resize_terminal_pane("chat", 100, 30),
+                lambda: hyadex_server.terminal_action("chat", "new-window"),
             ):
                 with self.subTest(operation=operation), self.assertRaises(HTTPException) as raised:
                     await asyncio.to_thread(operation)
@@ -460,12 +458,12 @@ class TerminalLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
             ticker_task = asyncio.create_task(ticker())
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "TERMINAL_INPUT_WRITE_TIMEOUT_SECONDS",
                 0.05,
             ):
                 with self.assertRaises(asyncio.TimeoutError):
-                    await agent_server.write_terminal_input(write_fd, b"blocked")
+                    await hyadex_server.write_terminal_input(write_fd, b"blocked")
             await ticker_task
             self.assertTrue(ticked.is_set())
         finally:
@@ -513,32 +511,32 @@ class TerminalLifecycleTests(unittest.IsolatedAsyncioTestCase):
             return b""
 
         with patch.dict(
-            agent_server.STORE.sessions,
+            hyadex_server.STORE.sessions,
             {"chat": {"id": "chat", "archived": False}},
             clear=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "websocket_authorized",
             return_value=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "TERMINAL_ATTACHMENTS",
             attachments,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "read_terminal_output",
             side_effect=never_read,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "set_pty_dimensions",
         ) as set_dimensions, patch.object(
-            agent_server,
+            hyadex_server,
             "resize_terminal_window",
         ) as resize, patch.object(
-            agent_server,
+            hyadex_server,
             "stop_terminal_client",
         ):
-            await agent_server.session_terminal("chat", socket)  # type: ignore[arg-type]
+            await hyadex_server.session_terminal("chat", socket)  # type: ignore[arg-type]
 
         self.assertEqual(socket.sent[0]["type"], "ready")
         self.assertFalse(any(item.get("type") == "error" for item in socket.sent))

@@ -8,9 +8,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-import agent_server as server
-
-
+from tests import hyadex_server as server
 class NetworkSecurityTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.object(server, "AGENT_TOKEN", "test-native-token"))

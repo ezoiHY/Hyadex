@@ -15,9 +15,7 @@ from contextlib import suppress
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import agent_server
-
-
+from tests import hyadex_server
 class _ListHandler(logging.Handler):
     def __init__(self) -> None:
         super().__init__()
@@ -33,12 +31,12 @@ class CoalescedSessionSaveTests(unittest.IsolatedAsyncioTestCase):
         self.state_dir = Path(self._temp.name) / "state"
         self.sessions_file = self.state_dir / "sessions.json"
         self._patches = [
-            patch.object(agent_server, "STATE_DIR", self.state_dir),
-            patch.object(agent_server, "SESSIONS_FILE", self.sessions_file),
-            patch.object(agent_server, "FILES_ROOT", self.state_dir / "files"),
-            patch.object(agent_server, "CODE_DIFFS_ROOT", self.state_dir / "diffs"),
+            patch.object(hyadex_server, "STATE_DIR", self.state_dir),
+            patch.object(hyadex_server, "SESSIONS_FILE", self.sessions_file),
+            patch.object(hyadex_server, "FILES_ROOT", self.state_dir / "files"),
+            patch.object(hyadex_server, "CODE_DIFFS_ROOT", self.state_dir / "diffs"),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "PROVIDER_AUTHORITY_ROOT",
                 self.state_dir / "authority",
             ),
@@ -54,8 +52,8 @@ class CoalescedSessionSaveTests(unittest.IsolatedAsyncioTestCase):
         for store in getattr(self, "_stores", []):
             await store.flush_pending_save()
 
-    def make_store(self) -> "agent_server.SessionStore":
-        store = agent_server.SessionStore()
+    def make_store(self) -> "tests.hyadex_server.SessionStore":
+        store = hyadex_server.SessionStore()
         self._stores = getattr(self, "_stores", [])
         self._stores.append(store)
         return store
@@ -78,8 +76,8 @@ class CoalescedSessionSaveTests(unittest.IsolatedAsyncioTestCase):
         store = self.make_store()
         store.sessions["a"] = {"id": "a"}
         with (
-            patch.object(agent_server, "SESSION_STORE_SAVE_DEBOUNCE_SECONDS", 0.02),
-            patch.object(agent_server, "SESSION_STORE_SAVE_MAX_LATENCY_SECONDS", 0.1),
+            patch.object(hyadex_server, "SESSION_STORE_SAVE_DEBOUNCE_SECONDS", 0.02),
+            patch.object(hyadex_server, "SESSION_STORE_SAVE_MAX_LATENCY_SECONDS", 0.1),
         ):
             await store.save(flush=False)
             store.sessions["b"] = {"id": "b"}
@@ -97,13 +95,13 @@ class CoalescedSessionSaveTests(unittest.IsolatedAsyncioTestCase):
     async def test_awaited_save_is_immediate_and_coalesces_concurrent_callers(self) -> None:
         store = self.make_store()
         writes: list[str] = []
-        real_write = agent_server.write_sessions_json_text
+        real_write = hyadex_server.write_sessions_json_text
 
         def traced_write(path: Path, text: str, *, durable: bool) -> None:
             writes.append(text)
             real_write(path, text, durable=durable)
 
-        with patch.object(agent_server, "write_sessions_json_text", traced_write):
+        with patch.object(hyadex_server, "write_sessions_json_text", traced_write):
             async def mutate_and_save(index: int) -> None:
                 store.sessions[f"s{index}"] = {"id": f"s{index}"}
                 await store.save()
@@ -131,7 +129,7 @@ class CoalescedSessionSaveTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("\n", raw)
         self.assertEqual(json.loads(raw), store.sessions)
 
-        reloaded = agent_server.SessionStore()
+        reloaded = hyadex_server.SessionStore()
         self._stores.append(reloaded)
         await reloaded.load()
         self.assertEqual(reloaded.sessions["sess_x"]["title"], "Ünïcode ✓")
@@ -155,10 +153,10 @@ class CoalescedSessionSaveTests(unittest.IsolatedAsyncioTestCase):
         self.state_dir.mkdir(parents=True, exist_ok=True)
         original = b"[]"
         jobs_file.write_bytes(original)
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs = {"in-memory": {"id": "in-memory"}}
 
-        with patch.object(agent_server, "JOBS_FILE", jobs_file):
+        with patch.object(hyadex_server, "JOBS_FILE", jobs_file):
             with self.assertRaisesRegex(RuntimeError, "unreadable jobs registry"):
                 await store.load()
 
@@ -169,13 +167,13 @@ class CoalescedSessionSaveTests(unittest.IsolatedAsyncioTestCase):
         store = self.make_store()
         store.sessions = {"a": {"id": "a"}}
         fsyncs: list[int] = []
-        real_fsync = agent_server.os.fsync
+        real_fsync = hyadex_server.os.fsync
 
         def traced_fsync(descriptor: int) -> None:
             fsyncs.append(descriptor)
             real_fsync(descriptor)
 
-        with patch.object(agent_server.os, "fsync", side_effect=traced_fsync):
+        with patch.object(hyadex_server.os, "fsync", side_effect=traced_fsync):
             await store.save(durable=True)
         self.assertEqual(len(fsyncs), 2)  # file, then directory
         self.assertEqual(json.loads(self.sessions_file.read_text()), store.sessions)
@@ -183,7 +181,7 @@ class CoalescedSessionSaveTests(unittest.IsolatedAsyncioTestCase):
         def failing_write(path: Path, text: str, *, durable: bool) -> None:
             raise OSError("disk full")
 
-        with patch.object(agent_server, "write_sessions_json_text", failing_write):
+        with patch.object(hyadex_server, "write_sessions_json_text", failing_write):
             with self.assertRaises(OSError):
                 await store.save()
 
@@ -225,8 +223,8 @@ class CoalescedSessionSaveTests(unittest.IsolatedAsyncioTestCase):
             raise OSError("never reached in this test")
 
         with (
-            patch.object(agent_server, "STORE", store),
-            patch.object(agent_server, "write_sessions_json_text", slow_write),
+            patch.object(hyadex_server, "STORE", store),
+            patch.object(hyadex_server, "write_sessions_json_text", slow_write),
         ):
             event = {
                 "seq": 7,
@@ -235,7 +233,7 @@ class CoalescedSessionSaveTests(unittest.IsolatedAsyncioTestCase):
                 "text": "hi",
             }
             await asyncio.wait_for(
-                agent_server.update_session_event_metadata("chat", event),
+                hyadex_server.update_session_event_metadata("chat", event),
                 timeout=0.05,
             )
             self.assertEqual(store.sessions["chat"]["latest_event_seq"], 7)
@@ -251,22 +249,22 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self._temp = tempfile.TemporaryDirectory()
         self.root = Path(self._temp.name)
         self._patches = [
-            patch.object(agent_server, "EVENT_SEQ_CACHE", {}),
-            patch.object(agent_server, "EVENT_SEQ_LOCK", asyncio.Lock()),
-            patch.object(agent_server, "EVENT_SEQ_REPAIR_LOCKS", {}),
-            patch.object(agent_server, "EVENT_DELIVERY_LOCKS", {}),
-            patch.object(agent_server, "ensure_dirs", return_value=None),
+            patch.object(hyadex_server, "EVENT_SEQ_CACHE", {}),
+            patch.object(hyadex_server, "EVENT_SEQ_LOCK", asyncio.Lock()),
+            patch.object(hyadex_server, "EVENT_SEQ_REPAIR_LOCKS", {}),
+            patch.object(hyadex_server, "EVENT_DELIVERY_LOCKS", {}),
+            patch.object(hyadex_server, "ensure_dirs", return_value=None),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "events_path",
                 side_effect=lambda session_id: self.root / f"{session_id}.jsonl",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "update_session_event_metadata",
                 new=AsyncMock(),
             ),
-            patch.object(agent_server.HUB, "broadcast", new=AsyncMock()),
+            patch.object(hyadex_server.HUB, "broadcast", new=AsyncMock()),
         ]
         for item in self._patches:
             item.start()
@@ -291,17 +289,17 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_each_writer_repairs_a_torn_tail_before_appending(self) -> None:
         async def append_single(session_id: str) -> None:
-            await agent_server.append_event(session_id, "error", {"message": "x"})
+            await hyadex_server.append_event(session_id, "error", {"message": "x"})
 
         async def append_import(session_id: str) -> None:
-            written = await agent_server.append_imported_events(
+            written = await hyadex_server.append_imported_events(
                 session_id,
                 [("assistant_text", {"text": "x", "imported": True})],
             )
             self.assertEqual(written, 1)
 
         async def append_durable(session_id: str) -> None:
-            await agent_server.append_durable_event_batch(
+            await hyadex_server.append_durable_event_batch(
                 session_id,
                 [("artifact_error", {"message": "x"})],
             )
@@ -315,7 +313,7 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 path = self.root / f"{session_id}.jsonl"
                 self.write_torn_log(path)
                 with patch.dict(
-                    agent_server.STORE.sessions,
+                    hyadex_server.STORE.sessions,
                     {session_id: {"id": session_id, "latest_event_seq": 1}},
                     clear=True,
                 ):
@@ -327,14 +325,14 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
         for function_name, call in (
             (
                 "append_imported_events_sync",
-                lambda session_id: agent_server.append_imported_events(
+                lambda session_id: hyadex_server.append_imported_events(
                     session_id,
                     [("assistant_text", {"text": "x", "imported": True})],
                 ),
             ),
             (
                 "append_durable_event_batch_sync",
-                lambda session_id: agent_server.append_durable_event_batch(
+                lambda session_id: hyadex_server.append_durable_event_batch(
                     session_id,
                     [("artifact_error", {"message": "x"})],
                 ),
@@ -353,15 +351,15 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 raise OSError("simulated short write")
 
             with self.subTest(writer=function_name), patch.dict(
-                agent_server.STORE.sessions,
+                hyadex_server.STORE.sessions,
                 {session_id: {"id": session_id, "latest_event_seq": 1}},
                 clear=True,
-            ), patch.object(agent_server, function_name, side_effect=fail_after_fragment):
+            ), patch.object(hyadex_server, function_name, side_effect=fail_after_fragment):
                 with self.assertRaises(OSError):
                     await call(session_id)
             self.assertTrue(path.read_bytes().endswith(b"\n"))
             self.assertEqual([event["seq"] for event in self.parsed_events(path)], [1])
-            self.assertEqual(agent_server.EVENT_SEQ_CACHE[session_id], 1)
+            self.assertEqual(hyadex_server.EVENT_SEQ_CACHE[session_id], 1)
 
     def test_invalid_json_value_without_newline_is_truncated(self) -> None:
         for suffix in (b"{}", b"[]"):
@@ -372,7 +370,7 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     + b"\n"
                     + suffix
                 )
-                self.assertEqual(agent_server.repair_event_log_tail(path), 7)
+                self.assertEqual(hyadex_server.repair_event_log_tail(path), 7)
                 self.assertEqual([event["seq"] for event in self.parsed_events(path)], [7])
 
     def test_last_event_seq_scans_across_chunks_with_only_one_line_carry(self) -> None:
@@ -384,7 +382,7 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
             + (b"x" * (300 * 1024))
         )
 
-        self.assertEqual(agent_server.last_event_seq_from_file(path), 7)
+        self.assertEqual(hyadex_server.last_event_seq_from_file(path), 7)
 
     async def test_durable_session_sequence_is_a_restart_floor(self) -> None:
         session_id = "registry-floor"
@@ -394,11 +392,11 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
             encoding="utf-8",
         )
         with patch.dict(
-            agent_server.STORE.sessions,
+            hyadex_server.STORE.sessions,
             {session_id: {"id": session_id, "latest_event_seq": 9}},
             clear=True,
         ):
-            self.assertEqual(await agent_server.next_event_seq(session_id, path), 10)
+            self.assertEqual(await hyadex_server.next_event_seq(session_id, path), 10)
 
     async def test_cancelled_tail_repairs_settle_before_releasing_ownership(self) -> None:
         for operation in ("cold-seed", "failed-write"):
@@ -414,21 +412,21 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     return 7
 
                 with patch.object(
-                    agent_server,
+                    hyadex_server,
                     "repair_event_log_tail",
                     side_effect=slow_repair,
                 ), patch.dict(
-                    agent_server.STORE.sessions,
+                    hyadex_server.STORE.sessions,
                     {session_id: {"id": session_id, "latest_event_seq": 3}},
                     clear=True,
                 ):
                     if operation == "cold-seed":
                         task = asyncio.create_task(
-                            agent_server.next_event_seq(session_id, path)
+                            hyadex_server.next_event_seq(session_id, path)
                         )
                     else:
                         task = asyncio.create_task(
-                            agent_server.reconcile_event_seq_after_failed_write(
+                            hyadex_server.reconcile_event_seq_after_failed_write(
                                 session_id,
                                 path,
                                 consumed_high_water=5,
@@ -443,7 +441,7 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
                         await task
 
                 if operation == "failed-write":
-                    self.assertEqual(agent_server.EVENT_SEQ_CACHE[session_id], 7)
+                    self.assertEqual(hyadex_server.EVENT_SEQ_CACHE[session_id], 7)
 
     async def test_stalled_tail_repair_does_not_block_other_sessions(self) -> None:
         stalled_session = "stalled-repair"
@@ -462,11 +460,11 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
             return 4
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "repair_event_log_tail",
             side_effect=repair,
         ), patch.dict(
-            agent_server.STORE.sessions,
+            hyadex_server.STORE.sessions,
             {
                 stalled_session: {"latest_event_seq": 0},
                 healthy_session: {"latest_event_seq": 0},
@@ -474,12 +472,12 @@ class EventLogRecoveryTests(unittest.IsolatedAsyncioTestCase):
             clear=True,
         ):
             stalled = asyncio.create_task(
-                agent_server.next_event_seq(stalled_session, stalled_path)
+                hyadex_server.next_event_seq(stalled_session, stalled_path)
             )
             self.assertTrue(await asyncio.to_thread(repair_started.wait, 1))
 
             healthy_seq = await asyncio.wait_for(
-                agent_server.next_event_seq(healthy_session, healthy_path),
+                hyadex_server.next_event_seq(healthy_session, healthy_path),
                 timeout=0.2,
             )
             self.assertEqual(healthy_seq, 5)
@@ -496,25 +494,25 @@ class StableServerIdentityTests(unittest.TestCase):
             cache: dict[str, str] = {}
             first = "a" * 24
             changed_machine_result = "b" * 24
-            with patch.object(agent_server, "SERVER_IDENTITY_FILE", path), \
-                 patch.object(agent_server, "SERVER_IDENTITY_CACHE", cache), \
+            with patch.object(hyadex_server, "SERVER_IDENTITY_FILE", path), \
+                 patch.object(hyadex_server, "SERVER_IDENTITY_CACHE", cache), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "legacy_server_identity",
                      return_value=first,
                  ) as legacy:
-                self.assertEqual(agent_server.server_identity(), first)
+                self.assertEqual(hyadex_server.server_identity(), first)
                 legacy.assert_called_once()
 
             cache.clear()  # simulate a process restart after hostname change
-            with patch.object(agent_server, "SERVER_IDENTITY_FILE", path), \
-                 patch.object(agent_server, "SERVER_IDENTITY_CACHE", cache), \
+            with patch.object(hyadex_server, "SERVER_IDENTITY_FILE", path), \
+                 patch.object(hyadex_server, "SERVER_IDENTITY_CACHE", cache), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "legacy_server_identity",
                      return_value=changed_machine_result,
                  ) as legacy:
-                self.assertEqual(agent_server.server_identity(), first)
+                self.assertEqual(hyadex_server.server_identity(), first)
                 legacy.assert_not_called()
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
@@ -522,11 +520,11 @@ class StableServerIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "server-identity"
             path.write_text("not-a-valid-identity\n", encoding="ascii")
-            with patch.object(agent_server, "SERVER_IDENTITY_FILE", path), \
-                 patch.object(agent_server, "SERVER_IDENTITY_CACHE", {}), \
-                 patch.object(agent_server, "legacy_server_identity") as legacy:
+            with patch.object(hyadex_server, "SERVER_IDENTITY_FILE", path), \
+                 patch.object(hyadex_server, "SERVER_IDENTITY_CACHE", {}), \
+                 patch.object(hyadex_server, "legacy_server_identity") as legacy:
                 with self.assertRaisesRegex(RuntimeError, "identity is invalid"):
-                    agent_server.server_identity()
+                    hyadex_server.server_identity()
                 legacy.assert_not_called()
 
     def test_persisted_identity_rejects_symlink(self) -> None:
@@ -536,19 +534,19 @@ class StableServerIdentityTests(unittest.TestCase):
             target.write_text("a" * 24 + "\n", encoding="ascii")
             path = root / "server-identity"
             path.symlink_to(target)
-            with patch.object(agent_server, "SERVER_IDENTITY_FILE", path), \
-                 patch.object(agent_server, "SERVER_IDENTITY_CACHE", {}):
+            with patch.object(hyadex_server, "SERVER_IDENTITY_FILE", path), \
+                 patch.object(hyadex_server, "SERVER_IDENTITY_CACHE", {}):
                 with self.assertRaisesRegex(RuntimeError, "not a regular file"):
-                    agent_server.server_identity()
+                    hyadex_server.server_identity()
 
     def test_persisted_identity_rejects_non_regular_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "server-identity"
             path.mkdir()
-            with patch.object(agent_server, "SERVER_IDENTITY_FILE", path), \
-                 patch.object(agent_server, "SERVER_IDENTITY_CACHE", {}):
+            with patch.object(hyadex_server, "SERVER_IDENTITY_FILE", path), \
+                 patch.object(hyadex_server, "SERVER_IDENTITY_CACHE", {}):
                 with self.assertRaisesRegex(RuntimeError, "not a regular file"):
-                    agent_server.server_identity()
+                    hyadex_server.server_identity()
 
     @unittest.skipIf(os.name == "nt", "POSIX file modes are not available")
     def test_existing_identity_is_restricted_to_private_mode(self) -> None:
@@ -557,7 +555,7 @@ class StableServerIdentityTests(unittest.TestCase):
             path.write_text("a" * 24 + "\n", encoding="ascii")
             path.chmod(0o400)
 
-            self.assertEqual(agent_server.read_server_identity_file(path), "a" * 24)
+            self.assertEqual(hyadex_server.read_server_identity_file(path), "a" * 24)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_concurrent_first_writers_do_not_replace_the_winner(self) -> None:
@@ -570,7 +568,7 @@ class StableServerIdentityTests(unittest.TestCase):
                 barrier.wait()
                 results.append((
                     candidate,
-                    agent_server.write_server_identity_file(path, candidate),
+                    hyadex_server.write_server_identity_file(path, candidate),
                 ))
 
             threads = [
@@ -585,7 +583,7 @@ class StableServerIdentityTests(unittest.TestCase):
             self.assertTrue(all(not thread.is_alive() for thread in threads))
             self.assertEqual(sorted(created for _value, created in results), [False, True])
             winner = next(value for value, created in results if created)
-            self.assertEqual(agent_server.read_server_identity_file(path), winner)
+            self.assertEqual(hyadex_server.read_server_identity_file(path), winner)
 
 
 class PollingAccessLogFilterTests(unittest.TestCase):
@@ -611,7 +609,7 @@ class PollingAccessLogFilterTests(unittest.TestCase):
         )
 
     def test_drops_successful_polls_and_keeps_everything_else(self) -> None:
-        log_filter = agent_server.PollingAccessLogFilter()
+        log_filter = hyadex_server.PollingAccessLogFilter()
         dropped = [
             ("GET", "/api/health", 200),
             ("GET", "/api/jobs", 200),
@@ -657,14 +655,14 @@ class PollingAccessLogFilterTests(unittest.TestCase):
                 )
 
     def test_unrelated_records_pass_through(self) -> None:
-        log_filter = agent_server.PollingAccessLogFilter()
+        log_filter = hyadex_server.PollingAccessLogFilter()
         record = logging.LogRecord(
             "uvicorn.access", logging.INFO, __file__, 1, "startup complete", None, None
         )
         self.assertTrue(log_filter.filter(record))
 
     def test_redacts_websocket_query_tokens_before_logging(self) -> None:
-        log_filter = agent_server.PollingAccessLogFilter()
+        log_filter = hyadex_server.PollingAccessLogFilter()
         secret = "admin-secret-that-must-not-reach-disk"
         paths = [
             f"/api/sessions/chat/events?after=5&token={secret}&visible=true",
@@ -717,7 +715,7 @@ class RepeatedMessageFilterTests(unittest.TestCase):
         self.logger.setLevel(logging.DEBUG)
         self.handler = _ListHandler()
         self.logger.addHandler(self.handler)
-        self.filter = agent_server.RepeatedMessageFilter(60.0, clock=lambda: self.clock[0])
+        self.filter = hyadex_server.RepeatedMessageFilter(60.0, clock=lambda: self.clock[0])
         self.logger.addFilter(self.filter)
         self.addCleanup(self.logger.removeHandler, self.handler)
         self.addCleanup(self.logger.removeFilter, self.filter)
@@ -788,7 +786,7 @@ class ConfigureServerLoggingTests(unittest.TestCase):
                 os.environ,
                 {"HYADEX_LOG_MAX_BYTES": "65536", "HYADEX_LOG_BACKUPS": "2"},
             ):
-                installed = agent_server.configure_server_logging(
+                installed = hyadex_server.configure_server_logging(
                     state_dir,
                     root_logger=root,
                     access_logger=access,
@@ -829,8 +827,8 @@ class ConfigureServerLoggingTests(unittest.TestCase):
             os.environ,
             {"HYADEX_LOG_MAX_BYTES": "not-a-number", "HYADEX_LOG_BACKUPS": "-4"},
         ):
-            max_bytes, backups = agent_server.server_log_rotation_settings()
-        self.assertEqual(max_bytes, agent_server.SERVER_LOG_DEFAULT_MAX_BYTES)
+            max_bytes, backups = hyadex_server.server_log_rotation_settings()
+        self.assertEqual(max_bytes, hyadex_server.SERVER_LOG_DEFAULT_MAX_BYTES)
         self.assertEqual(backups, 0)
 
     def test_main_routes_uvicorn_logging_through_root_handlers(self) -> None:
@@ -840,13 +838,13 @@ class ConfigureServerLoggingTests(unittest.TestCase):
             captured.update(kwargs)
 
         with (
-            patch.object(agent_server, "configure_server_logging") as configure,
-            patch.object(agent_server.uvicorn, "run", fake_run),
-            patch.object(agent_server, "AGENT_TOKEN", "test-native-token"),
-            patch.object(agent_server.sys, "argv", ["agent_server.py"]),
+            patch.object(hyadex_server, "configure_server_logging") as configure,
+            patch.object(hyadex_server.uvicorn, "run", fake_run),
+            patch.object(hyadex_server, "AGENT_TOKEN", "test-native-token"),
+            patch.object(hyadex_server.sys, "argv", ["agent_server.py"]),
         ):
-            self.assertEqual(agent_server.main(), 0)
-        configure.assert_called_once_with(agent_server.STATE_DIR)
+            self.assertEqual(hyadex_server.main(), 0)
+        configure.assert_called_once_with(hyadex_server.STATE_DIR)
         self.assertIn("log_config", captured)
         self.assertIsNone(captured["log_config"])
 
@@ -854,14 +852,14 @@ class ConfigureServerLoggingTests(unittest.TestCase):
 class EventCacheInvalidationTests(unittest.IsolatedAsyncioTestCase):
     async def test_forget_preserves_a_currently_owned_delivery_lock(self) -> None:
         session_id = "deleting-chat"
-        agent_server.EVENT_DELIVERY_LOCKS.pop(session_id, None)
-        lock = agent_server.event_delivery_lock(session_id)
+        hyadex_server.EVENT_DELIVERY_LOCKS.pop(session_id, None)
+        lock = hyadex_server.event_delivery_lock(session_id)
         try:
             async with lock:
-                await agent_server.forget_event_seq(session_id)
-                self.assertIs(agent_server.event_delivery_lock(session_id), lock)
+                await hyadex_server.forget_event_seq(session_id)
+                self.assertIs(hyadex_server.event_delivery_lock(session_id), lock)
         finally:
-            agent_server.EVENT_DELIVERY_LOCKS.pop(session_id, None)
+            hyadex_server.EVENT_DELIVERY_LOCKS.pop(session_id, None)
 
     async def test_forget_waits_for_timeline_scan_off_event_loop(self) -> None:
         session_id = "timeline-scan-chat"
@@ -879,12 +877,12 @@ class EventCacheInvalidationTests(unittest.IsolatedAsyncioTestCase):
         started = loop.time()
         try:
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "timeline_index_session_lock",
                 return_value=stripe,
             ):
                 invalidation = asyncio.create_task(
-                    agent_server.forget_event_seq(session_id)
+                    hyadex_server.forget_event_seq(session_id)
                 )
                 await asyncio.sleep(0.02)
                 heartbeat_elapsed = loop.time() - started
@@ -912,8 +910,8 @@ def _write_events(path: Path, count: int, *, session_id: str = "chat", pad: int 
 
 
 def _full_scan(session_id: str, **kwargs: object) -> tuple[list[dict[str, object]], int, bool]:
-    with patch.object(agent_server, "event_index_resume_offset", return_value=0):
-        return agent_server.read_event_catchup_batch(session_id, **kwargs)  # type: ignore[arg-type]
+    with patch.object(hyadex_server, "event_index_resume_offset", return_value=0):
+        return hyadex_server.read_event_catchup_batch(session_id, **kwargs)  # type: ignore[arg-type]
 
 
 class EventCatchupIndexTests(unittest.IsolatedAsyncioTestCase):
@@ -921,7 +919,7 @@ class EventCatchupIndexTests(unittest.IsolatedAsyncioTestCase):
         self._temp = tempfile.TemporaryDirectory()
         self.addCleanup(self._temp.cleanup)
         self.path = Path(self._temp.name) / "events.jsonl"
-        self.index_path = agent_server.events_index_path(self.path)
+        self.index_path = hyadex_server.events_index_path(self.path)
         self.assertEqual(self.index_path.name, "events.idx")
 
     def line_offset(self, seq: int) -> int:
@@ -935,41 +933,41 @@ class EventCatchupIndexTests(unittest.IsolatedAsyncioTestCase):
 
     def test_resume_uses_indexed_offset_and_matches_full_scan(self) -> None:
         _write_events(self.path, 3000, pad=120)
-        self.assertGreater(self.path.stat().st_size, agent_server.EVENT_INDEX_MIN_FILE_BYTES)
+        self.assertGreater(self.path.stat().st_size, hyadex_server.EVENT_INDEX_MIN_FILE_BYTES)
         self.assertFalse(self.index_path.exists())
         with (
-            patch.object(agent_server, "events_path", return_value=self.path),
-            patch.object(agent_server, "fork_internal_run_ids", return_value=set()),
+            patch.object(hyadex_server, "events_path", return_value=self.path),
+            patch.object(hyadex_server, "fork_internal_run_ids", return_value=set()),
         ):
             for after in (0, 1, 511, 512, 513, 1500, 2047, 2048, 2999, 3000):
                 with self.subTest(after=after):
                     expected = _full_scan(
                         "chat", after=after, through=3000, limit=5000, visible=True
                     )
-                    actual = agent_server.read_event_catchup_batch(
+                    actual = hyadex_server.read_event_catchup_batch(
                         "chat", after=after, through=3000, limit=5000, visible=True
                     )
                     self.assertEqual(actual, expected)
             # The first miss rebuilt the index lazily from the transcript.
             self.assertTrue(self.index_path.exists())
-            entries = agent_server.read_event_index(self.path)
+            entries = hyadex_server.read_event_index(self.path)
             self.assertEqual(
                 entries,
                 [(seq, self.line_offset(seq)) for seq in (512, 1024, 1536, 2048, 2560)],
             )
             self.assertEqual(
-                agent_server.event_index_resume_offset(self.path, 1500),
+                hyadex_server.event_index_resume_offset(self.path, 1500),
                 self.line_offset(1024),
             )
-            self.assertEqual(agent_server.event_index_resume_offset(self.path, 511), 0)
-            self.assertEqual(agent_server.event_index_resume_offset(self.path, 0), 0)
+            self.assertEqual(hyadex_server.event_index_resume_offset(self.path, 511), 0)
+            self.assertEqual(hyadex_server.event_index_resume_offset(self.path, 0), 0)
 
             # Paging continues from the returned byte offset exactly as before.
-            first, offset, exhausted = agent_server.read_event_catchup_batch(
+            first, offset, exhausted = hyadex_server.read_event_catchup_batch(
                 "chat", after=1500, through=3000, limit=400, visible=True
             )
             self.assertFalse(exhausted)
-            rest, _, exhausted = agent_server.read_event_catchup_batch(
+            rest, _, exhausted = hyadex_server.read_event_catchup_batch(
                 "chat", after=first[-1]["seq"], through=3000, offset=offset, limit=5000, visible=True
             )
             self.assertTrue(exhausted)
@@ -981,23 +979,23 @@ class EventCatchupIndexTests(unittest.IsolatedAsyncioTestCase):
     def test_stale_index_falls_back_without_skipping_events(self) -> None:
         _write_events(self.path, 2000, pad=120)
         with (
-            patch.object(agent_server, "events_path", return_value=self.path),
-            patch.object(agent_server, "fork_internal_run_ids", return_value=set()),
+            patch.object(hyadex_server, "events_path", return_value=self.path),
+            patch.object(hyadex_server, "fork_internal_run_ids", return_value=set()),
         ):
-            agent_server.rebuild_event_index(self.path)
-            self.assertIsNotNone(agent_server.read_event_index(self.path))
+            hyadex_server.rebuild_event_index(self.path)
+            self.assertIsNotNone(hyadex_server.read_event_index(self.path))
             # Rewrite the transcript in place with longer lines: same inode,
             # every checkpoint now points into the middle of some other line.
             _write_events(self.path, 2000, pad=200)
             self.assertEqual(
-                agent_server.read_event_catchup_batch(
+                hyadex_server.read_event_catchup_batch(
                     "chat", after=1300, through=2000, limit=5000, visible=True
                 ),
                 _full_scan("chat", after=1300, through=2000, limit=5000, visible=True),
             )
             # ...and the index was rebuilt against the new content.
             self.assertEqual(
-                agent_server.event_index_resume_offset(self.path, 1300),
+                hyadex_server.event_index_resume_offset(self.path, 1300),
                 self.line_offset(1024),
             )
 
@@ -1005,9 +1003,9 @@ class EventCatchupIndexTests(unittest.IsolatedAsyncioTestCase):
             replacement = self.path.with_name("replacement.jsonl")
             replacement.write_bytes(self.path.read_bytes())
             os.replace(replacement, self.path)
-            self.assertIsNone(agent_server.read_event_index(self.path))
+            self.assertIsNone(hyadex_server.read_event_index(self.path))
             self.assertEqual(
-                agent_server.read_event_catchup_batch(
+                hyadex_server.read_event_catchup_batch(
                     "chat", after=700, through=2000, limit=5000, visible=True
                 ),
                 _full_scan("chat", after=700, through=2000, limit=5000, visible=True),
@@ -1015,9 +1013,9 @@ class EventCatchupIndexTests(unittest.IsolatedAsyncioTestCase):
 
             # Corrupt index bytes are ignored, not raised.
             self.index_path.write_text("{not json", encoding="utf-8")
-            self.assertIsNone(agent_server.read_event_index(self.path))
+            self.assertIsNone(hyadex_server.read_event_index(self.path))
             self.assertEqual(
-                agent_server.read_event_catchup_batch(
+                hyadex_server.read_event_catchup_batch(
                     "chat", after=700, through=2000, limit=5000, visible=True
                 ),
                 _full_scan("chat", after=700, through=2000, limit=5000, visible=True),
@@ -1025,12 +1023,12 @@ class EventCatchupIndexTests(unittest.IsolatedAsyncioTestCase):
 
     def test_small_transcripts_are_not_indexed(self) -> None:
         _write_events(self.path, 600)
-        self.assertLess(self.path.stat().st_size, agent_server.EVENT_INDEX_MIN_FILE_BYTES)
+        self.assertLess(self.path.stat().st_size, hyadex_server.EVENT_INDEX_MIN_FILE_BYTES)
         with (
-            patch.object(agent_server, "events_path", return_value=self.path),
-            patch.object(agent_server, "fork_internal_run_ids", return_value=set()),
+            patch.object(hyadex_server, "events_path", return_value=self.path),
+            patch.object(hyadex_server, "fork_internal_run_ids", return_value=set()),
         ):
-            events, _, _ = agent_server.read_event_catchup_batch(
+            events, _, _ = hyadex_server.read_event_catchup_batch(
                 "chat", after=550, through=600, limit=500, visible=True
             )
         self.assertEqual(len(events), 40)
@@ -1038,39 +1036,39 @@ class EventCatchupIndexTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_append_event_records_stride_checkpoints(self) -> None:
         session_id = "index-chat"
-        agent_server.EVENT_SEQ_CACHE.pop(session_id, None)
-        agent_server.EVENT_DELIVERY_LOCKS.pop(session_id, None)
-        self.addCleanup(agent_server.EVENT_SEQ_CACHE.pop, session_id, None)
-        self.addCleanup(agent_server.EVENT_DELIVERY_LOCKS.pop, session_id, None)
+        hyadex_server.EVENT_SEQ_CACHE.pop(session_id, None)
+        hyadex_server.EVENT_DELIVERY_LOCKS.pop(session_id, None)
+        self.addCleanup(hyadex_server.EVENT_SEQ_CACHE.pop, session_id, None)
+        self.addCleanup(hyadex_server.EVENT_DELIVERY_LOCKS.pop, session_id, None)
         # Pre-seed 1023 events so the very next append lands on a boundary.
         _write_events(self.path, 1023, session_id=session_id)
         expected_offset = self.path.stat().st_size
         with (
-            patch.dict(agent_server.STORE.sessions, {session_id: {"id": session_id}}),
-            patch.object(agent_server, "ensure_dirs"),
-            patch.object(agent_server, "events_path", return_value=self.path),
-            patch.object(agent_server, "update_session_event_metadata", new=AsyncMock()),
-            patch.object(agent_server.HUB, "broadcast", new=AsyncMock()),
+            patch.dict(hyadex_server.STORE.sessions, {session_id: {"id": session_id}}),
+            patch.object(hyadex_server, "ensure_dirs"),
+            patch.object(hyadex_server, "events_path", return_value=self.path),
+            patch.object(hyadex_server, "update_session_event_metadata", new=AsyncMock()),
+            patch.object(hyadex_server.HUB, "broadcast", new=AsyncMock()),
         ):
-            event = await agent_server.append_event(session_id, "assistant_text", {"text": "boundary"})
+            event = await hyadex_server.append_event(session_id, "assistant_text", {"text": "boundary"})
             self.assertEqual(event["seq"], 1024)
-            self.assertEqual(agent_server.read_event_index(self.path), [(1024, expected_offset)])
-            await agent_server.append_event(session_id, "assistant_text", {"text": "after"})
-            self.assertEqual(agent_server.read_event_index(self.path), [(1024, expected_offset)])
+            self.assertEqual(hyadex_server.read_event_index(self.path), [(1024, expected_offset)])
+            await hyadex_server.append_event(session_id, "assistant_text", {"text": "after"})
+            self.assertEqual(hyadex_server.read_event_index(self.path), [(1024, expected_offset)])
             # The last line is byte-identical to the historical text-mode writer.
             last_line = self.path.read_bytes().splitlines()[-1]
             self.assertEqual(json.loads(last_line)["seq"], 1025)
             self.assertEqual(last_line, json.dumps(json.loads(last_line), separators=(",", ":")).encode())
 
-            with patch.object(agent_server, "fork_internal_run_ids", return_value=set()):
+            with patch.object(hyadex_server, "fork_internal_run_ids", return_value=set()):
                 self.assertEqual(
-                    agent_server.read_event_catchup_batch(
+                    hyadex_server.read_event_catchup_batch(
                         session_id, after=1024, through=1025, limit=10, visible=True
                     )[0],
                     _full_scan(session_id, after=1024, through=1025, limit=10, visible=True)[0],
                 )
                 self.assertEqual(
-                    agent_server.event_index_resume_offset(self.path, 1024),
+                    hyadex_server.event_index_resume_offset(self.path, 1024),
                     expected_offset,
                 )
 

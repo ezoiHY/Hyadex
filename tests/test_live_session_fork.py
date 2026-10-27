@@ -6,9 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-import agent_server as server
-
-
+from tests import hyadex_server as server
 class CompletedPrefixForkTests(unittest.IsolatedAsyncioTestCase):
     def events(self):
         return [

@@ -7,22 +7,20 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 
-import agent_server
-
-
+from tests import hyadex_server
 class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.previous_state_dir = agent_server.STATE_DIR
-        agent_server.STATE_DIR = Path(self.temporary.name)
+        self.previous_state_dir = hyadex_server.STATE_DIR
+        hyadex_server.STATE_DIR = Path(self.temporary.name)
         self.session_id = "claude-chat"
 
     def tearDown(self) -> None:
-        agent_server.STATE_DIR = self.previous_state_dir
+        hyadex_server.STATE_DIR = self.previous_state_dir
         self.temporary.cleanup()
 
     def write_events(self, events: list[dict[str, object]]) -> None:
-        path = agent_server.events_path(self.session_id)
+        path = hyadex_server.events_path(self.session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
 
@@ -121,7 +119,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.write_events(events)
 
-        snapshot = agent_server.build_claude_subagent_snapshot(self.session_id)
+        snapshot = hyadex_server.build_claude_subagent_snapshot(self.session_id)
 
         self.assertEqual(snapshot["count"], 1)
         self.assertEqual(snapshot["active_count"], 0)
@@ -200,7 +198,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.write_events(events)
 
-        snapshot = agent_server.build_claude_subagent_snapshot(self.session_id)
+        snapshot = hyadex_server.build_claude_subagent_snapshot(self.session_id)
         by_id = {item["subagent_id"]: item for item in snapshot["subagents"]}
 
         self.assertEqual(set(by_id), {"orphan-progress", "notification-only"})
@@ -231,7 +229,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.write_events(events)
 
-        running = agent_server.build_claude_subagent_snapshot(self.session_id)["subagents"][0]
+        running = hyadex_server.build_claude_subagent_snapshot(self.session_id)["subagents"][0]
         self.assertEqual(running["subagent_status"], "running")
         self.assertNotIn(ack_secret, json.dumps(running))
 
@@ -242,7 +240,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
             "patch": {"status": "pending"},
         }))
         self.write_events(events)
-        pending = agent_server.build_claude_subagent_snapshot(self.session_id)["subagents"][0]
+        pending = hyadex_server.build_claude_subagent_snapshot(self.session_id)["subagents"][0]
         self.assertEqual(pending["subagent_status"], "starting")
 
         events.append(self.raw(5, {
@@ -256,7 +254,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
             },
         }))
         self.write_events(events)
-        progressing = agent_server.build_claude_subagent_snapshot(self.session_id)["subagents"][0]
+        progressing = hyadex_server.build_claude_subagent_snapshot(self.session_id)["subagents"][0]
         self.assertEqual(progressing["subagent_status"], "running")
         self.assertEqual(progressing["subagent_activity"], "Scanning the repository")
 
@@ -267,7 +265,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
             "patch": {"last_tool_name": "Grep"},
         }))
         self.write_events(events)
-        using_tool = agent_server.build_claude_subagent_snapshot(self.session_id)["subagents"][0]
+        using_tool = hyadex_server.build_claude_subagent_snapshot(self.session_id)["subagents"][0]
         self.assertEqual(using_tool["subagent_activity"], "Using Grep")
 
         events.append(self.raw(7, {
@@ -277,7 +275,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
             "patch": {"status": "killed", "end_time": 1784592454084},
         }))
         self.write_events(events)
-        stopped = agent_server.build_claude_subagent_snapshot(self.session_id)["subagents"][0]
+        stopped = hyadex_server.build_claude_subagent_snapshot(self.session_id)["subagents"][0]
         self.assertEqual(stopped["subagent_status"], "stopped")
 
     def test_parent_terminal_events_preserve_background_agents_after_success(self) -> None:
@@ -299,7 +297,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.write_events(events)
 
-        snapshot = agent_server.build_claude_subagent_snapshot(self.session_id)
+        snapshot = hyadex_server.build_claude_subagent_snapshot(self.session_id)
         by_run = {item["run_id"]: item for item in snapshot["subagents"]}
 
         self.assertEqual(by_run["run-ok"]["subagent_status"], "starting")
@@ -328,7 +326,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.write_events(events)
 
-        snapshot = agent_server.build_claude_subagent_snapshot(self.session_id)
+        snapshot = hyadex_server.build_claude_subagent_snapshot(self.session_id)
 
         self.assertEqual(snapshot["active_count"], 0)
         self.assertEqual(
@@ -339,43 +337,43 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
     def test_snapshot_bounds_states_logs_and_endpoint_limit(self) -> None:
         events: list[dict[str, object]] = []
         seq = 0
-        for index in range(agent_server.SUBAGENT_SNAPSHOT_STATE_LIMIT + 14):
+        for index in range(hyadex_server.SUBAGENT_SNAPSHOT_STATE_LIMIT + 14):
             seq += 1
             events.append(self.event(seq, "tool_started", run_id=f"run-{index}", tool={
                 "id": f"tool-{index}",
                 "name": "Agent",
                 "input": {"description": f"Agent {index}", "run_in_background": True},
             }))
-        for index in range(agent_server.SUBAGENT_SNAPSHOT_LOG_LIMIT + 25):
+        for index in range(hyadex_server.SUBAGENT_SNAPSHOT_LOG_LIMIT + 25):
             seq += 1
             events.append(self.raw(seq, {
                 "type": "system",
                 "subtype": "task_progress",
                 "task_id": "latest-task",
-                "tool_use_id": f"tool-{agent_server.SUBAGENT_SNAPSHOT_STATE_LIMIT + 13}",
+                "tool_use_id": f"tool-{hyadex_server.SUBAGENT_SNAPSHOT_STATE_LIMIT + 13}",
                 "subagent_type": "Explore",
                 "description": f"Step {index}",
-            }, run_id=f"run-{agent_server.SUBAGENT_SNAPSHOT_STATE_LIMIT + 13}"))
+            }, run_id=f"run-{hyadex_server.SUBAGENT_SNAPSHOT_STATE_LIMIT + 13}"))
         self.write_events(events)
 
-        snapshot = agent_server.build_claude_subagent_snapshot(self.session_id, limit=5)
+        snapshot = hyadex_server.build_claude_subagent_snapshot(self.session_id, limit=5)
 
-        self.assertEqual(snapshot["count"], agent_server.SUBAGENT_SNAPSHOT_STATE_LIMIT)
+        self.assertEqual(snapshot["count"], hyadex_server.SUBAGENT_SNAPSHOT_STATE_LIMIT)
         self.assertEqual(len(snapshot["subagents"]), 5)
         latest = next(item for item in snapshot["subagents"] if item["subagent_id"] == "latest-task")
-        self.assertEqual(len(latest["subagent_log"]), agent_server.SUBAGENT_SNAPSHOT_LOG_LIMIT)
-        self.assertEqual(latest["subagent_log"][-1]["text"], f"Step {agent_server.SUBAGENT_SNAPSHOT_LOG_LIMIT + 24}")
+        self.assertEqual(len(latest["subagent_log"]), hyadex_server.SUBAGENT_SNAPSHOT_LOG_LIMIT)
+        self.assertEqual(latest["subagent_log"][-1]["text"], f"Step {hyadex_server.SUBAGENT_SNAPSHOT_LOG_LIMIT + 24}")
 
     async def test_snapshot_omits_silently_learned_state_without_event_identity(self) -> None:
         session_id = "codex-chat"
-        with patch.dict(agent_server.STORE.sessions, {
-            session_id: {"id": session_id, "backend": agent_server.BACKEND_CODEX},
+        with patch.dict(hyadex_server.STORE.sessions, {
+            session_id: {"id": session_id, "backend": hyadex_server.BACKEND_CODEX},
         }, clear=True), patch.dict(
-            agent_server.CODEX_SUBAGENT_STATE, {}, clear=True
+            hyadex_server.CODEX_SUBAGENT_STATE, {}, clear=True
         ), patch.dict(
-            agent_server.CODEX_SUBAGENT_SESSION_INDEX, {}, clear=True
+            hyadex_server.CODEX_SUBAGENT_SESSION_INDEX, {}, clear=True
         ):
-            learned = await agent_server.emit_codex_subagent_state(
+            learned = await hyadex_server.emit_codex_subagent_state(
                 session_id,
                 "terminal-child",
                 "completed",
@@ -385,7 +383,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertNotIn("seq", learned or {})
             self.assertNotIn("id", learned or {})
-            snapshot = agent_server.build_subagent_snapshot(session_id)
+            snapshot = hyadex_server.build_subagent_snapshot(session_id)
 
         self.assertEqual(snapshot["count"], 1)
         self.assertEqual(snapshot["active_count"], 0)
@@ -399,7 +397,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
                 "name": "Agent",
                 "input": {"description": "Review the server", "run_in_background": True},
             }),
-            self.event(2, "raw_event", backend=agent_server.BACKEND_CLAUDE, raw=json.dumps({
+            self.event(2, "raw_event", backend=hyadex_server.BACKEND_CLAUDE, raw=json.dumps({
                 "type": "user",
                 "tool_use_result": {
                     "status": "async_launched",
@@ -412,7 +410,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
                     "tool_use_id": "agent-tool",
                 }]},
             })),
-            self.event(3, "raw_event", backend=agent_server.BACKEND_CLAUDE, raw=json.dumps({
+            self.event(3, "raw_event", backend=hyadex_server.BACKEND_CLAUDE, raw=json.dumps({
                 "type": "system",
                 "subtype": "task_started",
                 "task_id": "task-1",
@@ -420,14 +418,14 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
                 "task_type": "local_agent",
                 "description": "Review the server",
             })),
-            self.event(4, "raw_event", backend=agent_server.BACKEND_CLAUDE, raw=json.dumps({
+            self.event(4, "raw_event", backend=hyadex_server.BACKEND_CLAUDE, raw=json.dumps({
                 "type": "system",
                 "subtype": "task_progress",
                 "task_id": "task-1",
                 "description": "Running tests",
                 "last_tool_name": "Bash",
             })),
-            self.event(5, "raw_event", backend=agent_server.BACKEND_CLAUDE, raw=json.dumps({
+            self.event(5, "raw_event", backend=hyadex_server.BACKEND_CLAUDE, raw=json.dumps({
                 "type": "system",
                 "subtype": "task_updated",
                 "task_id": "task-1",
@@ -435,7 +433,7 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
             })),
         ])
 
-        snapshot = agent_server.build_claude_subagent_snapshot(self.session_id)
+        snapshot = hyadex_server.build_claude_subagent_snapshot(self.session_id)
 
         self.assertEqual(snapshot["active_count"], 0)
         self.assertEqual(len(snapshot["subagents"]), 1)
@@ -450,11 +448,11 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
         owner = object()
         select = AsyncMock(return_value=owner)
         reconcile = AsyncMock()
-        with patch.dict(agent_server.STORE.sessions, {self.session_id: session}, clear=True), \
-             patch.object(agent_server, "codex_app_server_manager", select), \
-             patch.object(agent_server, "reconcile_codex_subagents", reconcile), \
-             patch.object(agent_server, "build_subagent_snapshot", return_value={"subagents": []}):
-            await agent_server.get_session_subagents(self.session_id, limit=12)
+        with patch.dict(hyadex_server.STORE.sessions, {self.session_id: session}, clear=True), \
+             patch.object(hyadex_server, "codex_app_server_manager", select), \
+             patch.object(hyadex_server, "reconcile_codex_subagents", reconcile), \
+             patch.object(hyadex_server, "build_subagent_snapshot", return_value={"subagents": []}):
+            await hyadex_server.get_session_subagents(self.session_id, limit=12)
         select.assert_awaited_once_with(session, allow_retired_login=True)
         reconcile.assert_awaited_once_with(self.session_id, owner)
 
@@ -462,18 +460,18 @@ class ClaudeSubagentSnapshotTests(unittest.IsolatedAsyncioTestCase):
         self.write_events([])
         original_to_thread = asyncio.to_thread
         offload = AsyncMock(side_effect=original_to_thread)
-        with patch.dict(agent_server.STORE.sessions, {self.session_id: {"id": self.session_id}}, clear=True), patch.object(
-            agent_server.asyncio,
+        with patch.dict(hyadex_server.STORE.sessions, {self.session_id: {"id": self.session_id}}, clear=True), patch.object(
+            hyadex_server.asyncio,
             "to_thread",
             new=offload,
         ):
-            response = await agent_server.get_session_subagents(self.session_id, limit=12)
+            response = await hyadex_server.get_session_subagents(self.session_id, limit=12)
             with self.assertRaises(HTTPException) as raised:
-                await agent_server.get_session_subagents("missing", limit=12)
+                await hyadex_server.get_session_subagents("missing", limit=12)
 
         self.assertEqual(response["subagents"], [])
         self.assertEqual(offload.await_count, 1)
-        self.assertIs(offload.await_args.args[0], agent_server.build_subagent_snapshot)
+        self.assertIs(offload.await_args.args[0], hyadex_server.build_subagent_snapshot)
         self.assertEqual(offload.await_args.args[1:], (self.session_id, 12))
         self.assertEqual(raised.exception.status_code, 404)
 

@@ -2,9 +2,7 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
-import agent_server
-
-
+from tests import hyadex_server
 async def wait_forever() -> None:
     await asyncio.Event().wait()
 
@@ -15,26 +13,26 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
         self.session = {
             "id": self.session_id,
             "title": "New chat",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "cwd": "/tmp",
         }
-        self.previous_sessions = agent_server.STORE.sessions
-        self.previous_active = agent_server.RUNS.active
-        self.previous_busy = agent_server.RUNS.busy
-        self.previous_current = agent_server.RUNS.current_turns
-        self.previous_tasks = agent_server.RUNS.turn_tasks
-        self.previous_lifecycle_locks = agent_server.SESSION_LIFECYCLE_LOCKS
-        agent_server.STORE.sessions = {self.session_id: self.session}
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.current_turns = {}
-        agent_server.RUNS.turn_tasks = {}
-        agent_server.SESSION_LIFECYCLE_LOCKS = {}
+        self.previous_sessions = hyadex_server.STORE.sessions
+        self.previous_active = hyadex_server.RUNS.active
+        self.previous_busy = hyadex_server.RUNS.busy
+        self.previous_current = hyadex_server.RUNS.current_turns
+        self.previous_tasks = hyadex_server.RUNS.turn_tasks
+        self.previous_lifecycle_locks = hyadex_server.SESSION_LIFECYCLE_LOCKS
+        hyadex_server.STORE.sessions = {self.session_id: self.session}
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.current_turns = {}
+        hyadex_server.RUNS.turn_tasks = {}
+        hyadex_server.SESSION_LIFECYCLE_LOCKS = {}
 
     async def asyncTearDown(self) -> None:
         pending = [
             task
-            for tasks in agent_server.RUNS.turn_tasks.values()
+            for tasks in hyadex_server.RUNS.turn_tasks.values()
             for task in tasks
             if not task.done()
         ]
@@ -42,18 +40,18 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
-        agent_server.STORE.sessions = self.previous_sessions
-        agent_server.RUNS.active = self.previous_active
-        agent_server.RUNS.busy = self.previous_busy
-        agent_server.RUNS.current_turns = self.previous_current
-        agent_server.RUNS.turn_tasks = self.previous_tasks
-        agent_server.SESSION_LIFECYCLE_LOCKS = self.previous_lifecycle_locks
+        hyadex_server.STORE.sessions = self.previous_sessions
+        hyadex_server.RUNS.active = self.previous_active
+        hyadex_server.RUNS.busy = self.previous_busy
+        hyadex_server.RUNS.current_turns = self.previous_current
+        hyadex_server.RUNS.turn_tasks = self.previous_tasks
+        hyadex_server.SESSION_LIFECYCLE_LOCKS = self.previous_lifecycle_locks
 
     def provider_runtime_env_patch(self):
         """Isolate backend-lifecycle tests from capability serialization."""
 
         return patch.object(
-            agent_server,
+            hyadex_server,
             "provider_authority_runtime_env",
             AsyncMock(return_value={"HYADEX_CHAT_ID": self.session_id}),
         )
@@ -61,19 +59,19 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_busy_first_turn_rejects_backend_change_without_provider_id(
         self,
     ) -> None:
-        agent_server.RUNS.busy.add(self.session_id)
-        agent_server.RUNS.current_turns[self.session_id] = {
+        hyadex_server.RUNS.busy.add(self.session_id)
+        hyadex_server.RUNS.current_turns[self.session_id] = {
             "run_id": None,
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
         }
         update = AsyncMock(return_value=self.session)
 
-        with patch.object(agent_server.STORE, "update", update):
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                await agent_server.update_session(
+        with patch.object(hyadex_server.STORE, "update", update):
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                await hyadex_server.update_session(
                     self.session_id,
-                    agent_server.UpdateSessionRequest(
-                        backend=agent_server.BACKEND_CODEX,
+                    hyadex_server.UpdateSessionRequest(
+                        backend=hyadex_server.BACKEND_CODEX,
                     ),
                 )
 
@@ -84,18 +82,18 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_active_record_rejects_change_even_without_busy_reservation(
         self,
     ) -> None:
-        agent_server.RUNS.active[self.session_id] = {
+        hyadex_server.RUNS.active[self.session_id] = {
             "run_id": "run-active",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
         }
         update = AsyncMock(return_value=self.session)
 
-        with patch.object(agent_server.STORE, "update", update):
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                await agent_server.update_session(
+        with patch.object(hyadex_server.STORE, "update", update):
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                await hyadex_server.update_session(
                     self.session_id,
-                    agent_server.UpdateSessionRequest(
-                        backend=agent_server.BACKEND_CODEX,
+                    hyadex_server.UpdateSessionRequest(
+                        backend=hyadex_server.BACKEND_CODEX,
                     ),
                 )
 
@@ -106,17 +104,17 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         provider_start = asyncio.create_task(wait_forever())
-        agent_server.RUNS.turn_tasks = {
+        hyadex_server.RUNS.turn_tasks = {
             self.session_id: {provider_start},
         }
         update = AsyncMock(return_value=self.session)
 
-        with patch.object(agent_server.STORE, "update", update):
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                await agent_server.update_session(
+        with patch.object(hyadex_server.STORE, "update", update):
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                await hyadex_server.update_session(
                     self.session_id,
-                    agent_server.UpdateSessionRequest(
-                        backend=agent_server.BACKEND_CODEX,
+                    hyadex_server.UpdateSessionRequest(
+                        backend=hyadex_server.BACKEND_CODEX,
                     ),
                 )
 
@@ -125,19 +123,19 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_noop_backend_updates_remain_allowed_while_starting(self) -> None:
         provider_start = asyncio.create_task(wait_forever())
-        agent_server.RUNS.turn_tasks = {
+        hyadex_server.RUNS.turn_tasks = {
             self.session_id: {provider_start},
         }
         update = AsyncMock(return_value=self.session)
 
-        with patch.object(agent_server.STORE, "update", update):
-            same_response = await agent_server.update_session(
+        with patch.object(hyadex_server.STORE, "update", update):
+            same_response = await hyadex_server.update_session(
                 self.session_id,
-                agent_server.UpdateSessionRequest(backend="CLAUDE"),
+                hyadex_server.UpdateSessionRequest(backend="CLAUDE"),
             )
-            null_response = await agent_server.update_session(
+            null_response = await hyadex_server.update_session(
                 self.session_id,
-                agent_server.UpdateSessionRequest(backend=None),
+                hyadex_server.UpdateSessionRequest(backend=None),
             )
 
         self.assertEqual(same_response["session"]["backend"], "claude")
@@ -147,24 +145,24 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_completed_registry_entries_do_not_block_a_change(self) -> None:
         completed = asyncio.create_task(asyncio.sleep(0))
         await completed
-        agent_server.RUNS.turn_tasks = {
+        hyadex_server.RUNS.turn_tasks = {
             self.session_id: {completed},
         }
-        changed = {**self.session, "backend": agent_server.BACKEND_CODEX}
+        changed = {**self.session, "backend": hyadex_server.BACKEND_CODEX}
         update = AsyncMock(return_value=changed)
 
-        with patch.object(agent_server.STORE, "update", update):
-            response = await agent_server.update_session(
+        with patch.object(hyadex_server.STORE, "update", update):
+            response = await hyadex_server.update_session(
                 self.session_id,
-                agent_server.UpdateSessionRequest(
-                    backend=agent_server.BACKEND_CODEX,
+                hyadex_server.UpdateSessionRequest(
+                    backend=hyadex_server.BACKEND_CODEX,
                 ),
             )
 
         self.assertEqual(response["session"]["backend"], "codex")
         update.assert_awaited_once_with(
             self.session_id,
-            {"backend": agent_server.BACKEND_CODEX},
+            {"backend": hyadex_server.BACKEND_CODEX},
         )
 
     async def test_backend_patch_that_wins_invalidates_a_waiting_turn(self) -> None:
@@ -182,49 +180,49 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             return self.session
 
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "update",
             AsyncMock(side_effect=gated_update),
         ):
             update_task = asyncio.create_task(
-                agent_server.update_session(
+                hyadex_server.update_session(
                     self.session_id,
-                    agent_server.UpdateSessionRequest(
-                        backend=agent_server.BACKEND_CODEX,
+                    hyadex_server.UpdateSessionRequest(
+                        backend=hyadex_server.BACKEND_CODEX,
                     ),
                 )
             )
             await asyncio.wait_for(update_entered.wait(), timeout=1)
 
             turn_task = asyncio.create_task(
-                agent_server.start_turn(
+                hyadex_server.start_turn(
                     self.session_id,
-                    agent_server.TurnRequest(
+                    hyadex_server.TurnRequest(
                         prompt="Use the backend selected when I pressed Send",
-                        backend=agent_server.BACKEND_CLAUDE,
+                        backend=hyadex_server.BACKEND_CLAUDE,
                     ),
                 )
             )
             for _attempt in range(20):
-                if agent_server.RUNS.turn_tasks.get(self.session_id):
+                if hyadex_server.RUNS.turn_tasks.get(self.session_id):
                     break
                 await asyncio.sleep(0)
             self.assertIn(
                 turn_task,
-                agent_server.RUNS.turn_tasks.get(self.session_id, set()),
+                hyadex_server.RUNS.turn_tasks.get(self.session_id, set()),
             )
 
             allow_update.set()
             update_response = await asyncio.wait_for(update_task, timeout=1)
-            with self.assertRaises(agent_server.HTTPException) as raised:
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
                 await asyncio.wait_for(turn_task, timeout=1)
 
         self.assertEqual(update_response["session"]["backend"], "codex")
         self.assertEqual(raised.exception.status_code, 409)
         self.assertIn("backend changed", str(raised.exception.detail))
-        self.assertNotIn(self.session_id, agent_server.RUNS.busy)
-        self.assertNotIn(self.session_id, agent_server.RUNS.current_turns)
-        self.assertNotIn(self.session_id, agent_server.RUNS.turn_tasks)
+        self.assertNotIn(self.session_id, hyadex_server.RUNS.busy)
+        self.assertNotIn(self.session_id, hyadex_server.RUNS.current_turns)
+        self.assertNotIn(self.session_id, hyadex_server.RUNS.turn_tasks)
 
     async def test_durable_first_turn_lock_blocks_backend_without_provider_id(
         self,
@@ -233,14 +231,14 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
         update = AsyncMock(return_value=self.session)
 
         self.assertTrue(
-            agent_server.public_session(self.session, summary=True)["backend_locked"]
+            hyadex_server.public_session(self.session, summary=True)["backend_locked"]
         )
-        with patch.object(agent_server.STORE, "update", update):
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                await agent_server.update_session(
+        with patch.object(hyadex_server.STORE, "update", update):
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                await hyadex_server.update_session(
                     self.session_id,
-                    agent_server.UpdateSessionRequest(
-                        backend=agent_server.BACKEND_CODEX,
+                    hyadex_server.UpdateSessionRequest(
+                        backend=hyadex_server.BACKEND_CODEX,
                     ),
                 )
 
@@ -251,15 +249,15 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_mark_backend_started_persists_summary_lock(self) -> None:
         save = AsyncMock()
 
-        with patch.object(agent_server.STORE, "save", save):
-            marked = await agent_server.STORE.mark_backend_started(
+        with patch.object(hyadex_server.STORE, "save", save):
+            marked = await hyadex_server.STORE.mark_backend_started(
                 self.session_id,
-                agent_server.BACKEND_CLAUDE,
+                hyadex_server.BACKEND_CLAUDE,
             )
 
         self.assertTrue(marked["backend_locked"])
         self.assertTrue(
-            agent_server.public_session(marked, summary=True)["backend_locked"]
+            hyadex_server.public_session(marked, summary=True)["backend_locked"]
         )
         save.assert_awaited_once()
 
@@ -271,7 +269,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             backend: str,
         ) -> dict[str, object]:
             self.assertEqual(session_id, self.session_id)
-            self.assertEqual(backend, agent_server.BACKEND_CLAUDE)
+            self.assertEqual(backend, hyadex_server.BACKEND_CLAUDE)
             self.session["backend_locked"] = True
             return self.session
 
@@ -281,41 +279,41 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
         run_claude = AsyncMock()
 
         with (
-            patch.object(agent_server.STORE, "mark_backend_started", mark),
-            patch.object(agent_server.STORE, "update", update),
+            patch.object(hyadex_server.STORE, "mark_backend_started", mark),
+            patch.object(hyadex_server.STORE, "update", update),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "turn_start_blocker",
                 AsyncMock(return_value=None),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_runtime_available",
                 AsyncMock(),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "build_turn_provider_prompt",
                 return_value="provider prompt",
             ),
-            patch.object(agent_server, "append_event", append_event),
-            patch.object(agent_server, "run_claude", run_claude),
+            patch.object(hyadex_server, "append_event", append_event),
+            patch.object(hyadex_server, "run_claude", run_claude),
         ):
-            result = await agent_server._start_turn_locked(
+            result = await hyadex_server._start_turn_locked(
                 self.session_id,
-                agent_server.TurnRequest(prompt="Start"),
-                admission_backend=agent_server.BACKEND_CLAUDE,
+                hyadex_server.TurnRequest(prompt="Start"),
+                admission_backend=hyadex_server.BACKEND_CLAUDE,
             )
             await asyncio.sleep(0)
 
         mark.assert_awaited_once_with(
             self.session_id,
-            agent_server.BACKEND_CLAUDE,
+            hyadex_server.BACKEND_CLAUDE,
         )
         self.assertTrue(result["session"]["backend_locked"])
         run_claude.assert_awaited_once()
@@ -329,20 +327,20 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
         ):
             with (
                 self.subTest(available=available, minimum=minimum),
-                patch.object(agent_server, "MIN_START_AVAILABLE_MEM_MB", minimum),
-                patch.object(agent_server, "MAX_ACTIVE_AGENT_RUNS", 0),
-                patch.object(agent_server, "host_pressure_snapshot", return_value={"available_mem_mb": available}),
-                patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
-                patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
-                patch.object(agent_server, "ensure_runtime_available", AsyncMock()),
-                patch.object(agent_server, "run_claude", AsyncMock()) as run,
-                patch.object(agent_server, "append_event", AsyncMock()) as append,
-                patch.object(agent_server.STORE, "mark_backend_started", AsyncMock()) as mark,
+                patch.object(hyadex_server, "MIN_START_AVAILABLE_MEM_MB", minimum),
+                patch.object(hyadex_server, "MAX_ACTIVE_AGENT_RUNS", 0),
+                patch.object(hyadex_server, "host_pressure_snapshot", return_value={"available_mem_mb": available}),
+                patch.object(hyadex_server, "server_lifecycle_admission_blocker", return_value=None),
+                patch.object(hyadex_server, "server_lifecycle_admission_blocker", return_value=None),
+                patch.object(hyadex_server, "ensure_runtime_available", AsyncMock()),
+                patch.object(hyadex_server, "run_claude", AsyncMock()) as run,
+                patch.object(hyadex_server, "append_event", AsyncMock()) as append,
+                patch.object(hyadex_server.STORE, "mark_backend_started", AsyncMock()) as mark,
             ):
                 # Keep the real send entrypoint and admission check. No provider
                 # or listener starts; the same HTTPException becomes the 503 body.
-                with self.assertRaises(agent_server.TransientAdmissionWait) as raised:
-                    await agent_server.post_turn(self.session_id, agent_server.TurnRequest(prompt="Start"))
+                with self.assertRaises(hyadex_server.TransientAdmissionWait) as raised:
+                    await hyadex_server.post_turn(self.session_id, hyadex_server.TurnRequest(prompt="Start"))
                 self.assertEqual(raised.exception.status_code, 503)
                 self.assertEqual(raised.exception.detail,
                     f"agent launch deferred: low available memory on the server: {available} MiB available; "
@@ -351,26 +349,26 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
                 run.assert_not_called()
                 append.assert_not_awaited()
                 mark.assert_not_awaited()
-                self.assertNotIn(self.session_id, agent_server.RUNS.busy)
-                self.assertNotIn(self.session_id, agent_server.RUNS.current_turns)
-                self.assertNotIn(self.session_id, agent_server.RUNS.turn_tasks)
+                self.assertNotIn(self.session_id, hyadex_server.RUNS.busy)
+                self.assertNotIn(self.session_id, hyadex_server.RUNS.current_turns)
+                self.assertNotIn(self.session_id, hyadex_server.RUNS.turn_tasks)
 
     async def test_2048_mib_send_reaches_provider_admission(self) -> None:
         self.session["title"] = "Existing chat"
         with (
-            patch.object(agent_server, "MIN_START_AVAILABLE_MEM_MB", 2048),
-            patch.object(agent_server, "MAX_ACTIVE_AGENT_RUNS", 0),
-            patch.object(agent_server, "host_pressure_snapshot", return_value={"available_mem_mb": 2048}),
-            patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
-            patch.object(agent_server, "server_lifecycle_admission_blocker", return_value=None),
-            patch.object(agent_server, "ensure_runtime_available", AsyncMock()),
-            patch.object(agent_server.STORE, "mark_backend_started", AsyncMock(return_value=self.session)) as mark,
-            patch.object(agent_server.STORE, "update", AsyncMock(return_value=self.session)),
-            patch.object(agent_server, "build_turn_provider_prompt", return_value="provider prompt"),
-            patch.object(agent_server, "append_event", AsyncMock(return_value={"type": "turn_started", "seq": 1})),
-            patch.object(agent_server, "run_claude", AsyncMock()) as run,
+            patch.object(hyadex_server, "MIN_START_AVAILABLE_MEM_MB", 2048),
+            patch.object(hyadex_server, "MAX_ACTIVE_AGENT_RUNS", 0),
+            patch.object(hyadex_server, "host_pressure_snapshot", return_value={"available_mem_mb": 2048}),
+            patch.object(hyadex_server, "server_lifecycle_admission_blocker", return_value=None),
+            patch.object(hyadex_server, "server_lifecycle_admission_blocker", return_value=None),
+            patch.object(hyadex_server, "ensure_runtime_available", AsyncMock()),
+            patch.object(hyadex_server.STORE, "mark_backend_started", AsyncMock(return_value=self.session)) as mark,
+            patch.object(hyadex_server.STORE, "update", AsyncMock(return_value=self.session)),
+            patch.object(hyadex_server, "build_turn_provider_prompt", return_value="provider prompt"),
+            patch.object(hyadex_server, "append_event", AsyncMock(return_value={"type": "turn_started", "seq": 1})),
+            patch.object(hyadex_server, "run_claude", AsyncMock()) as run,
         ):
-            result = await agent_server.post_turn(self.session_id, agent_server.TurnRequest(prompt="Start"))
+            result = await hyadex_server.post_turn(self.session_id, hyadex_server.TurnRequest(prompt="Start"))
             await asyncio.sleep(0)
             self.assertEqual(result["session"]["id"], self.session_id)
             mark.assert_awaited_once()
@@ -403,59 +401,59 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "mark_backend_started",
                 AsyncMock(return_value=self.session),
             ),
             patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "update",
                 AsyncMock(return_value=self.session),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "turn_start_blocker",
                 AsyncMock(return_value=None),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_runtime_available",
                 AsyncMock(return_value={}),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "build_turn_provider_prompt",
                 return_value="provider prompt",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "append_durable_event",
                 AsyncMock(side_effect=append_durable),
             ) as durable,
-            patch.object(agent_server, "run_claude", new=launch_provider),
+            patch.object(hyadex_server, "run_claude", new=launch_provider),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "issue_provider_authority",
-                AsyncMock(return_value=agent_server.STATE_DIR / "test-authority.json"),
+                AsyncMock(return_value=hyadex_server.STATE_DIR / "test-authority.json"),
             ),
             self.provider_runtime_env_patch(),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scrub_tmux_global_secret_environment",
                 return_value=None,
             ),
         ):
-            result = await agent_server._start_turn_locked(
+            result = await hyadex_server._start_turn_locked(
                 self.session_id,
-                agent_server.TurnRequest(prompt="Queued start"),
+                hyadex_server.TurnRequest(prompt="Queued start"),
                 queue_if_busy=False,
                 queued_id="queued-durable",
-                admission_backend=agent_server.BACKEND_CLAUDE,
+                admission_backend=hyadex_server.BACKEND_CLAUDE,
             )
             try:
                 self.assertEqual(order, ["durable", "provider"])
@@ -464,7 +462,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 provider_release.set()
                 await asyncio.gather(
-                    *list(agent_server.RUNS.turn_tasks.get(self.session_id, set())),
+                    *list(hyadex_server.RUNS.turn_tasks.get(self.session_id, set())),
                     return_exceptions=True,
                 )
 
@@ -479,72 +477,72 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             await provider_release.wait()
 
         with (
-            patch.object(agent_server.RUNS, "run_metadata", run_metadata),
+            patch.object(hyadex_server.RUNS, "run_metadata", run_metadata),
             patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "mark_backend_started",
                 AsyncMock(return_value=self.session),
             ),
             patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "update",
                 AsyncMock(side_effect=OSError("title save failed")),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "turn_start_blocker",
                 AsyncMock(return_value=None),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_runtime_available",
                 AsyncMock(return_value={}),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "build_turn_provider_prompt",
                 return_value="provider prompt",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "append_event",
                 AsyncMock(return_value={"type": "turn_started", "seq": 1}),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "run_claude",
                 new=lambda *args, **kwargs: provider(),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "issue_provider_authority",
-                AsyncMock(return_value=agent_server.STATE_DIR / "test-authority.json"),
+                AsyncMock(return_value=hyadex_server.STATE_DIR / "test-authority.json"),
             ),
             self.provider_runtime_env_patch(),
-            patch.object(agent_server, "revoke_provider_authority", revoke),
+            patch.object(hyadex_server, "revoke_provider_authority", revoke),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scrub_tmux_global_secret_environment",
                 return_value=None,
             ),
-            patch.object(agent_server.logger, "exception"),
+            patch.object(hyadex_server.logger, "exception"),
         ):
-            result = await agent_server._start_turn_locked(
+            result = await hyadex_server._start_turn_locked(
                 self.session_id,
-                agent_server.TurnRequest(prompt="Live start"),
+                hyadex_server.TurnRequest(prompt="Live start"),
                 queue_if_busy=False,
-                admission_backend=agent_server.BACKEND_CLAUDE,
+                admission_backend=hyadex_server.BACKEND_CLAUDE,
             )
             try:
                 run_id = result["run_id"]
-                self.assertIn(self.session_id, agent_server.RUNS.busy)
+                self.assertIn(self.session_id, hyadex_server.RUNS.busy)
                 self.assertEqual(
-                    agent_server.RUNS.current_turns[self.session_id]["run_id"],
+                    hyadex_server.RUNS.current_turns[self.session_id]["run_id"],
                     run_id,
                 )
                 self.assertIn(run_id, run_metadata)
@@ -552,7 +550,7 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 provider_release.set()
                 await asyncio.gather(
-                    *list(agent_server.RUNS.turn_tasks.get(self.session_id, set())),
+                    *list(hyadex_server.RUNS.turn_tasks.get(self.session_id, set())),
                     return_exceptions=True,
                 )
 
@@ -567,75 +565,75 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
 
         async def revoke_and_replace(run_id: str) -> None:
             revoked_run_ids.append(run_id)
-            async with agent_server.RUNS.active_lock:
-                agent_server.RUNS.current_turns[self.session_id] = {
+            async with hyadex_server.RUNS.active_lock:
+                hyadex_server.RUNS.current_turns[self.session_id] = {
                     "run_id": "run-replacement",
                     "_server_restart_admission_id": "replacement-admission",
                 }
-                agent_server.RUNS.active[self.session_id] = {
+                hyadex_server.RUNS.active[self.session_id] = {
                     "run_id": "run-replacement",
                 }
-                agent_server.RUNS.busy.add(self.session_id)
+                hyadex_server.RUNS.busy.add(self.session_id)
 
         with (
-            patch.object(agent_server.RUNS, "run_metadata", run_metadata),
+            patch.object(hyadex_server.RUNS, "run_metadata", run_metadata),
             patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "mark_backend_started",
                 AsyncMock(return_value=self.session),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "turn_start_blocker",
                 AsyncMock(return_value=None),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_runtime_available",
                 AsyncMock(return_value={}),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "build_turn_provider_prompt",
                 return_value="provider prompt",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "append_event",
                 AsyncMock(return_value={"type": "turn_started", "seq": 1}),
             ),
-            patch.object(agent_server, "run_claude", new=fail_launch),
+            patch.object(hyadex_server, "run_claude", new=fail_launch),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "issue_provider_authority",
-                AsyncMock(return_value=agent_server.STATE_DIR / "test-authority.json"),
+                AsyncMock(return_value=hyadex_server.STATE_DIR / "test-authority.json"),
             ),
             self.provider_runtime_env_patch(),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "revoke_provider_authority",
                 AsyncMock(side_effect=revoke_and_replace),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scrub_tmux_global_secret_environment",
                 return_value=None,
             ),
         ):
             with self.assertRaisesRegex(RuntimeError, "provider launch failed"):
-                await agent_server._start_turn_locked(
+                await hyadex_server._start_turn_locked(
                     self.session_id,
-                    agent_server.TurnRequest(
+                    hyadex_server.TurnRequest(
                         prompt="Failed start",
                         purpose="admission_regression",
                     ),
                     queue_if_busy=False,
-                    admission_backend=agent_server.BACKEND_CLAUDE,
+                    admission_backend=hyadex_server.BACKEND_CLAUDE,
                 )
 
         self.assertEqual(len(revoked_run_ids), 1)
@@ -645,14 +643,14 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             {"purpose": "replacement"},
         )
         self.assertEqual(
-            agent_server.RUNS.current_turns[self.session_id]["run_id"],
+            hyadex_server.RUNS.current_turns[self.session_id]["run_id"],
             "run-replacement",
         )
         self.assertEqual(
-            agent_server.RUNS.active[self.session_id]["run_id"],
+            hyadex_server.RUNS.active[self.session_id]["run_id"],
             "run-replacement",
         )
-        self.assertIn(self.session_id, agent_server.RUNS.busy)
+        self.assertIn(self.session_id, hyadex_server.RUNS.busy)
 
     async def test_cancel_during_precommit_failure_cleanup_does_not_strand_slot(
         self,
@@ -669,64 +667,64 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             await release_revoke.wait()
 
         with (
-            patch.object(agent_server.RUNS, "run_metadata", run_metadata),
+            patch.object(hyadex_server.RUNS, "run_metadata", run_metadata),
             patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "mark_backend_started",
                 AsyncMock(return_value=self.session),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "turn_start_blocker",
                 AsyncMock(return_value=None),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_runtime_available",
                 AsyncMock(return_value={}),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "build_turn_provider_prompt",
                 return_value="provider prompt",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "append_event",
                 AsyncMock(return_value={"type": "turn_started", "seq": 1}),
             ),
-            patch.object(agent_server, "run_claude", new=fail_launch),
+            patch.object(hyadex_server, "run_claude", new=fail_launch),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "issue_provider_authority",
-                AsyncMock(return_value=agent_server.STATE_DIR / "test-authority.json"),
+                AsyncMock(return_value=hyadex_server.STATE_DIR / "test-authority.json"),
             ),
             self.provider_runtime_env_patch(),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "revoke_provider_authority",
                 AsyncMock(side_effect=blocked_revoke),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scrub_tmux_global_secret_environment",
                 return_value=None,
             ),
         ):
             start = asyncio.create_task(
-                agent_server._start_turn_locked(
+                hyadex_server._start_turn_locked(
                     self.session_id,
-                    agent_server.TurnRequest(
+                    hyadex_server.TurnRequest(
                         prompt="Cancelled failed start",
                         purpose="admission_regression",
                     ),
                     queue_if_busy=False,
-                    admission_backend=agent_server.BACKEND_CLAUDE,
+                    admission_backend=hyadex_server.BACKEND_CLAUDE,
                 )
             )
             try:
@@ -737,11 +735,11 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
                 start.cancel()
                 await asyncio.sleep(0)
                 self.assertFalse(start.done())
-                self.assertIn(self.session_id, agent_server.RUNS.busy)
+                self.assertIn(self.session_id, hyadex_server.RUNS.busy)
                 start.cancel()
                 await asyncio.sleep(0)
                 self.assertFalse(start.done())
-                self.assertIn(self.session_id, agent_server.RUNS.busy)
+                self.assertIn(self.session_id, hyadex_server.RUNS.busy)
 
                 release_revoke.set()
                 with self.assertRaises(asyncio.CancelledError):
@@ -752,8 +750,8 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
                     start.cancel()
                     await asyncio.gather(start, return_exceptions=True)
 
-        self.assertNotIn(self.session_id, agent_server.RUNS.busy)
-        self.assertNotIn(self.session_id, agent_server.RUNS.current_turns)
+        self.assertNotIn(self.session_id, hyadex_server.RUNS.busy)
+        self.assertNotIn(self.session_id, hyadex_server.RUNS.current_turns)
         self.assertEqual(run_metadata, {})
 
     async def test_precommit_cleanup_failure_still_releases_owned_slot(
@@ -768,69 +766,69 @@ class SessionBackendUpdateFenceTests(unittest.IsolatedAsyncioTestCase):
             raise OSError("capability revoke failed")
 
         with (
-            patch.object(agent_server.RUNS, "run_metadata", run_metadata),
+            patch.object(hyadex_server.RUNS, "run_metadata", run_metadata),
             patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "mark_backend_started",
                 AsyncMock(return_value=self.session),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "server_lifecycle_admission_blocker",
                 return_value=None,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "turn_start_blocker",
                 AsyncMock(return_value=None),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_runtime_available",
                 AsyncMock(return_value={}),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "build_turn_provider_prompt",
                 return_value="provider prompt",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "append_event",
                 AsyncMock(return_value={"type": "turn_started", "seq": 1}),
             ),
-            patch.object(agent_server, "run_claude", new=fail_launch),
+            patch.object(hyadex_server, "run_claude", new=fail_launch),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "issue_provider_authority",
-                AsyncMock(return_value=agent_server.STATE_DIR / "test-authority.json"),
+                AsyncMock(return_value=hyadex_server.STATE_DIR / "test-authority.json"),
             ),
             self.provider_runtime_env_patch(),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "revoke_provider_authority",
                 AsyncMock(side_effect=fail_revoke),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "scrub_tmux_global_secret_environment",
                 return_value=None,
             ),
         ):
             with self.assertRaisesRegex(OSError, "capability revoke failed") as raised:
-                await agent_server._start_turn_locked(
+                await hyadex_server._start_turn_locked(
                     self.session_id,
-                    agent_server.TurnRequest(
+                    hyadex_server.TurnRequest(
                         prompt="Failed cleanup",
                         purpose="admission_regression",
                     ),
                     queue_if_busy=False,
-                    admission_backend=agent_server.BACKEND_CLAUDE,
+                    admission_backend=hyadex_server.BACKEND_CLAUDE,
                 )
 
         self.assertIsInstance(raised.exception.__cause__, RuntimeError)
-        self.assertNotIn(self.session_id, agent_server.RUNS.busy)
-        self.assertNotIn(self.session_id, agent_server.RUNS.current_turns)
+        self.assertNotIn(self.session_id, hyadex_server.RUNS.busy)
+        self.assertNotIn(self.session_id, hyadex_server.RUNS.current_turns)
         self.assertEqual(run_metadata, {})
 
 

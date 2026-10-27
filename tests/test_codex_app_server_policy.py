@@ -2,9 +2,7 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
-import agent_server
-
-
+from tests import hyadex_server
 class FakeCodexAppServerManager:
     def __init__(self, *, loaded: set[str] | None = None) -> None:
         self.generation = 1
@@ -50,18 +48,18 @@ class FakeCodexAppServerManager:
 
 class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
-        for event in agent_server.CODEX_APP_SERVER_EVICTING_THREADS.values():
+        for event in hyadex_server.CODEX_APP_SERVER_EVICTING_THREADS.values():
             event.set()
-        agent_server.CODEX_APP_SERVER_EVICTING_THREADS.clear()
-        agent_server.CODEX_APP_SERVER_PINNED_THREADS.clear()
-        agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS.clear()
-        agent_server.CODEX_APP_SERVER_INVALIDATED_THREADS.clear()
-        agent_server.CODEX_APP_SERVER_THREAD_LRU.clear()
+        hyadex_server.CODEX_APP_SERVER_EVICTING_THREADS.clear()
+        hyadex_server.CODEX_APP_SERVER_PINNED_THREADS.clear()
+        hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS.clear()
+        hyadex_server.CODEX_APP_SERVER_INVALIDATED_THREADS.clear()
+        hyadex_server.CODEX_APP_SERVER_THREAD_LRU.clear()
 
     def session(self, **overrides: object) -> dict[str, object]:
         value: dict[str, object] = {
             "id": "chat-1",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "cwd": "/repo",
         }
         value.update(overrides)
@@ -70,20 +68,20 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
     def test_compact_policy_is_thread_context_not_a_user_wrapper(self) -> None:
         session = self.session()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ):
-            instructions = agent_server.codex_thread_instructions("chat-1", session)
+            instructions = hyadex_server.codex_thread_instructions("chat-1", session)
 
         self.assertNotIn("[Hyadex context]", instructions)
         self.assertNotIn("User prompt follows", instructions)
         self.assertNotIn("Scheduled jobs", instructions)
         self.assertNotIn("Current jobs for this chat", instructions)
-        self.assertIn(str(agent_server.codex_manifest_path("chat-1")), instructions)
+        self.assertIn(str(hyadex_server.codex_manifest_path("chat-1")), instructions)
         self.assertIn("Hyadex provider tool described below", instructions)
         self.assertIn(
-            f"Use only `{agent_server.CLAUDE_PROVIDER_MCP_TOOL_NAME}`",
+            f"Use only `{hyadex_server.CLAUDE_PROVIDER_MCP_TOOL_NAME}`",
             instructions,
         )
         self.assertIn(
@@ -93,7 +91,7 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Use the `hyadex` provider tool", instructions)
         self.assertNotIn("provider-authority block", instructions)
         self.assertNotIn("--chat-id chat-1", instructions)
-        self.assertIn(agent_server.terminal_session_name("chat-1"), instructions)
+        self.assertIn(hyadex_server.terminal_session_name("chat-1"), instructions)
         self.assertIn("immediately retry the still-safe requested operation", instructions)
         self.assertIn("delegate bounded noisy exploration", instructions)
         self.assertIn("Never detach required work", instructions)
@@ -107,36 +105,36 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
         # provenance rules moved from every per-turn prompt into these thread
         # instructions, so the line budget applies to the core policy and the
         # static addendum is bounded separately (present exactly once).
-        core = instructions.split(agent_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip())[0]
+        core = instructions.split(hyadex_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip())[0]
         self.assertLessEqual(len(core.strip().splitlines()), 16)
         self.assertEqual(
-            instructions.count(agent_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip()),
+            instructions.count(hyadex_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip()),
             1,
         )
 
     def test_codex_policy_version_rotates_existing_thread_hashes(self) -> None:
         session = self.session()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ):
-            current_hash = agent_server.codex_thread_instruction_hash(
+            current_hash = hyadex_server.codex_thread_instruction_hash(
                 "chat-1",
                 session,
             )
-            with patch.object(agent_server, "CODEX_THREAD_POLICY_VERSION", "8"):
-                previous_hash = agent_server.codex_thread_instruction_hash(
+            with patch.object(hyadex_server, "CODEX_THREAD_POLICY_VERSION", "8"):
+                previous_hash = hyadex_server.codex_thread_instruction_hash(
                     "chat-1",
                     session,
                 )
 
         # v11 scopes messaging guidance to the out-of-band provider tool.
-        self.assertEqual(agent_server.CODEX_THREAD_POLICY_VERSION, "11")
+        self.assertEqual(hyadex_server.CODEX_THREAD_POLICY_VERSION, "11")
         self.assertNotEqual(current_hash, previous_hash)
 
     def test_claude_policy_has_the_same_retry_and_context_hygiene_rules(self) -> None:
-        instructions = agent_server.CLAUDE_PROMPT_PRELUDE.format()
+        instructions = hyadex_server.CLAUDE_PROMPT_PRELUDE.format()
         self.assertIn("immediately retry the still-safe requested operation", instructions)
         self.assertIn("delegate bounded noisy exploration", instructions)
         self.assertIn("Keep work needed for the current reply in foreground", instructions)
@@ -151,10 +149,10 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("--authority-file", instructions)
         # Context diet: the static addendum is appended once; the core policy
         # keeps its line budget.
-        core = instructions.split(agent_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip())[0]
+        core = instructions.split(hyadex_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip())[0]
         self.assertLessEqual(len(core.strip().splitlines()), 16)
         self.assertEqual(
-            instructions.count(agent_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip()),
+            instructions.count(hyadex_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM.strip()),
             1,
         )
 
@@ -163,20 +161,20 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
         session = self.session()
         save_provider_session = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save_provider_session",
             save_provider_session,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "touch_codex_app_server_thread",
             AsyncMock(),
         ):
             thread_id, instruction_hash = (
-                await agent_server.ensure_codex_app_server_thread(
+                await hyadex_server.ensure_codex_app_server_thread(
                     manager,  # type: ignore[arg-type]
                     "chat-1",
                     session,
@@ -192,7 +190,7 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
         save_provider_session.assert_awaited_once_with(
             "chat-1",
             "thread-new",
-            agent_server.BACKEND_CODEX,
+            hyadex_server.BACKEND_CODEX,
             codex_instruction_hash=instruction_hash,
         )
 
@@ -202,30 +200,30 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
             codex_thread_id="thread-existing",
         )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ):
             session["codex_instruction_hash"] = (
-                agent_server.codex_thread_instruction_hash("chat-1", session)
+                hyadex_server.codex_thread_instruction_hash("chat-1", session)
             )
 
         manager = FakeCodexAppServerManager()
         save_provider_session = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save_provider_session",
             save_provider_session,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "touch_codex_app_server_thread",
             AsyncMock(),
         ):
-            await agent_server.ensure_codex_app_server_thread(
+            await hyadex_server.ensure_codex_app_server_thread(
                 manager,  # type: ignore[arg-type]
                 "chat-1",
                 session,
@@ -249,19 +247,19 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeCodexAppServerManager()
         manager.loaded.add("thread-existing")
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "touch_codex_app_server_thread",
             AsyncMock(),
         ):
-            await agent_server.ensure_codex_app_server_thread(
+            await hyadex_server.ensure_codex_app_server_thread(
                 manager,  # type: ignore[arg-type]
                 "chat-1",
                 session,
@@ -284,20 +282,20 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
     async def test_saved_subagent_limit_waits_for_reload_and_clear_inherits_configuration(self) -> None:
         session = self.session(session_id="thread-existing", codex_thread_id="thread-existing")
         manager = FakeCodexAppServerManager(loaded={"thread-existing"})
-        with patch.object(agent_server, "codex_user_developer_instructions", return_value=""), patch.object(
-            agent_server, "read_codex_thread_config_overrides", return_value={}
-        ), patch.object(agent_server, "touch_codex_app_server_thread", AsyncMock()):
-            session["codex_instruction_hash"] = agent_server.codex_thread_instruction_hash("chat-1", session)
+        with patch.object(hyadex_server, "codex_user_developer_instructions", return_value=""), patch.object(
+            hyadex_server, "read_codex_thread_config_overrides", return_value={}
+        ), patch.object(hyadex_server, "touch_codex_app_server_thread", AsyncMock()):
+            session["codex_instruction_hash"] = hyadex_server.codex_thread_instruction_hash("chat-1", session)
             session["subagent_limit"] = 3
-            await agent_server.ensure_codex_app_server_thread(manager, "chat-1", session, "/repo")
+            await hyadex_server.ensure_codex_app_server_thread(manager, "chat-1", session, "/repo")
             self.assertEqual(manager.resume_calls, [])
             self.assertEqual(manager.unsubscribe_calls, [])
             manager.loaded.clear()  # A fresh provider process forgets loaded threads.
-            await agent_server.ensure_codex_app_server_thread(manager, "chat-1", session, "/repo")
+            await hyadex_server.ensure_codex_app_server_thread(manager, "chat-1", session, "/repo")
             self.assertEqual(manager.resume_calls[-1][1]["config"]["agents.max_concurrent_threads_per_session"], 3)
             session["subagent_limit"] = None
             manager.loaded.clear()
-            await agent_server.ensure_codex_app_server_thread(manager, "chat-1", session, "/repo")
+            await hyadex_server.ensure_codex_app_server_thread(manager, "chat-1", session, "/repo")
             self.assertNotIn("agents.max_concurrent_threads_per_session", manager.resume_calls[-1][1]["config"])
             self.assertEqual(manager.inject_calls, [])
 
@@ -312,13 +310,13 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
             await release_resume.wait()
             return await original_resume(thread_id, params)
         manager.resume_thread = resume
-        with patch.object(agent_server, "codex_user_developer_instructions", return_value=""), patch.object(
-            agent_server, "read_codex_thread_config_overrides", return_value={}
-        ), patch.object(agent_server, "touch_codex_app_server_thread", AsyncMock()), patch.object(
-            agent_server.STORE, "sessions", {"chat-1": session}
-        ), patch.object(agent_server.STORE, "_lock", asyncio.Lock()), patch.object(agent_server.STORE, "save", AsyncMock()):
-            session["codex_instruction_hash"] = agent_server.codex_thread_instruction_hash("chat-1", session)
-            task = asyncio.create_task(agent_server.ensure_codex_app_server_thread(manager, "chat-1", session, "/repo"))
+        with patch.object(hyadex_server, "codex_user_developer_instructions", return_value=""), patch.object(
+            hyadex_server, "read_codex_thread_config_overrides", return_value={}
+        ), patch.object(hyadex_server, "touch_codex_app_server_thread", AsyncMock()), patch.object(
+            hyadex_server.STORE, "sessions", {"chat-1": session}
+        ), patch.object(hyadex_server.STORE, "_lock", asyncio.Lock()), patch.object(hyadex_server.STORE, "save", AsyncMock()):
+            session["codex_instruction_hash"] = hyadex_server.codex_thread_instruction_hash("chat-1", session)
+            task = asyncio.create_task(hyadex_server.ensure_codex_app_server_thread(manager, "chat-1", session, "/repo"))
             try:
                 await asyncio.wait_for(resume_started.wait(), 2)
                 session["subagent_limit"] = None  # PATCH mutates this exact STORE.sessions object.
@@ -342,37 +340,37 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
         )
         save_provider_session = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "pin_codex_app_server_thread",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "unpin_codex_app_server_thread",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "touch_codex_app_server_thread",
             AsyncMock(),
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save_provider_session",
             save_provider_session,
         ), patch.object(
-            agent_server.STORE, "sessions", {"chat-child": child},
+            hyadex_server.STORE, "sessions", {"chat-child": child},
         ), patch.object(
-            agent_server.STORE, "_lock", asyncio.Lock(),
+            hyadex_server.STORE, "_lock", asyncio.Lock(),
         ), patch.object(
-            agent_server.STORE, "save", AsyncMock(),
+            hyadex_server.STORE, "save", AsyncMock(),
         ):
-            bound, instruction_hash = await agent_server.bind_forked_codex_thread(
+            bound, instruction_hash = await hyadex_server.bind_forked_codex_thread(
                 "chat-child",
                 "thread-fork",
                 child,
@@ -398,7 +396,7 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
         save_provider_session.assert_awaited_once_with(
             "chat-child",
             "thread-fork",
-            agent_server.BACKEND_CODEX,
+            hyadex_server.BACKEND_CODEX,
             codex_instruction_hash=instruction_hash,
         )
 
@@ -423,23 +421,23 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         manager = SlowManager()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CODEX_APP_SERVER_MAX_LOADED_THREADS",
             1,
         ):
-            await agent_server.touch_codex_app_server_thread(
+            await hyadex_server.touch_codex_app_server_thread(
                 manager,  # type: ignore[arg-type]
                 "thread-old",
             )
             eviction = asyncio.create_task(
-                agent_server.touch_codex_app_server_thread(
+                hyadex_server.touch_codex_app_server_thread(
                     manager,  # type: ignore[arg-type]
                     "thread-new",
                 )
             )
             await asyncio.wait_for(manager.started.wait(), timeout=1)
             await asyncio.wait_for(
-                agent_server.pin_codex_app_server_thread(
+                hyadex_server.pin_codex_app_server_thread(
                     "thread-unrelated",
                     manager,  # type: ignore[arg-type]
                 ),
@@ -451,96 +449,96 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("thread-old", manager.loaded)
         self.assertNotIn(
             "thread-old",
-            agent_server.CODEX_APP_SERVER_EVICTING_THREADS,
+            hyadex_server.CODEX_APP_SERVER_EVICTING_THREADS,
         )
 
     async def test_invalidation_releases_only_callers_pin_and_defers_eviction(
         self,
     ) -> None:
         manager = FakeCodexAppServerManager(loaded={"thread-shared"})
-        await agent_server.pin_codex_app_server_thread(
+        await hyadex_server.pin_codex_app_server_thread(
             "thread-shared", manager  # type: ignore[arg-type]
         )
-        await agent_server.pin_codex_app_server_thread(
+        await hyadex_server.pin_codex_app_server_thread(
             "thread-shared", manager  # type: ignore[arg-type]
         )
 
-        await agent_server.unpin_codex_app_server_thread(
+        await hyadex_server.unpin_codex_app_server_thread(
             manager,  # type: ignore[arg-type]
             "thread-shared",
             invalidate_loaded_thread=True,
         )
 
         self.assertEqual(
-            agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread-shared"],
+            hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread-shared"],
             1,
         )
-        self.assertIn("thread-shared", agent_server.CODEX_APP_SERVER_PINNED_THREADS)
-        self.assertIn("thread-shared", agent_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
+        self.assertIn("thread-shared", hyadex_server.CODEX_APP_SERVER_PINNED_THREADS)
+        self.assertIn("thread-shared", hyadex_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
         self.assertEqual(manager.unsubscribe_calls, [])
 
-        await agent_server.unpin_codex_app_server_thread(
+        await hyadex_server.unpin_codex_app_server_thread(
             manager,  # type: ignore[arg-type]
             "thread-shared",
         )
 
         self.assertEqual(manager.unsubscribe_calls, ["thread-shared"])
-        self.assertNotIn("thread-shared", agent_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
-        self.assertNotIn("thread-shared", agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS)
+        self.assertNotIn("thread-shared", hyadex_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
+        self.assertNotIn("thread-shared", hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS)
 
     async def test_new_pin_fails_closed_while_invalidated_owner_remains(self) -> None:
         manager = FakeCodexAppServerManager(loaded={"thread-shared"})
-        await agent_server.pin_codex_app_server_thread(
+        await hyadex_server.pin_codex_app_server_thread(
             "thread-shared", manager  # type: ignore[arg-type]
         )
-        await agent_server.pin_codex_app_server_thread(
+        await hyadex_server.pin_codex_app_server_thread(
             "thread-shared", manager  # type: ignore[arg-type]
         )
-        await agent_server.unpin_codex_app_server_thread(
+        await hyadex_server.unpin_codex_app_server_thread(
             manager,  # type: ignore[arg-type]
             "thread-shared",
             invalidate_loaded_thread=True,
         )
 
-        with self.assertRaises(agent_server.CodexAppServerError) as raised:
-            await agent_server.pin_codex_app_server_thread(
+        with self.assertRaises(hyadex_server.CodexAppServerError) as raised:
+            await hyadex_server.pin_codex_app_server_thread(
                 "thread-shared", manager  # type: ignore[arg-type]
             )
 
         self.assertTrue(raised.exception.safe_to_retry)
         self.assertFalse(raised.exception.request_sent)
         self.assertEqual(
-            agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread-shared"],
+            hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread-shared"],
             1,
         )
 
     async def test_invalidation_retries_after_active_turn_clears(self) -> None:
         manager = FakeCodexAppServerManager(loaded={"thread-stale"})
         manager.active["thread-stale"] = object()
-        await agent_server.pin_codex_app_server_thread(
+        await hyadex_server.pin_codex_app_server_thread(
             "thread-stale", manager  # type: ignore[arg-type]
         )
-        await agent_server.unpin_codex_app_server_thread(
+        await hyadex_server.unpin_codex_app_server_thread(
             manager,  # type: ignore[arg-type]
             "thread-stale",
             invalidate_loaded_thread=True,
         )
-        self.assertIn("thread-stale", agent_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
+        self.assertIn("thread-stale", hyadex_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
         self.assertEqual(manager.unsubscribe_calls, [])
 
-        with self.assertRaises(agent_server.CodexAppServerError):
-            await agent_server.pin_codex_app_server_thread(
+        with self.assertRaises(hyadex_server.CodexAppServerError):
+            await hyadex_server.pin_codex_app_server_thread(
                 "thread-stale", manager  # type: ignore[arg-type]
             )
         manager.active.clear()
-        await agent_server.pin_codex_app_server_thread(
+        await hyadex_server.pin_codex_app_server_thread(
             "thread-stale", manager  # type: ignore[arg-type]
         )
 
         self.assertEqual(manager.unsubscribe_calls, ["thread-stale"])
-        self.assertNotIn("thread-stale", agent_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
+        self.assertNotIn("thread-stale", hyadex_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
         self.assertEqual(
-            agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread-stale"],
+            hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread-stale"],
             1,
         )
 
@@ -554,30 +552,30 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
                 self.unsubscribe_calls.append(thread_id)
                 if self.failures:
                     self.failures -= 1
-                    raise agent_server.CodexAppServerError("unsubscribe failed")
+                    raise hyadex_server.CodexAppServerError("unsubscribe failed")
                 self.loaded.discard(thread_id)
                 return "unsubscribed"
 
         manager = FlakyManager()
-        await agent_server.pin_codex_app_server_thread(
+        await hyadex_server.pin_codex_app_server_thread(
             "thread-stale", manager  # type: ignore[arg-type]
         )
-        await agent_server.unpin_codex_app_server_thread(
+        await hyadex_server.unpin_codex_app_server_thread(
             manager,  # type: ignore[arg-type]
             "thread-stale",
             invalidate_loaded_thread=True,
         )
-        self.assertIn("thread-stale", agent_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
-        self.assertNotIn("thread-stale", agent_server.CODEX_APP_SERVER_THREAD_LRU)
+        self.assertIn("thread-stale", hyadex_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
+        self.assertNotIn("thread-stale", hyadex_server.CODEX_APP_SERVER_THREAD_LRU)
 
-        await agent_server.pin_codex_app_server_thread(
+        await hyadex_server.pin_codex_app_server_thread(
             "thread-stale", manager  # type: ignore[arg-type]
         )
 
         self.assertEqual(manager.unsubscribe_calls, ["thread-stale", "thread-stale"])
-        self.assertNotIn("thread-stale", agent_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
+        self.assertNotIn("thread-stale", hyadex_server.CODEX_APP_SERVER_INVALIDATED_THREADS)
         self.assertEqual(
-            agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread-stale"],
+            hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread-stale"],
             1,
         )
 
@@ -587,39 +585,39 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
             codex_thread_id="thread-stale",
         )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ):
             session["codex_instruction_hash"] = (
-                agent_server.codex_thread_instruction_hash("chat-1", session)
+                hyadex_server.codex_thread_instruction_hash("chat-1", session)
             )
 
         manager = FakeCodexAppServerManager(loaded={"thread-stale"})
-        await agent_server.pin_codex_app_server_thread(
+        await hyadex_server.pin_codex_app_server_thread(
             "thread-stale", manager  # type: ignore[arg-type]
         )
-        await agent_server.unpin_codex_app_server_thread(
+        await hyadex_server.unpin_codex_app_server_thread(
             manager,  # type: ignore[arg-type]
             "thread-stale",
             invalidate_loaded_thread=True,
         )
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "touch_codex_app_server_thread",
             AsyncMock(),
         ):
             thread_id, _instruction_hash = (
-                await agent_server.ensure_codex_app_server_thread(
+                await hyadex_server.ensure_codex_app_server_thread(
                     manager,  # type: ignore[arg-type]
                     "chat-1",
                     session,
@@ -634,27 +632,27 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_normal_retained_unpin_keeps_loaded_thread_warm(self) -> None:
         manager = FakeCodexAppServerManager(loaded={"thread-retained"})
-        await agent_server.pin_codex_app_server_thread(
+        await hyadex_server.pin_codex_app_server_thread(
             "thread-retained", manager  # type: ignore[arg-type]
         )
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "sessions",
             {
                 "chat": {
-                    "backend": agent_server.BACKEND_CODEX,
+                    "backend": hyadex_server.BACKEND_CODEX,
                     "codex_thread_id": "thread-retained",
                 }
             },
         ):
-            await agent_server.unpin_codex_app_server_thread(
+            await hyadex_server.unpin_codex_app_server_thread(
                 manager,  # type: ignore[arg-type]
                 "thread-retained",
             )
 
         self.assertEqual(manager.unsubscribe_calls, [])
         self.assertIn("thread-retained", manager.loaded)
-        self.assertIn("thread-retained", agent_server.CODEX_APP_SERVER_THREAD_LRU)
+        self.assertIn("thread-retained", hyadex_server.CODEX_APP_SERVER_THREAD_LRU)
 
 
 if __name__ == "__main__":

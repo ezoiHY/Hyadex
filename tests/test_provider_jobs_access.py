@@ -9,20 +9,18 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from starlette.requests import Request
 
-import agent_server
-
-
+from tests import hyadex_server
 class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
-        self.original_sessions = agent_server.STORE.sessions
-        self.original_current_turns = agent_server.RUNS.current_turns
-        self.original_authority_root = agent_server.PROVIDER_AUTHORITY_ROOT
-        self.original_agent_token = agent_server.AGENT_TOKEN
-        self.original_jobs = agent_server.JOBS.jobs
-        self.original_lifecycle_locks = agent_server.SESSION_LIFECYCLE_LOCKS
-        agent_server.STORE.sessions = {
+        self.original_sessions = hyadex_server.STORE.sessions
+        self.original_current_turns = hyadex_server.RUNS.current_turns
+        self.original_authority_root = hyadex_server.PROVIDER_AUTHORITY_ROOT
+        self.original_agent_token = hyadex_server.AGENT_TOKEN
+        self.original_jobs = hyadex_server.JOBS.jobs
+        self.original_lifecycle_locks = hyadex_server.SESSION_LIFECYCLE_LOCKS
+        hyadex_server.STORE.sessions = {
             "source": {
                 "id": "source",
                 "title": "Source",
@@ -30,21 +28,21 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
                 "provider_jobs_access": "full",
             },
         }
-        agent_server.RUNS.current_turns = {}
-        agent_server.PROVIDER_AUTHORITY_ROOT = self.root / "authority"
-        agent_server.PROVIDER_AUTHORITIES.clear()
-        agent_server.AGENT_TOKEN = "test-admin-token"
-        agent_server.JOBS.jobs = {}
-        agent_server.SESSION_LIFECYCLE_LOCKS = {}
+        hyadex_server.RUNS.current_turns = {}
+        hyadex_server.PROVIDER_AUTHORITY_ROOT = self.root / "authority"
+        hyadex_server.PROVIDER_AUTHORITIES.clear()
+        hyadex_server.AGENT_TOKEN = "test-admin-token"
+        hyadex_server.JOBS.jobs = {}
+        hyadex_server.SESSION_LIFECYCLE_LOCKS = {}
 
     async def asyncTearDown(self) -> None:
-        agent_server.PROVIDER_AUTHORITIES.clear()
-        agent_server.STORE.sessions = self.original_sessions
-        agent_server.RUNS.current_turns = self.original_current_turns
-        agent_server.PROVIDER_AUTHORITY_ROOT = self.original_authority_root
-        agent_server.AGENT_TOKEN = self.original_agent_token
-        agent_server.JOBS.jobs = self.original_jobs
-        agent_server.SESSION_LIFECYCLE_LOCKS = self.original_lifecycle_locks
+        hyadex_server.PROVIDER_AUTHORITIES.clear()
+        hyadex_server.STORE.sessions = self.original_sessions
+        hyadex_server.RUNS.current_turns = self.original_current_turns
+        hyadex_server.PROVIDER_AUTHORITY_ROOT = self.original_authority_root
+        hyadex_server.AGENT_TOKEN = self.original_agent_token
+        hyadex_server.JOBS.jobs = self.original_jobs
+        hyadex_server.SESSION_LIFECYCLE_LOCKS = self.original_lifecycle_locks
         self.temporary.cleanup()
 
     @staticmethod
@@ -63,23 +61,23 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         })
 
     async def issue(self, mode: str, run_id: str) -> tuple[str, dict]:
-        agent_server.STORE.sessions["source"]["provider_jobs_access"] = mode
-        authority_path = await agent_server.issue_provider_authority("source", run_id)
+        hyadex_server.STORE.sessions["source"]["provider_jobs_access"] = mode
+        authority_path = await hyadex_server.issue_provider_authority("source", run_id)
         payload = json.loads(authority_path.read_text(encoding="utf-8"))
         token = payload["provider_capability"]
-        token_hash = agent_server.hashlib.sha256(token.encode("utf-8")).hexdigest()
-        return token, agent_server.PROVIDER_AUTHORITIES[token_hash]
+        token_hash = hyadex_server.hashlib.sha256(token.encode("utf-8")).hexdigest()
+        return token, hyadex_server.PROVIDER_AUTHORITIES[token_hash]
 
     async def test_session_policy_defaults_persists_updates_and_validates(self) -> None:
-        store = agent_server.SessionStore()
+        store = hyadex_server.SessionStore()
         sessions_path = self.root / "sessions.json"
         with (
-            patch.object(agent_server, "SESSIONS_FILE", sessions_path),
-            patch.object(agent_server, "ensure_dirs"),
-            patch.object(agent_server, "append_event", new_callable=AsyncMock),
+            patch.object(hyadex_server, "SESSIONS_FILE", sessions_path),
+            patch.object(hyadex_server, "ensure_dirs"),
+            patch.object(hyadex_server, "append_event", new_callable=AsyncMock),
         ):
             created = await store.create(
-                agent_server.CreateSessionRequest(title="Policy chat"),
+                hyadex_server.CreateSessionRequest(title="Policy chat"),
             )
             self.assertEqual(created["provider_jobs_access"], "full")
             persisted = json.loads(sessions_path.read_text(encoding="utf-8"))
@@ -106,15 +104,15 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
                 )
         self.assertEqual(raised.exception.status_code, 400)
         self.assertEqual(
-            agent_server.effective_provider_jobs_access({}),
+            hyadex_server.effective_provider_jobs_access({}),
             "full",
         )
         self.assertEqual(
-            agent_server.public_session({"id": "legacy"})["provider_jobs_access"],
+            hyadex_server.public_session({"id": "legacy"})["provider_jobs_access"],
             "full",
         )
         with self.assertRaises(ValueError):
-            agent_server.UpdateSessionRequest(provider_jobs_access="unexpected")
+            hyadex_server.UpdateSessionRequest(provider_jobs_access="unexpected")
 
     async def test_legacy_session_load_migrates_default_policy_durably(self) -> None:
         sessions_path = self.root / "legacy-sessions.json"
@@ -126,16 +124,16 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
                 "cwd": "/tmp",
             },
         }), encoding="utf-8")
-        store = agent_server.SessionStore()
+        store = hyadex_server.SessionStore()
         with (
-            patch.object(agent_server, "SESSIONS_FILE", sessions_path),
-            patch.object(agent_server, "ensure_dirs"),
+            patch.object(hyadex_server, "SESSIONS_FILE", sessions_path),
+            patch.object(hyadex_server, "ensure_dirs"),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "read_abandoned_fork_thread_ids",
                 return_value=set(),
             ),
-            patch.object(agent_server, "rebuild_codex_subagent_indexes"),
+            patch.object(hyadex_server, "rebuild_codex_subagent_indexes"),
         ):
             await store.load()
 
@@ -150,7 +148,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_failed_policy_save_restores_previous_authorization(self) -> None:
-        store = agent_server.SessionStore()
+        store = hyadex_server.SessionStore()
         store.sessions = {
             "source": {
                 "id": "source",
@@ -174,7 +172,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_cancelled_policy_expansion_is_rolled_back_on_disk(self) -> None:
-        store = agent_server.SessionStore()
+        store = hyadex_server.SessionStore()
         store.sessions = {
             "source": {
                 "id": "source",
@@ -186,7 +184,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         first_write_started = threading.Event()
         release_first_write = threading.Event()
         written_policies: list[str] = []
-        real_write = agent_server.write_sessions_json_text
+        real_write = hyadex_server.write_sessions_json_text
 
         def blocked_write(
             path: Path,
@@ -202,10 +200,10 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
             real_write(path, text, durable=durable)
 
         with (
-            patch.object(agent_server, "SESSIONS_FILE", sessions_path),
-            patch.object(agent_server, "ensure_dirs"),
+            patch.object(hyadex_server, "SESSIONS_FILE", sessions_path),
+            patch.object(hyadex_server, "ensure_dirs"),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "write_sessions_json_text",
                 side_effect=blocked_write,
             ),
@@ -241,7 +239,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_standalone_scheduled_context_inherits_provider_jobs_policy(self) -> None:
-        isolated = agent_server.standalone_provider_session({
+        isolated = hyadex_server.standalone_provider_session({
             "id": "source",
             "backend": "codex",
             "provider_jobs_access": "read_only",
@@ -252,7 +250,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_health_advertises_versioned_policy_contract(self) -> None:
         with patch.object(
-            agent_server,
+            hyadex_server,
             "tmux_capability",
             return_value={
                 "available": False,
@@ -261,7 +259,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
                 "action": None,
             },
         ):
-            response = await agent_server.health()
+            response = await hyadex_server.health()
         self.assertEqual(response["api_contract_version"], 30)
         # Cross-chat messaging was removed in contract version 30.
         self.assertNotIn("cross_chat_handoffs_v1", response["capabilities"])
@@ -294,16 +292,16 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(blocked["provider_jobs_access"], "blocked")
 
     def test_only_retired_peer_text_cannot_manage_jobs(self) -> None:
-        self.assertTrue(agent_server.provider_turn_may_manage_jobs(None))
-        self.assertTrue(agent_server.provider_turn_may_manage_jobs("scheduled_job"))
+        self.assertTrue(hyadex_server.provider_turn_may_manage_jobs(None))
+        self.assertTrue(hyadex_server.provider_turn_may_manage_jobs("scheduled_job"))
         self.assertFalse(
-            agent_server.provider_turn_may_manage_jobs(
+            hyadex_server.provider_turn_may_manage_jobs(
                 "secure_peer_handoff_delivery"
             )
         )
         self.assertIn(
             "Manage durable scheduled jobs only when explicitly asked",
-            agent_server.CODEX_PROMPT_PRELUDE,
+            hyadex_server.CODEX_PROMPT_PRELUDE,
         )
 
     async def test_provider_capability_cannot_authorize_human_jobs_or_run_now(self) -> None:
@@ -314,7 +312,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         ):
             request = Request({
                 "type": "http",
-                "app": agent_server.app,
+                "app": hyadex_server.app,
                 "method": method,
                 "path": path,
                 "headers": [
@@ -326,14 +324,14 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
                 "client": ("127.0.0.1", 41000),
             })
             call_next = AsyncMock()
-            response = await agent_server.require_agent_token(request, call_next)
+            response = await hyadex_server.require_agent_token(request, call_next)
             self.assertEqual(response.status_code, 401)
             call_next.assert_not_awaited()
 
     async def test_no_auth_mode_advertises_policy_unavailable_and_omits_jobs_authority(self) -> None:
-        agent_server.AGENT_TOKEN = ""
+        hyadex_server.AGENT_TOKEN = ""
         with patch.object(
-            agent_server,
+            hyadex_server,
             "tmux_capability",
             return_value={
                 "available": False,
@@ -342,40 +340,40 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
                 "action": None,
             },
         ):
-            response = await agent_server.health()
+            response = await hyadex_server.health()
         capability = response["capabilities"]["provider_jobs_access_control_v1"]
         self.assertFalse(capability["available"])
         self.assertIn("authenticated", capability["message"])
-        authority_path = await agent_server.issue_provider_authority("source", "run_no_auth")
+        authority_path = await hyadex_server.issue_provider_authority("source", "run_no_auth")
         payload = json.loads(authority_path.read_text(encoding="utf-8"))
-        token_hash = agent_server.hashlib.sha256(
+        token_hash = hyadex_server.hashlib.sha256(
             payload["provider_capability"].encode("utf-8")
         ).hexdigest()
-        self.assertNotIn("jobs", agent_server.PROVIDER_AUTHORITIES[token_hash]["actions"])
+        self.assertNotIn("jobs", hyadex_server.PROVIDER_AUTHORITIES[token_hash]["actions"])
 
     async def test_policy_tightening_is_immediate_during_live_turn(self) -> None:
         token, _capability = await self.issue("full", "run_live")
-        agent_server.RUNS.current_turns = {"source": {"run_id": "run_live"}}
+        hyadex_server.RUNS.current_turns = {"source": {"run_id": "run_live"}}
         request = self.provider_request(token)
 
-        await agent_server.authorize_provider_jobs_operation(
+        await hyadex_server.authorize_provider_jobs_operation(
             request,
             session_id="source",
             operation="write",
         )
 
         async def update(_session_id: str, policy_patch: dict) -> dict:
-            agent_server.STORE.sessions["source"].update(policy_patch)
-            return agent_server.STORE.sessions["source"]
+            hyadex_server.STORE.sessions["source"].update(policy_patch)
+            return hyadex_server.STORE.sessions["source"]
 
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "update",
             AsyncMock(side_effect=update),
         ):
-            response = await agent_server.update_session(
+            response = await hyadex_server.update_session(
                 "source",
-                agent_server.UpdateSessionRequest(
+                hyadex_server.UpdateSessionRequest(
                     provider_jobs_access="read_only",
                 ),
             )
@@ -383,13 +381,13 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
                 response["session"]["provider_jobs_access"],
                 "read_only",
             )
-            await agent_server.authorize_provider_jobs_operation(
+            await hyadex_server.authorize_provider_jobs_operation(
                 request,
                 session_id="source",
                 operation="read",
             )
             with self.assertRaises(HTTPException) as raised:
-                await agent_server.authorize_provider_jobs_operation(
+                await hyadex_server.authorize_provider_jobs_operation(
                     request,
                     session_id="source",
                     operation="write",
@@ -397,14 +395,14 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raised.exception.status_code, 403)
             self.assertIn("read-only", str(raised.exception.detail))
 
-            await agent_server.update_session(
+            await hyadex_server.update_session(
                 "source",
-                agent_server.UpdateSessionRequest(
+                hyadex_server.UpdateSessionRequest(
                     provider_jobs_access="blocked",
                 ),
             )
             with self.assertRaises(HTTPException) as raised:
-                await agent_server.authorize_provider_jobs_operation(
+                await hyadex_server.authorize_provider_jobs_operation(
                     request,
                     session_id="source",
                     operation="read",
@@ -414,18 +412,18 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_issue_time_read_only_ceiling_cannot_be_loosened_mid_turn(self) -> None:
         token, _capability = await self.issue("read_only", "run_read_live")
-        agent_server.RUNS.current_turns = {
+        hyadex_server.RUNS.current_turns = {
             "source": {"run_id": "run_read_live"},
         }
-        agent_server.STORE.sessions["source"]["provider_jobs_access"] = "full"
+        hyadex_server.STORE.sessions["source"]["provider_jobs_access"] = "full"
         request = self.provider_request(token)
-        await agent_server.authorize_provider_jobs_operation(
+        await hyadex_server.authorize_provider_jobs_operation(
             request,
             session_id="source",
             operation="read",
         )
         with self.assertRaises(HTTPException) as raised:
-            await agent_server.authorize_provider_jobs_operation(
+            await hyadex_server.authorize_provider_jobs_operation(
                 request,
                 session_id="source",
                 operation="write",
@@ -434,49 +432,49 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_policy_patch_serializes_with_live_agent_job_mutation(self) -> None:
         token, _capability = await self.issue("full", "run_policy_race")
-        agent_server.RUNS.current_turns = {
+        hyadex_server.RUNS.current_turns = {
             "source": {"run_id": "run_policy_race"},
         }
         request = self.provider_request(token, method="POST")
-        update_entered = agent_server.asyncio.Event()
-        allow_update = agent_server.asyncio.Event()
+        update_entered = hyadex_server.asyncio.Event()
+        allow_update = hyadex_server.asyncio.Event()
 
         async def gated_update(_session_id: str, policy_patch: dict) -> dict:
             update_entered.set()
             await allow_update.wait()
-            agent_server.STORE.sessions["source"].update(policy_patch)
-            return agent_server.STORE.sessions["source"]
+            hyadex_server.STORE.sessions["source"].update(policy_patch)
+            return hyadex_server.STORE.sessions["source"]
 
         create = AsyncMock(return_value={})
         with (
             patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "update",
                 AsyncMock(side_effect=gated_update),
             ),
-            patch.object(agent_server.JOBS, "create", create),
+            patch.object(hyadex_server.JOBS, "create", create),
         ):
-            update_task = agent_server.asyncio.create_task(
-                agent_server.update_session(
+            update_task = hyadex_server.asyncio.create_task(
+                hyadex_server.update_session(
                     "source",
-                    agent_server.UpdateSessionRequest(
+                    hyadex_server.UpdateSessionRequest(
                         provider_jobs_access="blocked",
                     ),
                 )
             )
             await update_entered.wait()
-            create_task = agent_server.asyncio.create_task(
-                agent_server.create_agent_session_job(
+            create_task = hyadex_server.asyncio.create_task(
+                hyadex_server.create_agent_session_job(
                     request,
                     "source",
-                    agent_server.AgentCreateScopedJobRequest(
+                    hyadex_server.AgentCreateScopedJobRequest(
                         title="Must not race",
                         prompt="Run",
                         interval_seconds=60,
                     ),
                 )
             )
-            await agent_server.asyncio.sleep(0)
+            await hyadex_server.asyncio.sleep(0)
             self.assertFalse(create_task.done())
             allow_update.set()
             await update_task
@@ -491,48 +489,48 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         authorize = AsyncMock(return_value={})
         with (
             patch.object(
-                agent_server,
+                hyadex_server,
                 "authorize_provider_jobs_operation",
                 authorize,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "list_session_jobs",
                 AsyncMock(return_value={"jobs": []}),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "get_session_job_runs",
                 AsyncMock(return_value={"runs": []}),
             ),
-            patch.object(agent_server.JOBS, "create", AsyncMock(return_value={})),
-            patch.object(agent_server.JOBS, "update", AsyncMock(return_value={})),
-            patch.object(agent_server.JOBS, "delete", AsyncMock(return_value=True)),
+            patch.object(hyadex_server.JOBS, "create", AsyncMock(return_value={})),
+            patch.object(hyadex_server.JOBS, "update", AsyncMock(return_value={})),
+            patch.object(hyadex_server.JOBS, "delete", AsyncMock(return_value=True)),
         ):
-            await agent_server.list_agent_session_jobs(request, "source")
-            await agent_server.get_agent_session_job_runs(
+            await hyadex_server.list_agent_session_jobs(request, "source")
+            await hyadex_server.get_agent_session_job_runs(
                 request,
                 "source",
                 "job_1",
                 before_seq=None,
                 limit=20,
             )
-            await agent_server.create_agent_session_job(
+            await hyadex_server.create_agent_session_job(
                 request,
                 "source",
-                agent_server.AgentCreateScopedJobRequest(
+                hyadex_server.AgentCreateScopedJobRequest(
                     title="Create",
                     prompt="Run",
                     interval_seconds=60,
                 ),
             )
-            await agent_server.update_agent_session_job(
+            await hyadex_server.update_agent_session_job(
                 request,
                 "source",
                 "job_1",
-                agent_server.AgentUpdateJobRequest(enabled=False),
+                hyadex_server.AgentUpdateJobRequest(enabled=False),
             )
-            await agent_server.delete_agent_session_job(
+            await hyadex_server.delete_agent_session_job(
                 request,
                 "source",
                 "job_1",
@@ -546,7 +544,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
     async def test_agent_job_projections_hide_internal_chat_reference_ids(self) -> None:
         secret_target_id = "internal-target-session-secret"
         token, _capability = await self.issue("full", "run_projection")
-        agent_server.RUNS.current_turns = {
+        hyadex_server.RUNS.current_turns = {
             "source": {"run_id": "run_projection"},
         }
         # Jobs saved before @Chat targets were retired still carry them.
@@ -577,43 +575,43 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
             "enabled": True,
             "updated_at": "2026-08-26T00:00:00Z",
         }
-        agent_server.JOBS.jobs[raw_job["id"]] = raw_job
+        hyadex_server.JOBS.jobs[raw_job["id"]] = raw_job
 
-        listed = await agent_server.list_agent_session_jobs(
+        listed = await hyadex_server.list_agent_session_jobs(
             self.provider_request(token),
             "source",
         )
         with (
             patch.object(
-                agent_server.JOBS,
+                hyadex_server.JOBS,
                 "create",
                 AsyncMock(return_value=raw_job),
             ),
             patch.object(
-                agent_server.JOBS,
+                hyadex_server.JOBS,
                 "update",
                 AsyncMock(return_value=raw_job),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "append_provider_job_mutation_event",
                 new_callable=AsyncMock,
             ),
         ):
-            created = await agent_server.create_agent_session_job(
+            created = await hyadex_server.create_agent_session_job(
                 self.provider_request(token, method="POST"),
                 "source",
-                agent_server.AgentCreateScopedJobRequest(
+                hyadex_server.AgentCreateScopedJobRequest(
                     title="Routed job",
                     prompt="Run",
                     interval_seconds=300,
                 ),
             )
-            updated = await agent_server.update_agent_session_job(
+            updated = await hyadex_server.update_agent_session_job(
                 self.provider_request(token, method="PATCH"),
                 "source",
                 raw_job["id"],
-                agent_server.AgentUpdateJobRequest(title="Renamed"),
+                hyadex_server.AgentUpdateJobRequest(title="Renamed"),
             )
 
         projections = [listed["jobs"][0], created["job"], updated["job"]]
@@ -631,7 +629,7 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         exchange_id = "exchange_private_scheduled_delivery"
         leg_id = "leg_private_scheduled_delivery"
         token, _capability = await self.issue("read_only", "run_history_projection")
-        agent_server.RUNS.current_turns = {
+        hyadex_server.RUNS.current_turns = {
             "source": {"run_id": "run_history_projection"},
         }
         reference = {
@@ -691,11 +689,11 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "get_session_job_runs",
             AsyncMock(return_value=raw_response),
         ):
-            response = await agent_server.get_agent_session_job_runs(
+            response = await hyadex_server.get_agent_session_job_runs(
                 self.provider_request(token),
                 "source",
                 raw_job["id"],
@@ -721,19 +719,19 @@ class ProviderJobsAccessTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(run["job"]["chat_target_count"], 1)
 
     async def test_human_jobs_routes_ignore_provider_policy(self) -> None:
-        agent_server.STORE.sessions["source"]["provider_jobs_access"] = "blocked"
+        hyadex_server.STORE.sessions["source"]["provider_jobs_access"] = "blocked"
         job = {
             "id": "job_human",
             "session_id": "source",
             "title": "Human-created",
         }
         with patch.object(
-            agent_server.JOBS,
+            hyadex_server.JOBS,
             "create",
             AsyncMock(return_value=job),
         ) as create:
-            response = await agent_server.create_job(
-                agent_server.CreateJobRequest(
+            response = await hyadex_server.create_job(
+                hyadex_server.CreateJobRequest(
                     session_id="source",
                     title="Human-created",
                     prompt="Run",

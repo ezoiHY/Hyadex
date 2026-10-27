@@ -13,7 +13,7 @@ from fastapi import HTTPException
 import httpx
 from pydantic import ValidationError
 
-import agent_server
+from tests import hyadex_server
 from hyadex.providers import runtime as provider_runtime
 from hyadex.cli import emergency as hyadex_emergency
 from hyadex.cli import jobs as hyadex_jobs
@@ -26,9 +26,9 @@ def http_request(
     *,
     headers: list[tuple[bytes, bytes]] | None = None,
     receive=None,
-) -> agent_server.Request:
+) -> hyadex_server.Request:
     scope = {
-        "type": "http", "app": agent_server.app,
+        "type": "http", "app": hyadex_server.app,
         "asgi": {"version": "3.0"},
         "http_version": "1.1",
         "method": method,
@@ -42,8 +42,8 @@ def http_request(
         "server": ("127.0.0.1", 7870),
     }
     if receive is None:
-        return agent_server.Request(scope)
-    return agent_server.Request(scope, receive=receive)
+        return hyadex_server.Request(scope)
+    return hyadex_server.Request(scope, receive=receive)
 
 
 class FakeProviderStream:
@@ -84,13 +84,13 @@ class FakeProviderProcess:
 class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
     def test_agent_notification_route_has_bounded_helper_access(self):
         self.assertEqual(
-            agent_server.agent_helper_route_body_limit(
+            hyadex_server.agent_helper_route_body_limit(
                 "POST", "/api/agent/sessions/chat/notifications"
             ),
             8 * 1024,
         )
         self.assertIsNone(
-            agent_server.agent_helper_route_body_limit(
+            hyadex_server.agent_helper_route_body_limit(
                 "GET", "/api/agent/sessions/chat/notifications"
             )
         )
@@ -108,7 +108,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             "[End Hyadex provider authority]\n"
         )
         self.assertEqual(
-            agent_server.strip_hyadex_generated_user_text(lookalike),
+            hyadex_server.strip_hyadex_generated_user_text(lookalike),
             lookalike,
         )
 
@@ -157,12 +157,12 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             ["list", "--target-index", "1"],
         ):
             with self.subTest(arguments=arguments):
-                with self.assertRaises(agent_server.ProviderToolError):
-                    agent_server.resolve_provider_tool_arguments(
+                with self.assertRaises(hyadex_server.ProviderToolError):
+                    hyadex_server.resolve_provider_tool_arguments(
                         "jobs", arguments, {},
                     )
         self.assertEqual(
-            agent_server.resolve_provider_tool_arguments("jobs", ["list"], {}),
+            hyadex_server.resolve_provider_tool_arguments("jobs", ["list"], {}),
             ["list"],
         )
 
@@ -170,14 +170,14 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         value = {"helper": "jobs", "arguments": ["list"]}
         for backend, owner_kwargs in (
             (
-                agent_server.BACKEND_CODEX,
+                hyadex_server.BACKEND_CODEX,
                 {
                     "provider_thread_id": "thread-live",
                     "provider_turn_id": "turn-live",
                 },
             ),
             (
-                agent_server.BACKEND_CLAUDE,
+                hyadex_server.BACKEND_CLAUDE,
                 {"claude_owner_token": "owner-live"},
             ),
         ):
@@ -187,23 +187,23 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 )
                 executor = AsyncMock(return_value=("ok", False))
                 with patch.object(
-                    agent_server,
+                    hyadex_server,
                     "PROVIDER_TOOL_REPLAY",
-                    agent_server.OrderedDict(),
+                    hyadex_server.OrderedDict(),
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "PROVIDER_TOOL_REPLAY_LOCK",
                     asyncio.Lock(),
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "provider_tool_capability_snapshot",
                     capability,
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "execute_provider_tool",
                     executor,
                 ):
-                    first = await agent_server.execute_provider_tool_once(
+                    first = await hyadex_server.execute_provider_tool_once(
                         "chat-live",
                         "run_live",
                         value,
@@ -213,7 +213,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                     )
                     self.assertEqual(first, ("ok", False))
                     self.assertEqual(
-                        await agent_server.execute_provider_tool_once(
+                        await hyadex_server.execute_provider_tool_once(
                             "chat-live",
                             "run_live",
                             value,
@@ -225,11 +225,11 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                     )
                     executor.assert_awaited_once()
 
-                    capability.side_effect = agent_server.ProviderToolError(
+                    capability.side_effect = hyadex_server.ProviderToolError(
                         "provider authority is not active"
                     )
-                    with self.assertRaises(agent_server.ProviderToolError):
-                        await agent_server.execute_provider_tool_once(
+                    with self.assertRaises(hyadex_server.ProviderToolError):
+                        await hyadex_server.execute_provider_tool_once(
                             "chat-live",
                             "run_live",
                             value,
@@ -243,53 +243,53 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         value = {"helper": "jobs", "arguments": ["list"]}
         capability = AsyncMock(return_value=(Path("/private/authority"), {}))
         executor = AsyncMock(return_value=("x" * 100_000, False))
-        replay = agent_server.OrderedDict()
-        tombstones = agent_server.OrderedDict()
+        replay = hyadex_server.OrderedDict()
+        tombstones = hyadex_server.OrderedDict()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_TOOL_REPLAY",
             replay,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_TOOL_REPLAY_TOMBSTONES",
             tombstones,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_TOOL_REPLAY_LIMIT",
             1,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_TOOL_REPLAY_LOCK",
             asyncio.Lock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "provider_tool_capability_snapshot",
             capability,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "execute_provider_tool",
             executor,
         ):
             for replay_key in ("call-1", "call-2"):
-                await agent_server.execute_provider_tool_once(
+                await hyadex_server.execute_provider_tool_once(
                     "chat-live",
                     "run_live",
                     value,
                     replay_key=replay_key,
-                    backend=agent_server.BACKEND_CODEX,
+                    backend=hyadex_server.BACKEND_CODEX,
                     provider_thread_id="thread-live",
                     provider_turn_id="turn-live",
                 )
             self.assertEqual(len(replay), 1)
             self.assertEqual(len(tombstones), 1)
             self.assertIn(("chat-live", "run_live", "call-1"), tombstones)
-            with self.assertRaises(agent_server.ProviderToolError):
-                await agent_server.execute_provider_tool_once(
+            with self.assertRaises(hyadex_server.ProviderToolError):
+                await hyadex_server.execute_provider_tool_once(
                     "chat-live",
                     "run_live",
                     value,
                     replay_key="call-1",
-                    backend=agent_server.BACKEND_CODEX,
+                    backend=hyadex_server.BACKEND_CODEX,
                     provider_thread_id="thread-live",
                     provider_turn_id="turn-live",
                 )
@@ -302,23 +302,23 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             returncode=2,
         )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "provider_tool_capability_snapshot",
             AsyncMock(return_value=(Path("/private/authority"), {})),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "agent_runner_env",
             return_value={},
         ), patch.object(
-            agent_server.asyncio,
+            hyadex_server.asyncio,
             "create_subprocess_exec",
             AsyncMock(return_value=process),
         ):
-            text, is_error = await agent_server.execute_provider_tool(
+            text, is_error = await hyadex_server.execute_provider_tool(
                 "chat-live",
                 "run_live",
                 {"helper": "jobs", "arguments": ["list"]},
-                backend=agent_server.BACKEND_CODEX,
+                backend=hyadex_server.BACKEND_CODEX,
                 provider_thread_id="thread-live",
                 provider_turn_id="turn-live",
             )
@@ -335,38 +335,38 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(payload.user_prompt, exact_user_text)
         self.assertLessEqual(
-            len(agent_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM),
-            agent_server.MAX_PROVIDER_STATIC_INSTRUCTIONS_CHARS,
+            len(hyadex_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM),
+            hyadex_server.MAX_PROVIDER_STATIC_INSTRUCTIONS_CHARS,
         )
         with self.assertRaises(provider_runtime.ProviderRuntimeContextError):
             provider_runtime.validate_provider_runtime_context(
                 "\U0001f4e6" * (provider_runtime.MAX_PROVIDER_RUNTIME_CONTEXT_BYTES // 4 + 1)
             )
-        with self.assertRaises(agent_server.ProviderToolError):
-            agent_server.validate_provider_tool_input({
+        with self.assertRaises(hyadex_server.ProviderToolError):
+            hyadex_server.validate_provider_tool_input({
                 "helper": "jobs",
                 "arguments": [
                     "get",
-                    "x" * (agent_server.PROVIDER_TOOL_MAX_ARGUMENT_CHARS + 1),
+                    "x" * (hyadex_server.PROVIDER_TOOL_MAX_ARGUMENT_CHARS + 1),
                 ],
             })
-        with self.assertRaises(agent_server.ProviderToolError):
-            agent_server.validate_provider_tool_input({
+        with self.assertRaises(hyadex_server.ProviderToolError):
+            hyadex_server.validate_provider_tool_input({
                 "helper": "publish",
                 "arguments": ["--title", "report"],
                 "stdin": "\U0001f4e6" * (
-                    agent_server.PROVIDER_TOOL_MAX_STDIN_BYTES // 4 + 1
+                    hyadex_server.PROVIDER_TOOL_MAX_STDIN_BYTES // 4 + 1
                 ),
             })
         for malformed in ("\ud800", "prefix\udfff"):
             with self.subTest(malformed=repr(malformed)):
-                with self.assertRaises(agent_server.ProviderToolError):
-                    agent_server.validate_provider_tool_input({
+                with self.assertRaises(hyadex_server.ProviderToolError):
+                    hyadex_server.validate_provider_tool_input({
                         "helper": "jobs",
                         "arguments": ["get", malformed],
                     })
-                with self.assertRaises(agent_server.ProviderToolError):
-                    agent_server.validate_provider_tool_input({
+                with self.assertRaises(hyadex_server.ProviderToolError):
+                    hyadex_server.validate_provider_tool_input({
                         "helper": "publish",
                         "arguments": ["--title", "report"],
                         "stdin": malformed,
@@ -375,16 +375,16 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             provider_runtime.validate_provider_runtime_context("\ud800")
 
     async def test_provider_tool_rejects_huge_target_index_as_safe_error(self):
-        with self.assertRaises(agent_server.ProviderToolError):
-            agent_server.resolve_provider_tool_arguments(
+        with self.assertRaises(hyadex_server.ProviderToolError):
+            hyadex_server.resolve_provider_tool_arguments(
                 "jobs",
                 ["list", "--target-index", "9" * 5_000],
                 {},
             )
 
     async def test_provider_tool_preserves_supported_message_and_job_boundaries(self):
-        job_prompt = "j" * agent_server.MAX_JOB_PROMPT_CHARS
-        helper, arguments, _stdin = agent_server.validate_provider_tool_input({
+        job_prompt = "j" * hyadex_server.MAX_JOB_PROMPT_CHARS
+        helper, arguments, _stdin = hyadex_server.validate_provider_tool_input({
             "helper": "jobs",
             "arguments": [
                 "create",
@@ -399,8 +399,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(helper, "jobs")
         self.assertEqual(arguments[4], job_prompt)
 
-        message = "m" * agent_server.PROVIDER_TOOL_MAX_ARGUMENT_CHARS
-        helper, arguments, stdin = agent_server.validate_provider_tool_input({
+        message = "m" * hyadex_server.PROVIDER_TOOL_MAX_ARGUMENT_CHARS
+        helper, arguments, stdin = hyadex_server.validate_provider_tool_input({
             "helper": "notify",
             "arguments": ["--message", message],
         })
@@ -424,15 +424,15 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             "--en",
         ):
             with self.subTest(argument=argument):
-                with self.assertRaises(agent_server.ProviderToolError):
-                    agent_server.validate_provider_tool_input({
+                with self.assertRaises(hyadex_server.ProviderToolError):
+                    hyadex_server.validate_provider_tool_input({
                         "helper": "jobs",
                         "arguments": [argument, "attacker", "list"],
                     })
 
     async def test_codex_provider_mcp_rejects_nonexclusive_transport_auth_before_body(self):
         secret = "process-scoped-mcp-secret"
-        secret_name = agent_server.CODEX_PROVIDER_MCP_HEADER_NAME.lower().encode(
+        secret_name = hyadex_server.CODEX_PROVIDER_MCP_HEADER_NAME.lower().encode(
             "ascii"
         )
 
@@ -467,7 +467,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(case=label):
                 request = http_request(
                     "POST",
-                    agent_server.CODEX_PROVIDER_MCP_PATH,
+                    hyadex_server.CODEX_PROVIDER_MCP_PATH,
                     headers=[
                         (b"content-type", b"application/json"),
                         (b"content-length", b"1"),
@@ -477,11 +477,11 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 )
                 downstream = AsyncMock()
                 with patch.object(
-                    agent_server,
+                    hyadex_server,
                     "CODEX_PROVIDER_MCP_HEADER_SECRET",
                     secret,
                 ):
-                    response = await agent_server.require_agent_token(
+                    response = await hyadex_server.require_agent_token(
                         request,
                         downstream,
                     )
@@ -511,7 +511,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                         "turn_id": turn_id,
                         "hyadex_run_id": run_id,
                         "hyadex_run_proof": (
-                            agent_server.codex_provider_mcp_run_proof(
+                            hyadex_server.codex_provider_mcp_run_proof(
                                 session_id,
                                 thread_id,
                                 run_id,
@@ -528,7 +528,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
 
         request = http_request(
             "POST",
-            agent_server.CODEX_PROVIDER_MCP_PATH,
+            hyadex_server.CODEX_PROVIDER_MCP_PATH,
             headers=[
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(body)).encode("ascii")),
@@ -537,36 +537,36 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         )
         request.state.codex_provider_mcp_authenticated = True
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "sessions",
             {
                 session_id: {
                     "id": session_id,
-                    "backend": agent_server.BACKEND_CODEX,
+                    "backend": hyadex_server.BACKEND_CODEX,
                     "codex_thread_id": thread_id,
                 }
             },
         ), patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "active",
             {
                 session_id: {
                     "run_id": run_id,
-                    "backend": agent_server.BACKEND_CODEX,
-                    "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                    "backend": hyadex_server.BACKEND_CODEX,
+                    "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                     "provider_thread_id": thread_id,
                 }
             },
         ), patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "busy",
             {session_id},
         ), patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "active_lock",
             asyncio.Lock(),
         ):
-            response = await agent_server.codex_provider_mcp(request)
+            response = await hyadex_server.codex_provider_mcp(request)
 
         decoded = json.loads(response.body)
         self.assertEqual(response.status_code, 200)
@@ -580,7 +580,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         turn_id = "turn-live"
         run_id = "run_live"
         arguments = {"helper": "jobs", "arguments": ["list"]}
-        proof = agent_server.codex_provider_mcp_run_proof(
+        proof = hyadex_server.codex_provider_mcp_run_proof(
             session_id,
             thread_id,
             run_id,
@@ -607,33 +607,33 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             },
         }
         executor = AsyncMock(return_value=("provider result", False))
-        transport = httpx.ASGITransport(app=agent_server.app)
+        transport = httpx.ASGITransport(app=hyadex_server.app)
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://127.0.0.1:7870",
         ) as client:
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "CODEX_PROVIDER_MCP_HEADER_SECRET",
                 secret,
             ), patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "sessions",
                 {
                     session_id: {
                         "id": session_id,
-                        "backend": agent_server.BACKEND_CODEX,
+                        "backend": hyadex_server.BACKEND_CODEX,
                         "codex_thread_id": thread_id,
                     }
                 },
             ), patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "active",
                 {
                     session_id: {
                         "run_id": run_id,
-                        "backend": agent_server.BACKEND_CODEX,
-                        "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                        "backend": hyadex_server.BACKEND_CODEX,
+                        "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                         "provider_thread_id": thread_id,
                         "provider_turn_id": turn_id,
                         "provider_turn_ready": True,
@@ -641,60 +641,60 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                     }
                 },
             ), patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "current_turns",
                 {session_id: {"run_id": run_id}},
             ), patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "busy",
                 {session_id},
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "DELETING_SESSIONS",
                 set(),
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "DELETED_SESSION_TOMBSTONES",
                 set(),
             ), patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "active_lock",
                 asyncio.Lock(),
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "UNSAFE_HTTP_MUTATION_ADMISSION_LOCK",
                 asyncio.Lock(),
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "UNSAFE_HTTP_MUTATION_TASKS",
                 {},
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "managed_server_restart_blocks_work",
                 return_value=False,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "execution_maintenance_blocks_work",
                 return_value=False,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "execute_provider_tool_once",
                 executor,
             ):
                 normal_response = await client.post(
-                    agent_server.CODEX_PROVIDER_MCP_PATH,
+                    hyadex_server.CODEX_PROVIDER_MCP_PATH,
                     json=payload,
                     headers={
-                        agent_server.CODEX_PROVIDER_MCP_HEADER_NAME: secret,
+                        hyadex_server.CODEX_PROVIDER_MCP_HEADER_NAME: secret,
                     },
                 )
 
                 # A standalone scheduled job owns a live ephemeral thread,
                 # intentionally absent from persistent session identity.
-                agent_server.STORE.sessions[session_id][
+                hyadex_server.STORE.sessions[session_id][
                     "codex_thread_id"
                 ] = "parked-chat-thread"
-                agent_server.RUNS.active[session_id][
+                hyadex_server.RUNS.active[session_id][
                     "standalone_provider_context"
                 ] = True
                 standalone_payload = json.loads(json.dumps(payload))
@@ -703,10 +703,10 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                     "call-standalone"
                 )
                 standalone_response = await client.post(
-                    agent_server.CODEX_PROVIDER_MCP_PATH,
+                    hyadex_server.CODEX_PROVIDER_MCP_PATH,
                     json=standalone_payload,
                     headers={
-                        agent_server.CODEX_PROVIDER_MCP_HEADER_NAME: secret,
+                        hyadex_server.CODEX_PROVIDER_MCP_HEADER_NAME: secret,
                     },
                 )
 
@@ -731,14 +731,14 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             run_id,
             arguments,
             replay_key="codex:call-standalone",
-            backend=agent_server.BACKEND_CODEX,
+            backend=hyadex_server.BACKEND_CODEX,
             provider_thread_id=thread_id,
             provider_turn_id=turn_id,
         )
 
     async def test_main_cli_port_updates_required_provider_endpoint(self):
-        original_bind = agent_server.SERVER.bind_address
-        original_port = agent_server.SERVER.port
+        original_bind = hyadex_server.SERVER.bind_address
+        original_port = hyadex_server.SERVER.port
         run_server = MagicMock()
         try:
             with patch.object(
@@ -746,31 +746,31 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 "argv",
                 ["agent_server.py", "--bind", "127.0.0.1", "--port", "17850"],
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "configure_server_logging",
             ), patch.object(
-                agent_server.uvicorn,
+                hyadex_server.uvicorn,
                 "run",
                 run_server,
             ):
-                self.assertEqual(agent_server.main(), 0)
+                self.assertEqual(hyadex_server.main(), 0)
 
-            self.assertEqual(agent_server.SERVER.bind_address, "127.0.0.1")
-            self.assertEqual(agent_server.SERVER.port, 17850)
-            config = agent_server.codex_provider_mcp_config()
+            self.assertEqual(hyadex_server.SERVER.bind_address, "127.0.0.1")
+            self.assertEqual(hyadex_server.SERVER.port, 17850)
+            config = hyadex_server.codex_provider_mcp_config()
             self.assertEqual(
                 config[
-                    f"mcp_servers.{agent_server.CODEX_PROVIDER_MCP_NAME}.url"
+                    f"mcp_servers.{hyadex_server.CODEX_PROVIDER_MCP_NAME}.url"
                 ],
                 "http://127.0.0.1:17850/api/agent/provider-tools/mcp",
             )
             run_server.assert_called_once()
         finally:
-            agent_server.SERVER.bind_address = original_bind
-            agent_server.SERVER.port = original_port
+            hyadex_server.SERVER.bind_address = original_bind
+            hyadex_server.SERVER.port = original_port
 
     async def test_codex_provider_mcp_config_supports_every_bind_family(self):
-        prefix = f"mcp_servers.{agent_server.CODEX_PROVIDER_MCP_NAME}.url"
+        prefix = f"mcp_servers.{hyadex_server.CODEX_PROVIDER_MCP_NAME}.url"
         cases = {
             "0.0.0.0": "http://127.0.0.1:17850/api/agent/provider-tools/mcp",
             "127.0.0.1": "http://127.0.0.1:17850/api/agent/provider-tools/mcp",
@@ -782,26 +782,26 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         }
         for bind_address, expected in cases.items():
             with self.subTest(bind=bind_address), patch.object(
-                agent_server.SERVER,
+                hyadex_server.SERVER,
                 "bind_address",
                 bind_address,
-            ), patch.object(agent_server.SERVER, "port", 17850):
+            ), patch.object(hyadex_server.SERVER, "port", 17850):
                 self.assertEqual(
-                    agent_server.codex_provider_mcp_config()[prefix],
+                    hyadex_server.codex_provider_mcp_config()[prefix],
                     expected,
                 )
 
     async def test_provider_runner_env_uses_exact_origin_and_bypasses_proxies(self):
         with patch.object(
-            agent_server.SERVER,
+            hyadex_server.SERVER,
             "bind_address",
             "2001:db8::40",
         ), patch.object(
-            agent_server.SERVER,
+            hyadex_server.SERVER,
             "port",
             17850,
         ), patch.dict(
-            agent_server.os.environ,
+            hyadex_server.os.environ,
             {
                 "HTTP_PROXY": "http://proxy.example:8080",
                 "HTTPS_PROXY": "http://proxy.example:8080",
@@ -810,8 +810,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             },
             clear=False,
         ):
-            runner = agent_server.agent_runner_env("chat-specific-bind")
-            codex = agent_server.codex_app_server_env()
+            runner = hyadex_server.agent_runner_env("chat-specific-bind")
+            codex = hyadex_server.codex_app_server_env()
 
         expected = "http://[2001:db8::40]:17850"
         for environment in (runner, codex):
@@ -825,7 +825,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_agent_helper_middleware_accepts_exact_specific_bind_peer(self):
         token = "specific-bind-provider-capability"
-        token_hash = agent_server.hashlib.sha256(token.encode()).hexdigest()
+        token_hash = hyadex_server.hashlib.sha256(token.encode()).hexdigest()
         request = http_request(
             "GET",
             "/api/agent/sessions/chat/jobs",
@@ -835,18 +835,18 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         )
         request.scope["client"] = ("192.0.2.40", 50000)
         downstream = AsyncMock(
-            return_value=agent_server.JSONResponse({"jobs": []})
+            return_value=hyadex_server.JSONResponse({"jobs": []})
         )
         with patch.object(
-            agent_server.SERVER,
+            hyadex_server.SERVER,
             "bind_address",
             "192.0.2.40",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_AUTHORITIES",
             {token_hash: {"source_run_id": "run-specific-bind"}},
         ):
-            response = await agent_server.require_agent_token(
+            response = await hyadex_server.require_agent_token(
                 request,
                 downstream,
             )
@@ -871,7 +871,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 (b"content-type", b"application/json"),
                 (b"content-length", b"2"),
                 (
-                    agent_server.CODEX_PROVIDER_MCP_HEADER_NAME.lower().encode("ascii"),
+                    hyadex_server.CODEX_PROVIDER_MCP_HEADER_NAME.lower().encode("ascii"),
                     secret.encode("ascii"),
                 ),
             ]
@@ -879,24 +879,24 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 headers.append((b"x-forwarded-for", b"127.0.0.1"))
             request = http_request(
                 "POST",
-                agent_server.CODEX_PROVIDER_MCP_PATH,
+                hyadex_server.CODEX_PROVIDER_MCP_PATH,
                 headers=headers,
                 receive=receive,
             )
             request.scope["client"] = (client_host, 50000)
             downstream = AsyncMock(
-                return_value=agent_server.JSONResponse({"ok": True})
+                return_value=hyadex_server.JSONResponse({"ok": True})
             )
             with patch.object(
-                agent_server.SERVER,
+                hyadex_server.SERVER,
                 "bind_address",
                 "192.0.2.40",
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "CODEX_PROVIDER_MCP_HEADER_SECRET",
                 secret,
             ):
-                response = await agent_server.require_agent_token(
+                response = await hyadex_server.require_agent_token(
                     request,
                     downstream,
                 )
@@ -923,7 +923,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         turn_id = "turn-live"
         run_id = "run_live"
         arguments = {"helper": "jobs", "arguments": ["list"]}
-        proof = agent_server.codex_provider_mcp_run_proof(
+        proof = hyadex_server.codex_provider_mcp_run_proof(
             session_id,
             thread_id,
             run_id,
@@ -949,22 +949,22 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         sessions = {
             session_id: {
                 "id": session_id,
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": thread_id,
             }
         }
         active = {
             session_id: {
                 "run_id": run_id,
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                "backend": hyadex_server.BACKEND_CODEX,
+                "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                 "provider_thread_id": thread_id,
             }
         }
         busy = {session_id}
         executor = AsyncMock()
 
-        async def invoke(payload: dict) -> agent_server.Response:
+        async def invoke(payload: dict) -> hyadex_server.Response:
             body = json.dumps(payload).encode("utf-8")
 
             async def receive():
@@ -976,7 +976,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
 
             request = http_request(
                 "POST",
-                agent_server.CODEX_PROVIDER_MCP_PATH,
+                hyadex_server.CODEX_PROVIDER_MCP_PATH,
                 headers=[
                     (b"content-type", b"application/json"),
                     (b"content-length", str(len(body)).encode("ascii")),
@@ -984,20 +984,20 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 receive=receive,
             )
             request.state.codex_provider_mcp_authenticated = True
-            return await agent_server.codex_provider_mcp(request)
+            return await hyadex_server.codex_provider_mcp(request)
 
         def reset_state() -> dict:
             sessions.clear()
             sessions[session_id] = {
                 "id": session_id,
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": thread_id,
             }
             active.clear()
             active[session_id] = {
                 "run_id": run_id,
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                "backend": hyadex_server.BACKEND_CODEX,
+                "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                 "provider_thread_id": thread_id,
             }
             busy.clear()
@@ -1005,31 +1005,31 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             return json.loads(json.dumps(base_payload))
 
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "sessions",
             sessions,
         ), patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "active",
             active,
         ), patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "busy",
             busy,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "DELETING_SESSIONS",
             set(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "DELETED_SESSION_TOMBSTONES",
             set(),
         ), patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "active_lock",
             asyncio.Lock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "execute_provider_tool_once",
             executor,
         ):
@@ -1047,7 +1047,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             payload = reset_state()
             sessions["chat-other"] = {
                 "id": "chat-other",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": thread_id,
             }
             cases.append(("two stored owners", payload, "Ambiguous thread owner"))
@@ -1055,7 +1055,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             payload = reset_state()
             sessions["chat-other"] = {
                 "id": "chat-other",
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
                 # A backend switch parks the Codex identity; it remains an
                 # owner and must keep this thread ambiguous.
                 "codex_thread_id": thread_id,
@@ -1092,13 +1092,13 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                     elif label == "two stored owners":
                         sessions["chat-other"] = {
                             "id": "chat-other",
-                            "backend": agent_server.BACKEND_CODEX,
+                            "backend": hyadex_server.BACKEND_CODEX,
                             "codex_thread_id": thread_id,
                         }
                     elif label == "parked stored owner":
                         sessions["chat-other"] = {
                             "id": "chat-other",
-                            "backend": agent_server.BACKEND_CLAUDE,
+                            "backend": hyadex_server.BACKEND_CLAUDE,
                             "codex_thread_id": thread_id,
                             "claude_session_id": "claude-other",
                         }
@@ -1145,8 +1145,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                     receive=body_must_not_be_read,
                 )
                 downstream = AsyncMock()
-                with patch.object(agent_server, "PROVIDER_AUTHORITIES", {}):
-                    response = await agent_server.require_agent_token(
+                with patch.object(hyadex_server, "PROVIDER_AUTHORITIES", {}):
+                    response = await hyadex_server.require_agent_token(
                         request,
                         downstream,
                     )
@@ -1181,11 +1181,11 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 )
                 downstream = AsyncMock()
                 with patch.object(
-                    agent_server,
+                    hyadex_server,
                     "PROVIDER_AUTHORITIES",
                     {token_hash: {"source_run_id": "run-live"}},
                 ):
-                    response = await agent_server.require_agent_token(
+                    response = await hyadex_server.require_agent_token(
                         request,
                         downstream,
                     )
@@ -1221,11 +1221,11 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         )
         downstream = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_AUTHORITIES",
             {token_hash: {"source_run_id": "run-live"}},
         ):
-            response = await agent_server.require_agent_token(request, downstream)
+            response = await hyadex_server.require_agent_token(request, downstream)
 
         self.assertEqual(response.status_code, 413)
         self.assertFalse(receive_called)
@@ -1264,7 +1264,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             nonlocal handler_completed
             await request.body()
             handler_completed = True
-            return agent_server.JSONResponse({"ok": True})
+            return hyadex_server.JSONResponse({"ok": True})
 
         request = http_request(
             "POST",
@@ -1277,11 +1277,11 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             receive=receive,
         )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_AUTHORITIES",
             {token_hash: {"source_run_id": "run-live"}},
         ):
-            response = await agent_server.require_agent_token(
+            response = await hyadex_server.require_agent_token(
                 request,
                 body_handler,
             )
@@ -1313,7 +1313,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         async def body_handler(request):
             nonlocal received_body
             received_body = await request.body()
-            return agent_server.JSONResponse({"ok": True})
+            return hyadex_server.JSONResponse({"ok": True})
 
         request = http_request(
             "POST",
@@ -1325,11 +1325,11 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             receive=receive,
         )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_AUTHORITIES",
             {token_hash: {"source_run_id": "run-live"}},
         ):
-            response = await agent_server.require_agent_token(
+            response = await hyadex_server.require_agent_token(
                 request,
                 body_handler,
             )
@@ -1342,7 +1342,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
 
     def test_agent_helper_loopback_rejects_proxy_identity_headers(self):
         self.assertTrue(
-            agent_server.request_client_is_loopback(
+            hyadex_server.request_client_is_loopback(
                 http_request("POST", "/api/agent/sessions/chat/jobs")
             )
         )
@@ -1353,7 +1353,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                     "/api/agent/sessions/chat/jobs",
                     headers=[(name, b"remote.example")],
                 )
-                self.assertFalse(agent_server.request_client_is_loopback(request))
+                self.assertFalse(hyadex_server.request_client_is_loopback(request))
 
     async def test_body_stall_does_not_hold_mutation_lease(self):
         release_final_frame = asyncio.Event()
@@ -1382,7 +1382,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             nonlocal handler_reached
             await request.body()
             handler_reached = True
-            return agent_server.JSONResponse({"saved": True})
+            return hyadex_server.JSONResponse({"saved": True})
 
         update_active = False
         request = http_request(
@@ -1391,23 +1391,23 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             headers=[(b"content-type", b"application/json")],
             receive=receive,
         )
-        with patch.object(agent_server, "AGENT_TOKEN", ""), \
-             patch.object(agent_server, "UNSAFE_HTTP_MUTATION_TASKS", {}), \
+        with patch.object(hyadex_server, "AGENT_TOKEN", ""), \
+             patch.object(hyadex_server, "UNSAFE_HTTP_MUTATION_TASKS", {}), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "managed_server_restart_blocks_work",
                  return_value=False,
              ), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "execution_maintenance_blocks_work",
                  side_effect=lambda: update_active,
              ):
             response_task = asyncio.create_task(
-                agent_server.require_agent_token(request, body_handler)
+                hyadex_server.require_agent_token(request, body_handler)
             )
             await asyncio.wait_for(waiting_for_final_frame.wait(), timeout=1)
-            self.assertEqual(agent_server.unsafe_http_mutation_count_locked(), 0)
+            self.assertEqual(hyadex_server.unsafe_http_mutation_count_locked(), 0)
             update_active = True
             release_final_frame.set()
             response = await asyncio.wait_for(response_task, timeout=1)
@@ -1415,7 +1415,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn(b"execution worker is in maintenance", response.body)
         self.assertFalse(handler_reached)
-        self.assertEqual(agent_server.unsafe_http_mutation_count_locked(), 0)
+        self.assertEqual(hyadex_server.unsafe_http_mutation_count_locked(), 0)
 
     async def test_completed_body_acquires_lease_before_handler(self):
         sent = False
@@ -1435,8 +1435,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         async def body_handler(request):
             nonlocal observed_count
             await request.body()
-            observed_count = agent_server.unsafe_http_mutation_count_locked()
-            return agent_server.JSONResponse({"saved": True})
+            observed_count = hyadex_server.unsafe_http_mutation_count_locked()
+            return hyadex_server.JSONResponse({"saved": True})
 
         request = http_request(
             "POST",
@@ -1444,26 +1444,26 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             headers=[(b"content-type", b"application/json")],
             receive=receive,
         )
-        with patch.object(agent_server, "AGENT_TOKEN", ""), \
-             patch.object(agent_server, "UNSAFE_HTTP_MUTATION_TASKS", {}), \
+        with patch.object(hyadex_server, "AGENT_TOKEN", ""), \
+             patch.object(hyadex_server, "UNSAFE_HTTP_MUTATION_TASKS", {}), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "managed_server_restart_blocks_work",
                  return_value=False,
              ), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "execution_maintenance_blocks_work",
                  return_value=False,
              ):
-            response = await agent_server.require_agent_token(
+            response = await hyadex_server.require_agent_token(
                 request,
                 body_handler,
             )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(observed_count, 1)
-        self.assertEqual(agent_server.unsafe_http_mutation_count_locked(), 0)
+        self.assertEqual(hyadex_server.unsafe_http_mutation_count_locked(), 0)
 
     async def test_asgi_body_stall_cannot_reserve_lifecycle_fence(self):
         first_frame_requested = asyncio.Event()
@@ -1476,20 +1476,20 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             await release_final_frame.wait()
             yield b'"stalled"}'
 
-        transport = httpx.ASGITransport(app=agent_server.app)
+        transport = httpx.ASGITransport(app=hyadex_server.app)
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://127.0.0.1:7870",
         ) as client:
-            with patch.object(agent_server, "AGENT_TOKEN", ""), \
-                 patch.object(agent_server, "UNSAFE_HTTP_MUTATION_TASKS", {}), \
+            with patch.object(hyadex_server, "AGENT_TOKEN", ""), \
+                 patch.object(hyadex_server, "UNSAFE_HTTP_MUTATION_TASKS", {}), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "managed_server_restart_blocks_work",
                      return_value=False,
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "execution_maintenance_blocks_work",
                      side_effect=lambda: update_active,
                  ):
@@ -1503,7 +1503,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(first_frame_requested.wait(), timeout=1)
                 await asyncio.sleep(0)
                 self.assertEqual(
-                    agent_server.unsafe_http_mutation_count_locked(),
+                    hyadex_server.unsafe_http_mutation_count_locked(),
                     0,
                 )
                 update_active = True
@@ -1512,7 +1512,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertIn("execution worker is in maintenance", response.text)
-        self.assertEqual(agent_server.unsafe_http_mutation_count_locked(), 0)
+        self.assertEqual(hyadex_server.unsafe_http_mutation_count_locked(), 0)
 
     async def test_asgi_final_frame_lease_survives_receiver_task(self):
         handler_entered = asyncio.Event()
@@ -1521,33 +1521,33 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
 
         async def slow_create(request):
             nonlocal observed_count
-            observed_count = agent_server.unsafe_http_mutation_count_locked()
+            observed_count = hyadex_server.unsafe_http_mutation_count_locked()
             handler_entered.set()
             await release_handler.wait()
             return {
                 "id": "created-chat",
                 "title": request.title,
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
             }
 
-        transport = httpx.ASGITransport(app=agent_server.app)
+        transport = httpx.ASGITransport(app=hyadex_server.app)
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://127.0.0.1:7870",
         ) as client:
-            with patch.object(agent_server, "AGENT_TOKEN", ""), \
-                 patch.object(agent_server, "UNSAFE_HTTP_MUTATION_TASKS", {}), \
+            with patch.object(hyadex_server, "AGENT_TOKEN", ""), \
+                 patch.object(hyadex_server, "UNSAFE_HTTP_MUTATION_TASKS", {}), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "managed_server_restart_blocks_work",
                      return_value=False,
                  ), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "execution_maintenance_blocks_work",
                      return_value=False,
                  ), \
-                 patch.object(agent_server.STORE, "create", new=slow_create):
+                 patch.object(hyadex_server.STORE, "create", new=slow_create):
                 request_task = asyncio.create_task(
                     client.post(
                         "/api/sessions",
@@ -1557,7 +1557,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(handler_entered.wait(), timeout=1)
                 self.assertEqual(observed_count, 1)
                 self.assertEqual(
-                    agent_server.unsafe_http_mutation_count_locked(),
+                    hyadex_server.unsafe_http_mutation_count_locked(),
                     1,
                 )
                 self.assertFalse(request_task.done())
@@ -1565,7 +1565,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 response = await asyncio.wait_for(request_task, timeout=1)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(agent_server.unsafe_http_mutation_count_locked(), 0)
+        self.assertEqual(hyadex_server.unsafe_http_mutation_count_locked(), 0)
 
     async def test_claude_event_scan_runs_off_event_loop(self):
         loop_thread = threading.get_ident()
@@ -1578,21 +1578,21 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             scan_threads.append(threading.get_ident())
             return {"active_count": 1}
 
-        with patch.object(agent_server, "active_codex_work_labels", return_value=[]), \
-             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", manager), \
+        with patch.object(hyadex_server, "active_codex_work_labels", return_value=[]), \
+             patch.object(hyadex_server.PROVIDERS, "claude_sdk_manager", manager), \
              patch.object(
-                 agent_server.STORE,
+                 hyadex_server.STORE,
                  "sessions",
-                 {"claude-chat": {"backend": agent_server.BACKEND_CLAUDE}},
+                 {"claude-chat": {"backend": hyadex_server.BACKEND_CLAUDE}},
              ), \
-             patch.object(agent_server.RUNS, "busy", set()), \
-             patch.object(agent_server.RUNS, "maintenance", set()), \
+             patch.object(hyadex_server.RUNS, "busy", set()), \
+             patch.object(hyadex_server.RUNS, "maintenance", set()), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "build_claude_subagent_snapshot",
                  side_effect=scan,
              ):
-            labels = await agent_server.active_provider_background_work_labels_async()
+            labels = await hyadex_server.active_provider_background_work_labels_async()
 
         self.assertEqual(labels, ["Claude background work in claude-chat"])
         self.assertEqual(len(scan_threads), 1)
@@ -1610,27 +1610,27 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             release_scan.wait()
             return {"active_count": 0}
 
-        with patch.object(agent_server, "active_codex_work_labels", return_value=[]), \
-             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", manager), \
+        with patch.object(hyadex_server, "active_codex_work_labels", return_value=[]), \
+             patch.object(hyadex_server.PROVIDERS, "claude_sdk_manager", manager), \
              patch.object(
-                 agent_server.STORE,
+                 hyadex_server.STORE,
                  "sessions",
-                 {"claude-chat": {"backend": agent_server.BACKEND_CLAUDE}},
+                 {"claude-chat": {"backend": hyadex_server.BACKEND_CLAUDE}},
              ), \
-             patch.object(agent_server.RUNS, "busy", set()), \
-             patch.object(agent_server.RUNS, "maintenance", set()), \
+             patch.object(hyadex_server.RUNS, "busy", set()), \
+             patch.object(hyadex_server.RUNS, "maintenance", set()), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "build_claude_subagent_snapshot",
                  side_effect=scan,
              ), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "server_restart_tmux_cgroup_state",
                  return_value={},
              ):
             snapshot_task = asyncio.create_task(
-                agent_server.current_server_restart_blocker_snapshot()
+                hyadex_server.current_server_restart_blocker_snapshot()
             )
             started = await asyncio.wait_for(
                 asyncio.to_thread(scan_started.wait, 1),
@@ -1638,10 +1638,10 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertTrue(started)
             await asyncio.wait_for(
-                agent_server.UNSAFE_HTTP_MUTATION_ADMISSION_LOCK.acquire(),
+                hyadex_server.UNSAFE_HTTP_MUTATION_ADMISSION_LOCK.acquire(),
                 timeout=0.2,
             )
-            agent_server.UNSAFE_HTTP_MUTATION_ADMISSION_LOCK.release()
+            hyadex_server.UNSAFE_HTTP_MUTATION_ADMISSION_LOCK.release()
             release_scan.set()
             snapshot = await asyncio.wait_for(snapshot_task, timeout=2)
 
@@ -1653,26 +1653,26 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             event_file = Path(temporary) / "events.jsonl"
             event_file.write_text("")
-            with patch.object(agent_server, "active_codex_work_labels", return_value=[]), \
-                 patch.object(agent_server.PROVIDERS, "claude_sdk_manager", manager), \
+            with patch.object(hyadex_server, "active_codex_work_labels", return_value=[]), \
+                 patch.object(hyadex_server.PROVIDERS, "claude_sdk_manager", manager), \
                  patch.object(
-                     agent_server.STORE,
+                     hyadex_server.STORE,
                      "sessions",
-                     {"claude-chat": {"backend": agent_server.BACKEND_CLAUDE}},
+                     {"claude-chat": {"backend": hyadex_server.BACKEND_CLAUDE}},
                  ), \
-                 patch.object(agent_server.RUNS, "busy", set()), \
-                 patch.object(agent_server.RUNS, "maintenance", set()), \
-                 patch.object(agent_server, "events_path", return_value=event_file), \
+                 patch.object(hyadex_server.RUNS, "busy", set()), \
+                 patch.object(hyadex_server.RUNS, "maintenance", set()), \
+                 patch.object(hyadex_server, "events_path", return_value=event_file), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "build_claude_subagent_snapshot",
                      return_value={"active_count": 0},
                  ):
                 snapshot = (
-                    await agent_server.prepare_provider_background_work_snapshot()
+                    await hyadex_server.prepare_provider_background_work_snapshot()
                 )
                 event_file.write_text("changed\n")
-                labels = agent_server.provider_background_work_labels_from_snapshot(
+                labels = hyadex_server.provider_background_work_labels_from_snapshot(
                     snapshot
                 )
 
@@ -1704,32 +1704,32 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             "run_id": "parent-run",
             "subagent_status": "running",
         }
-        with patch.object(agent_server.PROVIDERS, "codex_manager", manager), \
-             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", None), \
-             patch.object(agent_server.STORE, "sessions", {}), \
-             patch.object(agent_server.RUNS, "busy", set()), \
-             patch.object(agent_server.RUNS, "maintenance", set()), \
-             patch.object(agent_server.RUNS, "active", {}), \
-             patch.object(agent_server.RUNS, "current_turns", {}), \
-             patch.object(agent_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
-             patch.object(agent_server, "CODEX_PENDING_INTERACTIONS", {}), \
+        with patch.object(hyadex_server.PROVIDERS, "codex_manager", manager), \
+             patch.object(hyadex_server.PROVIDERS, "claude_sdk_manager", None), \
+             patch.object(hyadex_server.STORE, "sessions", {}), \
+             patch.object(hyadex_server.RUNS, "busy", set()), \
+             patch.object(hyadex_server.RUNS, "maintenance", set()), \
+             patch.object(hyadex_server.RUNS, "active", {}), \
+             patch.object(hyadex_server.RUNS, "current_turns", {}), \
+             patch.object(hyadex_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
+             patch.object(hyadex_server, "CODEX_PENDING_INTERACTIONS", {}), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "CODEX_SUBAGENT_STATE",
                  {"child-thread": child_state},
              ), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "CODEX_SUBAGENT_SESSION_INDEX",
                  {"child-thread": "idle-chat"},
              ), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "CODEX_SUBAGENT_LIVE_GENERATIONS",
                  {"child-thread": manager.generation},
              ):
-            snapshot = await agent_server.prepare_provider_background_work_snapshot()
-            labels = agent_server.provider_background_work_labels_from_snapshot(
+            snapshot = await hyadex_server.prepare_provider_background_work_snapshot()
+            labels = hyadex_server.provider_background_work_labels_from_snapshot(
                 snapshot
             )
 
@@ -1760,27 +1760,27 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 return [{"id": "turn-terminal", "status": "completed"}]
 
         manager = CodexManager()
-        with patch.object(agent_server.PROVIDERS, "codex_manager", manager), \
-             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", None), \
-             patch.object(agent_server.STORE, "sessions", {}), \
-             patch.object(agent_server.RUNS, "busy", set()), \
-             patch.object(agent_server.RUNS, "maintenance", set()), \
-             patch.object(agent_server.RUNS, "active", {}), \
-             patch.object(agent_server.RUNS, "current_turns", {}), \
-             patch.object(agent_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
-             patch.object(agent_server, "CODEX_PENDING_INTERACTIONS", {}), \
-             patch.object(agent_server, "CODEX_SUBAGENT_STATE", {
+        with patch.object(hyadex_server.PROVIDERS, "codex_manager", manager), \
+             patch.object(hyadex_server.PROVIDERS, "claude_sdk_manager", None), \
+             patch.object(hyadex_server.STORE, "sessions", {}), \
+             patch.object(hyadex_server.RUNS, "busy", set()), \
+             patch.object(hyadex_server.RUNS, "maintenance", set()), \
+             patch.object(hyadex_server.RUNS, "active", {}), \
+             patch.object(hyadex_server.RUNS, "current_turns", {}), \
+             patch.object(hyadex_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
+             patch.object(hyadex_server, "CODEX_PENDING_INTERACTIONS", {}), \
+             patch.object(hyadex_server, "CODEX_SUBAGENT_STATE", {
                  "child-thread": {
                      "session_id": "idle-chat",
                      "subagent_status": "running",
                  },
              }), \
-             patch.object(agent_server, "CODEX_SUBAGENT_SESSION_INDEX", {
+             patch.object(hyadex_server, "CODEX_SUBAGENT_SESSION_INDEX", {
                  "child-thread": "idle-chat",
              }), \
-             patch.object(agent_server, "CODEX_SUBAGENT_LIVE_GENERATIONS", {}):
-            snapshot = await agent_server.prepare_provider_background_work_snapshot()
-            labels = agent_server.provider_background_work_labels_from_snapshot(
+             patch.object(hyadex_server, "CODEX_SUBAGENT_LIVE_GENERATIONS", {}):
+            snapshot = await hyadex_server.prepare_provider_background_work_snapshot()
+            labels = hyadex_server.provider_background_work_labels_from_snapshot(
                 snapshot
             )
 
@@ -1814,33 +1814,33 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         generations = {
             thread_id: manager.generation for thread_id in states
         }
-        with patch.object(agent_server.PROVIDERS, "codex_manager", manager), \
-             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", None), \
-             patch.object(agent_server.STORE, "sessions", {}), \
-             patch.object(agent_server.RUNS, "busy", set()), \
-             patch.object(agent_server.RUNS, "maintenance", set()), \
-             patch.object(agent_server.RUNS, "active", {}), \
-             patch.object(agent_server.RUNS, "current_turns", {}), \
-             patch.object(agent_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
-             patch.object(agent_server, "CODEX_PENDING_INTERACTIONS", {}), \
-             patch.object(agent_server, "CODEX_SUBAGENT_STATE", states), \
-             patch.object(agent_server, "CODEX_SUBAGENT_SESSION_INDEX", {}), \
+        with patch.object(hyadex_server.PROVIDERS, "codex_manager", manager), \
+             patch.object(hyadex_server.PROVIDERS, "claude_sdk_manager", None), \
+             patch.object(hyadex_server.STORE, "sessions", {}), \
+             patch.object(hyadex_server.RUNS, "busy", set()), \
+             patch.object(hyadex_server.RUNS, "maintenance", set()), \
+             patch.object(hyadex_server.RUNS, "active", {}), \
+             patch.object(hyadex_server.RUNS, "current_turns", {}), \
+             patch.object(hyadex_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
+             patch.object(hyadex_server, "CODEX_PENDING_INTERACTIONS", {}), \
+             patch.object(hyadex_server, "CODEX_SUBAGENT_STATE", states), \
+             patch.object(hyadex_server, "CODEX_SUBAGENT_SESSION_INDEX", {}), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "CODEX_SUBAGENT_LIVE_GENERATIONS",
                  generations,
              ), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "CODEX_SUBAGENT_SCAN_LIMIT",
                  2,
              ):
-            first = await agent_server.prepare_provider_background_work_snapshot()
-            first_labels = agent_server.provider_background_work_labels_from_snapshot(
+            first = await hyadex_server.prepare_provider_background_work_snapshot()
+            first_labels = hyadex_server.provider_background_work_labels_from_snapshot(
                 first
             )
-            second = await agent_server.prepare_provider_background_work_snapshot()
-            second_labels = agent_server.provider_background_work_labels_from_snapshot(
+            second = await hyadex_server.prepare_provider_background_work_snapshot()
+            second_labels = hyadex_server.provider_background_work_labels_from_snapshot(
                 second
             )
 
@@ -1862,29 +1862,29 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 return [{"id": "turn-live", "status": "inProgress"}]
 
         manager = CodexManager()
-        with patch.object(agent_server.PROVIDERS, "codex_manager", manager), \
-             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", None), \
-             patch.object(agent_server.STORE, "sessions", {}), \
-             patch.object(agent_server.RUNS, "busy", set()), \
-             patch.object(agent_server.RUNS, "maintenance", set()), \
-             patch.object(agent_server.RUNS, "active", {}), \
-             patch.object(agent_server.RUNS, "current_turns", {}), \
-             patch.object(agent_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
-             patch.object(agent_server, "CODEX_PENDING_INTERACTIONS", {}), \
-             patch.object(agent_server, "CODEX_SUBAGENT_STATE", {
+        with patch.object(hyadex_server.PROVIDERS, "codex_manager", manager), \
+             patch.object(hyadex_server.PROVIDERS, "claude_sdk_manager", None), \
+             patch.object(hyadex_server.STORE, "sessions", {}), \
+             patch.object(hyadex_server.RUNS, "busy", set()), \
+             patch.object(hyadex_server.RUNS, "maintenance", set()), \
+             patch.object(hyadex_server.RUNS, "active", {}), \
+             patch.object(hyadex_server.RUNS, "current_turns", {}), \
+             patch.object(hyadex_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
+             patch.object(hyadex_server, "CODEX_PENDING_INTERACTIONS", {}), \
+             patch.object(hyadex_server, "CODEX_SUBAGENT_STATE", {
                  "child-thread": {
                      "session_id": "idle-chat",
                      "subagent_status": "running",
                  },
              }), \
-             patch.object(agent_server, "CODEX_SUBAGENT_SESSION_INDEX", {
+             patch.object(hyadex_server, "CODEX_SUBAGENT_SESSION_INDEX", {
                  "child-thread": "idle-chat",
              }), \
-             patch.object(agent_server, "CODEX_SUBAGENT_LIVE_GENERATIONS", {
+             patch.object(hyadex_server, "CODEX_SUBAGENT_LIVE_GENERATIONS", {
                  "child-thread": manager.generation,
              }):
-            snapshot = await agent_server.prepare_provider_background_work_snapshot()
-            labels = agent_server.provider_background_work_labels_from_snapshot(
+            snapshot = await hyadex_server.prepare_provider_background_work_snapshot()
+            labels = hyadex_server.provider_background_work_labels_from_snapshot(
                 snapshot
             )
 
@@ -1904,29 +1904,29 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("app-server unavailable")
 
         manager = CodexManager()
-        with patch.object(agent_server.PROVIDERS, "codex_manager", manager), \
-             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", None), \
-             patch.object(agent_server.STORE, "sessions", {}), \
-             patch.object(agent_server.RUNS, "busy", set()), \
-             patch.object(agent_server.RUNS, "maintenance", set()), \
-             patch.object(agent_server.RUNS, "active", {}), \
-             patch.object(agent_server.RUNS, "current_turns", {}), \
-             patch.object(agent_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
-             patch.object(agent_server, "CODEX_PENDING_INTERACTIONS", {}), \
-             patch.object(agent_server, "CODEX_SUBAGENT_STATE", {
+        with patch.object(hyadex_server.PROVIDERS, "codex_manager", manager), \
+             patch.object(hyadex_server.PROVIDERS, "claude_sdk_manager", None), \
+             patch.object(hyadex_server.STORE, "sessions", {}), \
+             patch.object(hyadex_server.RUNS, "busy", set()), \
+             patch.object(hyadex_server.RUNS, "maintenance", set()), \
+             patch.object(hyadex_server.RUNS, "active", {}), \
+             patch.object(hyadex_server.RUNS, "current_turns", {}), \
+             patch.object(hyadex_server, "CODEX_NATIVE_ACTION_TASKS", {}), \
+             patch.object(hyadex_server, "CODEX_PENDING_INTERACTIONS", {}), \
+             patch.object(hyadex_server, "CODEX_SUBAGENT_STATE", {
                  "child-thread": {
                      "session_id": "idle-chat",
                      "subagent_status": "running",
                  },
              }), \
-             patch.object(agent_server, "CODEX_SUBAGENT_SESSION_INDEX", {
+             patch.object(hyadex_server, "CODEX_SUBAGENT_SESSION_INDEX", {
                  "child-thread": "idle-chat",
              }), \
-             patch.object(agent_server, "CODEX_SUBAGENT_LIVE_GENERATIONS", {
+             patch.object(hyadex_server, "CODEX_SUBAGENT_LIVE_GENERATIONS", {
                  "child-thread": manager.generation,
              }):
-            snapshot = await agent_server.prepare_provider_background_work_snapshot()
-            labels = agent_server.provider_background_work_labels_from_snapshot(
+            snapshot = await hyadex_server.prepare_provider_background_work_snapshot()
+            labels = hyadex_server.provider_background_work_labels_from_snapshot(
                 snapshot
             )
 
@@ -1936,14 +1936,14 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
     def test_oversized_claude_events_fail_closed_without_folding(self):
         event_file = MagicMock()
         event_file.stat.return_value.st_size = (
-            agent_server.MAX_CLAUDE_BACKGROUND_EVENT_SCAN_BYTES + 1
+            hyadex_server.MAX_CLAUDE_BACKGROUND_EVENT_SCAN_BYTES + 1
         )
-        with patch.object(agent_server, "events_path", return_value=event_file), \
+        with patch.object(hyadex_server, "events_path", return_value=event_file), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "build_claude_subagent_snapshot",
              ) as fold:
-            labels = agent_server.claude_background_work_labels_from_events(
+            labels = hyadex_server.claude_background_work_labels_from_events(
                 ("claude-chat",)
             )
 
@@ -1954,7 +1954,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         session_ids = [f"claude-{index:02d}" for index in range(33)]
         last_session_id = session_ids[-1]
         sessions = {
-            session_id: {"backend": agent_server.BACKEND_CLAUDE}
+            session_id: {"backend": hyadex_server.BACKEND_CLAUDE}
             for session_id in session_ids
         }
         scanned: list[str] = []
@@ -1967,43 +1967,43 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             return {"active_count": int(session_id == last_session_id)}
 
         with tempfile.TemporaryDirectory() as temporary, \
-             patch.object(agent_server, "active_codex_work_labels", return_value=[]), \
-             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", manager), \
-             patch.object(agent_server.STORE, "sessions", sessions), \
-             patch.object(agent_server.RUNS, "busy", set()), \
-             patch.object(agent_server.RUNS, "maintenance", set()), \
+             patch.object(hyadex_server, "active_codex_work_labels", return_value=[]), \
+             patch.object(hyadex_server.PROVIDERS, "claude_sdk_manager", manager), \
+             patch.object(hyadex_server.STORE, "sessions", sessions), \
+             patch.object(hyadex_server.RUNS, "busy", set()), \
+             patch.object(hyadex_server.RUNS, "maintenance", set()), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "events_path",
                  side_effect=lambda session_id: Path(temporary) / session_id,
              ), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "build_claude_subagent_snapshot",
                  side_effect=scan,
              ):
             provider_snapshot = (
-                await agent_server.prepare_provider_background_work_snapshot()
+                await hyadex_server.prepare_provider_background_work_snapshot()
             )
-            labels = agent_server.provider_background_work_labels_from_snapshot(
+            labels = hyadex_server.provider_background_work_labels_from_snapshot(
                 provider_snapshot
             )
 
         self.assertEqual(
             labels,
-            [agent_server.CLAUDE_PROVIDER_INSPECTION_OVERFLOW_LABEL],
+            [hyadex_server.CLAUDE_PROVIDER_INSPECTION_OVERFLOW_LABEL],
         )
         self.assertEqual(scanned, session_ids[:-1])
         self.assertNotIn(last_session_id, scanned)
 
-        restart_snapshot = agent_server.server_restart_blocker_snapshot_locked(
+        restart_snapshot = hyadex_server.server_restart_blocker_snapshot_locked(
             tmux_cgroup_state={},
             provider_background_work_labels=labels,
         )
         self.assertTrue(restart_snapshot["has_blockers"])
         self.assertEqual(restart_snapshot["provider_background_count"], 1)
 
-        update_counts = agent_server.server_lifecycle_blocker_counts(
+        update_counts = hyadex_server.server_lifecycle_blocker_counts(
             [],
             0,
             labels,
@@ -2020,24 +2020,24 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
 
     def test_job_models_bound_title_and_prompt(self):
         with self.assertRaises(ValidationError):
-            agent_server.CreateJobRequest(
+            hyadex_server.CreateJobRequest(
                 session_id="chat",
-                title="t" * (agent_server.MAX_JOB_TITLE_CHARS + 1),
+                title="t" * (hyadex_server.MAX_JOB_TITLE_CHARS + 1),
                 prompt="run",
             )
         with self.assertRaises(ValidationError):
-            agent_server.UpdateJobRequest(
-                prompt="p" * (agent_server.MAX_JOB_PROMPT_CHARS + 1),
+            hyadex_server.UpdateJobRequest(
+                prompt="p" * (hyadex_server.MAX_JOB_PROMPT_CHARS + 1),
             )
         with self.assertRaises(HTTPException) as internal:
-            agent_server.validate_job_text_bounds(
-                "t" * (agent_server.MAX_JOB_TITLE_CHARS + 1),
+            hyadex_server.validate_job_text_bounds(
+                "t" * (hyadex_server.MAX_JOB_TITLE_CHARS + 1),
                 "run",
             )
         self.assertEqual(internal.exception.status_code, 400)
 
     async def test_job_registry_write_runs_off_event_loop(self):
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs = {"job": {"id": "job"}}
         loop_thread = threading.get_ident()
         write_threads: list[int] = []
@@ -2048,7 +2048,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             write_threads.append(threading.get_ident())
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "write_jobs_registry",
             side_effect=record_write,
         ):
@@ -2058,7 +2058,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(write_threads[0], loop_thread)
 
     async def test_cancelled_job_save_finishes_before_next_mutation(self):
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         store.jobs = {"job": {"id": "job", "title": "initial"}}
         first_write_started = threading.Event()
         release_first_write = threading.Event()
@@ -2081,7 +2081,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 await store.save()
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "write_jobs_registry",
             side_effect=record_write,
         ):
@@ -2109,10 +2109,10 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store._last_saved_sequence, 2)
 
     async def test_cancelled_job_create_retains_committed_memory_state(self):
-        store = agent_server.JobStore()
+        store = hyadex_server.JobStore()
         first_write_started = threading.Event()
         release_first_write = threading.Event()
-        real_write = agent_server.write_jobs_registry
+        real_write = hyadex_server.write_jobs_registry
 
         def blocked_write(snapshot):
             first_write_started.set()
@@ -2124,26 +2124,26 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             sessions = {
                 "chat": {
                     "id": "chat",
-                    "backend": agent_server.BACKEND_CODEX,
+                    "backend": hyadex_server.BACKEND_CODEX,
                     "archived": False,
                 },
             }
             with (
-                patch.object(agent_server, "JOBS_FILE", jobs_path),
-                patch.object(agent_server.STORE, "sessions", sessions),
+                patch.object(hyadex_server, "JOBS_FILE", jobs_path),
+                patch.object(hyadex_server.STORE, "sessions", sessions),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "write_jobs_registry",
                     side_effect=blocked_write,
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "append_event",
                     new_callable=AsyncMock,
                 ) as append_event,
             ):
                 create_task = asyncio.create_task(store.create(
-                    agent_server.CreateJobRequest(
+                    hyadex_server.CreateJobRequest(
                         session_id="chat",
                         title="Committed during cancellation",
                         prompt="Run once",

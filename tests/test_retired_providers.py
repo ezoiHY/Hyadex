@@ -10,7 +10,7 @@ import httpx
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-import agent_server as server
+from tests import hyadex_server as server
 from tests.runtime_state import patch_server
 from hyadex.features.group_engine import ParticipantSpec
 

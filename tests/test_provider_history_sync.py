@@ -16,9 +16,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import agent_server
-
-
+from tests import hyadex_server
 def user(text: str) -> dict[str, str]:
     return {"kind": "user", "text": text}
 
@@ -28,7 +26,7 @@ def assistant(text: str) -> dict[str, str]:
 
 
 def provider_line(backend: str, kind: str, text: str) -> str:
-    if backend == agent_server.BACKEND_CLAUDE:
+    if backend == hyadex_server.BACKEND_CLAUDE:
         record = {
             "type": kind,
             "message": {"content": [{"type": "text", "text": text}]},
@@ -98,7 +96,7 @@ def legacy_provider_authority_block(
     what legacy provider history still contains.
     """
 
-    path = agent_server.provider_authority_path(run_id, nonce)
+    path = hyadex_server.provider_authority_path(run_id, nonce)
     if compact:
         return (
             "\n\n[Hyadex provider authority]\n"
@@ -148,24 +146,24 @@ def fake_history_timeline_scan(events: list[dict]):
                 continue
             event_type = event.get("type")
             if event_type == "turn_started":
-                key = agent_server.history_dedup_key("user", event.get("prompt"))
+                key = hyadex_server.history_dedup_key("user", event.get("prompt"))
             elif event_type == "assistant_text":
-                key = agent_server.history_dedup_key(
+                key = hyadex_server.history_dedup_key(
                     "assistant", event.get("text")
                 )
             elif (
                 event_type == "reasoning_summary"
                 and event.get("phase") == "commentary"
-                and event.get("backend") == agent_server.BACKEND_CLAUDE
+                and event.get("backend") == hyadex_server.BACKEND_CLAUDE
             ):
-                key = agent_server.history_dedup_key(
+                key = hyadex_server.history_dedup_key(
                     "assistant", event.get("text")
                 )
             elif tail and event_type in {"turn_finished", "job_summary"}:
                 result_text = event.get("result_text")
                 if not isinstance(result_text, str) or not result_text.strip():
                     continue
-                key = agent_server.history_dedup_key("assistant", result_text)
+                key = hyadex_server.history_dedup_key("assistant", result_text)
             else:
                 continue
             has_messages = True
@@ -175,9 +173,9 @@ def fake_history_timeline_scan(events: list[dict]):
                 text = event.get("prompt") if key[0] == "user" else event.get(
                     "result_text" if event_type in {"turn_finished", "job_summary"} else "text"
                 )
-                message_details[seq] = agent_server.history_message_match_details(key[0], text, event)
+                message_details[seq] = hyadex_server.history_message_match_details(key[0], text, event)
             selected.append((seq, key))
-        maximum = max(1, int(agent_server.HISTORY_SYNC_EVENT_SCAN_LIMIT))
+        maximum = max(1, int(hyadex_server.HISTORY_SYNC_EVENT_SCAN_LIMIT))
         if tail:
             selected = selected[-maximum:]
         front_window_truncated = False
@@ -195,9 +193,9 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
             origin={"kind": "task-notification"},
         )
         self.assertTrue(
-            agent_server.claude_history_event_is_task_notification(generated)
+            hyadex_server.claude_history_event_is_task_notification(generated)
         )
-        self.assertIsNone(agent_server.claude_history_event_item(generated))
+        self.assertIsNone(hyadex_server.claude_history_event_item(generated))
 
     def test_human_task_notification_lookalike_is_preserved(self) -> None:
         human = task_notification_event(
@@ -206,10 +204,10 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
             queue_skip_attachments=False,
         )
         self.assertFalse(
-            agent_server.claude_history_event_is_task_notification(human)
+            hyadex_server.claude_history_event_is_task_notification(human)
         )
         self.assertEqual(
-            agent_server.claude_history_event_item(human),
+            hyadex_server.claude_history_event_item(human),
             user(task_notification_text()),
         )
 
@@ -217,7 +215,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
         legacy = task_notification_event()
         self.assertNotIn("origin", legacy)
         self.assertTrue(
-            agent_server.claude_history_event_is_task_notification(legacy)
+            hyadex_server.claude_history_event_is_task_notification(legacy)
         )
         for patch_values in (
             {"queueSkipAttachments": False},
@@ -232,12 +230,12 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
             with self.subTest(patch=patch_values):
                 lookalike = {**legacy, **patch_values}
                 self.assertFalse(
-                    agent_server.claude_history_event_is_task_notification(
+                    hyadex_server.claude_history_event_is_task_notification(
                         lookalike
                     )
                 )
                 self.assertIsNotNone(
-                    agent_server.claude_history_event_item(lookalike)
+                    hyadex_server.claude_history_event_item(lookalike)
                 )
 
     def test_legacy_task_notification_accepts_observed_nested_output_variant(self) -> None:
@@ -255,9 +253,9 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
         legacy = task_notification_event(content=content)
 
         self.assertTrue(
-            agent_server.claude_history_event_is_task_notification(legacy)
+            hyadex_server.claude_history_event_is_task_notification(legacy)
         )
-        self.assertIsNone(agent_server.claude_history_event_item(legacy))
+        self.assertIsNone(hyadex_server.claude_history_event_item(legacy))
 
         missing_provider_tool_id = dict(legacy)
         missing_provider_tool_id["message"] = {
@@ -268,7 +266,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
             ),
         }
         self.assertFalse(
-            agent_server.claude_history_event_is_task_notification(
+            hyadex_server.claude_history_event_is_task_notification(
                 missing_provider_tool_id
             )
         )
@@ -279,16 +277,16 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
             transcript.write_text("", encoding="utf-8")
             session = {
                 "id": SANITIZER_CHAT_ID,
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
                 "claude_session_id": "provider-history-sanitizer",
             }
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "provider_history_path",
                 return_value=transcript,
             ):
                 _path, _items, cursor, _continued = (
-                    agent_server.load_provider_history_with_cursor(
+                    hyadex_server.load_provider_history_with_cursor(
                         session,
                         None,
                         None,
@@ -304,7 +302,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
                         "message": {"role": "user", "content": "New user text"},
                     }) + "\n")
                 _path, items, next_cursor, continued = (
-                    agent_server.load_provider_history_with_cursor(
+                    hyadex_server.load_provider_history_with_cursor(
                         session,
                         None,
                         cursor,
@@ -342,15 +340,15 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
             },
         )
         parsed = [
-            agent_server.claude_history_event_item(
+            hyadex_server.claude_history_event_item(
                 events[0],
                 expected_session_id=SANITIZER_CHAT_ID,
             ),
-            agent_server.codex_history_event_item(
+            hyadex_server.codex_history_event_item(
                 events[1],
                 expected_session_id=SANITIZER_CHAT_ID,
             ),
-            agent_server.codex_history_event_item(
+            hyadex_server.codex_history_event_item(
                 events[2],
                 expected_session_id=SANITIZER_CHAT_ID,
             ),
@@ -363,7 +361,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
             + legacy_provider_authority_block(compact=True)
         )
         self.assertEqual(
-            agent_server.strip_hyadex_generated_user_text(
+            hyadex_server.strip_hyadex_generated_user_text(
                 nested,
                 expected_session_id=SANITIZER_CHAT_ID,
             ),
@@ -371,17 +369,17 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
         )
 
     def test_authority_is_removed_before_long_provider_text_is_compacted(self) -> None:
-        prompt = "x" * (agent_server.MAX_IMPORTED_TEXT_CHARS + 500)
+        prompt = "x" * (hyadex_server.MAX_IMPORTED_TEXT_CHARS + 500)
         decorated = prompt + legacy_provider_authority_block(compact=True)
-        expected = agent_server.normalized_history_item("user", prompt)
-        claude = agent_server.claude_history_event_item(
+        expected = hyadex_server.normalized_history_item("user", prompt)
+        claude = hyadex_server.claude_history_event_item(
             {
                 "type": "user",
                 "message": {"content": decorated},
             },
             expected_session_id=SANITIZER_CHAT_ID,
         )
-        codex = agent_server.codex_history_event_item(
+        codex = hyadex_server.codex_history_event_item(
             {
                 "type": "response_item",
                 "payload": {
@@ -395,7 +393,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
         self.assertEqual(claude, expected)
         self.assertEqual(codex, expected)
         self.assertNotIn(
-            agent_server.LEGACY_PROVIDER_AUTHORITY_HEADER,
+            hyadex_server.LEGACY_PROVIDER_AUTHORITY_HEADER,
             str(claude["text"] if claude else ""),
         )
 
@@ -409,7 +407,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
         )
         decorated = provider_prompt + legacy_provider_authority_block(compact=False)
         self.assertEqual(
-            agent_server.strip_hyadex_generated_user_text(
+            hyadex_server.strip_hyadex_generated_user_text(
                 decorated,
                 expected_session_id=SANITIZER_CHAT_ID,
             ),
@@ -419,7 +417,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
     def test_authority_only_prompt_and_inline_verbose_footer_are_removed(self) -> None:
         authority_only = legacy_provider_authority_block(compact=True).strip()
         self.assertEqual(
-            agent_server.strip_hyadex_generated_user_text(
+            hyadex_server.strip_hyadex_generated_user_text(
                 authority_only,
                 expected_session_id=SANITIZER_CHAT_ID,
             ),
@@ -434,7 +432,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
             " [End Hyadex provider authority]",
         )
         self.assertEqual(
-            agent_server.strip_hyadex_generated_user_text(
+            hyadex_server.strip_hyadex_generated_user_text(
                 prompt + inline_verbose,
                 expected_session_id=SANITIZER_CHAT_ID,
             ),
@@ -447,15 +445,15 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
             "session_id": SANITIZER_CHAT_ID,
             "type": "turn_started",
             "run_id": "import_0123456789ab",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "imported": True,
             "prompt": prompt + legacy_provider_authority_block(compact=True),
         }
-        projected = agent_server.project_legacy_imported_provider_event(
+        projected = hyadex_server.project_legacy_imported_provider_event(
             event,
             SANITIZER_CHAT_ID,
         )
-        wrong_session = agent_server.project_legacy_imported_provider_event(
+        wrong_session = hyadex_server.project_legacy_imported_provider_event(
             event,
             "sess_history_other",
         )
@@ -471,18 +469,18 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
                 chat_id="sess_previous_hyadex_chat",
             )
         ).replace(
-            str(agent_server.PROVIDER_AUTHORITY_ROOT),
+            str(hyadex_server.PROVIDER_AUTHORITY_ROOT),
             "/home/migrated-user/.hyadex/cross_chat_authority",
         )
         migrated_projection = (
-            agent_server.project_legacy_imported_provider_event(
+            hyadex_server.project_legacy_imported_provider_event(
                 migrated,
                 SANITIZER_CHAT_ID,
             )
         )
         self.assertEqual(migrated_projection["prompt"], prompt)
         self.assertEqual(
-            agent_server.claude_history_event_item({
+            hyadex_server.claude_history_event_item({
                 "type": "user",
                 "message": {"content": migrated["prompt"]},
             }),
@@ -492,7 +490,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
     def test_authority_lookalikes_and_nonterminal_blocks_are_preserved(self) -> None:
         exact = "User-owned evidence" + legacy_provider_authority_block(compact=True)
         wrong_root = exact.replace(
-            str(agent_server.PROVIDER_AUTHORITY_ROOT),
+            str(hyadex_server.PROVIDER_AUTHORITY_ROOT),
             "/tmp/not-hyadex-authority",
         )
         wrong_chat = "User-owned evidence" + legacy_provider_authority_block(
@@ -507,7 +505,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
         for lookalike in (wrong_root, wrong_chat, nonterminal, marker_only):
             with self.subTest(lookalike=lookalike[:40]):
                 self.assertEqual(
-                    agent_server.strip_hyadex_generated_user_text(
+                    hyadex_server.strip_hyadex_generated_user_text(
                         lookalike,
                         expected_session_id=SANITIZER_CHAT_ID,
                     ),
@@ -515,18 +513,18 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
                 )
 
         portable_migration = exact.replace(
-            str(agent_server.PROVIDER_AUTHORITY_ROOT),
+            str(hyadex_server.PROVIDER_AUTHORITY_ROOT),
             "/home/migrated-user/.hyadex/cross_chat_authority",
         )
         self.assertEqual(
-            agent_server.strip_legacy_hyadex_provider_authority_suffix(
+            hyadex_server.strip_legacy_hyadex_provider_authority_suffix(
                 portable_migration,
                 expected_session_id=SANITIZER_CHAT_ID,
             ),
             portable_migration,
         )
         self.assertEqual(
-            agent_server.strip_hyadex_generated_user_text(
+            hyadex_server.strip_hyadex_generated_user_text(
                 portable_migration,
                 expected_session_id=SANITIZER_CHAT_ID,
             ),
@@ -543,23 +541,23 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
         for authority_path in portable_paths:
             with self.subTest(authority_path=authority_path):
                 self.assertEqual(
-                    agent_server.legacy_provider_authority_run_id(
+                    hyadex_server.legacy_provider_authority_run_id(
                         authority_path,
                         allow_portable_root=True,
                     ),
                     SANITIZER_RUN_ID,
                 )
 
-        current_path = str(agent_server.provider_authority_path(
+        current_path = str(hyadex_server.provider_authority_path(
             SANITIZER_RUN_ID,
             SANITIZER_NONCE,
         ))
         windows_block = legacy_provider_authority_block(compact=True).replace(
-            agent_server.shlex.quote(current_path),
-            agent_server.shlex.quote(portable_paths[1]),
+            hyadex_server.shlex.quote(current_path),
+            hyadex_server.shlex.quote(portable_paths[1]),
         )
         self.assertEqual(
-            agent_server.strip_hyadex_generated_user_text(
+            hyadex_server.strip_hyadex_generated_user_text(
                 "Portable user prompt" + windows_block,
                 expected_session_id=SANITIZER_CHAT_ID,
             ),
@@ -577,7 +575,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
         for authority_path in malformed:
             with self.subTest(authority_path=authority_path):
                 self.assertIsNone(
-                    agent_server.legacy_provider_authority_run_id(
+                    hyadex_server.legacy_provider_authority_run_id(
                         authority_path,
                         allow_portable_root=True,
                     )
@@ -585,7 +583,7 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
 
     def test_sanitized_authority_prompt_matches_native_timeline(self) -> None:
         prompt = "Asked from Hyadex"
-        items = agent_server.parse_claude_history_events(
+        items = hyadex_server.parse_claude_history_events(
             [{
                 "type": "user",
                 "message": {
@@ -597,11 +595,11 @@ class ProviderTranscriptSanitizerTests(unittest.TestCase):
         )
         events = [{"type": "turn_started", "prompt": prompt}]
         with patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ):
-            fresh = agent_server.unsynced_history_items(
+            fresh = hyadex_server.unsynced_history_items(
                 SANITIZER_CHAT_ID,
                 items,
                 timeline_through_seq=1,
@@ -614,11 +612,11 @@ class UnsyncedHistoryItemsTests(unittest.TestCase):
 
     def select(self, events, items):
         with patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ):
-            return agent_server.unsynced_history_items(
+            return hyadex_server.unsynced_history_items(
                 "chat-x",
                 items,
                 timeline_through_seq=len(events),
@@ -727,23 +725,23 @@ class UnsyncedHistoryItemsTests(unittest.TestCase):
             {
                 "seq": 11,
                 "type": "turn_started",
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
                 "prompt": "asked from Hyadex",
             },
             {
                 "seq": 12,
                 "type": "reasoning_summary",
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
                 "phase": "commentary",
                 "text": "checking before the tool",
             },
         ]
         with patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ):
-            fresh, consumed_seq = agent_server.reconcile_cursor_history_items(
+            fresh, consumed_seq = hyadex_server.reconcile_cursor_history_items(
                 "chat-x",
                 [
                     user("asked from Hyadex"),
@@ -760,16 +758,16 @@ class UnsyncedHistoryItemsTests(unittest.TestCase):
         events = [{
             "seq": 11,
             "type": "reasoning_summary",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "phase": "commentary",
             "text": "Codex progress",
         }]
         with patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ):
-            fresh, consumed_seq = agent_server.reconcile_cursor_history_items(
+            fresh, consumed_seq = hyadex_server.reconcile_cursor_history_items(
                 "chat-x",
                 [assistant("Codex progress")],
                 timeline_after_seq=10,
@@ -837,11 +835,11 @@ class UnsyncedHistoryItemsTests(unittest.TestCase):
             assistant("local answer"),
         ]
         with patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ):
-            fresh, consumed_seq = agent_server.reconcile_cursor_history_items(
+            fresh, consumed_seq = hyadex_server.reconcile_cursor_history_items(
                 "chat-x",
                 delta,
                 timeline_after_seq=10,
@@ -860,11 +858,11 @@ class UnsyncedHistoryItemsTests(unittest.TestCase):
         ]
         pair = [user("same question"), assistant("same answer")]
         with patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ):
-            fresh, consumed_seq = agent_server.reconcile_cursor_history_items(
+            fresh, consumed_seq = hyadex_server.reconcile_cursor_history_items(
                 "chat-x",
                 pair + pair,
                 timeline_after_seq=10,
@@ -895,9 +893,9 @@ class UnsyncedHistoryItemsTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch.object(
-                agent_server, "events_path", return_value=event_path
-            ), patch.object(agent_server, "HISTORY_SYNC_EVENT_SCAN_LIMIT", 1):
-                fresh, consumed_seq = agent_server.reconcile_cursor_history_items(
+                hyadex_server, "events_path", return_value=event_path
+            ), patch.object(hyadex_server, "HISTORY_SYNC_EVENT_SCAN_LIMIT", 1):
+                fresh, consumed_seq = hyadex_server.reconcile_cursor_history_items(
                     "chat-x",
                     [user("external message"), user("local message")],
                     timeline_after_seq=0,
@@ -925,10 +923,10 @@ class UnsyncedHistoryItemsTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch.object(
-                agent_server, "events_path", return_value=event_path
-            ), patch.object(agent_server, "HISTORY_SYNC_EVENT_SCAN_LIMIT", 2):
+                hyadex_server, "events_path", return_value=event_path
+            ), patch.object(hyadex_server, "HISTORY_SYNC_EVENT_SCAN_LIMIT", 2):
                 first_fresh, first_consumed_seq = (
-                    agent_server.reconcile_cursor_history_items(
+                    hyadex_server.reconcile_cursor_history_items(
                         "chat-x",
                         [user("local-1"), user("local-2")],
                         timeline_after_seq=0,
@@ -936,7 +934,7 @@ class UnsyncedHistoryItemsTests(unittest.TestCase):
                     )
                 )
                 second_fresh, second_consumed_seq = (
-                    agent_server.reconcile_cursor_history_items(
+                    hyadex_server.reconcile_cursor_history_items(
                         "chat-x",
                         [user("local-3")],
                         timeline_after_seq=first_consumed_seq,
@@ -968,10 +966,10 @@ class UnsyncedHistoryItemsTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch.object(
-                agent_server, "events_path", return_value=event_path
+                hyadex_server, "events_path", return_value=event_path
             ):
                 with self.assertRaisesRegex(ValueError, "malformed event"):
-                    agent_server.reconcile_cursor_history_items(
+                    hyadex_server.reconcile_cursor_history_items(
                         "chat-x",
                         [user("local-1"), user("local-3")],
                         timeline_after_seq=0,
@@ -996,14 +994,14 @@ class UnsyncedHistoryItemsTests(unittest.TestCase):
             existing = [user("existing"), assistant("answer")]
             appended = [user("outside"), assistant("outside answer")]
             with patch.object(
-                agent_server, "events_path", return_value=event_path
-            ), patch.object(agent_server, "HISTORY_SYNC_EVENT_SCAN_LIMIT", 2):
-                unchanged = agent_server.unsynced_history_items(
+                hyadex_server, "events_path", return_value=event_path
+            ), patch.object(hyadex_server, "HISTORY_SYNC_EVENT_SCAN_LIMIT", 2):
+                unchanged = hyadex_server.unsynced_history_items(
                     "chat-x",
                     existing,
                     timeline_through_seq=8,
                 )
-                fresh = agent_server.unsynced_history_items(
+                fresh = hyadex_server.unsynced_history_items(
                     "chat-x",
                     existing + appended,
                     timeline_through_seq=8,
@@ -1023,7 +1021,7 @@ class ClaudeHistoryMessageIdentityTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory(prefix="claude-history-identity-")
         self.addCleanup(folder.cleanup)
         self.event_path = Path(folder.name) / "events.jsonl"
-        patcher = patch.object(agent_server, "events_path", return_value=self.event_path)
+        patcher = patch.object(hyadex_server, "events_path", return_value=self.event_path)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -1032,14 +1030,14 @@ class ClaudeHistoryMessageIdentityTests(unittest.TestCase):
         self.event_path.write_text("".join(json.dumps(event) + "\n" for event in self.events), encoding="utf-8")
 
     def source(self, text=None, message_id=None, provider_id=None):
-        return agent_server.claude_history_event_item({
+        return hyadex_server.claude_history_event_item({
             "type": "assistant", "uuid": message_id or self.message_id,
             "sessionId": provider_id or self.provider_id,
             "message": {"content": [{"type": "text", "text": text or self.raw_text}]},
         })
 
     def live(self, *, identity=True, blocks=None):
-        text = agent_server.clean_assistant_text(self.raw_text)
+        text = hyadex_server.clean_assistant_text(self.raw_text)
         parts = blocks or [text]
         self.write([
             {"type": "turn_started", "backend": "claude", "prompt": "Publish it"},
@@ -1053,12 +1051,12 @@ class ClaudeHistoryMessageIdentityTests(unittest.TestCase):
         ])
 
     def cursor(self, items, after=1):
-        return agent_server.reconcile_cursor_history_items(
+        return hyadex_server.reconcile_cursor_history_items(
             "test-chat", items, timeline_after_seq=after, timeline_through_seq=len(self.events),
         )
 
     def initial(self, items):
-        return agent_server.unsynced_history_items("test-chat", items, timeline_through_seq=len(self.events))
+        return hyadex_server.unsynced_history_items("test-chat", items, timeline_through_seq=len(self.events))
 
     def test_decorated_reply_is_owned_in_initial_and_cursor_sync(self):
         self.live()
@@ -1119,7 +1117,7 @@ class ClaudeHistoryMessageIdentityTests(unittest.TestCase):
             {"type": "reasoning_summary", "backend": "claude", "phase": "commentary", "text": "Another reply",
              "provider_message_id": self.later_id, "run_id": "run_next"},
         ])
-        with patch.object(agent_server, "HISTORY_SYNC_EVENT_SCAN_LIMIT", 1):
+        with patch.object(hyadex_server, "HISTORY_SYNC_EVENT_SCAN_LIMIT", 1):
             fresh, consumed = self.cursor([self.source()])
             self.assertEqual(fresh, [])
             self.assertEqual(consumed, 5)
@@ -1127,7 +1125,7 @@ class ClaudeHistoryMessageIdentityTests(unittest.TestCase):
 
     def test_compacted_display_prefix_is_not_canonical_fallback_proof(self):
         self.live(identity=False)
-        external = {**self.source(), "source_text_sha256": agent_server.history_dedup_key("assistant", self.raw_text + " unseen suffix")[1]}
+        external = {**self.source(), "source_text_sha256": hyadex_server.history_dedup_key("assistant", self.raw_text + " unseen suffix")[1]}
         self.assertEqual(self.cursor([external]), ([external], 1))
 
     def test_other_backend_and_user_text_do_not_gain_decoration_equivalence(self):
@@ -1148,7 +1146,7 @@ class SyncProviderHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.transcript.write_text("", encoding="utf-8")
         self.sess = {
             "id": "chat-sync",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "thread-1",
         }
 
@@ -1173,21 +1171,21 @@ class SyncProviderHistoryTests(unittest.IsolatedAsyncioTestCase):
             ]
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "load_provider_history_with_cursor",
             return_value=(self.transcript, items, None, False),
         ), patch.object(
-            agent_server, "read_events", return_value=events
+            hyadex_server, "read_events", return_value=events
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ), patch.object(
-            agent_server, "last_event_seq_from_file", return_value=len(events)
+            hyadex_server, "last_event_seq_from_file", return_value=len(events)
         ), patch.object(
-            agent_server, "append_durable_event_batch", fake_append_batch
+            hyadex_server, "append_durable_event_batch", fake_append_batch
         ):
-            result = await agent_server.sync_provider_history(self.sess)
+            result = await hyadex_server.sync_provider_history(self.sess)
 
         self.assertEqual(result["imported"], 2)
         prompts = [p.get("prompt") for t, p in appended if t == "turn_started"]
@@ -1212,28 +1210,28 @@ class SyncProviderHistoryTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "load_provider_history_with_cursor",
             return_value=(self.transcript, items, None, False),
         ), patch.object(
-            agent_server, "read_events", return_value=events
+            hyadex_server, "read_events", return_value=events
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ), patch.object(
-            agent_server, "last_event_seq_from_file", return_value=len(events)
+            hyadex_server, "last_event_seq_from_file", return_value=len(events)
         ), patch.object(
-            agent_server, "append_event", fake_append
+            hyadex_server, "append_event", fake_append
         ):
-            result = await agent_server.sync_provider_history(self.sess)
+            result = await hyadex_server.sync_provider_history(self.sess)
 
         self.assertEqual(result["imported"], 0)
         self.assertEqual(appended, [])
 
     async def test_session_without_a_provider_id_is_skipped(self) -> None:
-        result = await agent_server.sync_provider_history(
-            {"id": "chat-none", "backend": agent_server.BACKEND_CODEX}
+        result = await hyadex_server.sync_provider_history(
+            {"id": "chat-none", "backend": hyadex_server.BACKEND_CODEX}
         )
         self.assertEqual(result["imported"], 0)
 
@@ -1245,7 +1243,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
         # Native history proof reads the durable ledger directly, not the
         # read_events mock. Keep that real evidence inside this test's state.
         self.enterContext(patch.object(
-            agent_server, "events_path",
+            hyadex_server, "events_path",
             side_effect=lambda session_id: Path(self.tempdir.name) / f"{session_id}-events.jsonl",
         ))
 
@@ -1299,7 +1297,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
                 events.append(event)
                 committed.append(event)
                 next_seq += 1
-            DurableHistoryCursorTests.write_event_ledger(agent_server.events_path(_session_id), events)
+            DurableHistoryCursorTests.write_event_ledger(hyadex_server.events_path(_session_id), events)
             return committed
 
         return append
@@ -1315,7 +1313,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
         return read
 
     async def test_full_window_duplicate_pair_append_survives_rollover(self) -> None:
-        maximum = agent_server.normalized_history_import_limit(None)
+        maximum = hyadex_server.normalized_history_import_limit(None)
         self.assertGreaterEqual(maximum, 4)
         repeated_pair = [
             user("same rollover question"),
@@ -1327,7 +1325,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
         ]
         baseline = prefix + repeated_pair
 
-        for backend in (agent_server.BACKEND_CLAUDE, agent_server.BACKEND_CODEX):
+        for backend in (hyadex_server.BACKEND_CLAUDE, hyadex_server.BACKEND_CODEX):
             with self.subTest(backend=backend):
                 transcript = Path(self.tempdir.name) / f"{backend}.jsonl"
                 transcript.write_text(
@@ -1339,7 +1337,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
                 )
                 provider_field = (
                     "claude_session_id"
-                    if backend == agent_server.BACKEND_CLAUDE
+                    if backend == hyadex_server.BACKEND_CLAUDE
                     else "codex_thread_id"
                 )
                 sess = {
@@ -1347,7 +1345,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
                     "backend": backend,
                     provider_field: (
                         self.codex_provider_id("rollover")
-                        if backend == agent_server.BACKEND_CODEX else f"provider-{backend}"
+                        if backend == hyadex_server.BACKEND_CODEX else f"provider-{backend}"
                     ),
                 }
                 live = {sess["id"]: dict(sess)}
@@ -1357,28 +1355,28 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
                 ]
                 batches: list[list[tuple[str, dict]]] = []
                 save = AsyncMock()
-                with patch.object(agent_server.STORE, "sessions", live), patch.object(
-                    agent_server.STORE, "save", save
+                with patch.object(hyadex_server.STORE, "sessions", live), patch.object(
+                    hyadex_server.STORE, "save", save
                 ), patch.object(
-                    agent_server, "provider_history_path", return_value=transcript
+                    hyadex_server, "provider_history_path", return_value=transcript
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "read_events",
                     side_effect=self.fake_read_events(events),
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "history_timeline_message_keys",
                     side_effect=fake_history_timeline_scan(events),
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "last_event_seq_from_file",
                     side_effect=self.last_seq(events),
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "append_durable_event_batch",
                     side_effect=self.fake_append_events(events, batches),
                 ):
-                    initial = await agent_server.sync_provider_history(dict(sess))
+                    initial = await hyadex_server.sync_provider_history(dict(sess))
                     # Exercise the durable JSON representation rather than
                     # relying on process-local cursor identity.
                     live[sess["id"]] = json.loads(json.dumps(live[sess["id"]]))
@@ -1389,8 +1387,8 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
                                 for item in repeated_pair
                             )
                         )
-                    appended = await agent_server.sync_provider_history(dict(sess))
-                    unchanged = await agent_server.sync_provider_history(dict(sess))
+                    appended = await hyadex_server.sync_provider_history(dict(sess))
+                    unchanged = await hyadex_server.sync_provider_history(dict(sess))
 
                 self.assertEqual(initial["imported"], 0)
                 self.assertEqual(appended["imported"], 2)
@@ -1408,12 +1406,12 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(imported_messages, repeated_pair)
 
     async def test_more_than_message_cap_drains_from_front_across_passes(self) -> None:
-        maximum = agent_server.normalized_history_import_limit(None)
+        maximum = hyadex_server.normalized_history_import_limit(None)
         transcript = Path(self.tempdir.name) / "overflow.jsonl"
         transcript.write_text("", encoding="utf-8")
         sess = {
             "id": "overflow",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("overflow"),
         }
         live = {sess["id"]: dict(sess)}
@@ -1425,33 +1423,33 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
         ]
         local_pair = [user("local after cap"), assistant("local answer after cap")]
         appended_items = external_items + local_pair
-        with patch.object(agent_server.STORE, "sessions", live), patch.object(
-            agent_server.STORE, "save", new=AsyncMock()
+        with patch.object(hyadex_server.STORE, "sessions", live), patch.object(
+            hyadex_server.STORE, "save", new=AsyncMock()
         ), patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "read_events",
             side_effect=self.fake_read_events(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "last_event_seq_from_file",
             side_effect=self.last_seq(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_durable_event_batch",
             side_effect=self.fake_append_events(events, batches),
         ):
-            baseline = await agent_server.sync_provider_history(dict(sess))
+            baseline = await hyadex_server.sync_provider_history(dict(sess))
             with transcript.open("a", encoding="utf-8") as stream:
                 stream.write(
                     "".join(
                         provider_line(
-                            agent_server.BACKEND_CODEX,
+                            hyadex_server.BACKEND_CODEX,
                             item["kind"],
                             item["text"],
                         )
@@ -1462,10 +1460,10 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
                 self.timeline_event(index, item)
                 for index, item in enumerate(local_pair, 1)
             )
-            first = await agent_server.sync_provider_history(dict(sess))
+            first = await hyadex_server.sync_provider_history(dict(sess))
             partial_cursor = dict(live[sess["id"]]["_history_sync_cursor"])
-            second = await agent_server.sync_provider_history(dict(sess))
-            third = await agent_server.sync_provider_history(dict(sess))
+            second = await hyadex_server.sync_provider_history(dict(sess))
+            third = await hyadex_server.sync_provider_history(dict(sess))
 
         self.assertEqual(baseline["imported"], 0)
         self.assertEqual(
@@ -1491,7 +1489,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
         transcript.write_text("", encoding="utf-8")
         sess = {
             "id": "interleaved-passes",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("interleaved-passes"),
         }
         live = {sess["id"]: dict(sess)}
@@ -1500,33 +1498,33 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
         external_pair = [user("outside first"), assistant("outside answer")]
         old_local_pair = [user("old local"), assistant("old local answer")]
         new_local_pair = [user("new local"), assistant("new local answer")]
-        with patch.object(agent_server.STORE, "sessions", live), patch.object(
-            agent_server.STORE, "save", new=AsyncMock()
+        with patch.object(hyadex_server.STORE, "sessions", live), patch.object(
+            hyadex_server.STORE, "save", new=AsyncMock()
         ), patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "read_events",
             side_effect=self.fake_read_events(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "last_event_seq_from_file",
             side_effect=self.last_seq(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_durable_event_batch",
             side_effect=self.fake_append_events(events, batches),
         ):
-            baseline = await agent_server.sync_provider_history(dict(sess), limit=2)
+            baseline = await hyadex_server.sync_provider_history(dict(sess), limit=2)
             with transcript.open("a", encoding="utf-8") as stream:
                 stream.write(
                     "".join(
                         provider_line(
-                            agent_server.BACKEND_CODEX,
+                            hyadex_server.BACKEND_CODEX,
                             item["kind"],
                             item["text"],
                         )
@@ -1537,7 +1535,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
                 self.timeline_event(index, item)
                 for index, item in enumerate(old_local_pair, 1)
             )
-            first = await agent_server.sync_provider_history(dict(sess), limit=2)
+            first = await hyadex_server.sync_provider_history(dict(sess), limit=2)
 
             next_seq = int(events[-1]["seq"]) + 1
             events.extend(
@@ -1548,16 +1546,16 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
                 stream.write(
                     "".join(
                         provider_line(
-                            agent_server.BACKEND_CODEX,
+                            hyadex_server.BACKEND_CODEX,
                             item["kind"],
                             item["text"],
                         )
                         for item in new_local_pair
                     )
                 )
-            second = await agent_server.sync_provider_history(dict(sess), limit=2)
-            third = await agent_server.sync_provider_history(dict(sess), limit=2)
-            unchanged = await agent_server.sync_provider_history(dict(sess), limit=2)
+            second = await hyadex_server.sync_provider_history(dict(sess), limit=2)
+            third = await hyadex_server.sync_provider_history(dict(sess), limit=2)
+            unchanged = await hyadex_server.sync_provider_history(dict(sess), limit=2)
 
         self.assertEqual(
             [
@@ -1588,47 +1586,47 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
         transcript.write_text("", encoding="utf-8")
         sess = {
             "id": "partial",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("partial"),
         }
         live = {sess["id"]: dict(sess)}
         events: list[dict] = []
         batches: list[list[tuple[str, dict]]] = []
         encoded = provider_line(
-            agent_server.BACKEND_CODEX,
+            hyadex_server.BACKEND_CODEX,
             "user",
             "completed later",
         ).encode("utf-8")
-        with patch.object(agent_server.STORE, "sessions", live), patch.object(
-            agent_server.STORE, "save", new=AsyncMock()
+        with patch.object(hyadex_server.STORE, "sessions", live), patch.object(
+            hyadex_server.STORE, "save", new=AsyncMock()
         ), patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "read_events",
             side_effect=self.fake_read_events(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "last_event_seq_from_file",
             side_effect=self.last_seq(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_durable_event_batch",
             side_effect=self.fake_append_events(events, batches),
         ):
-            await agent_server.sync_provider_history(dict(sess))
+            await hyadex_server.sync_provider_history(dict(sess))
             with transcript.open("ab") as stream:
                 stream.write(encoded[:-1])
-            partial = await agent_server.sync_provider_history(dict(sess))
+            partial = await hyadex_server.sync_provider_history(dict(sess))
             partial_offset = live[sess["id"]]["_history_sync_cursor"]["source_offset"]
             with transcript.open("ab") as stream:
                 stream.write(b"\n")
-            complete = await agent_server.sync_provider_history(dict(sess))
-            unchanged = await agent_server.sync_provider_history(dict(sess))
+            complete = await hyadex_server.sync_provider_history(dict(sess))
+            unchanged = await hyadex_server.sync_provider_history(dict(sess))
 
         self.assertEqual(partial["imported"], 0)
         self.assertEqual(partial_offset, 0)
@@ -1638,51 +1636,51 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_identical_prefix_atomic_replacement_continues_cursor(self) -> None:
         transcript = Path(self.tempdir.name) / "replace.jsonl"
-        original = provider_line(agent_server.BACKEND_CODEX, "user", "existing")
+        original = provider_line(hyadex_server.BACKEND_CODEX, "user", "existing")
         transcript.write_text(original, encoding="utf-8")
         sess = {
             "id": "replace",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("replace"),
         }
         live = {sess["id"]: dict(sess)}
         events = [self.timeline_event(1, user("existing"))]
         batches: list[list[tuple[str, dict]]] = []
-        with patch.object(agent_server.STORE, "sessions", live), patch.object(
-            agent_server.STORE, "save", new=AsyncMock()
+        with patch.object(hyadex_server.STORE, "sessions", live), patch.object(
+            hyadex_server.STORE, "save", new=AsyncMock()
         ), patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "read_events",
             side_effect=self.fake_read_events(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "last_event_seq_from_file",
             side_effect=self.last_seq(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_durable_event_batch",
             side_effect=self.fake_append_events(events, batches),
         ):
-            initial = await agent_server.sync_provider_history(dict(sess))
+            initial = await hyadex_server.sync_provider_history(dict(sess))
             original_ino = transcript.stat().st_ino
             replacement = transcript.with_suffix(".next")
             replacement.write_text(
                 original
                 + provider_line(
-                    agent_server.BACKEND_CODEX,
+                    hyadex_server.BACKEND_CODEX,
                     "assistant",
                     "from replacement",
                 ),
                 encoding="utf-8",
             )
             os.replace(replacement, transcript)
-            appended = await agent_server.sync_provider_history(dict(sess))
+            appended = await hyadex_server.sync_provider_history(dict(sess))
 
         self.assertEqual(initial["imported"], 0)
         self.assertNotEqual(original_ino, transcript.stat().st_ino)
@@ -1700,47 +1698,47 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
     async def test_divergent_replacement_fails_closed_without_cursor_advance(self) -> None:
         transcript = Path(self.tempdir.name) / "divergent.jsonl"
         transcript.write_text(
-            provider_line(agent_server.BACKEND_CODEX, "user", "existing prefix"),
+            provider_line(hyadex_server.BACKEND_CODEX, "user", "existing prefix"),
             encoding="utf-8",
         )
         sess = {
             "id": "divergent",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("divergent"),
         }
         live = {sess["id"]: dict(sess)}
         events = [self.timeline_event(1, user("existing prefix"))]
         batches: list[list[tuple[str, dict]]] = []
         save = AsyncMock()
-        with patch.object(agent_server.STORE, "sessions", live), patch.object(
-            agent_server.STORE, "save", save
+        with patch.object(hyadex_server.STORE, "sessions", live), patch.object(
+            hyadex_server.STORE, "save", save
         ), patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "read_events",
             side_effect=self.fake_read_events(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "last_event_seq_from_file",
             side_effect=self.last_seq(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_durable_event_batch",
             side_effect=self.fake_append_events(events, batches),
         ):
-            await agent_server.sync_provider_history(dict(sess))
+            await hyadex_server.sync_provider_history(dict(sess))
             old_cursor = json.loads(
                 json.dumps(live[sess["id"]]["_history_sync_cursor"])
             )
             replacement = transcript.with_suffix(".next")
             replacement.write_text(
                 provider_line(
-                    agent_server.BACKEND_CODEX,
+                    hyadex_server.BACKEND_CODEX,
                     "user",
                     "different prefix with enough bytes",
                 ),
@@ -1748,7 +1746,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
             )
             os.replace(replacement, transcript)
             with self.assertRaisesRegex(ValueError, "no longer extends"):
-                await agent_server.sync_provider_history(dict(sess))
+                await hyadex_server.sync_provider_history(dict(sess))
 
         self.assertEqual(live[sess["id"]]["_history_sync_cursor"], old_cursor)
         self.assertEqual(save.await_count, 1)
@@ -1757,43 +1755,43 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
     async def test_append_between_snapshot_and_parse_does_not_advance_cursor(self) -> None:
         transcript = Path(self.tempdir.name) / "mutated.jsonl"
         transcript.write_text(
-            provider_line(agent_server.BACKEND_CODEX, "user", "existing"),
+            provider_line(hyadex_server.BACKEND_CODEX, "user", "existing"),
             encoding="utf-8",
         )
         sess = {
             "id": "mutated",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("mutated"),
         }
         live = {sess["id"]: dict(sess)}
         events = [self.timeline_event(1, user("existing"))]
         save = AsyncMock()
-        with patch.object(agent_server.STORE, "sessions", live), patch.object(
-            agent_server.STORE, "save", save
+        with patch.object(hyadex_server.STORE, "sessions", live), patch.object(
+            hyadex_server.STORE, "save", save
         ), patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "read_events",
             side_effect=self.fake_read_events(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "last_event_seq_from_file",
             side_effect=self.last_seq(events),
         ):
-            await agent_server.sync_provider_history(dict(sess))
+            await hyadex_server.sync_provider_history(dict(sess))
             old_cursor = json.loads(
                 json.dumps(live[sess["id"]]["_history_sync_cursor"])
             )
             with transcript.open("a", encoding="utf-8") as stream:
                 stream.write(
-                    provider_line(agent_server.BACKEND_CODEX, "assistant", "new")
+                    provider_line(hyadex_server.BACKEND_CODEX, "assistant", "new")
                 )
-            original_parse = agent_server.parse_provider_history_delta
+            original_parse = hyadex_server.parse_provider_history_delta
 
             def mutate_then_parse(*args, **kwargs):
                 with transcript.open("a", encoding="utf-8") as stream:
@@ -1801,11 +1799,11 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
                 return original_parse(*args, **kwargs)
 
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "parse_provider_history_delta",
                 side_effect=mutate_then_parse,
             ), self.assertRaisesRegex(ValueError, "changed before cursor parsing"):
-                await agent_server.sync_provider_history(dict(sess))
+                await hyadex_server.sync_provider_history(dict(sess))
 
         self.assertEqual(live[sess["id"]]["_history_sync_cursor"], old_cursor)
         self.assertEqual(save.await_count, 1)
@@ -1813,12 +1811,12 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
     def test_codex_duplicate_record_format_across_cursor_is_coalesced(self) -> None:
         transcript = Path(self.tempdir.name) / "cross-format.jsonl"
         transcript.write_text(
-            provider_line(agent_server.BACKEND_CODEX, "user", "same message"),
+            provider_line(hyadex_server.BACKEND_CODEX, "user", "same message"),
             encoding="utf-8",
         )
         sess = {
             "id": "cross-format",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("cross-format"),
         }
         response_item = {
@@ -1830,15 +1828,15 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
             },
         }
         with patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ):
             _path, first, cursor, continued = (
-                agent_server.load_provider_history_with_cursor(sess, None, None)
+                hyadex_server.load_provider_history_with_cursor(sess, None, None)
             )
             with transcript.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(response_item, separators=(",", ":")) + "\n")
             _path, second, next_cursor, continued_again = (
-                agent_server.load_provider_history_with_cursor(sess, None, cursor)
+                hyadex_server.load_provider_history_with_cursor(sess, None, cursor)
             )
 
         self.assertEqual(first, [user("same message")])
@@ -1850,12 +1848,12 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
     def test_claude_cursor_consumes_task_notification_without_importing_it(self) -> None:
         transcript = Path(self.tempdir.name) / "claude-task-notification.jsonl"
         transcript.write_text(
-            provider_line(agent_server.BACKEND_CLAUDE, "user", "before"),
+            provider_line(hyadex_server.BACKEND_CLAUDE, "user", "before"),
             encoding="utf-8",
         )
         sess = {
             "id": "claude-task-notification",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "claude_session_id": "claude-task-notification-thread",
         }
         task_notification = {
@@ -1875,24 +1873,24 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
             },
         }
         with patch.object(
-            agent_server,
+            hyadex_server,
             "provider_history_path",
             return_value=transcript,
         ):
             _path, first, cursor, continued = (
-                agent_server.load_provider_history_with_cursor(sess, None, None)
+                hyadex_server.load_provider_history_with_cursor(sess, None, None)
             )
             with transcript.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(task_notification, separators=(",", ":")) + "\n")
                 stream.write(
                     provider_line(
-                        agent_server.BACKEND_CLAUDE,
+                        hyadex_server.BACKEND_CLAUDE,
                         "assistant",
                         "visible follow-up",
                     )
                 )
             _path, second, next_cursor, continued_again = (
-                agent_server.load_provider_history_with_cursor(sess, None, cursor)
+                hyadex_server.load_provider_history_with_cursor(sess, None, cursor)
             )
 
         self.assertEqual(first, [user("before")])
@@ -1904,24 +1902,24 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
     def test_raw_checkpoint_reader_recovers_field_hidden_from_clients(self) -> None:
         transcript = Path(self.tempdir.name) / "raw-checkpoint-provider.jsonl"
         transcript.write_text(
-            provider_line(agent_server.BACKEND_CODEX, "user", "committed"),
+            provider_line(hyadex_server.BACKEND_CODEX, "user", "committed"),
             encoding="utf-8",
         )
         event_path = Path(self.tempdir.name) / "events.jsonl"
         sess = {
             "id": "raw-checkpoint",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("raw-checkpoint"),
         }
         with patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ):
             _path, _items, cursor, _continued = (
-                agent_server.load_provider_history_with_cursor(sess, None, None)
+                hyadex_server.load_provider_history_with_cursor(sess, None, None)
             )
         cursor["timeline_seq"] = 0
         cursor["checkpoint_seq"] = 0
-        checkpoint = agent_server.history_sync_checkpoint(
+        checkpoint = hyadex_server.history_sync_checkpoint(
             None,
             cursor,
             caught_up=True,
@@ -1956,14 +1954,14 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(
             "_history_sync_checkpoint",
-            agent_server.client_safe_event(raw_events[0]),
+            hyadex_server.client_safe_event(raw_events[0]),
         )
         with patch.object(
-            agent_server, "events_path", return_value=event_path
+            hyadex_server, "events_path", return_value=event_path
         ), patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ):
-            recovered = agent_server.committed_history_sync_checkpoint(sess, None)
+            recovered = hyadex_server.committed_history_sync_checkpoint(sess, None)
 
         self.assertIsNotNone(recovered)
         recovered_cursor, terminal_seq = recovered
@@ -1974,7 +1972,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
     def test_no_cursor_checkpoint_search_fails_closed_when_scan_is_truncated(self) -> None:
         sess = {
             "id": "truncated-checkpoints",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("truncated-checkpoint"),
         }
         events = [
@@ -1982,40 +1980,40 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
             for index in range(1, 5)
         ]
         with patch.object(
-            agent_server,
+            hyadex_server,
             "MAX_LOCAL_TRANSCRIPT_SCAN_LINES",
             3,
-        ), patch.object(agent_server, "read_events", return_value=events):
+        ), patch.object(hyadex_server, "read_events", return_value=events):
             with self.assertRaisesRegex(ValueError, "checkpoint search exceeded"):
-                agent_server.committed_history_sync_checkpoint(sess, None)
+                hyadex_server.committed_history_sync_checkpoint(sess, None)
 
     def test_cursor_checkpoint_is_recovered_before_later_scan_overflow(self) -> None:
         transcript = Path(self.tempdir.name) / "late-overflow-provider.jsonl"
         transcript.write_text(
-            provider_line(agent_server.BACKEND_CODEX, "user", "before"),
+            provider_line(hyadex_server.BACKEND_CODEX, "user", "before"),
             encoding="utf-8",
         )
         sess = {
             "id": "late-overflow",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("late-overflow"),
         }
         with patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ):
             _path, _items, previous, _continued = (
-                agent_server.load_provider_history_with_cursor(sess, None, None)
+                hyadex_server.load_provider_history_with_cursor(sess, None, None)
             )
             previous["timeline_seq"] = 10
             previous["checkpoint_seq"] = 10
             with transcript.open("a", encoding="utf-8") as stream:
                 stream.write(
-                    provider_line(agent_server.BACKEND_CODEX, "assistant", "after")
+                    provider_line(hyadex_server.BACKEND_CODEX, "assistant", "after")
                 )
             _path, _items, cursor, _continued = (
-                agent_server.load_provider_history_with_cursor(sess, None, previous)
+                hyadex_server.load_provider_history_with_cursor(sess, None, previous)
             )
-        checkpoint = agent_server.history_sync_checkpoint(
+        checkpoint = hyadex_server.history_sync_checkpoint(
             previous,
             cursor,
             caught_up=True,
@@ -2039,15 +2037,15 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
             ],
         ]
         with patch.object(
-            agent_server, "HISTORY_SYNC_EVENT_SCAN_LIMIT", 2
+            hyadex_server, "HISTORY_SYNC_EVENT_SCAN_LIMIT", 2
         ), patch.object(
-            agent_server, "normalized_history_import_limit", return_value=2
+            hyadex_server, "normalized_history_import_limit", return_value=2
         ), patch.object(
-            agent_server, "read_events", return_value=events
+            hyadex_server, "read_events", return_value=events
         ), patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ):
-            recovered = agent_server.committed_history_sync_checkpoint(
+            recovered = hyadex_server.committed_history_sync_checkpoint(
                 sess,
                 previous,
             )
@@ -2060,59 +2058,59 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
     async def test_cursor_save_failure_after_batch_retries_without_duplicate(self) -> None:
         transcript = Path(self.tempdir.name) / "crash.jsonl"
         transcript.write_text(
-            provider_line(agent_server.BACKEND_CODEX, "user", "existing"),
+            provider_line(hyadex_server.BACKEND_CODEX, "user", "existing"),
             encoding="utf-8",
         )
         sess = {
             "id": "crash",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("crash"),
         }
         live = {sess["id"]: dict(sess)}
         events = [self.timeline_event(1, user("existing"))]
         batches: list[list[tuple[str, dict]]] = []
         save = AsyncMock()
-        with patch.object(agent_server.STORE, "sessions", live), patch.object(
-            agent_server.STORE, "save", save
+        with patch.object(hyadex_server.STORE, "sessions", live), patch.object(
+            hyadex_server.STORE, "save", save
         ), patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "read_events",
             side_effect=self.fake_read_events(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "last_event_seq_from_file",
             side_effect=self.last_seq(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_durable_event_batch",
             side_effect=self.fake_append_events(events, batches),
         ):
-            await agent_server.sync_provider_history(dict(sess))
+            await hyadex_server.sync_provider_history(dict(sess))
             old_cursor = json.loads(
                 json.dumps(live[sess["id"]]["_history_sync_cursor"])
             )
             with transcript.open("a", encoding="utf-8") as stream:
                 stream.write(
-                    provider_line(agent_server.BACKEND_CODEX, "user", "outside")
+                    provider_line(hyadex_server.BACKEND_CODEX, "user", "outside")
                     + provider_line(
-                        agent_server.BACKEND_CODEX,
+                        hyadex_server.BACKEND_CODEX,
                         "assistant",
                         "outside answer",
                     )
                 )
             save.side_effect = OSError("registry unavailable")
             with self.assertRaises(OSError):
-                await agent_server.sync_provider_history(dict(sess))
+                await hyadex_server.sync_provider_history(dict(sess))
             self.assertEqual(live[sess["id"]]["_history_sync_cursor"], old_cursor)
             save.side_effect = None
-            retry = await agent_server.sync_provider_history(dict(sess))
-            unchanged = await agent_server.sync_provider_history(dict(sess))
+            retry = await hyadex_server.sync_provider_history(dict(sess))
+            unchanged = await hyadex_server.sync_provider_history(dict(sess))
 
         self.assertEqual(retry["imported"], 0)
         self.assertEqual(unchanged["imported"], 0)
@@ -2133,7 +2131,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
         event_path.write_text("", encoding="utf-8")
         sess = {
             "id": "ordered-crash",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("ordered-crash"),
         }
         live = {sess["id"]: dict(sess)}
@@ -2161,24 +2159,24 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
             batches.append(list(event_specs))
             return committed
 
-        with patch.object(agent_server.STORE, "sessions", live), patch.object(
-            agent_server.STORE, "save", save
+        with patch.object(hyadex_server.STORE, "sessions", live), patch.object(
+            hyadex_server.STORE, "save", save
         ), patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ), patch.object(
-            agent_server, "events_path", return_value=event_path
+            hyadex_server, "events_path", return_value=event_path
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_durable_event_batch",
             side_effect=append_to_real_event_file,
         ):
-            await agent_server.sync_provider_history(dict(sess), limit=2)
+            await hyadex_server.sync_provider_history(dict(sess), limit=2)
             durable_old_session = json.loads(json.dumps(live[sess["id"]]))
             with transcript.open("a", encoding="utf-8") as stream:
                 stream.write(
                     "".join(
                         provider_line(
-                            agent_server.BACKEND_CODEX,
+                            hyadex_server.BACKEND_CODEX,
                             item["kind"],
                             item["text"],
                         )
@@ -2195,14 +2193,14 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
             )
             save.side_effect = OSError("registry unavailable")
             with self.assertRaises(OSError):
-                await agent_server.sync_provider_history(dict(sess), limit=2)
+                await hyadex_server.sync_provider_history(dict(sess), limit=2)
             # Simulate restart from the old sessions.json snapshot. The event
             # batch, including its checkpoint, is already authoritative.
             live[sess["id"]] = json.loads(json.dumps(durable_old_session))
             save.side_effect = None
-            recovered = await agent_server.sync_provider_history(dict(sess), limit=2)
-            drained = await agent_server.sync_provider_history(dict(sess), limit=2)
-            unchanged = await agent_server.sync_provider_history(dict(sess), limit=2)
+            recovered = await hyadex_server.sync_provider_history(dict(sess), limit=2)
+            drained = await hyadex_server.sync_provider_history(dict(sess), limit=2)
+            unchanged = await hyadex_server.sync_provider_history(dict(sess), limit=2)
 
         self.assertEqual(recovered["imported"], 0)
         self.assertIn("Recovered", recovered["message"])
@@ -2227,12 +2225,12 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancelled_cursor_save_retains_committed_memory_and_retries_cleanly(self) -> None:
         transcript = Path(self.tempdir.name) / "cancel-save.jsonl"
         transcript.write_text(
-            provider_line(agent_server.BACKEND_CODEX, "user", "existing"),
+            provider_line(hyadex_server.BACKEND_CODEX, "user", "existing"),
             encoding="utf-8",
         )
         sess = {
             "id": "cancel-save",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": self.codex_provider_id("cancel-save"),
         }
         live = {sess["id"]: dict(sess)}
@@ -2240,31 +2238,31 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
         batches: list[list[tuple[str, dict]]] = []
         save = AsyncMock()
         disk: dict = {}
-        with patch.object(agent_server.STORE, "sessions", live), patch.object(
-            agent_server.STORE, "save", save
+        with patch.object(hyadex_server.STORE, "sessions", live), patch.object(
+            hyadex_server.STORE, "save", save
         ), patch.object(
-            agent_server, "provider_history_path", return_value=transcript
+            hyadex_server, "provider_history_path", return_value=transcript
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "read_events",
             side_effect=self.fake_read_events(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             side_effect=fake_history_timeline_scan(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "last_event_seq_from_file",
             side_effect=self.last_seq(events),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_durable_event_batch",
             side_effect=self.fake_append_events(events, batches),
         ):
-            await agent_server.sync_provider_history(dict(sess))
+            await hyadex_server.sync_provider_history(dict(sess))
             with transcript.open("a", encoding="utf-8") as stream:
                 stream.write(
-                    provider_line(agent_server.BACKEND_CODEX, "assistant", "outside")
+                    provider_line(hyadex_server.BACKEND_CODEX, "assistant", "outside")
                 )
 
             async def commit_then_cancel(*_args, **_kwargs):
@@ -2274,7 +2272,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
 
             save.side_effect = commit_then_cancel
             with self.assertRaises(asyncio.CancelledError):
-                await agent_server.sync_provider_history(dict(sess))
+                await hyadex_server.sync_provider_history(dict(sess))
             committed_cursor = json.loads(
                 json.dumps(live[sess["id"]]["_history_sync_cursor"])
             )
@@ -2283,7 +2281,7 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
                 committed_cursor,
             )
             save.side_effect = None
-            retry = await agent_server.sync_provider_history(dict(sess))
+            retry = await hyadex_server.sync_provider_history(dict(sess))
 
         self.assertEqual(retry["imported"], 0)
         self.assertEqual(len(batches), 1)
@@ -2291,25 +2289,25 @@ class DurableHistoryCursorTests(unittest.IsolatedAsyncioTestCase):
 
 class ScheduleProviderHistorySyncTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.enterContext(patch.object(agent_server, "HISTORY_MAINTENANCE_STATE", {}))
-        self.enterContext(patch.object(agent_server, "HISTORY_MAINTENANCE_TASKS", {}))
-        self.previous_scheduled = set(agent_server.HISTORY_SYNC_SCHEDULED)
-        self.previous_busy = agent_server.RUNS.busy
-        self.previous_active = agent_server.RUNS.active
-        agent_server.HISTORY_SYNC_SCHEDULED.clear()
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.active = {}
+        self.enterContext(patch.object(hyadex_server, "HISTORY_MAINTENANCE_STATE", {}))
+        self.enterContext(patch.object(hyadex_server, "HISTORY_MAINTENANCE_TASKS", {}))
+        self.previous_scheduled = set(hyadex_server.HISTORY_SYNC_SCHEDULED)
+        self.previous_busy = hyadex_server.RUNS.busy
+        self.previous_active = hyadex_server.RUNS.active
+        hyadex_server.HISTORY_SYNC_SCHEDULED.clear()
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.active = {}
 
     async def asyncTearDown(self) -> None:
-        agent_server.HISTORY_SYNC_SCHEDULED.clear()
-        agent_server.HISTORY_SYNC_SCHEDULED.update(self.previous_scheduled)
-        agent_server.RUNS.busy = self.previous_busy
-        agent_server.RUNS.active = self.previous_active
+        hyadex_server.HISTORY_SYNC_SCHEDULED.clear()
+        hyadex_server.HISTORY_SYNC_SCHEDULED.update(self.previous_scheduled)
+        hyadex_server.RUNS.busy = self.previous_busy
+        hyadex_server.RUNS.active = self.previous_active
 
     def sess(self) -> dict:
         return {
             "id": "chat-open",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "thread-1",
         }
 
@@ -2321,9 +2319,9 @@ class ScheduleProviderHistorySyncTests(unittest.IsolatedAsyncioTestCase):
             started += 1
             await asyncio.sleep(0)
 
-        with patch.object(agent_server, "run_provider_history_sync", fake_run):
+        with patch.object(hyadex_server, "run_provider_history_sync", fake_run):
             for _ in range(5):
-                agent_server.schedule_provider_history_sync(self.sess())
+                hyadex_server.schedule_provider_history_sync(self.sess())
             await asyncio.sleep(0)
 
         self.assertEqual(started, 1)
@@ -2331,15 +2329,15 @@ class ScheduleProviderHistorySyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_busy_session_is_left_alone(self) -> None:
         # A live turn is already streaming provider output and still writing
         # its transcript.
-        agent_server.RUNS.busy = {"chat-open"}
+        hyadex_server.RUNS.busy = {"chat-open"}
         started = False
 
         async def fake_run(session_id):
             nonlocal started
             started = True
 
-        with patch.object(agent_server, "run_provider_history_sync", fake_run):
-            agent_server.schedule_provider_history_sync(self.sess())
+        with patch.object(hyadex_server, "run_provider_history_sync", fake_run):
+            hyadex_server.schedule_provider_history_sync(self.sess())
             await asyncio.sleep(0)
 
         self.assertFalse(started)
@@ -2351,9 +2349,9 @@ class ScheduleProviderHistorySyncTests(unittest.IsolatedAsyncioTestCase):
             nonlocal started
             started = True
 
-        with patch.object(agent_server, "run_provider_history_sync", fake_run):
-            agent_server.schedule_provider_history_sync(
-                {"id": "chat-open", "backend": agent_server.BACKEND_CODEX}
+        with patch.object(hyadex_server, "run_provider_history_sync", fake_run):
+            hyadex_server.schedule_provider_history_sync(
+                {"id": "chat-open", "backend": hyadex_server.BACKEND_CODEX}
             )
             await asyncio.sleep(0)
 
@@ -2365,12 +2363,12 @@ class ScheduleProviderHistorySyncTests(unittest.IsolatedAsyncioTestCase):
         async def boom(sess, **kwargs):
             raise RuntimeError("transcript unreadable")
 
-        with patch.object(agent_server.STORE, "sessions", {"chat-open": self.sess()}), \
-                patch.object(agent_server, "sync_provider_history", boom):
-            agent_server.HISTORY_SYNC_SCHEDULED.add("chat-open")
-            await agent_server.run_provider_history_sync("chat-open")
+        with patch.object(hyadex_server.STORE, "sessions", {"chat-open": self.sess()}), \
+                patch.object(hyadex_server, "sync_provider_history", boom):
+            hyadex_server.HISTORY_SYNC_SCHEDULED.add("chat-open")
+            await hyadex_server.run_provider_history_sync("chat-open")
 
-        self.assertNotIn("chat-open", agent_server.HISTORY_SYNC_SCHEDULED)
+        self.assertNotIn("chat-open", hyadex_server.HISTORY_SYNC_SCHEDULED)
 
 
 if __name__ == "__main__":

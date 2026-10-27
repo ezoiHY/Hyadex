@@ -87,8 +87,7 @@ class StateOwnershipTests(unittest.TestCase):
 
 PRODUCTION_BOOTSTRAP = r'''
 import json, os, pathlib, subprocess, sys
-import agent_server as server
-
+from tests import hyadex_server as server
 fixture = pathlib.Path(os.environ["OWNERSHIP_FIXTURE"])
 role = os.environ["OWNERSHIP_ROLE"]
 child = None

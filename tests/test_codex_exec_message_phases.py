@@ -2,7 +2,7 @@ import unittest
 
 from unittest.mock import patch
 
-from agent_server import (
+from tests.hyadex_server import (
     CodexExecMessageBuffer,
     codex_exec_agent_message,
     codex_exec_raw_event_text,
@@ -141,7 +141,7 @@ class CodexExecMessagePhaseTests(unittest.TestCase):
         )
 
     def test_unrecognized_raw_events_are_bounded(self) -> None:
-        with patch("agent_server.CODEX_EXEC_RAW_EVENT_MAX_CHARS", 8):
+        with patch("tests.hyadex_server.CODEX_EXEC_RAW_EVENT_MAX_CHARS", 8):
             value = codex_exec_raw_event_text("abcdefghijkl", handled=False)
         self.assertTrue(value.startswith("abcdefgh"))
         self.assertIn("omitted 4 characters", value)

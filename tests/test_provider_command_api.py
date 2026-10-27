@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-import agent_server
+from tests import hyadex_server
 from hyadex.providers.commands import ProviderCommandRecord, codex_provider_command_inventory
 
 
@@ -23,12 +23,12 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
                     "cwd": tmp,
                 }
             }
-            with patch.object(agent_server.STORE, "sessions", sessions):
-                snapshot = await agent_server.get_session_provider_commands(
+            with patch.object(hyadex_server.STORE, "sessions", sessions):
+                snapshot = await hyadex_server.get_session_provider_commands(
                     "cursor-chat"
                 )
                 with self.assertRaises(HTTPException) as missing:
-                    await agent_server.get_session_provider_commands("missing")
+                    await hyadex_server.get_session_provider_commands("missing")
 
         self.assertEqual(snapshot["backend"], "cursor")
         self.assertEqual(snapshot["commands"], [])
@@ -40,12 +40,12 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             session = {"id": "codex-chat", "backend": "codex", "cwd": tmp}
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "provider_command_selector_secret",
                 side_effect=RuntimeError("private state unavailable"),
             ):
                 snapshot, inventory = (
-                    await agent_server.discover_session_provider_commands(
+                    await hyadex_server.discover_session_provider_commands(
                         "codex-chat",
                         session,
                     )
@@ -71,7 +71,7 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
             },
             native={"name": "review", "path": "/private/skill/SKILL.md"},
         )
-        inventory = agent_server.ProviderCommandInventory(
+        inventory = hyadex_server.ProviderCommandInventory(
             backend="codex",
             revision="pcmdrev_" + "b" * 32,
             records=(record,),
@@ -82,18 +82,18 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
             "support": {"available": True, "mode": "native"},
             "commands": inventory.commands,
         }
-        selection = agent_server.SkillSelection(
+        selection = hyadex_server.SkillSelection(
             id=record.public["id"],
             revision=inventory.revision,
         )
         session = {"id": "chat-a", "backend": "codex", "cwd": "/tmp"}
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "discover_session_provider_commands",
             AsyncMock(return_value=(snapshot, inventory)),
         ):
-            resolved = await agent_server.resolve_provider_command_selection(
+            resolved = await hyadex_server.resolve_provider_command_selection(
                 "chat-a",
                 session,
                 selection,
@@ -101,16 +101,16 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
                 purpose=None,
                 provider_context_mode="chat",
                 client_capabilities=[
-                    agent_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
+                    hyadex_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
                 ],
             )
             self.assertIs(resolved, record)
 
-            with self.assertRaises(agent_server.ProviderCommandSelectionInvalid) as stale:
-                await agent_server.resolve_provider_command_selection(
+            with self.assertRaises(hyadex_server.ProviderCommandSelectionInvalid) as stale:
+                await hyadex_server.resolve_provider_command_selection(
                     "chat-a",
                     session,
-                    agent_server.SkillSelection(
+                    hyadex_server.SkillSelection(
                         id=record.public["id"],
                         revision="pcmdrev_" + "c" * 32,
                     ),
@@ -118,13 +118,13 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
                     purpose=None,
                     provider_context_mode="chat",
                     client_capabilities=[
-                        agent_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
+                        hyadex_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
                     ],
                 )
             self.assertEqual(stale.exception.status_code, 409)
 
-            with self.assertRaises(agent_server.ProviderCommandSelectionInvalid) as mismatch:
-                await agent_server.resolve_provider_command_selection(
+            with self.assertRaises(hyadex_server.ProviderCommandSelectionInvalid) as mismatch:
+                await hyadex_server.resolve_provider_command_selection(
                     "chat-a",
                     session,
                     selection,
@@ -132,21 +132,21 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
                     purpose=None,
                     provider_context_mode="chat",
                     client_capabilities=[
-                        agent_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
+                        hyadex_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
                     ],
                 )
             self.assertEqual(mismatch.exception.status_code, 409)
 
     async def test_unavailable_selection_is_typed_for_terminal_queue_handling(self) -> None:
         session = {"id": "chat-a", "backend": "codex", "cwd": "/tmp"}
-        empty = agent_server.empty_provider_command_inventory(
+        empty = hyadex_server.empty_provider_command_inventory(
             "codex",
             cwd="/tmp",
             selector_secret="a" * 64,
             binding_context="chat-a",
         )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "discover_session_provider_commands",
             AsyncMock(return_value=(
                 {
@@ -159,12 +159,12 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
             )),
         ):
             with self.assertRaises(
-                agent_server.ProviderCommandSelectionUnavailable
+                hyadex_server.ProviderCommandSelectionUnavailable
             ) as unavailable:
-                await agent_server.resolve_provider_command_selection(
+                await hyadex_server.resolve_provider_command_selection(
                     "chat-a",
                     session,
-                    agent_server.SkillSelection(
+                    hyadex_server.SkillSelection(
                         id="pcmd_" + "a" * 32,
                         revision="pcmdrev_" + "b" * 32,
                     ),
@@ -172,7 +172,7 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
                     purpose=None,
                     provider_context_mode="chat",
                     client_capabilities=[
-                        agent_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
+                        hyadex_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
                     ],
                 )
 
@@ -180,17 +180,17 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_transport_ineligible_selection_is_permanently_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.object(
-            agent_server,
+            hyadex_server,
             "CODEX_TRANSPORT",
-            agent_server.CODEX_TRANSPORT_EXEC,
+            hyadex_server.CODEX_TRANSPORT_EXEC,
         ):
             with self.assertRaises(
-                agent_server.ProviderCommandSelectionInvalid
+                hyadex_server.ProviderCommandSelectionInvalid
             ) as invalid:
-                await agent_server.resolve_provider_command_selection(
+                await hyadex_server.resolve_provider_command_selection(
                     "chat-a",
                     {"id": "chat-a", "backend": "codex", "cwd": tmp},
-                    agent_server.SkillSelection(
+                    hyadex_server.SkillSelection(
                         id="pcmd_" + "a" * 32,
                         revision="pcmdrev_" + "b" * 32,
                     ),
@@ -198,7 +198,7 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
                     purpose=None,
                     provider_context_mode="chat",
                     client_capabilities=[
-                        agent_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
+                        hyadex_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
                     ],
                 )
 
@@ -234,17 +234,17 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
                 "commands": current.commands,
             }
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "discover_session_provider_commands",
                 AsyncMock(return_value=(snapshot, current)),
             ):
                 with self.assertRaises(
-                    agent_server.ProviderCommandSelectionInvalid
+                    hyadex_server.ProviderCommandSelectionInvalid
                 ) as stale:
-                    await agent_server.resolve_provider_command_selection(
+                    await hyadex_server.resolve_provider_command_selection(
                         "chat-a",
                         {"id": "chat-a", "backend": "codex", "cwd": tmp},
-                        agent_server.SkillSelection(
+                        hyadex_server.SkillSelection(
                             id=previous.commands[0]["id"],
                             revision=previous.revision,
                         ),
@@ -252,7 +252,7 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
                         purpose=None,
                         provider_context_mode="chat",
                         client_capabilities=[
-                            agent_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
+                            hyadex_server.CODEX_INTERACTIVE_CLIENT_CAPABILITY
                         ],
                     )
 
@@ -260,7 +260,7 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
 
     def test_selection_schema_rejects_paths_names_and_extra_fields(self) -> None:
         with self.assertRaises(ValidationError):
-            agent_server.SkillSelection.model_validate({
+            hyadex_server.SkillSelection.model_validate({
                 "id": "pcmd_" + "a" * 32,
                 "revision": "pcmdrev_" + "b" * 32,
                 "path": "/private/skill/SKILL.md",
@@ -274,7 +274,7 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            agent_server.codex_provider_command_turn_input("/review", command),
+            hyadex_server.codex_provider_command_turn_input("/review", command),
             [
                 {"type": "text", "text": "$review", "text_elements": []},
                 {
@@ -285,7 +285,7 @@ class ProviderCommandAPIContractTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(
-            agent_server.codex_provider_command_turn_input(
+            hyadex_server.codex_provider_command_turn_input(
                 "/review\nFocus on auth",
                 command,
             )[0]["text"],
@@ -297,11 +297,11 @@ class ProviderCommandSelectorProcessScopeTests(unittest.TestCase):
     def test_selector_secret_is_process_private_and_rotation_changes_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "PROVIDER_COMMAND_SELECTOR_SECRET",
                 "a" * 64,
             ):
-                first_key = agent_server.provider_command_selector_secret()
+                first_key = hyadex_server.provider_command_selector_secret()
                 first = codex_provider_command_inventory(
                     {
                         "data": [{
@@ -316,7 +316,7 @@ class ProviderCommandSelectorProcessScopeTests(unittest.TestCase):
                     selector_secret=first_key,
                     binding_context="chat-a",
                 )
-                second_key = agent_server.provider_command_selector_secret()
+                second_key = hyadex_server.provider_command_selector_secret()
                 second = codex_provider_command_inventory(
                     {
                         "data": [{
@@ -333,11 +333,11 @@ class ProviderCommandSelectorProcessScopeTests(unittest.TestCase):
                 )
 
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "PROVIDER_COMMAND_SELECTOR_SECRET",
                 "b" * 64,
             ):
-                rotated_key = agent_server.provider_command_selector_secret()
+                rotated_key = hyadex_server.provider_command_selector_secret()
                 rotated = codex_provider_command_inventory(
                     {
                         "data": [{

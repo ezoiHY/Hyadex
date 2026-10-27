@@ -4,9 +4,7 @@ from unittest.mock import AsyncMock
 
 from fastapi import HTTPException
 
-import agent_server
-
-
+from tests import hyadex_server
 def session(
     session_id: str,
     *,
@@ -32,7 +30,7 @@ def session(
 
 class SessionOrderingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.store = agent_server.SessionStore()
+        self.store = hyadex_server.SessionStore()
         self.store.save = AsyncMock()
 
     async def test_cross_folder_reorder_is_atomic_and_exact(self) -> None:
@@ -55,7 +53,7 @@ class SessionOrderingTests(unittest.IsolatedAsyncioTestCase):
         destination = [
             item["id"]
             for item in result
-            if agent_server.session_section_key(item) == ("folder", "General")
+            if hyadex_server.session_section_key(item) == ("folder", "General")
         ]
         self.assertEqual(destination, ["first", "source", "target", "last"])
         self.assertEqual(source["folder"], "General")
@@ -93,10 +91,10 @@ class SessionOrderingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(source["archived_at"])
                 destination = [
                     item["id"]
-                    for item in agent_server.sorted_sessions(
+                    for item in hyadex_server.sorted_sessions(
                         list(self.store.sessions.values())
                     )
-                    if agent_server.session_section_key(item)
+                    if hyadex_server.session_section_key(item)
                     == ("folder", "Research")
                 ]
                 self.assertEqual(destination, ["target", "source"])
@@ -169,7 +167,7 @@ class SessionOrderingTests(unittest.IsolatedAsyncioTestCase):
         jobs = [
             item["id"]
             for item in result
-            if agent_server.session_section_key(item) == ("folder", "Jobs")
+            if hyadex_server.session_section_key(item) == ("folder", "Jobs")
         ]
         self.assertEqual(jobs, ["target", "source"])
         self.store.save.assert_awaited_once()

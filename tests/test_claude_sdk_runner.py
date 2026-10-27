@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 from starlette.requests import Request
 
-import agent_server
+from tests import hyadex_server
 from tests.runtime_state import patch_server, patch_server_multiple
 from hyadex.providers.claude.sdk import ClaudeSDKQueryError, ClaudeSDKUnavailable
 
@@ -363,7 +363,7 @@ class PermissionDuringStartManager(SequencedClaudeManager):
         if call_number in self.jobs_authorization_on_calls:
             matching = [
                 capability
-                for capability in agent_server.PROVIDER_AUTHORITIES.values()
+                for capability in hyadex_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == run_id
             ]
             if len(matching) != 1:
@@ -386,7 +386,7 @@ class PermissionDuringStartManager(SequencedClaudeManager):
                 "client": ("127.0.0.1", 43103),
             })
             self.jobs_authorization_results.append(
-                await agent_server.authorize_provider_jobs_operation(
+                await hyadex_server.authorize_provider_jobs_operation(
                     request,
                     session_id=chat_id,
                     operation="read",
@@ -479,7 +479,7 @@ class SafeFailingCandidateStartManager(SequencedClaudeManager):
         if call_number == 2:
             matching = [
                 capability
-                for capability in agent_server.PROVIDER_AUTHORITIES.values()
+                for capability in hyadex_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == run_id
             ]
             if len(matching) != 1:
@@ -487,7 +487,7 @@ class SafeFailingCandidateStartManager(SequencedClaudeManager):
             self.candidate_authority_path = Path(str(
                 matching[0]["authority_path"]
             ))
-            raise agent_server.NativeSteerHandoffError(
+            raise hyadex_server.NativeSteerHandoffError(
                 "candidate query was rejected before delivery",
                 safe_to_requeue=True,
             )
@@ -522,88 +522,88 @@ async def wait_forever(*_args: object, **_kwargs: object) -> None:
 
 class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.previous_sessions = agent_server.STORE.sessions
-        self.previous_active = agent_server.RUNS.active
-        self.previous_busy = agent_server.RUNS.busy
-        self.previous_current = agent_server.RUNS.current_turns
-        self.previous_stop_requests = agent_server.RUNS.stop_requests
-        self.previous_stopped_runs = agent_server.RUNS.stopped_runs
-        self.previous_turn_tasks = agent_server.RUNS.turn_tasks
-        self.previous_manager = agent_server.PROVIDERS.claude_sdk_manager
-        self.previous_run_metadata = agent_server.RUNS.run_metadata
-        self.previous_queue = agent_server.RUNS.queued
-        self.previous_run_now = agent_server.RUNS.run_now
-        self.previous_run_now_requests = agent_server.RUNS.run_now_requests
-        self.previous_run_now_completed = agent_server.RUN_NOW_COMPLETED_RESULTS
-        self.previous_steering = agent_server.RUNS.steering
-        self.previous_pending_interactions = agent_server.CLAUDE_PENDING_INTERACTIONS
-        self.previous_interaction_tasks = agent_server.CLAUDE_INTERACTION_HANDLER_TASKS
-        self.previous_lifecycle_locks = agent_server.SESSION_LIFECYCLE_LOCKS
-        self.previous_deleting = agent_server.DELETING_SESSIONS
-        self.previous_deleted = agent_server.DELETED_SESSION_TOMBSTONES
-        self.previous_maintenance = agent_server.RUNS.maintenance
-        self.previous_stop_fences = agent_server.CLAUDE_STOP_FENCE_SESSIONS
-        self.previous_stop_fence_retries = agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS
-        self.previous_stop_fence_locks = agent_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS
-        self.previous_stop_fence_attempts = agent_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS
-        self.previous_capabilities = agent_server.PROVIDER_AUTHORITIES
-        self.previous_authority_root = agent_server.PROVIDER_AUTHORITY_ROOT
-        self.previous_agent_token = agent_server.AGENT_TOKEN
+        self.previous_sessions = hyadex_server.STORE.sessions
+        self.previous_active = hyadex_server.RUNS.active
+        self.previous_busy = hyadex_server.RUNS.busy
+        self.previous_current = hyadex_server.RUNS.current_turns
+        self.previous_stop_requests = hyadex_server.RUNS.stop_requests
+        self.previous_stopped_runs = hyadex_server.RUNS.stopped_runs
+        self.previous_turn_tasks = hyadex_server.RUNS.turn_tasks
+        self.previous_manager = hyadex_server.PROVIDERS.claude_sdk_manager
+        self.previous_run_metadata = hyadex_server.RUNS.run_metadata
+        self.previous_queue = hyadex_server.RUNS.queued
+        self.previous_run_now = hyadex_server.RUNS.run_now
+        self.previous_run_now_requests = hyadex_server.RUNS.run_now_requests
+        self.previous_run_now_completed = hyadex_server.RUN_NOW_COMPLETED_RESULTS
+        self.previous_steering = hyadex_server.RUNS.steering
+        self.previous_pending_interactions = hyadex_server.CLAUDE_PENDING_INTERACTIONS
+        self.previous_interaction_tasks = hyadex_server.CLAUDE_INTERACTION_HANDLER_TASKS
+        self.previous_lifecycle_locks = hyadex_server.SESSION_LIFECYCLE_LOCKS
+        self.previous_deleting = hyadex_server.DELETING_SESSIONS
+        self.previous_deleted = hyadex_server.DELETED_SESSION_TOMBSTONES
+        self.previous_maintenance = hyadex_server.RUNS.maintenance
+        self.previous_stop_fences = hyadex_server.CLAUDE_STOP_FENCE_SESSIONS
+        self.previous_stop_fence_retries = hyadex_server.CLAUDE_STOP_FENCE_RETRY_TASKS
+        self.previous_stop_fence_locks = hyadex_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS
+        self.previous_stop_fence_attempts = hyadex_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS
+        self.previous_capabilities = hyadex_server.PROVIDER_AUTHORITIES
+        self.previous_authority_root = hyadex_server.PROVIDER_AUTHORITY_ROOT
+        self.previous_agent_token = hyadex_server.AGENT_TOKEN
         self.authority_temporary = tempfile.TemporaryDirectory()
 
         self.cwd = str(Path(__file__).resolve().parents[2])
         self.session = {
             "id": "chat-claude",
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "cwd": self.cwd,
             "model": "claude-opus",
             "effort": "high",
             "provider_jobs_access": "full",
         }
-        agent_server.STORE.sessions = {"chat-claude": self.session}
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = {"chat-claude"}
-        agent_server.RUNS.current_turns = {
+        hyadex_server.STORE.sessions = {"chat-claude": self.session}
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = {"chat-claude"}
+        hyadex_server.RUNS.current_turns = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "prompt": "Prompt",
                 "file_ids": [],
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
             }
         }
-        agent_server.RUNS.stop_requests = set()
-        agent_server.RUNS.stopped_runs = set()
-        agent_server.RUNS.turn_tasks = {}
-        agent_server.PROVIDERS.claude_sdk_manager = None
-        agent_server.RUNS.run_metadata = {}
-        agent_server.RUNS.queued = {}
-        agent_server.RUNS.run_now = {}
-        agent_server.RUNS.run_now_requests = {}
-        agent_server.RUN_NOW_COMPLETED_RESULTS = OrderedDict()
-        agent_server.RUNS.steering = set()
-        agent_server.CLAUDE_PENDING_INTERACTIONS = {}
-        agent_server.CLAUDE_INTERACTION_HANDLER_TASKS = {}
-        agent_server.SESSION_LIFECYCLE_LOCKS = {}
-        agent_server.DELETING_SESSIONS = set()
-        agent_server.DELETED_SESSION_TOMBSTONES = set()
-        agent_server.RUNS.maintenance = set()
-        agent_server.CLAUDE_STOP_FENCE_SESSIONS = set()
-        agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS = {}
-        agent_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS = {}
-        agent_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS = {}
-        agent_server.PROVIDER_AUTHORITIES = {}
-        agent_server.PROVIDER_AUTHORITY_ROOT = (
+        hyadex_server.RUNS.stop_requests = set()
+        hyadex_server.RUNS.stopped_runs = set()
+        hyadex_server.RUNS.turn_tasks = {}
+        hyadex_server.PROVIDERS.claude_sdk_manager = None
+        hyadex_server.RUNS.run_metadata = {}
+        hyadex_server.RUNS.queued = {}
+        hyadex_server.RUNS.run_now = {}
+        hyadex_server.RUNS.run_now_requests = {}
+        hyadex_server.RUN_NOW_COMPLETED_RESULTS = OrderedDict()
+        hyadex_server.RUNS.steering = set()
+        hyadex_server.CLAUDE_PENDING_INTERACTIONS = {}
+        hyadex_server.CLAUDE_INTERACTION_HANDLER_TASKS = {}
+        hyadex_server.SESSION_LIFECYCLE_LOCKS = {}
+        hyadex_server.DELETING_SESSIONS = set()
+        hyadex_server.DELETED_SESSION_TOMBSTONES = set()
+        hyadex_server.RUNS.maintenance = set()
+        hyadex_server.CLAUDE_STOP_FENCE_SESSIONS = set()
+        hyadex_server.CLAUDE_STOP_FENCE_RETRY_TASKS = {}
+        hyadex_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS = {}
+        hyadex_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS = {}
+        hyadex_server.PROVIDER_AUTHORITIES = {}
+        hyadex_server.PROVIDER_AUTHORITY_ROOT = (
             Path(self.authority_temporary.name) / "authority"
         )
-        agent_server.AGENT_TOKEN = "test-agent-token"
+        hyadex_server.AGENT_TOKEN = "test-agent-token"
         self.durable_event_patcher = patch.object(
-            agent_server,
+            hyadex_server,
             "append_durable_event",
             AsyncMock(return_value={}),
         )
         self.append_durable_event = self.durable_event_patcher.start()
         self.durable_batch_patcher = patch.object(
-            agent_server,
+            hyadex_server,
             "append_durable_event_batch",
             AsyncMock(return_value=[]),
         )
@@ -612,24 +612,24 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         self.durable_batch_patcher.stop()
         self.durable_event_patcher.stop()
-        for tasks in agent_server.RUNS.turn_tasks.values():
+        for tasks in hyadex_server.RUNS.turn_tasks.values():
             for task in tasks:
                 if not task.done():
                     task.cancel()
         pending = [
             task
-            for tasks in agent_server.RUNS.turn_tasks.values()
+            for tasks in hyadex_server.RUNS.turn_tasks.values()
             for task in tasks
             if not task.done()
         ]
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         stop_fence_retries = tuple(
-            agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS.values()
+            hyadex_server.CLAUDE_STOP_FENCE_RETRY_TASKS.values()
         )
         stop_fence_attempts = tuple(
             task
-            for tasks in agent_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS.values()
+            for tasks in hyadex_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS.values()
             for task in tasks
         )
         for task in (*stop_fence_retries, *stop_fence_attempts):
@@ -640,33 +640,33 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 *stop_fence_attempts,
                 return_exceptions=True,
             )
-        agent_server.STORE.sessions = self.previous_sessions
-        agent_server.RUNS.active = self.previous_active
-        agent_server.RUNS.busy = self.previous_busy
-        agent_server.RUNS.current_turns = self.previous_current
-        agent_server.RUNS.stop_requests = self.previous_stop_requests
-        agent_server.RUNS.stopped_runs = self.previous_stopped_runs
-        agent_server.RUNS.turn_tasks = self.previous_turn_tasks
-        agent_server.PROVIDERS.claude_sdk_manager = self.previous_manager
-        agent_server.RUNS.run_metadata = self.previous_run_metadata
-        agent_server.RUNS.queued = self.previous_queue
-        agent_server.RUNS.run_now = self.previous_run_now
-        agent_server.RUNS.run_now_requests = self.previous_run_now_requests
-        agent_server.RUN_NOW_COMPLETED_RESULTS = self.previous_run_now_completed
-        agent_server.RUNS.steering = self.previous_steering
-        agent_server.CLAUDE_PENDING_INTERACTIONS = self.previous_pending_interactions
-        agent_server.CLAUDE_INTERACTION_HANDLER_TASKS = self.previous_interaction_tasks
-        agent_server.SESSION_LIFECYCLE_LOCKS = self.previous_lifecycle_locks
-        agent_server.DELETING_SESSIONS = self.previous_deleting
-        agent_server.DELETED_SESSION_TOMBSTONES = self.previous_deleted
-        agent_server.RUNS.maintenance = self.previous_maintenance
-        agent_server.CLAUDE_STOP_FENCE_SESSIONS = self.previous_stop_fences
-        agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS = self.previous_stop_fence_retries
-        agent_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS = self.previous_stop_fence_locks
-        agent_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS = self.previous_stop_fence_attempts
-        agent_server.PROVIDER_AUTHORITIES = self.previous_capabilities
-        agent_server.PROVIDER_AUTHORITY_ROOT = self.previous_authority_root
-        agent_server.AGENT_TOKEN = self.previous_agent_token
+        hyadex_server.STORE.sessions = self.previous_sessions
+        hyadex_server.RUNS.active = self.previous_active
+        hyadex_server.RUNS.busy = self.previous_busy
+        hyadex_server.RUNS.current_turns = self.previous_current
+        hyadex_server.RUNS.stop_requests = self.previous_stop_requests
+        hyadex_server.RUNS.stopped_runs = self.previous_stopped_runs
+        hyadex_server.RUNS.turn_tasks = self.previous_turn_tasks
+        hyadex_server.PROVIDERS.claude_sdk_manager = self.previous_manager
+        hyadex_server.RUNS.run_metadata = self.previous_run_metadata
+        hyadex_server.RUNS.queued = self.previous_queue
+        hyadex_server.RUNS.run_now = self.previous_run_now
+        hyadex_server.RUNS.run_now_requests = self.previous_run_now_requests
+        hyadex_server.RUN_NOW_COMPLETED_RESULTS = self.previous_run_now_completed
+        hyadex_server.RUNS.steering = self.previous_steering
+        hyadex_server.CLAUDE_PENDING_INTERACTIONS = self.previous_pending_interactions
+        hyadex_server.CLAUDE_INTERACTION_HANDLER_TASKS = self.previous_interaction_tasks
+        hyadex_server.SESSION_LIFECYCLE_LOCKS = self.previous_lifecycle_locks
+        hyadex_server.DELETING_SESSIONS = self.previous_deleting
+        hyadex_server.DELETED_SESSION_TOMBSTONES = self.previous_deleted
+        hyadex_server.RUNS.maintenance = self.previous_maintenance
+        hyadex_server.CLAUDE_STOP_FENCE_SESSIONS = self.previous_stop_fences
+        hyadex_server.CLAUDE_STOP_FENCE_RETRY_TASKS = self.previous_stop_fence_retries
+        hyadex_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS = self.previous_stop_fence_locks
+        hyadex_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS = self.previous_stop_fence_attempts
+        hyadex_server.PROVIDER_AUTHORITIES = self.previous_capabilities
+        hyadex_server.PROVIDER_AUTHORITY_ROOT = self.previous_authority_root
+        hyadex_server.AGENT_TOKEN = self.previous_agent_token
         self.authority_temporary.cleanup()
 
     @staticmethod
@@ -699,79 +699,79 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         runtime_success = Mock()
         runtime_failure = Mock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             append_finished,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "sample_claude_context_usage",
             AsyncMock(return_value=False),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_success",
             runtime_success,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_failure",
             runtime_failure,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            await agent_server.run_claude_sdk(
+            await hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -806,39 +806,39 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 ("CLAUDE_SDK_IDLE_WARN_SECONDS", idle_warn),
                 ("CLAUDE_SDK_IDLE_TIMEOUT_SECONDS", idle_timeout),
             ):
-                stack.enter_context(patch_server(agent_server, name, value))
+                stack.enter_context(patch_server(hyadex_server, name, value))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "resolve_claude_resume_provider",
                 return_value=(None, None),
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "capture_git_baseline",
                 AsyncMock(return_value={"head": "base"}),
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "build_claude_sdk_options",
                 return_value=(object(), "config", "/usr/bin/claude"),
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "claude_sdk_manager",
                 AsyncMock(return_value=manager),
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "watch_manifest_artifacts",
                 wait_forever,
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "append_event",
                 append_event,
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "project_claude_sdk_message",
                 AsyncMock(return_value=project_result),
             ))
@@ -851,37 +851,37 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 "publish_turn_code_diff",
             ):
                 stack.enter_context(patch.object(
-                    agent_server,
+                    hyadex_server,
                     name,
                     AsyncMock(),
                 ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "append_turn_finished_event",
                 append_finished,
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "release_turn_slot",
                 AsyncMock(return_value=True),
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "record_runtime_success",
                 Mock(),
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "record_runtime_failure",
                 runtime_failure,
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "should_schedule_queue_after_finish",
                 return_value=False,
             ))
             await asyncio.wait_for(
-                agent_server.run_claude_sdk(
+                hyadex_server.run_claude_sdk(
                     "chat-claude",
                     "run-claude",
                     "Prompt",
@@ -908,13 +908,13 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(
             call.args[1] == "error"
             and call.args[2]["message"]
-            == agent_server.CLAUDE_EMPTY_TURN_ERROR
+            == hyadex_server.CLAUDE_EMPTY_TURN_ERROR
             for call in append_event.await_args_list
         ))
         runtime_success.assert_not_called()
         runtime_failure.assert_called_once_with(
-            agent_server.BACKEND_CLAUDE,
-            agent_server.CLAUDE_EMPTY_TURN_ERROR,
+            hyadex_server.BACKEND_CLAUDE,
+            hyadex_server.CLAUDE_EMPTY_TURN_ERROR,
         )
 
     async def test_tool_only_empty_sdk_result_remains_success(self) -> None:
@@ -953,10 +953,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(
             call.args[1] == "error"
             and call.args[2].get("message")
-            == agent_server.CLAUDE_EMPTY_TURN_ERROR
+            == hyadex_server.CLAUDE_EMPTY_TURN_ERROR
             for call in append_event.await_args_list
         ))
-        runtime_success.assert_called_once_with(agent_server.BACKEND_CLAUDE)
+        runtime_success.assert_called_once_with(hyadex_server.BACKEND_CLAUDE)
         runtime_failure.assert_not_called()
 
     async def test_sdk_text_streams_as_assistant_text_and_result_is_final(
@@ -994,7 +994,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             [{
                 "run_id": "run-claude",
                 "text": "Checking the repository now.",
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
             }],
         )
         self.assertFalse(any(
@@ -1005,7 +1005,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         terminal = append_finished.await_args.args[1]
         self.assertEqual(terminal["result_text"], "The repository is ready.")
         self.assertFalse(terminal["stopped"])
-        runtime_success.assert_called_once_with(agent_server.BACKEND_CLAUDE)
+        runtime_success.assert_called_once_with(hyadex_server.BACKEND_CLAUDE)
         runtime_failure.assert_not_called()
 
     async def test_aborted_sdk_result_preserves_visible_text_without_final(
@@ -1072,87 +1072,87 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         runtime_success = Mock()
         runtime_failure = Mock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_cmd",
             return_value=["claude", "-p"],
         ), patch.object(
-            agent_server.asyncio,
+            hyadex_server.asyncio,
             "create_subprocess_exec",
             AsyncMock(return_value=process),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "process_group_for_pid",
             return_value=4242,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             append_finished,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_active_stdout",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "terminate_process_tree",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "clear_active_process",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_success",
             runtime_success,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_failure",
             runtime_failure,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            await agent_server.run_claude_print(
+            await hyadex_server.run_claude_print(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -1166,33 +1166,33 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(
             call.args[1] == "error"
             and call.args[2].get("message")
-            == agent_server.CLAUDE_EMPTY_TURN_ERROR
+            == hyadex_server.CLAUDE_EMPTY_TURN_ERROR
             for call in append_event.await_args_list
         ))
         runtime_success.assert_not_called()
         runtime_failure.assert_called_once_with(
-            agent_server.BACKEND_CLAUDE,
-            agent_server.CLAUDE_EMPTY_TURN_ERROR,
+            hyadex_server.BACKEND_CLAUDE,
+            hyadex_server.CLAUDE_EMPTY_TURN_ERROR,
         )
 
     async def test_interactive_auto_never_downgrades_to_unattended_print(self) -> None:
         sdk = AsyncMock(side_effect=ClaudeSDKUnavailable("missing SDK"))
         print_runner = AsyncMock()
         terminal_failure = AsyncMock()
-        with patch.object(agent_server, "CLAUDE_TRANSPORT", agent_server.CLAUDE_TRANSPORT_AUTO), patch.object(
-            agent_server,
+        with patch.object(hyadex_server, "CLAUDE_TRANSPORT", hyadex_server.CLAUDE_TRANSPORT_AUTO), patch.object(
+            hyadex_server,
             "run_claude_sdk",
             sdk,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_claude_print",
             print_runner,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "finish_claude_sdk_start_failure",
             terminal_failure,
         ):
-            await agent_server.run_claude(
+            await hyadex_server.run_claude(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -1216,26 +1216,26 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "categories": {"ignored": "not persisted"},
         }, 9)
         self.session["claude_session_id"] = "provider-usage"
-        agent_server.RUNS.active = {
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "claude_sdk_owner_token": manager.owner_token,
                 "stop_requested": False,
             }
         }
         broadcast = AsyncMock()
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             AsyncMock(),
         ), patch.object(
-            agent_server.HUB,
+            hyadex_server.HUB,
             "broadcast",
             broadcast,
         ):
-            stored = await agent_server.sample_claude_context_usage(
+            stored = await hyadex_server.sample_claude_context_usage(
                 "chat-claude",
                 "run-claude",
                 "provider-usage",
@@ -1253,7 +1253,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["provider_generation"], 9)
         self.assertEqual(snapshot["usage_generation"], 1)
         self.assertNotIn("categories", snapshot)
-        runtime = await agent_server.claude_runtime_snapshot("chat-claude")
+        runtime = await hyadex_server.claude_runtime_snapshot("chat-claude")
         self.assertEqual(runtime["context_usage_state"], "available")
         self.assertEqual(runtime["context_usage_snapshot"], snapshot)
         packet = broadcast.await_args.args[1]
@@ -1265,7 +1265,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         # The first context sample after Claude's process starts takes one to
         # two seconds. It must not hit the timeout: a timeout resets the SDK
         # client, which made every following turn start cold and miss again.
-        self.assertGreaterEqual(agent_server.CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS, 5)
+        self.assertGreaterEqual(hyadex_server.CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS, 5)
         manager = FakeClaudeManager()
         manager.context_usage_response = ({"totalTokens": 27_000, "maxTokens": 1_000_000}, 1)
         answer = manager.get_context_usage
@@ -1276,24 +1276,24 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         manager.get_context_usage = cold_answer
         self.session["claude_session_id"] = "provider-cold"
-        agent_server.RUNS.active = {
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-cold",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "claude_sdk_owner_token": manager.owner_token,
                 "stop_requested": False,
             }
         }
-        with patch.object(agent_server.STORE, "save", AsyncMock()), patch.object(
-            agent_server.HUB, "broadcast", AsyncMock(),
+        with patch.object(hyadex_server.STORE, "save", AsyncMock()), patch.object(
+            hyadex_server.HUB, "broadcast", AsyncMock(),
         ), patch.object(
             # Scaled down: 0.2 s stands for a 1.5 s cold sample, this limit
             # for the old 2 s default that cold samples could exceed.
-            agent_server, "CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS",
-            agent_server.CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS / 20,
+            hyadex_server, "CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS",
+            hyadex_server.CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS / 20,
         ):
-            stored = await agent_server.sample_claude_context_usage(
+            stored = await hyadex_server.sample_claude_context_usage(
                 "chat-claude", "run-cold", "provider-cold", manager,
             )
         self.assertTrue(stored)
@@ -1310,34 +1310,34 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "model": "claude-opus-4-1",
         }, 12)
         self.session["claude_session_id"] = "provider-manual"
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.current_turns = {}
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.current_turns = {}
         broadcast = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_TRANSPORT",
-            agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+            hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_dependency_available",
             return_value=True,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             AsyncMock(),
         ), patch.object(
-            agent_server.HUB,
+            hyadex_server.HUB,
             "broadcast",
             broadcast,
         ):
-            observed = await agent_server.get_claude_runtime("chat-claude")
+            observed = await hyadex_server.get_claude_runtime("chat-claude")
             self.assertTrue(
                 observed["features"]["context_usage_refresh"]
             )
             self.assertEqual(manager.context_usage_calls, [])
-            refreshed = await agent_server.post_claude_context_usage_refresh(
+            refreshed = await hyadex_server.post_claude_context_usage_refresh(
                 "chat-claude"
             )
 
@@ -1374,30 +1374,30 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.current_turns = {}
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.current_turns = {}
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_TRANSPORT",
-            agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+            hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_dependency_available",
             return_value=True,
         ):
-            agent_server.RUNS.busy = {"chat-claude"}
-            with self.assertRaises(agent_server.HTTPException) as busy:
-                await agent_server.post_claude_context_usage_refresh(
+            hyadex_server.RUNS.busy = {"chat-claude"}
+            with self.assertRaises(hyadex_server.HTTPException) as busy:
+                await hyadex_server.post_claude_context_usage_refresh(
                     "chat-claude"
                 )
             self.assertEqual(busy.exception.status_code, 409)
             self.assertEqual(manager.context_usage_calls, [])
 
-            agent_server.RUNS.busy = set()
+            hyadex_server.RUNS.busy = set()
             manager.loaded = False
-            with self.assertRaises(agent_server.HTTPException) as unloaded:
-                await agent_server.post_claude_context_usage_refresh(
+            with self.assertRaises(hyadex_server.HTTPException) as unloaded:
+                await hyadex_server.post_claude_context_usage_refresh(
                     "chat-claude"
                 )
             self.assertEqual(unloaded.exception.status_code, 409)
@@ -1408,10 +1408,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_manual_context_refresh_cannot_overwrite_newer_generation(self) -> None:
         manager = FakeClaudeManager()
         self.session["claude_session_id"] = "provider-manual"
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.current_turns = {}
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.current_turns = {}
         newer_snapshot = {
             "provider_session_id": "provider-manual",
             "context_tokens": 77_000,
@@ -1437,16 +1437,16 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             side_effect=sample_after_newer_write
         )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_TRANSPORT",
-            agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+            hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_dependency_available",
             return_value=True,
         ):
-            with self.assertRaises(agent_server.HTTPException) as changed:
-                await agent_server.post_claude_context_usage_refresh(
+            with self.assertRaises(hyadex_server.HTTPException) as changed:
+                await hyadex_server.post_claude_context_usage_refresh(
                     "chat-claude"
                 )
 
@@ -1470,26 +1470,26 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.current_turns = {}
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.current_turns = {}
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_TRANSPORT",
-            agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+            hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_dependency_available",
             return_value=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS",
             0.01,
         ):
-            with self.assertRaises(agent_server.HTTPException) as timed_out:
+            with self.assertRaises(hyadex_server.HTTPException) as timed_out:
                 await asyncio.wait_for(
-                    agent_server.post_claude_context_usage_refresh(
+                    hyadex_server.post_claude_context_usage_refresh(
                         "chat-claude"
                     ),
                     0.2,
@@ -1526,21 +1526,21 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.current_turns = {}
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.current_turns = {}
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_TRANSPORT",
-            agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+            hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_dependency_available",
             return_value=True,
         ):
             request = asyncio.create_task(
-                agent_server.post_claude_context_usage_refresh("chat-claude")
+                hyadex_server.post_claude_context_usage_refresh("chat-claude")
             )
             await asyncio.wait_for(sampling_started.wait(), 0.2)
             request.cancel()
@@ -1600,55 +1600,55 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             side_effect=delayed_evict
         )
         self.session["claude_session_id"] = "provider-manual"
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.current_turns = {}
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.current_turns = {}
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_TRANSPORT",
-            agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+            hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_dependency_available",
             return_value=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "turn_start_blocker",
             AsyncMock(return_value=None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "ensure_runtime_available",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={"id": "started", "seq": 1}),
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "update",
             AsyncMock(return_value=self.session),
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "mark_backend_started",
             AsyncMock(return_value=self.session),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_claude",
             replacement_runner,
         ):
             refresh = asyncio.create_task(
-                agent_server.post_claude_context_usage_refresh("chat-claude")
+                hyadex_server.post_claude_context_usage_refresh("chat-claude")
             )
             await asyncio.wait_for(sampling_started.wait(), 0.2)
             refresh.cancel()
             await asyncio.wait_for(eviction_started.wait(), 0.2)
 
             replacement = asyncio.create_task(
-                agent_server.start_turn(
+                hyadex_server.start_turn(
                     "chat-claude",
-                    agent_server.TurnRequest(prompt="Replacement turn"),
+                    hyadex_server.TurnRequest(prompt="Replacement turn"),
                 )
             )
             await asyncio.sleep(0)
@@ -1678,23 +1678,23 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "model": "claude",
         }, 3)
         self.session["claude_session_id"] = "current-provider"
-        agent_server.RUNS.active = {
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "claude_sdk_owner_token": manager.owner_token,
                 "stop_requested": False,
             }
         }
-        self.assertFalse(await agent_server.sample_claude_context_usage(
+        self.assertFalse(await hyadex_server.sample_claude_context_usage(
             "chat-claude",
             "run-claude",
             "stale-provider",
             manager,
         ))
-        agent_server.RUNS.active["chat-claude"]["stop_requested"] = True
-        self.assertFalse(await agent_server.sample_claude_context_usage(
+        hyadex_server.RUNS.active["chat-claude"]["stop_requested"] = True
+        self.assertFalse(await hyadex_server.sample_claude_context_usage(
             "chat-claude",
             "run-claude",
             "current-provider",
@@ -1723,31 +1723,31 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.RUNS.active = {
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "claude_sdk_owner_token": manager.owner_token,
                 "stop_requested": False,
             }
         }
         broadcast = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS",
             0.01,
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             AsyncMock(),
         ), patch.object(
-            agent_server.HUB,
+            hyadex_server.HUB,
             "broadcast",
             broadcast,
         ):
             self.assertFalse(await asyncio.wait_for(
-                agent_server.sample_claude_context_usage(
+                hyadex_server.sample_claude_context_usage(
                     "chat-claude",
                     "run-claude",
                     "provider-usage",
@@ -1779,26 +1779,26 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.RUNS.active = {
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "claude_sdk_owner_token": manager.owner_token,
                 "stop_requested": True,
             }
         }
         broadcast = AsyncMock()
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             AsyncMock(),
         ), patch.object(
-            agent_server.HUB,
+            hyadex_server.HUB,
             "broadcast",
             broadcast,
         ):
-            self.assertFalse(await agent_server.sample_claude_context_usage(
+            self.assertFalse(await hyadex_server.sample_claude_context_usage(
                 "chat-claude",
                 "run-claude",
                 "provider-usage",
@@ -1847,27 +1847,27 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.RUNS.active = {
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "claude_sdk_owner_token": manager.owner_token,
                 "stop_requested": False,
             }
         }
         broadcast = AsyncMock()
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             AsyncMock(),
         ), patch.object(
-            agent_server.HUB,
+            hyadex_server.HUB,
             "broadcast",
             broadcast,
         ):
             sampling = asyncio.create_task(
-                agent_server.sample_claude_context_usage(
+                hyadex_server.sample_claude_context_usage(
                     "chat-claude",
                     "run-claude",
                     "provider-usage",
@@ -1875,7 +1875,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             await asyncio.wait_for(sampling_started.wait(), 0.2)
-            agent_server.RUNS.active["chat-claude"]["stop_requested"] = True
+            hyadex_server.RUNS.active["chat-claude"]["stop_requested"] = True
             release_sampling.set()
             self.assertFalse(await asyncio.wait_for(sampling, 0.2))
 
@@ -1888,11 +1888,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_context_usage_rpc_and_invalid_results_clear_current_snapshot(self) -> None:
         self.session["claude_session_id"] = "provider-usage"
-        agent_server.RUNS.active = {
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "claude_sdk_owner_token": "fake-claude-owner",
                 "stop_requested": False,
             }
@@ -1918,15 +1918,15 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 })
                 broadcast = AsyncMock()
                 with patch.object(
-                    agent_server.STORE,
+                    hyadex_server.STORE,
                     "save",
                     AsyncMock(),
                 ), patch.object(
-                    agent_server.HUB,
+                    hyadex_server.HUB,
                     "broadcast",
                     broadcast,
                 ):
-                    self.assertFalse(await agent_server.sample_claude_context_usage(
+                    self.assertFalse(await hyadex_server.sample_claude_context_usage(
                         "chat-claude",
                         "run-claude",
                         "provider-usage",
@@ -1970,27 +1970,27 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": old_snapshot,
             "claude_context_usage_snapshot": old_snapshot,
         })
-        agent_server.RUNS.active = {
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "claude_sdk_owner_token": manager.owner_token,
                 "stop_requested": False,
             }
         }
         broadcast = AsyncMock()
         with patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save",
             AsyncMock(),
         ), patch.object(
-            agent_server.HUB,
+            hyadex_server.HUB,
             "broadcast",
             broadcast,
         ):
             sampling = asyncio.create_task(
-                agent_server.sample_claude_context_usage(
+                hyadex_server.sample_claude_context_usage(
                     "chat-claude",
                     "run-claude",
                     "provider-usage",
@@ -2003,14 +2003,14 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 "context_tokens": 30_000,
                 "usage_generation": 9,
             }
-            async with agent_server.STORE.transaction():
+            async with hyadex_server.STORE.transaction():
                 self.session.update({
                     "_context_usage_generation": 9,
                     "context_usage_state": "available",
                     "context_usage_snapshot": newer_snapshot,
                     "claude_context_usage_snapshot": newer_snapshot,
                 })
-            agent_server.RUNS.active["chat-claude"]["stop_requested"] = True
+            hyadex_server.RUNS.active["chat-claude"]["stop_requested"] = True
             release_sampling.set()
             self.assertFalse(await asyncio.wait_for(sampling, 0.2))
 
@@ -2022,15 +2022,15 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         sdk = AsyncMock()
         print_runner = AsyncMock()
         with patch.object(
-            agent_server,
+            hyadex_server,
             "run_claude_sdk",
             sdk,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_claude_print",
             print_runner,
         ):
-            await agent_server.run_claude(
+            await hyadex_server.run_claude(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -2069,15 +2069,15 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "evict_claude_sdk_chat",
             side_effect=evict,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_claude_print",
             side_effect=run_print,
         ):
-            await agent_server.run_claude(
+            await hyadex_server.run_claude(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -2095,19 +2095,19 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             return kwargs
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_cli_path",
             return_value="/usr/bin/claude",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=("provider-from-print", None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "create_claude_agent_options",
             side_effect=make_options,
         ):
-            agent_server.build_claude_sdk_options(
+            hyadex_server.build_claude_sdk_options(
                 "chat-claude",
                 session,
                 self.cwd,
@@ -2133,23 +2133,23 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         inherited = {
             name: f"inherited-{index}"
-            for index, name in enumerate(agent_server.PROVIDER_SECRET_ENV_NAMES)
+            for index, name in enumerate(hyadex_server.PROVIDER_SECRET_ENV_NAMES)
         }
         inherited["ANTHROPIC_API_KEY"] = "provider-credential"
         with patch.dict(os.environ, inherited), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_cli_path",
             return_value="/usr/bin/claude",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "create_claude_agent_options",
             side_effect=make_options,
         ):
-            agent_server.build_claude_sdk_options(
+            hyadex_server.build_claude_sdk_options(
                 "chat-claude",
                 self.session,
                 self.cwd,
@@ -2158,7 +2158,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         child_env = captured_options["env"]
         self.assertIsInstance(child_env, dict)
-        for secret_name in agent_server.PROVIDER_SECRET_ENV_NAMES:
+        for secret_name in hyadex_server.PROVIDER_SECRET_ENV_NAMES:
             with self.subTest(secret_name=secret_name):
                 self.assertIn(secret_name, child_env)
                 self.assertEqual(child_env[secret_name], "")
@@ -2168,13 +2168,13 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_server_secrets_are_removed_from_process_environment(self) -> None:
         inherited = {
             name: f"server-secret-{index}"
-            for index, name in enumerate(agent_server.PROVIDER_SECRET_ENV_NAMES)
+            for index, name in enumerate(hyadex_server.PROVIDER_SECRET_ENV_NAMES)
         }
         inherited["ANTHROPIC_API_KEY"] = "provider-credential"
         with patch.dict(os.environ, inherited, clear=False):
-            removed = agent_server.scrub_server_secret_environment()
-            self.assertEqual(set(removed), set(agent_server.PROVIDER_SECRET_ENV_NAMES))
-            for secret_name in agent_server.PROVIDER_SECRET_ENV_NAMES:
+            removed = hyadex_server.scrub_server_secret_environment()
+            self.assertEqual(set(removed), set(hyadex_server.PROVIDER_SECRET_ENV_NAMES))
+            for secret_name in hyadex_server.PROVIDER_SECRET_ENV_NAMES:
                 self.assertNotIn(secret_name, os.environ)
             self.assertEqual(
                 os.environ.get("ANTHROPIC_API_KEY"),
@@ -2187,28 +2187,28 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         base = {**self.session}
         base.pop("subagent_limit", None)
         with patch.dict(os.environ, {cap_name: "9"}), patch.object(
-            agent_server, "claude_sdk_cli_path", return_value="/usr/bin/claude",
+            hyadex_server, "claude_sdk_cli_path", return_value="/usr/bin/claude",
         ), patch.object(
-            agent_server, "resolve_claude_resume_provider", return_value=(None, None),
+            hyadex_server, "resolve_claude_resume_provider", return_value=(None, None),
         ), patch.object(
-            agent_server, "create_claude_agent_options", side_effect=lambda **values: values,
+            hyadex_server, "create_claude_agent_options", side_effect=lambda **values: values,
         ):
-            inherited, inherited_key, _ = agent_server.build_claude_sdk_options(
+            inherited, inherited_key, _ = hyadex_server.build_claude_sdk_options(
                 "chat-claude", base, self.cwd, manifest,
             )
-            cleared, cleared_key, _ = agent_server.build_claude_sdk_options(
+            cleared, cleared_key, _ = hyadex_server.build_claude_sdk_options(
                 "chat-claude", {**base, "subagent_limit": None}, self.cwd, manifest,
             )
-            limited, limited_key, _ = agent_server.build_claude_sdk_options(
+            limited, limited_key, _ = hyadex_server.build_claude_sdk_options(
                 "chat-claude", {**base, "subagent_limit": 3}, self.cwd, manifest,
             )
-            sibling, _, _ = agent_server.build_claude_sdk_options(
+            sibling, _, _ = hyadex_server.build_claude_sdk_options(
                 "chat-sibling", {**base, "subagent_limit": 5}, self.cwd, manifest,
             )
-            command = agent_server.build_claude_cmd(
+            command = hyadex_server.build_claude_cmd(
                 "chat-claude", {**base, "subagent_limit": 3}, manifest,
             )
-            inherited_command = agent_server.build_claude_cmd(
+            inherited_command = hyadex_server.build_claude_cmd(
                 "chat-claude", {**base, "subagent_limit": None}, manifest,
             )
             self.assertEqual(os.environ[cap_name], "9")
@@ -2242,23 +2242,23 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             return kwargs
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_cli_path",
             return_value="/usr/bin/claude",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "create_claude_agent_options",
             side_effect=make_options,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "handle_claude_tool_permission",
             permission,
         ):
-            options, config_key, _ = agent_server.build_claude_sdk_options(
+            options, config_key, _ = hyadex_server.build_claude_sdk_options(
                 "chat-claude",
                 session,
                 self.cwd,
@@ -2271,18 +2271,18 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(captured_options["permission_mode"], "plan")
-        self.assertEqual(agent_server.CLAUDE_SDK_CONFIGURATION_VERSION, 10)
+        self.assertEqual(hyadex_server.CLAUDE_SDK_CONFIGURATION_VERSION, 10)
         self.assertEqual(
             captured_options["disallowed_tools"],
             ["CronCreate", "Monitor", "ScheduleWakeup"],
         )
         self.assertEqual(
             captured_options["allowed_tools"],
-            [agent_server.CLAUDE_PROVIDER_MCP_TOOL_NAME],
+            [hyadex_server.CLAUDE_PROVIDER_MCP_TOOL_NAME],
         )
         system_prompt = captured_options["system_prompt"]["append"]
         self.assertIn(
-            f"Use only `{agent_server.CLAUDE_PROVIDER_MCP_TOOL_NAME}`",
+            f"Use only `{hyadex_server.CLAUDE_PROVIDER_MCP_TOOL_NAME}`",
             system_prompt,
         )
         self.assertIn(
@@ -2306,7 +2306,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [matcher.matcher for matcher in hooks["PreToolUse"]],
             [
-                agent_server.CLAUDE_PROVIDER_MCP_TOOL_NAME,
+                hyadex_server.CLAUDE_PROVIDER_MCP_TOOL_NAME,
                 "Bash",
                 "CronCreate",
                 "Monitor",
@@ -2322,35 +2322,35 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             owner_token="",
         )
 
-        default_key = agent_server.claude_sdk_configuration_key(
+        default_key = hyadex_server.claude_sdk_configuration_key(
             {**session, "claude_permission_mode": "default"},
             self.cwd,
             "/usr/bin/claude",
-            agent_server.session_system_prompt(
+            hyadex_server.session_system_prompt(
                 "chat-claude",
                 session,
                 Path(self.cwd) / ".manifest.json",
             ),
         )
         self.assertNotEqual(config_key, default_key)
-        system_prompt = agent_server.session_system_prompt(
+        system_prompt = hyadex_server.session_system_prompt(
             "chat-claude",
             session,
             Path(self.cwd) / ".manifest.json",
         )
-        with patch.object(agent_server, "CLAUDE_SDK_CONFIGURATION_VERSION", 7):
-            previous_version_key = agent_server.claude_sdk_configuration_key(
+        with patch.object(hyadex_server, "CLAUDE_SDK_CONFIGURATION_VERSION", 7):
+            previous_version_key = hyadex_server.claude_sdk_configuration_key(
                 session,
                 self.cwd,
                 "/usr/bin/claude",
                 system_prompt,
             )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_NON_DURABLE_SCHEDULER_TOOLS",
             ("CronCreate",),
         ):
-            previous_tools_key = agent_server.claude_sdk_configuration_key(
+            previous_tools_key = hyadex_server.claude_sdk_configuration_key(
                 session,
                 self.cwd,
                 "/usr/bin/claude",
@@ -2370,23 +2370,23 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             return {"type": "sdk", "name": "hyadex"}
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_cli_path",
             return_value="/usr/bin/claude",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "create_claude_agent_options",
             side_effect=make_options,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "create_claude_sdk_mcp_server",
             side_effect=make_mcp,
         ):
-            options, _config_key, _ = agent_server.build_claude_sdk_options(
+            options, _config_key, _ = hyadex_server.build_claude_sdk_options(
                 "chat-claude",
                 self.session,
                 self.cwd,
@@ -2403,23 +2403,23 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_TOOL_REPLAY",
-            agent_server.OrderedDict(),
+            hyadex_server.OrderedDict(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_TOOL_REPLAY_TOMBSTONES",
-            agent_server.OrderedDict(),
+            hyadex_server.OrderedDict(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "PROVIDER_TOOL_REPLAY_LOCK",
             asyncio.Lock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "provider_tool_capability_snapshot",
             AsyncMock(return_value=(Path("/private/authority"), {})),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "execute_provider_tool",
             executor,
         ):
@@ -2446,13 +2446,13 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         async def gated_executor(*_args: object, **_kwargs: object):
             nonlocal entered
             entered += 1
-            if entered == agent_server.PROVIDER_TOOL_MAX_CONCURRENT_PER_CLAUDE_CHAT:
+            if entered == hyadex_server.PROVIDER_TOOL_MAX_CONCURRENT_PER_CLAUDE_CHAT:
                 both_entered.set()
             await release.wait()
             return "fresh", False
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "execute_provider_tool",
             AsyncMock(side_effect=gated_executor),
         ):
@@ -2462,7 +2462,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     "arguments": ["list"],
                 }))
                 for _ in range(
-                    agent_server.PROVIDER_TOOL_MAX_CONCURRENT_PER_CLAUDE_CHAT
+                    hyadex_server.PROVIDER_TOOL_MAX_CONCURRENT_PER_CLAUDE_CHAT
                 )
             ]
             await asyncio.wait_for(both_entered.wait(), 1)
@@ -2483,17 +2483,17 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         append_event = AsyncMock(return_value={})
         update_metadata = AsyncMock()
         with patch.dict(sys.modules, fake_claude_sdk_modules()), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "update_claude_pending_session_metadata",
             update_metadata,
         ):
             for tool_name in ("CronCreate", "Monitor", "ScheduleWakeup"):
                 with self.subTest(tool_name=tool_name):
-                    result = await agent_server.handle_claude_tool_permission(
+                    result = await hyadex_server.handle_claude_tool_permission(
                         "chat-claude",
                         tool_name,
                         {},
@@ -2504,7 +2504,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn("Hyadex provider tool", result.message)
                     self.assertNotIn("provider-authority block", result.message)
 
-        self.assertFalse(agent_server.CLAUDE_PENDING_INTERACTIONS)
+        self.assertFalse(hyadex_server.CLAUDE_PENDING_INTERACTIONS)
         append_event.assert_not_awaited()
         update_metadata.assert_not_awaited()
 
@@ -2512,12 +2512,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.session["claude_permission_mode"] = "bypassPermissions"
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "interactive_agent_sdk": True,
                 "stop_requested": False,
                 "claude_sdk_owner_token": manager.owner_token,
@@ -2532,11 +2532,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         append_event = AsyncMock(return_value={})
         update_metadata = AsyncMock()
         with patch.dict(sys.modules, fake_claude_sdk_modules()), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "update_claude_pending_session_metadata",
             update_metadata,
         ):
@@ -2545,7 +2545,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 ("Bash", {"command": "pwd"}),
             ):
                 with self.subTest(tool_name=tool_name):
-                    result = await agent_server.handle_claude_tool_permission(
+                    result = await hyadex_server.handle_claude_tool_permission(
                         "chat-claude",
                         tool_name,
                         input_data,
@@ -2555,74 +2555,74 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsInstance(result, FakePermissionResultAllow)
                     self.assertEqual(result.updated_input, input_data)
 
-        self.assertFalse(agent_server.CLAUDE_PENDING_INTERACTIONS)
+        self.assertFalse(hyadex_server.CLAUDE_PENDING_INTERACTIONS)
         append_event.assert_not_awaited()
         update_metadata.assert_not_awaited()
 
     async def test_permission_mode_runtime_contract_and_public_session(self) -> None:
         self.session["claude_permission_mode"] = "acceptEdits"
         with patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_dependency_available",
             return_value=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_TRANSPORT",
-            agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+            hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
         ):
-            runtime = await agent_server.claude_runtime_snapshot("chat-claude")
+            runtime = await hyadex_server.claude_runtime_snapshot("chat-claude")
 
         self.assertEqual(runtime["policy"]["permission_mode"], "acceptEdits")
         self.assertEqual(
             runtime["permission_modes"],
-            list(agent_server.CLAUDE_PERMISSION_MODE_OPTIONS),
+            list(hyadex_server.CLAUDE_PERMISSION_MODE_OPTIONS),
         )
         self.assertTrue(runtime["features"]["permission_mode_control"])
         with patch.object(
-            agent_server,
+            hyadex_server,
             "host_pressure_snapshot",
             return_value={},
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "tmux_capability",
             return_value={"available": False},
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "runtime_diagnostics_snapshot",
             return_value={},
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_dependency_available",
             return_value=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_TRANSPORT",
-            agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+            hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
         ):
-            health = await agent_server.health()
+            health = await hyadex_server.health()
         capability = health["capabilities"]["claude_controls"]
         self.assertTrue(capability["features"]["permission_mode_control"])
         self.assertEqual(
             capability["permission_modes"],
-            list(agent_server.CLAUDE_PERMISSION_MODE_OPTIONS),
+            list(hyadex_server.CLAUDE_PERMISSION_MODE_OPTIONS),
         )
         self.assertEqual(
-            agent_server.public_session(self.session)["claude_permission_mode"],
+            hyadex_server.public_session(self.session)["claude_permission_mode"],
             "acceptEdits",
         )
-        legacy = {"id": "legacy", "backend": agent_server.BACKEND_CLAUDE}
+        legacy = {"id": "legacy", "backend": hyadex_server.BACKEND_CLAUDE}
         self.assertEqual(
-            agent_server.effective_claude_permission_mode(legacy),
-            agent_server.CLAUDE_DEFAULT_PERMISSION_MODE,
+            hyadex_server.effective_claude_permission_mode(legacy),
+            hyadex_server.CLAUDE_DEFAULT_PERMISSION_MODE,
         )
 
     async def test_permission_mode_change_is_saved_for_next_turn_while_active(self) -> None:
         self.session["claude_permission_mode"] = "default"
-        agent_server.RUNS.active = {
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "claude_permission_mode": "default",
             }
         }
@@ -2635,10 +2635,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             return self.session
 
         update = AsyncMock(side_effect=update_session_value)
-        with patch.object(agent_server.STORE, "update", update):
-            result = await agent_server.update_session(
+        with patch.object(hyadex_server.STORE, "update", update):
+            result = await hyadex_server.update_session(
                 "chat-claude",
-                agent_server.UpdateSessionRequest(
+                hyadex_server.UpdateSessionRequest(
                     claude_permission_mode="bypassPermissions",
                 ),
             )
@@ -2649,22 +2649,22 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         )
         update.assert_awaited_once()
         self.assertEqual(
-            agent_server.active_claude_permission_mode(
+            hyadex_server.active_claude_permission_mode(
                 "chat-claude",
-                agent_server.RUNS.active["chat-claude"],
+                hyadex_server.RUNS.active["chat-claude"],
             ),
             "default",
         )
 
     async def test_permission_mode_store_persists_and_null_resets(self) -> None:
         self.session["claude_permission_mode"] = "default"
-        with patch.object(agent_server.STORE, "save", AsyncMock()):
-            updated = await agent_server.STORE.update(
+        with patch.object(hyadex_server.STORE, "save", AsyncMock()):
+            updated = await hyadex_server.STORE.update(
                 "chat-claude",
                 {"claude_permission_mode": "dontAsk"},
             )
             persisted_mode = updated["claude_permission_mode"]
-            reset = await agent_server.STORE.update(
+            reset = await hyadex_server.STORE.update(
                 "chat-claude",
                 {"claude_permission_mode": None},
             )
@@ -2674,7 +2674,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_print_fallback_keeps_legacy_permission_behavior(self) -> None:
         session = {**self.session, "claude_permission_mode": "plan"}
-        command = agent_server.build_claude_cmd(
+        command = hyadex_server.build_claude_cmd(
             "chat-claude",
             session,
             Path(self.cwd) / ".manifest.json",
@@ -2702,12 +2702,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         process = NeverSettlingProcess()
         with patch.object(
-            agent_server.os,
+            hyadex_server.os,
             "getpgid",
             side_effect=ProcessLookupError,
         ):
             result = await asyncio.wait_for(
-                agent_server.terminate_process_tree(process, grace=0.01),
+                hyadex_server.terminate_process_tree(process, grace=0.01),
                 timeout=0.3,
             )
 
@@ -2739,15 +2739,15 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             },
         }
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_PENDING_INTERACTIONS",
             pending,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "update_claude_pending_session_metadata",
             AsyncMock(),
         ):
-            await agent_server.cancel_claude_interactions(
+            await hyadex_server.cancel_claude_interactions(
                 "chat-claude",
                 resolution="turn_stopped",
                 expected_run_id="run-old",
@@ -2768,22 +2768,22 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "queued_id": "queued-human",
             "prompt": "Continue after the scheduled print run.",
             "file_ids": [],
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "_durable": True,
         }
         self.session["active_run"] = {"run_id": "run-claude"}
-        agent_server.RUNS.current_turns["chat-claude"]["purpose"] = "scheduled_job"
-        agent_server.RUNS.run_metadata = {
+        hyadex_server.RUNS.current_turns["chat-claude"]["purpose"] = "scheduled_job"
+        hyadex_server.RUNS.run_metadata = {
             "run-claude": {"purpose": "scheduled_job"},
         }
-        agent_server.RUNS.queued = {
+        hyadex_server.RUNS.queued = {
             "chat-claude": deque([human_turn]),
         }
         queue_start_tasks: dict[str, asyncio.Task[object]] = {}
         launch_started = asyncio.Event()
         finish_launch = asyncio.Event()
         launch_calls: list[
-            tuple[str, agent_server.TurnRequest, dict[str, object]]
+            tuple[str, hyadex_server.TurnRequest, dict[str, object]]
         ] = []
 
         async def terminate(
@@ -2795,20 +2795,20 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         async def gated_start_turn(
             session_id: str,
-            request: agent_server.TurnRequest,
+            request: hyadex_server.TurnRequest,
             **kwargs: object,
         ) -> dict[str, object]:
             launch_calls.append((session_id, request, kwargs))
-            async with agent_server.RUNS.active_lock:
-                agent_server.RUNS.active[session_id] = {
+            async with hyadex_server.RUNS.active_lock:
+                hyadex_server.RUNS.active[session_id] = {
                     "run_id": "run-human",
-                    "backend": agent_server.BACKEND_CLAUDE,
-                    "transport": agent_server.CLAUDE_TRANSPORT_PRINT,
+                    "backend": hyadex_server.BACKEND_CLAUDE,
+                    "transport": hyadex_server.CLAUDE_TRANSPORT_PRINT,
                 }
-                agent_server.RUNS.busy.add(session_id)
-                agent_server.RUNS.current_turns[session_id] = {
+                hyadex_server.RUNS.busy.add(session_id)
+                hyadex_server.RUNS.current_turns[session_id] = {
                     "run_id": "run-human",
-                    "backend": agent_server.BACKEND_CLAUDE,
+                    "backend": hyadex_server.BACKEND_CLAUDE,
                 }
                 self.session["active_run"] = {"run_id": "run-human"}
             launch_started.set()
@@ -2819,7 +2819,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         append_finished = AsyncMock(return_value={})
         quarantine = AsyncMock(return_value=True)
         with patch_server_multiple(
-            agent_server,
+            hyadex_server,
             QUEUE_START_TASKS=queue_start_tasks,
             STOP_CONFIRM_TIMEOUT_SECONDS=0.01,
             resolve_claude_resume_provider=Mock(return_value=(None, None)),
@@ -2842,16 +2842,16 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             quarantine_codex_goal_thread=quarantine,
             _start_turn_locked=AsyncMock(side_effect=gated_start_turn),
         ), patch.object(
-            agent_server.asyncio,
+            hyadex_server.asyncio,
             "create_subprocess_exec",
             AsyncMock(return_value=process),
         ):
             provider_task = asyncio.create_task(
-                agent_server.supervise_provider_turn_task(
+                hyadex_server.supervise_provider_turn_task(
                     "chat-claude",
                     "run-claude",
-                    agent_server.BACKEND_CLAUDE,
-                    agent_server.run_claude_print(
+                    hyadex_server.BACKEND_CLAUDE,
+                    hyadex_server.run_claude_print(
                         "chat-claude",
                         "run-claude",
                         "Scheduled prompt",
@@ -2860,14 +2860,14 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     ),
                 )
             )
-            agent_server.RUNS.turn_tasks = {
+            hyadex_server.RUNS.turn_tasks = {
                 "chat-claude": {provider_task},
             }
             promotion_task: asyncio.Task[object] | None = None
             try:
                 await asyncio.wait_for(process.stdout.started.wait(), 0.5)
                 result = await asyncio.wait_for(
-                    agent_server.stop_turn(
+                    hyadex_server.stop_turn(
                         "chat-claude",
                         cascade_claude_subagents=False,
                     ),
@@ -2887,12 +2887,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(result["hard_stop"])
                 self.assertEqual(len(launch_calls), 1)
                 self.assertEqual(
-                    agent_server.RUNS.active["chat-claude"]["run_id"],
+                    hyadex_server.RUNS.active["chat-claude"]["run_id"],
                     "run-human",
                 )
-                self.assertIn("chat-claude", agent_server.RUNS.busy)
+                self.assertIn("chat-claude", hyadex_server.RUNS.busy)
                 self.assertEqual(
-                    agent_server.RUNS.current_turns["chat-claude"]["run_id"],
+                    hyadex_server.RUNS.current_turns["chat-claude"]["run_id"],
                     "run-human",
                 )
                 terminal_calls = [
@@ -2923,12 +2923,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         handle = FakeClaudeRun()
         manager = FakeClaudeManager(handle)
         manager.owner_token = "owner-old"
-        agent_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
         human_turn = {
             "queued_id": "queued-human",
             "prompt": "Continue on the replacement SDK client.",
             "file_ids": [],
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "_durable": True,
         }
         self.session.update({
@@ -2937,11 +2937,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "claude_session_id": "provider-old",
             "claude_session_cwd": self.cwd,
         })
-        agent_server.RUNS.current_turns["chat-claude"]["purpose"] = "scheduled_job"
-        agent_server.RUNS.run_metadata = {
+        hyadex_server.RUNS.current_turns["chat-claude"]["purpose"] = "scheduled_job"
+        hyadex_server.RUNS.run_metadata = {
             "run-claude": {"purpose": "scheduled_job"},
         }
-        agent_server.RUNS.queued = {
+        hyadex_server.RUNS.queued = {
             "chat-claude": deque([human_turn]),
         }
         queue_start_tasks: dict[str, asyncio.Task[object]] = {}
@@ -2950,7 +2950,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         launch_started = asyncio.Event()
         finish_launch = asyncio.Event()
         new_permission: asyncio.Future[dict[str, object]] | None = None
-        real_cancel_interactions = agent_server.cancel_claude_interactions
+        real_cancel_interactions = hyadex_server.cancel_claude_interactions
 
         async def gated_cancel_interactions(
             session_id: str | None = None,
@@ -2963,7 +2963,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         async def gated_start_turn(
             session_id: str,
-            _request: agent_server.TurnRequest,
+            _request: hyadex_server.TurnRequest,
             **_kwargs: object,
         ) -> dict[str, object]:
             nonlocal new_permission
@@ -2971,8 +2971,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             manager.active_run_id = "run-human"
             manager.loaded = True
             new_permission = asyncio.get_running_loop().create_future()
-            async with agent_server.CLAUDE_PENDING_INTERACTIONS_LOCK:
-                agent_server.CLAUDE_PENDING_INTERACTIONS["new-card"] = {
+            async with hyadex_server.CLAUDE_PENDING_INTERACTIONS_LOCK:
+                hyadex_server.CLAUDE_PENDING_INTERACTIONS["new-card"] = {
                     "id": "new-card",
                     "session_id": session_id,
                     "turn_id": "run-human",
@@ -2980,17 +2980,17 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     "future": new_permission,
                     "responded": False,
                 }
-            async with agent_server.RUNS.active_lock:
-                agent_server.RUNS.active[session_id] = {
+            async with hyadex_server.RUNS.active_lock:
+                hyadex_server.RUNS.active[session_id] = {
                     "run_id": "run-human",
-                    "backend": agent_server.BACKEND_CLAUDE,
-                    "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                    "backend": hyadex_server.BACKEND_CLAUDE,
+                    "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                     "claude_sdk_owner_token": "owner-new",
                 }
-                agent_server.RUNS.busy.add(session_id)
-                agent_server.RUNS.current_turns[session_id] = {
+                hyadex_server.RUNS.busy.add(session_id)
+                hyadex_server.RUNS.current_turns[session_id] = {
                     "run_id": "run-human",
-                    "backend": agent_server.BACKEND_CLAUDE,
+                    "backend": hyadex_server.BACKEND_CLAUDE,
                 }
                 self.session.update({
                     "active_run": {"run_id": "run-human"},
@@ -3003,9 +3003,9 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         append_event = AsyncMock(return_value={})
         append_finished = AsyncMock(return_value={})
-        save_provider = AsyncMock(wraps=agent_server.STORE.save_provider_session)
+        save_provider = AsyncMock(wraps=hyadex_server.STORE.save_provider_session)
         with patch_server_multiple(
-            agent_server,
+            hyadex_server,
             QUEUE_START_TASKS=queue_start_tasks,
             STOP_CONFIRM_TIMEOUT_SECONDS=0.01,
             resolve_claude_resume_provider=Mock(
@@ -3030,16 +3030,16 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             update_claude_pending_session_metadata=AsyncMock(),
             _start_turn_locked=AsyncMock(side_effect=gated_start_turn),
         ), patch.object(
-            agent_server.STORE,
+            hyadex_server.STORE,
             "save_provider_session",
             save_provider,
         ):
             provider_task = asyncio.create_task(
-                agent_server.supervise_provider_turn_task(
+                hyadex_server.supervise_provider_turn_task(
                     "chat-claude",
                     "run-claude",
-                    agent_server.BACKEND_CLAUDE,
-                    agent_server.run_claude_sdk(
+                    hyadex_server.BACKEND_CLAUDE,
+                    hyadex_server.run_claude_sdk(
                         "chat-claude",
                         "run-claude",
                         "Scheduled prompt",
@@ -3048,13 +3048,13 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     ),
                 )
             )
-            agent_server.RUNS.turn_tasks = {
+            hyadex_server.RUNS.turn_tasks = {
                 "chat-claude": {provider_task},
             }
             promotion_task: asyncio.Task[object] | None = None
             try:
                 for _ in range(100):
-                    active = agent_server.RUNS.active.get("chat-claude") or {}
+                    active = hyadex_server.RUNS.active.get("chat-claude") or {}
                     if active.get("claude_sdk_run") is handle:
                         break
                     await asyncio.sleep(0)
@@ -3062,7 +3062,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     self.fail("old SDK handle did not attach")
 
                 result = await asyncio.wait_for(
-                    agent_server.stop_turn(
+                    hyadex_server.stop_turn(
                         "chat-claude",
                         cascade_claude_subagents=False,
                     ),
@@ -3087,12 +3087,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(new_permission.done())
                 self.assertEqual(self.session["claude_session_id"], "provider-new")
                 self.assertEqual(
-                    agent_server.RUNS.active["chat-claude"]["run_id"],
+                    hyadex_server.RUNS.active["chat-claude"]["run_id"],
                     "run-human",
                 )
-                self.assertIn("chat-claude", agent_server.RUNS.busy)
+                self.assertIn("chat-claude", hyadex_server.RUNS.busy)
                 self.assertEqual(
-                    agent_server.RUNS.current_turns["chat-claude"]["run_id"],
+                    hyadex_server.RUNS.current_turns["chat-claude"]["run_id"],
                     "run-human",
                 )
                 save_provider.assert_not_awaited()
@@ -3124,39 +3124,39 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeClaudeManager(handle)
         manager.active_run_id = "run-claude"
         runner = asyncio.create_task(wait_forever())
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "proc": None,
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "claude_sdk_run": handle,
                 "claude_sdk_owner_token": manager.owner_token,
                 "provider_turn_ready": True,
                 "stop_requested": False,
             }
         }
-        agent_server.RUNS.turn_tasks = {"chat-claude": {runner}}
+        hyadex_server.RUNS.turn_tasks = {"chat-claude": {runner}}
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "STOP_CONFIRM_TIMEOUT_SECONDS",
             0.01,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_codex_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ):
-            result = await agent_server.stop_turn("chat-claude")
+            result = await hyadex_server.stop_turn("chat-claude")
 
         self.assertTrue(result["stopped"])
         self.assertTrue(result["hard_stop"])
@@ -3166,10 +3166,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_idle_stop_retires_only_chat_with_background_subagents(self) -> None:
         manager = FakeClaudeManager()
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.current_turns = {}
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.current_turns = {}
         snapshot = {
             "active_count": 1,
             "subagents": [{
@@ -3181,23 +3181,23 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         append_event = AsyncMock(return_value={})
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_subagent_snapshot",
             return_value=snapshot,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_codex_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ):
-            result = await agent_server.stop_turn("chat-claude")
+            result = await hyadex_server.stop_turn("chat-claude")
 
         self.assertTrue(result["stopped"])
         self.assertEqual(manager.evict_calls, [("chat-claude", True)])
@@ -3213,11 +3213,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_claude_supervisor_state_keeps_stop_fence_closed(self) -> None:
         manager = FakeClaudeManager()
         manager.is_loaded = Mock(side_effect=RuntimeError("ownership unavailable"))
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
 
-        result = await agent_server.stop_idle_claude_background_subagents(
+        result = await hyadex_server.stop_idle_claude_background_subagents(
             "chat-claude",
             emit_event=False,
         )
@@ -3232,10 +3232,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager.is_loaded = Mock(
             side_effect=[RuntimeError("ownership unavailable"), False]
         )
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.current_turns = {}
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.current_turns = {}
         snapshot = {
             "active_count": 1,
             "subagents": [{
@@ -3246,33 +3246,33 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_STOP_FENCE_RETRY_DELAYS_SECONDS",
             (0.0,),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_subagent_snapshot",
             return_value=snapshot,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_codex_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "schedule_next_queued_turn",
         ) as schedule:
-            result = await agent_server.stop_turn(
+            result = await hyadex_server.stop_turn(
                 "chat-claude",
                 emit_event=False,
                 schedule_queue=False,
                 pause_queued_turns_on_stop=False,
             )
             for _ in range(100):
-                if not agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS:
+                if not hyadex_server.CLAUDE_STOP_FENCE_RETRY_TASKS:
                     break
                 await asyncio.sleep(0)
 
@@ -3280,34 +3280,34 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(manager.is_loaded.call_count, 2)
         self.assertNotIn(
             "chat-claude",
-            agent_server.CLAUDE_STOP_FENCE_SESSIONS,
+            hyadex_server.CLAUDE_STOP_FENCE_SESSIONS,
         )
         self.assertEqual(self.append_durable_event.await_count, 1)
         schedule.assert_called_once_with("chat-claude")
 
     async def test_initial_claude_stop_attempt_error_still_arms_retry(self) -> None:
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.current_turns = {}
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.current_turns = {}
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "stop_idle_claude_background_subagents_bounded",
             new=AsyncMock(side_effect=RuntimeError("attempt failed")),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "schedule_claude_stop_fence_retry",
         ) as schedule, patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_codex_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ):
             with self.assertRaisesRegex(RuntimeError, "attempt failed"):
-                await agent_server.stop_turn(
+                await hyadex_server.stop_turn(
                     "chat-claude",
                     emit_event=False,
                     schedule_queue=False,
@@ -3316,20 +3316,20 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(
             "chat-claude",
-            agent_server.CLAUDE_STOP_FENCE_SESSIONS,
+            hyadex_server.CLAUDE_STOP_FENCE_SESSIONS,
         )
         self.assertIn(
             "chat-claude",
-            agent_server.RUNS.maintenance,
+            hyadex_server.RUNS.maintenance,
         )
         schedule.assert_called_once_with("chat-claude")
 
     async def test_failed_claude_stop_fence_retries_and_releases_admission(self) -> None:
         manager = FakeClaudeManager()
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
-        agent_server.RUNS.current_turns = {}
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.RUNS.current_turns = {}
         snapshot = {
             "active_count": 1,
             "subagents": [{
@@ -3344,84 +3344,84 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_STOP_FENCE_RETRY_DELAYS_SECONDS",
             (0.0,),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_subagent_snapshot",
             return_value=snapshot,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_codex_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "schedule_next_queued_turn",
         ) as schedule:
-            result = await agent_server.stop_turn(
+            result = await hyadex_server.stop_turn(
                 "chat-claude",
                 emit_event=False,
                 schedule_queue=False,
                 pause_queued_turns_on_stop=False,
             )
             for _ in range(100):
-                if not agent_server.CLAUDE_STOP_FENCE_RETRY_TASKS:
+                if not hyadex_server.CLAUDE_STOP_FENCE_RETRY_TASKS:
                     break
                 await asyncio.sleep(0)
 
         self.assertFalse(result["subagents"]["fence_committed"])
         self.assertNotIn(
             "chat-claude",
-            agent_server.CLAUDE_STOP_FENCE_SESSIONS,
+            hyadex_server.CLAUDE_STOP_FENCE_SESSIONS,
         )
         self.assertNotIn(
             "chat-claude",
-            agent_server.RUNS.maintenance,
+            hyadex_server.RUNS.maintenance,
         )
         self.assertNotIn(
             "chat-claude",
-            agent_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS,
+            hyadex_server.CLAUDE_STOP_FENCE_ATTEMPT_LOCKS,
         )
         self.assertEqual(self.append_durable_event.await_count, 2)
         schedule.assert_called_once_with("chat-claude")
 
     async def test_claude_stop_fence_retry_survives_unexpected_attempt_error(self) -> None:
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy = set()
-        agent_server.CLAUDE_STOP_FENCE_SESSIONS.add("chat-claude")
-        agent_server.RUNS.maintenance.add("chat-claude")
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy = set()
+        hyadex_server.CLAUDE_STOP_FENCE_SESSIONS.add("chat-claude")
+        hyadex_server.RUNS.maintenance.add("chat-claude")
         attempt = AsyncMock(side_effect=[
             RuntimeError("unexpected persistence error"),
             {"fence_committed": True},
         ])
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_STOP_FENCE_RETRY_DELAYS_SECONDS",
             (0.0,),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "stop_idle_claude_background_subagents_bounded",
             attempt,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "schedule_next_queued_turn",
         ) as schedule:
-            await agent_server.retry_claude_stop_fence("chat-claude")
+            await hyadex_server.retry_claude_stop_fence("chat-claude")
 
         self.assertEqual(attempt.await_count, 2)
         self.assertNotIn(
             "chat-claude",
-            agent_server.CLAUDE_STOP_FENCE_SESSIONS,
+            hyadex_server.CLAUDE_STOP_FENCE_SESSIONS,
         )
         self.assertNotIn(
             "chat-claude",
-            agent_server.RUNS.maintenance,
+            hyadex_server.RUNS.maintenance,
         )
         schedule.assert_called_once_with("chat-claude")
 
@@ -3439,15 +3439,15 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             return {"fence_committed": True}
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_STOP_FENCE_ATTEMPT_TIMEOUT_SECONDS",
             0.01,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "stop_idle_claude_background_subagents",
             side_effect=cancellation_hostile_attempt,
         ):
-            result = await agent_server.stop_idle_claude_background_subagents_bounded(
+            result = await hyadex_server.stop_idle_claude_background_subagents_bounded(
                 "chat-claude",
                 emit_event=False,
             )
@@ -3455,7 +3455,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["pending"], ["claude-stop-fence"])
             release.set()
             pending = tuple(
-                agent_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS.get(
+                hyadex_server.CLAUDE_STOP_FENCE_ATTEMPT_TASKS.get(
                     "chat-claude"
                 ) or ()
             )
@@ -3479,26 +3479,26 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "queued_id": "queued-human",
             "prompt": "Run after the cancelled scheduled job.",
             "file_ids": [],
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "_durable": True,
         }
-        agent_server.RUNS.queued = {
+        hyadex_server.RUNS.queued = {
             "chat-claude": deque([human_turn]),
         }
-        agent_server.RUNS.current_turns["chat-claude"]["purpose"] = "scheduled_job"
-        agent_server.RUNS.run_metadata = {
+        hyadex_server.RUNS.current_turns["chat-claude"]["purpose"] = "scheduled_job"
+        hyadex_server.RUNS.run_metadata = {
             "run-claude": {"purpose": "scheduled_job"},
         }
         queue_start_tasks: dict[str, asyncio.Task[object]] = {}
         launch_started = asyncio.Event()
         finish_launch = asyncio.Event()
         launch_calls: list[
-            tuple[str, agent_server.TurnRequest, dict[str, object]]
+            tuple[str, hyadex_server.TurnRequest, dict[str, object]]
         ] = []
 
         async def gated_start_turn(
             session_id: str,
-            request: agent_server.TurnRequest,
+            request: hyadex_server.TurnRequest,
             **kwargs: object,
         ) -> dict[str, object]:
             launch_calls.append((session_id, request, kwargs))
@@ -3510,7 +3510,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         evict = AsyncMock(return_value=True)
         cancel_interactions = AsyncMock()
         with patch_server_multiple(
-            agent_server,
+            hyadex_server,
             QUEUE_START_TASKS=queue_start_tasks,
             resolve_claude_resume_provider=Mock(return_value=(None, None)),
             capture_git_baseline=AsyncMock(return_value={"head": "base"}),
@@ -3523,11 +3523,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             cancel_claude_interactions=cancel_interactions,
             _start_turn_locked=AsyncMock(side_effect=gated_start_turn),
         ):
-            runner = asyncio.create_task(agent_server.supervise_provider_turn_task(
+            runner = asyncio.create_task(hyadex_server.supervise_provider_turn_task(
                 "chat-claude",
                 "run-claude",
-                agent_server.BACKEND_CLAUDE,
-                agent_server.run_claude_sdk(
+                hyadex_server.BACKEND_CLAUDE,
+                hyadex_server.run_claude_sdk(
                     "chat-claude",
                     "run-claude",
                     "Scheduled prompt",
@@ -3544,10 +3544,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNotNone(promotion_task)
                 await asyncio.sleep(0)
 
-                self.assertNotIn("chat-claude", agent_server.RUNS.active)
-                self.assertNotIn("chat-claude", agent_server.RUNS.busy)
-                self.assertNotIn("chat-claude", agent_server.RUNS.current_turns)
-                self.assertNotIn("chat-claude", agent_server.RUNS.queued)
+                self.assertNotIn("chat-claude", hyadex_server.RUNS.active)
+                self.assertNotIn("chat-claude", hyadex_server.RUNS.busy)
+                self.assertNotIn("chat-claude", hyadex_server.RUNS.current_turns)
+                self.assertNotIn("chat-claude", hyadex_server.RUNS.queued)
                 self.assertEqual(len(launch_calls), 1)
                 launched_session, launched_request, launched_kwargs = launch_calls[0]
                 self.assertEqual(launched_session, "chat-claude")
@@ -3587,14 +3587,14 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             [handle],
             permission_on_calls={1},
         )
-        agent_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
 
         async def permission_callback(
             tool_name: str,
             input_data: dict[str, Any],
             context: Any,
         ) -> object:
-            return await agent_server.handle_claude_tool_permission(
+            return await hyadex_server.handle_claude_tool_permission(
                 "chat-claude",
                 tool_name,
                 input_data,
@@ -3603,15 +3603,15 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with patch.dict(sys.modules, fake_claude_sdk_modules()), patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(
                 {"can_use_tool": permission_callback},
@@ -3619,23 +3619,23 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 "/usr/bin/claude",
             ),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "update_claude_pending_session_metadata",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "project_claude_sdk_message",
             AsyncMock(return_value={
                 "session_id": "provider",
@@ -3646,39 +3646,39 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 "error": "",
             }),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_success",
             Mock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            runner = asyncio.create_task(agent_server.run_claude_sdk(
+            runner = asyncio.create_task(hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -3687,17 +3687,17 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             ))
             await asyncio.wait_for(manager.permission_requested.wait(), 0.5)
             for _ in range(100):
-                if agent_server.CLAUDE_PENDING_INTERACTIONS:
+                if hyadex_server.CLAUDE_PENDING_INTERACTIONS:
                     break
                 await asyncio.sleep(0)
             interaction_id, interaction = next(iter(
-                agent_server.CLAUDE_PENDING_INTERACTIONS.items()
+                hyadex_server.CLAUDE_PENDING_INTERACTIONS.items()
             ))
             self.assertEqual(interaction["turn_id"], "run-claude")
             self.assertTrue(
-                agent_server.RUNS.active["chat-claude"]["claude_permissions_open"]
+                hyadex_server.RUNS.active["chat-claude"]["claude_permissions_open"]
             )
-            await agent_server.resolve_claude_interaction(
+            await hyadex_server.resolve_claude_interaction(
                 "chat-claude",
                 interaction_id,
                 {"decision": "accept"},
@@ -3709,7 +3709,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             manager.permission_results[0],
             FakePermissionResultAllow,
         )
-        self.assertFalse(agent_server.CLAUDE_PENDING_INTERACTIONS)
+        self.assertFalse(hyadex_server.CLAUDE_PENDING_INTERACTIONS)
 
     async def test_steered_query_routes_permission_to_candidate_before_handle_returns(self) -> None:
         first = FakeClaudeRun()
@@ -3725,10 +3725,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             permission_on_calls={2},
             jobs_authorization_on_calls={2},
         )
-        agent_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
         predecessor_run_id = "run_claude"
-        agent_server.RUNS.current_turns["chat-claude"]["run_id"] = predecessor_run_id
-        predecessor_path = await agent_server.issue_provider_authority(
+        hyadex_server.RUNS.current_turns["chat-claude"]["run_id"] = predecessor_run_id
+        predecessor_path = await hyadex_server.issue_provider_authority(
             "chat-claude",
             predecessor_run_id,
             actions={"jobs", "publish"},
@@ -3736,14 +3736,14 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         predecessor_token = json.loads(
             predecessor_path.read_text(encoding="utf-8")
         )["provider_capability"]
-        real_revoke = agent_server.revoke_provider_authority
+        real_revoke = hyadex_server.revoke_provider_authority
         predecessor_revoke_observations: list[tuple[bool, str]] = []
 
         async def recording_revoke(run_id: str) -> None:
             if run_id == predecessor_run_id:
                 candidate_records = [
                     capability
-                    for capability in agent_server.PROVIDER_AUTHORITIES.values()
+                    for capability in hyadex_server.PROVIDER_AUTHORITIES.values()
                     if capability.get("source_run_id") != predecessor_run_id
                 ]
                 candidate_path_value = (
@@ -3755,7 +3755,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     bool(candidate_path_value)
                     and Path(candidate_path_value).is_file(),
                     str(
-                        agent_server.RUNS.current_turns.get("chat-claude", {}).get(
+                        hyadex_server.RUNS.current_turns.get("chat-claude", {}).get(
                             "run_id"
                         )
                         or ""
@@ -3768,7 +3768,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             input_data: dict[str, Any],
             context: Any,
         ) -> object:
-            return await agent_server.handle_claude_tool_permission(
+            return await hyadex_server.handle_claude_tool_permission(
                 "chat-claude",
                 tool_name,
                 input_data,
@@ -3809,7 +3809,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             ):
                 candidate_records = [
                     capability
-                    for capability in agent_server.PROVIDER_AUTHORITIES.values()
+                    for capability in hyadex_server.PROVIDER_AUTHORITIES.values()
                     if capability.get("source_run_id") != predecessor_run_id
                 ]
                 self.assertEqual(len(candidate_records), 1)
@@ -3822,7 +3822,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 candidate_run_id = str(
                     candidate_records[0]["source_run_id"]
                 )
-                authorized = await agent_server.authorize_provider_jobs_operation(
+                authorized = await hyadex_server.authorize_provider_jobs_operation(
                     self.provider_request(candidate_token),
                     session_id="chat-claude",
                     operation="read",
@@ -3832,7 +3832,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     candidate_run_id,
                 )
                 with self.assertRaises(HTTPException) as publish_denied:
-                    await agent_server.authorize_provider_action(
+                    await hyadex_server.authorize_provider_action(
                         self.provider_request(candidate_token),
                         action="publish",
                         session_id="chat-claude",
@@ -3846,7 +3846,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         revoke_patcher = patch.object(
-            agent_server,
+            hyadex_server,
             "revoke_provider_authority",
             side_effect=recording_revoke,
         )
@@ -3854,15 +3854,15 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(revoke_patcher.stop)
 
         with patch.dict(sys.modules, fake_claude_sdk_modules()), patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(
                 {"can_use_tool": permission_callback},
@@ -3870,67 +3870,67 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 "/usr/bin/claude",
             ),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "update_claude_pending_session_metadata",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "project_claude_sdk_message",
             side_effect=project_message,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_user_provider_prompt",
             return_value="Steered prompt",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_success",
             Mock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            runner = asyncio.create_task(agent_server.run_claude_sdk(
+            runner = asyncio.create_task(hyadex_server.run_claude_sdk(
                 "chat-claude",
                 predecessor_run_id,
                 "Prompt",
@@ -3938,12 +3938,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.RUNS.active.get("chat-claude") or {}
+                active = hyadex_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
             steer_future = asyncio.get_running_loop().create_future()
-            await agent_server.RUNS.active["chat-claude"]["native_steer_queue"].put({
+            await hyadex_server.RUNS.active["chat-claude"]["native_steer_queue"].put({
                 "selected": {
                     "queued_id": "queued-next",
                     "prompt": "Steer",
@@ -3969,21 +3969,21 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 str(manager.start_calls[1][2]),
             )
             for _ in range(100):
-                if agent_server.CLAUDE_PENDING_INTERACTIONS:
+                if hyadex_server.CLAUDE_PENDING_INTERACTIONS:
                     break
                 await asyncio.sleep(0)
             interaction_id, interaction = next(iter(
-                agent_server.CLAUDE_PENDING_INTERACTIONS.items()
+                hyadex_server.CLAUDE_PENDING_INTERACTIONS.items()
             ))
             candidate_run_id = str(interaction["turn_id"])
             self.assertNotEqual(candidate_run_id, predecessor_run_id)
             self.assertEqual(
-                agent_server.RUNS.active["chat-claude"][
+                hyadex_server.RUNS.active["chat-claude"][
                     "claude_permission_run_id"
                 ],
                 candidate_run_id,
             )
-            await agent_server.resolve_claude_interaction(
+            await hyadex_server.resolve_claude_interaction(
                 "chat-claude",
                 interaction_id,
                 {"decision": "accept"},
@@ -3991,7 +3991,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             steer_result = await asyncio.wait_for(steer_future, 0.5)
             candidate_records = [
                 capability
-                for capability in agent_server.PROVIDER_AUTHORITIES.values()
+                for capability in hyadex_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == candidate_run_id
             ]
             self.assertEqual(len(candidate_records), 1)
@@ -4001,20 +4001,20 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             candidate_token = json.loads(
                 candidate_path.read_text(encoding="utf-8")
             )["provider_capability"]
-            authorized = await agent_server.authorize_provider_jobs_operation(
+            authorized = await hyadex_server.authorize_provider_jobs_operation(
                 self.provider_request(candidate_token),
                 session_id="chat-claude",
                 operation="write",
             )
             self.assertEqual(authorized["source_run_id"], candidate_run_id)
-            published = await agent_server.authorize_provider_action(
+            published = await hyadex_server.authorize_provider_action(
                 self.provider_request(candidate_token),
                 action="publish",
                 session_id="chat-claude",
             )
             self.assertEqual(published["source_run_id"], candidate_run_id)
             with self.assertRaises(HTTPException) as stale:
-                await agent_server.authorize_provider_action(
+                await hyadex_server.authorize_provider_action(
                     self.provider_request(predecessor_token),
                     action="jobs",
                     session_id="chat-claude",
@@ -4049,8 +4049,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             third_handle,
         ])
         original_run_id = "run_claude"
-        agent_server.RUNS.current_turns["chat-claude"]["run_id"] = original_run_id
-        original_path = await agent_server.issue_provider_authority(
+        hyadex_server.RUNS.current_turns["chat-claude"]["run_id"] = original_run_id
+        original_path = await hyadex_server.issue_provider_authority(
             "chat-claude",
             original_run_id,
             actions={"jobs", "publish"},
@@ -4082,87 +4082,87 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         stack = ExitStack()
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             AsyncMock(return_value={}),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "project_claude_sdk_message",
             side_effect=project_message,
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "build_user_provider_prompt",
             return_value="Steered prompt",
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ))
@@ -4178,7 +4178,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     "queued_id": queued_id,
                     "prompt": f"Prompt for {queued_id}",
                     "file_ids": [],
-                    "backend": agent_server.BACKEND_CLAUDE,
+                    "backend": hyadex_server.BACKEND_CLAUDE,
                 },
                 "remaining": 0,
                 "future": future,
@@ -4197,7 +4197,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             return await asyncio.wait_for(future, 0.5)
 
         with stack:
-            runner = asyncio.create_task(agent_server.run_claude_sdk(
+            runner = asyncio.create_task(hyadex_server.run_claude_sdk(
                 "chat-claude",
                 original_run_id,
                 "Prompt",
@@ -4205,11 +4205,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.RUNS.active.get("chat-claude") or {}
+                active = hyadex_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
-            native_queue = agent_server.RUNS.active["chat-claude"][
+            native_queue = hyadex_server.RUNS.active["chat-claude"][
                 "native_steer_queue"
             ]
 
@@ -4220,7 +4220,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
             first_record = next(
                 capability
-                for capability in agent_server.PROVIDER_AUTHORITIES.values()
+                for capability in hyadex_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == first["run_id"]
             )
             first_path = Path(str(first_record["authority_path"]))
@@ -4235,7 +4235,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             )
             second_record = next(
                 capability
-                for capability in agent_server.PROVIDER_AUTHORITIES.values()
+                for capability in hyadex_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == second["run_id"]
             )
             second_path = Path(str(second_record["authority_path"]))
@@ -4250,23 +4250,23 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 {
                     str(capability.get("source_run_id") or "")
-                    for capability in agent_server.PROVIDER_AUTHORITIES.values()
+                    for capability in hyadex_server.PROVIDER_AUTHORITIES.values()
                 },
                 {second["run_id"]},
             )
             self.assertEqual(
-                list(agent_server.PROVIDER_AUTHORITY_ROOT.glob("*.json")),
+                list(hyadex_server.PROVIDER_AUTHORITY_ROOT.glob("*.json")),
                 [second_path],
             )
             for stale_token in (original_token, first_token):
                 with self.assertRaises(HTTPException) as stale:
-                    await agent_server.authorize_provider_action(
+                    await hyadex_server.authorize_provider_action(
                         self.provider_request(stale_token),
                         action="jobs",
                         session_id="chat-claude",
                     )
                 self.assertEqual(stale.exception.status_code, 403)
-            latest = await agent_server.authorize_provider_action(
+            latest = await hyadex_server.authorize_provider_action(
                 self.provider_request(second_token),
                 action="publish",
                 session_id="chat-claude",
@@ -4283,10 +4283,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(second_path.exists())
         self.assertEqual(
-            list(agent_server.PROVIDER_AUTHORITY_ROOT.glob("*.json")),
+            list(hyadex_server.PROVIDER_AUTHORITY_ROOT.glob("*.json")),
             [second_path],
         )
-        await agent_server.revoke_provider_authority(second["run_id"])
+        await hyadex_server.revoke_provider_authority(second["run_id"])
         self.assertFalse(second_path.exists())
 
     async def test_typed_tool_results_finish_from_assistant_and_user_messages(self) -> None:
@@ -4352,15 +4352,15 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         ])
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             mark_ready,
         ):
-            await agent_server.project_claude_sdk_message(
+            await hyadex_server.project_claude_sdk_message(
                 "chat-claude",
                 "run-claude",
                 assistant_message,
@@ -4368,7 +4368,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 current_tools=current_tools,
                 changed_paths=set(),
             )
-            await agent_server.project_claude_sdk_message(
+            await hyadex_server.project_claude_sdk_message(
                 "chat-claude",
                 "run-claude",
                 user_message,
@@ -4427,15 +4427,15 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         append_event = AsyncMock(return_value={})
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ):
-            await agent_server.project_claude_sdk_message(
+            await hyadex_server.project_claude_sdk_message(
                 "chat-claude",
                 "run-claude",
                 AssistantMessage(
@@ -4555,13 +4555,13 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         ]
         append_event = AsyncMock(return_value={})
 
-        with patch.object(agent_server, "append_event", append_event), patch.object(
-            agent_server,
+        with patch.object(hyadex_server, "append_event", append_event), patch.object(
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ):
             for message in messages:
-                await agent_server.project_claude_sdk_message(
+                await hyadex_server.project_claude_sdk_message(
                     "chat-claude",
                     "run-claude",
                     message,
@@ -4601,79 +4601,79 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         schedule_next = Mock()
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "CLAUDE_SDK_POST_ACK_FIRST_ACTIVITY_TIMEOUT_SECONDS",
             0.02,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "project_claude_sdk_message",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             append_finished,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             release,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_success",
             Mock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_failure",
             runtime_failure,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "schedule_next_queued_turn",
             schedule_next,
         ):
-            runner = asyncio.create_task(agent_server.run_claude_sdk(
+            runner = asyncio.create_task(hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -4681,7 +4681,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.RUNS.active.get("chat-claude") or {}
+                active = hyadex_server.RUNS.active.get("chat-claude") or {}
                 if active.get("claude_sdk_run") is handle:
                     break
                 await asyncio.sleep(0)
@@ -4889,7 +4889,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         class ApprovalDelayedTerminalClaudeRun(FakeClaudeRun):
             async def __anext__(self) -> object:
                 await asyncio.sleep(0.06)
-                await agent_server.resolve_claude_interaction(
+                await hyadex_server.resolve_claude_interaction(
                     "chat-claude",
                     interaction_id,
                     {"decision": "accept"},
@@ -4915,8 +4915,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "responded": False,
             "resolution": "dismissed",
         }
-        async with agent_server.CLAUDE_PENDING_INTERACTIONS_LOCK:
-            agent_server.CLAUDE_PENDING_INTERACTIONS[interaction_id] = pending
+        async with hyadex_server.CLAUDE_PENDING_INTERACTIONS_LOCK:
+            hyadex_server.CLAUDE_PENDING_INTERACTIONS[interaction_id] = pending
         try:
             handle = ApprovalDelayedTerminalClaudeRun()
             manager, append_event, append_finished, runtime_failure = (
@@ -4939,8 +4939,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
         finally:
-            async with agent_server.CLAUDE_PENDING_INTERACTIONS_LOCK:
-                agent_server.CLAUDE_PENDING_INTERACTIONS.pop(
+            async with hyadex_server.CLAUDE_PENDING_INTERACTIONS_LOCK:
+                hyadex_server.CLAUDE_PENDING_INTERACTIONS.pop(
                     interaction_id,
                     None,
                 )
@@ -4963,63 +4963,63 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         project = AsyncMock()
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "project_claude_sdk_message",
             project,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             append_finished,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_failure",
             Mock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            await agent_server.run_claude_sdk(
+            await hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -5050,67 +5050,67 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         project = AsyncMock()
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "project_claude_sdk_message",
             project,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             append_finished,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_failure",
             Mock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "schedule_next_queued_turn",
             Mock(),
         ):
-            await agent_server.run_claude_sdk(
+            await hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -5136,67 +5136,67 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         release = AsyncMock(return_value=True)
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "project_claude_sdk_message",
             AsyncMock(side_effect=RuntimeError("timeline write failed")),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             release,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_failure",
             Mock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            await agent_server.run_claude_sdk(
+            await hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -5219,75 +5219,75 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         append_finished = AsyncMock(return_value={})
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             append_finished,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_user_provider_prompt",
             return_value="Steered prompt",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_success",
             Mock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            runner = asyncio.create_task(agent_server.run_claude_sdk(
+            runner = asyncio.create_task(hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -5295,11 +5295,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.RUNS.active.get("chat-claude") or {}
+                active = hyadex_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
-            native_queue = agent_server.RUNS.active["chat-claude"][
+            native_queue = hyadex_server.RUNS.active["chat-claude"][
                 "native_steer_queue"
             ]
             steer_future = asyncio.get_running_loop().create_future()
@@ -5325,24 +5325,24 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             })
             steer_result = await asyncio.wait_for(steer_future, 0.5)
             self.assertIs(
-                agent_server.RUNS.active["chat-claude"]["claude_sdk_run"],
+                hyadex_server.RUNS.active["chat-claude"]["claude_sdk_run"],
                 second,
             )
             self.assertFalse(
-                agent_server.RUNS.active["chat-claude"]["provider_turn_ready"]
+                hyadex_server.RUNS.active["chat-claude"]["provider_turn_ready"]
             )
             self.assertTrue(
-                agent_server.RUNS.active["chat-claude"]["provider_starting"]
+                hyadex_server.RUNS.active["chat-claude"]["provider_starting"]
             )
             second.acknowledge()
             for _ in range(100):
-                if agent_server.RUNS.active["chat-claude"].get(
+                if hyadex_server.RUNS.active["chat-claude"].get(
                     "provider_turn_ready"
                 ):
                     break
                 await asyncio.sleep(0)
             self.assertTrue(
-                agent_server.RUNS.active["chat-claude"]["provider_turn_ready"]
+                hyadex_server.RUNS.active["chat-claude"]["provider_turn_ready"]
             )
             await second.messages.put({
                 "type": "result",
@@ -5377,83 +5377,83 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         runtime_failure = Mock()
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             append_finished,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_user_provider_prompt",
             return_value="Steered prompt",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "sample_claude_context_usage",
             AsyncMock(return_value=False),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_success",
             Mock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_failure",
             runtime_failure,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            runner = asyncio.create_task(agent_server.run_claude_sdk(
+            runner = asyncio.create_task(hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -5461,12 +5461,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.RUNS.active.get("chat-claude") or {}
+                active = hyadex_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
             steer_future = asyncio.get_running_loop().create_future()
-            await agent_server.RUNS.active["chat-claude"][
+            await hyadex_server.RUNS.active["chat-claude"][
                 "native_steer_queue"
             ].put({
                 "selected": {
@@ -5509,12 +5509,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             call.args[1] == "error"
             and call.args[2].get("run_id") == "run-claude"
             and call.args[2].get("message")
-            == agent_server.CLAUDE_EMPTY_TURN_ERROR
+            == hyadex_server.CLAUDE_EMPTY_TURN_ERROR
             for call in append_event.await_args_list
         ))
         runtime_failure.assert_any_call(
-            agent_server.BACKEND_CLAUDE,
-            agent_server.CLAUDE_EMPTY_TURN_ERROR,
+            hyadex_server.BACKEND_CLAUDE,
+            hyadex_server.CLAUDE_EMPTY_TURN_ERROR,
         )
 
     async def test_system_init_provider_id_survives_stop_before_result(self) -> None:
@@ -5532,67 +5532,67 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             provider_seen.set()
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             side_effect=mark_ready,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             persist,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            runner = asyncio.create_task(agent_server.run_claude_sdk(
+            runner = asyncio.create_task(hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -5610,7 +5610,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             if call.args[:3] == (
                 "chat-claude",
                 "run-claude",
-                agent_server.BACKEND_CLAUDE,
+                hyadex_server.BACKEND_CLAUDE,
             )
         ]
         # Bind immediately at System init so a crash is resumable, then write
@@ -5641,75 +5641,75 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             return []
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_durable_event_batch",
             side_effect=append_durable_event_batch,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_user_provider_prompt",
             return_value="Steered prompt",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            runner = asyncio.create_task(agent_server.run_claude_sdk(
+            runner = asyncio.create_task(hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -5717,12 +5717,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.RUNS.active.get("chat-claude") or {}
+                active = hyadex_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
             steer_future = asyncio.get_running_loop().create_future()
-            await agent_server.RUNS.active["chat-claude"]["native_steer_queue"].put({
+            await hyadex_server.RUNS.active["chat-claude"]["native_steer_queue"].put({
                 "selected": {
                     "queued_id": "queued-next",
                     "prompt": "Steer",
@@ -5745,7 +5745,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             runner.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await runner
-            with self.assertRaises(agent_server.NativeSteerHandoffError) as raised:
+            with self.assertRaises(hyadex_server.NativeSteerHandoffError) as raised:
                 await asyncio.wait_for(steer_future, 0.5)
 
         self.assertTrue(raised.exception.delivery_uncertain)
@@ -5766,8 +5766,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         first = FakeClaudeRun()
         manager = SafeFailingCandidateStartManager([first])
         predecessor_run_id = "run_claude"
-        agent_server.RUNS.current_turns["chat-claude"]["run_id"] = predecessor_run_id
-        predecessor_path = await agent_server.issue_provider_authority(
+        hyadex_server.RUNS.current_turns["chat-claude"]["run_id"] = predecessor_run_id
+        predecessor_path = await hyadex_server.issue_provider_authority(
             "chat-claude",
             predecessor_run_id,
             actions={"jobs", "publish"},
@@ -5775,13 +5775,13 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         predecessor_token = json.loads(
             predecessor_path.read_text(encoding="utf-8")
         )["provider_capability"]
-        agent_server.RUNS.queued["chat-claude"] = deque([{
+        hyadex_server.RUNS.queued["chat-claude"] = deque([{
             "queued_id": "queued-safe-rejection",
             "prompt": "Steer",
             "file_ids": [],
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "client_capabilities": [
-                agent_server.CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY
+                hyadex_server.CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY
             ],
             "_durable": True,
         }])
@@ -5796,42 +5796,42 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         stack = ExitStack()
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(side_effect=[{"head": "old"}, {"head": "candidate"}]),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             AsyncMock(return_value={}),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "project_claude_sdk_message",
             AsyncMock(return_value={
                 "session_id": "provider",
@@ -5843,58 +5843,58 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             }),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "build_user_provider_prompt",
             return_value="Steered prompt",
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "queued_claude_runtime_matches_active",
             return_value=True,
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             side_effect=gated_cancel_interactions,
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ))
         stack.enter_context(patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ))
 
         with stack:
-            runner = asyncio.create_task(agent_server.run_claude_sdk(
+            runner = asyncio.create_task(hyadex_server.run_claude_sdk(
                 "chat-claude",
                 predecessor_run_id,
                 "Prompt",
@@ -5903,12 +5903,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             ))
             try:
                 for _ in range(100):
-                    active = agent_server.RUNS.active.get("chat-claude") or {}
+                    active = hyadex_server.RUNS.active.get("chat-claude") or {}
                     if active.get("native_steer_queue") is not None:
                         break
                     await asyncio.sleep(0)
                 force_send = asyncio.create_task(
-                    agent_server.run_queued_turn_now(
+                    hyadex_server.run_queued_turn_now(
                         "chat-claude",
                         "queued-safe-rejection",
                     )
@@ -5936,11 +5936,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     {
                         str(capability.get("source_run_id") or "")
-                        for capability in agent_server.PROVIDER_AUTHORITIES.values()
+                        for capability in hyadex_server.PROVIDER_AUTHORITIES.values()
                     },
                     {predecessor_run_id},
                 )
-                authorized = await agent_server.authorize_provider_jobs_operation(
+                authorized = await hyadex_server.authorize_provider_jobs_operation(
                     self.provider_request(predecessor_token),
                     session_id="chat-claude",
                     operation="read",
@@ -5949,10 +5949,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     authorized["source_run_id"],
                     predecessor_run_id,
                 )
-                restored = agent_server.RUNS.queued["chat-claude"][0]
+                restored = hyadex_server.RUNS.queued["chat-claude"][0]
                 self.assertFalse(restored["_paused_after_stop"])
                 self.assertNotIn("_native_delivery_fenced", restored)
-                public = await agent_server.queued_turns_snapshot("chat-claude")
+                public = await hyadex_server.queued_turns_snapshot("chat-claude")
                 self.assertFalse(public[0]["paused"])
                 queue_lifecycle = [
                     event_type
@@ -5980,11 +5980,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             {
                 str(capability.get("source_run_id") or "")
-                for capability in agent_server.PROVIDER_AUTHORITIES.values()
+                for capability in hyadex_server.PROVIDER_AUTHORITIES.values()
             },
             {predecessor_run_id},
         )
-        await agent_server.revoke_provider_authority(predecessor_run_id)
+        await hyadex_server.revoke_provider_authority(predecessor_run_id)
         self.assertFalse(predecessor_path.exists())
 
     async def test_cancellation_during_candidate_query_is_never_replayed(self) -> None:
@@ -5992,17 +5992,17 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = BlockingCandidateStartManager([first])
         collect_manifest = AsyncMock()
         predecessor_run_id = "run_claude"
-        agent_server.RUNS.current_turns["chat-claude"]["run_id"] = predecessor_run_id
-        predecessor_path = await agent_server.issue_provider_authority(
+        hyadex_server.RUNS.current_turns["chat-claude"]["run_id"] = predecessor_run_id
+        predecessor_path = await hyadex_server.issue_provider_authority(
             "chat-claude",
             predecessor_run_id,
             actions={"jobs", "publish"},
         )
-        real_revoke = agent_server.revoke_provider_authority
+        real_revoke = hyadex_server.revoke_provider_authority
         revoke_observations: list[tuple[str, bool]] = []
 
         async def record_ordered_revoke(run_id: str) -> None:
-            active = agent_server.RUNS.active.get("chat-claude") or {}
+            active = hyadex_server.RUNS.active.get("chat-claude") or {}
             transition_ready = active.get("logical_transition_ready")
             revoke_observations.append((
                 run_id,
@@ -6014,7 +6014,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             await real_revoke(run_id)
 
         revoke_patcher = patch.object(
-            agent_server,
+            hyadex_server,
             "revoke_provider_authority",
             side_effect=record_ordered_revoke,
         )
@@ -6022,71 +6022,71 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(revoke_patcher.stop)
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(side_effect=[{"head": "old"}, {"head": "candidate"}]),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_user_provider_prompt",
             return_value="Steered prompt",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             collect_manifest,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            runner = asyncio.create_task(agent_server.run_claude_sdk(
+            runner = asyncio.create_task(hyadex_server.run_claude_sdk(
                 "chat-claude",
                 predecessor_run_id,
                 "Prompt",
@@ -6094,12 +6094,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.RUNS.active.get("chat-claude") or {}
+                active = hyadex_server.RUNS.active.get("chat-claude") or {}
                 if active.get("native_steer_queue") is not None:
                     break
                 await asyncio.sleep(0)
             steer_future = asyncio.get_running_loop().create_future()
-            await agent_server.RUNS.active["chat-claude"]["native_steer_queue"].put({
+            await hyadex_server.RUNS.active["chat-claude"]["native_steer_queue"].put({
                 "selected": {
                     "queued_id": "queued-next",
                     "prompt": "Steer",
@@ -6125,7 +6125,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             candidate_run_id = str(manager.start_calls[1][2])
             candidate_records = [
                 capability
-                for capability in agent_server.PROVIDER_AUTHORITIES.values()
+                for capability in hyadex_server.PROVIDER_AUTHORITIES.values()
                 if capability.get("source_run_id") == candidate_run_id
             ]
             self.assertEqual(len(candidate_records), 1)
@@ -6137,7 +6137,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await runner
             with self.assertRaises(
-                agent_server.NativeSteerHandoffError,
+                hyadex_server.NativeSteerHandoffError,
             ) as raised:
                 await asyncio.wait_for(steer_future, 0.5)
 
@@ -6145,7 +6145,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(raised.exception.safe_to_requeue)
         self.assertFalse(predecessor_path.exists())
         self.assertFalse(candidate_path.exists())
-        self.assertFalse(agent_server.PROVIDER_AUTHORITIES)
+        self.assertFalse(hyadex_server.PROVIDER_AUTHORITIES)
         self.assertIn((candidate_run_id, False), revoke_observations)
         self.assertIn((predecessor_run_id, False), revoke_observations)
         self.assertEqual(manager.evict_calls, [("chat-claude", True)])
@@ -6172,7 +6172,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             nonlocal steer_future
             loop = asyncio.get_running_loop()
             steer_future = loop.create_future()
-            active = agent_server.RUNS.active["chat-claude"]
+            active = hyadex_server.RUNS.active["chat-claude"]
             active["native_steer_queue"].put_nowait({
                 "selected": {
                     "queued_id": "queued-race",
@@ -6196,71 +6196,71 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             }
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "project_claude_sdk_message",
             project_terminal,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_success",
             Mock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            await agent_server.run_claude_sdk(
+            await hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -6270,7 +6270,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(steer_future)
         assert steer_future is not None
-        with self.assertRaises(agent_server.NativeSteerHandoffError) as raised:
+        with self.assertRaises(hyadex_server.NativeSteerHandoffError) as raised:
             await steer_future
         self.assertTrue(raised.exception.safe_to_requeue)
         self.assertFalse(raised.exception.delivery_uncertain)
@@ -6296,7 +6296,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         }
 
         self.assertFalse(
-            agent_server.queued_claude_runtime_matches_active(
+            hyadex_server.queued_claude_runtime_matches_active(
                 "chat-claude",
                 {},
                 active,
@@ -6309,21 +6309,21 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "queued_id": "queued-race",
             "prompt": "Continue after completion",
             "file_ids": [],
-            "backend": agent_server.BACKEND_CLAUDE,
+            "backend": hyadex_server.BACKEND_CLAUDE,
             "client_capabilities": [
-                agent_server.CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY
+                hyadex_server.CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY
             ],
             "_durable": True,
             "_paused_after_stop": True,
         }
-        agent_server.RUNS.queued = {
+        hyadex_server.RUNS.queued = {
             "chat-claude": deque([selected]),
         }
-        agent_server.RUNS.active = {
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "provider_turn_ready": True,
                 "native_steer_queue": native_queue,
             }
@@ -6332,18 +6332,18 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         def finish_during_selection(*_args: object) -> bool:
             # Reproduce the provider terminalizing after Force Send snapshots
             # ACTIVE but before it delivers into the native queue.
-            agent_server.RUNS.active["chat-claude"]["provider_turn_ready"] = False
-            agent_server.RUNS.active["chat-claude"]["native_steer_queue"] = None
+            hyadex_server.RUNS.active["chat-claude"]["provider_turn_ready"] = False
+            hyadex_server.RUNS.active["chat-claude"]["native_steer_queue"] = None
             return True
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "queued_claude_runtime_matches_active",
             side_effect=finish_during_selection,
         ):
-            with self.assertRaises(agent_server.NativeSteerHandoffError) as raised:
+            with self.assertRaises(hyadex_server.NativeSteerHandoffError) as raised:
                 await asyncio.wait_for(
-                    agent_server._run_queued_turn_now_once(
+                    hyadex_server._run_queued_turn_now_once(
                         "chat-claude",
                         "queued-race",
                     ),
@@ -6354,7 +6354,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [
                 item.get("queued_id")
-                for item in agent_server.RUNS.queued["chat-claude"]
+                for item in hyadex_server.RUNS.queued["chat-claude"]
             ],
             ["queued-race"],
         )
@@ -6365,17 +6365,17 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             [event_type for event_type, _payload in lifecycle],
             ["turn_queued", "turn_queue_reordered"],
         )
-        public = await agent_server.queued_turns_snapshot("chat-claude")
+        public = await hyadex_server.queued_turns_snapshot("chat-claude")
         self.assertFalse(public[0]["paused"])
         self.assertTrue(native_queue.empty())
 
-        agent_server.RUNS.active = {}
-        agent_server.RUNS.busy.discard("chat-claude")
+        hyadex_server.RUNS.active = {}
+        hyadex_server.RUNS.busy.discard("chat-claude")
         start = AsyncMock(return_value={"run_id": "run-retry"})
-        with patch.object(agent_server, "_start_turn_locked", start):
-            await agent_server._start_next_queued_turn_locked(
+        with patch.object(hyadex_server, "_start_turn_locked", start):
+            await hyadex_server._start_next_queued_turn_locked(
                 "chat-claude",
-                admission_backend=agent_server.BACKEND_CLAUDE,
+                admission_backend=hyadex_server.BACKEND_CLAUDE,
             )
         start.assert_awaited_once()
         self.assertEqual(start.await_args.args[1].prompt, selected["prompt"])
@@ -6386,79 +6386,79 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         append_event = AsyncMock(return_value={})
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_resume_provider",
             return_value=(None, None),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "capture_git_baseline",
             AsyncMock(return_value={"head": "base"}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "build_claude_sdk_options",
             return_value=(object(), "config", "/usr/bin/claude"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "claude_sdk_manager",
             AsyncMock(return_value=manager),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "watch_manifest_artifacts",
             wait_forever,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             append_event,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_turn_finished_event",
             AsyncMock(return_value={}),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "mark_provider_turn_ready",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "persist_run_provider_session",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "sample_claude_context_usage",
             AsyncMock(return_value=False),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "cancel_claude_interactions",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_manifest",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "collect_recent_leftover_manifests",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "publish_turn_code_diff",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "release_turn_slot",
             AsyncMock(return_value=True),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_success",
             Mock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "record_runtime_failure",
             Mock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "should_schedule_queue_after_finish",
             return_value=False,
         ):
-            runner = asyncio.create_task(agent_server.run_claude_sdk(
+            runner = asyncio.create_task(hyadex_server.run_claude_sdk(
                 "chat-claude",
                 "run-claude",
                 "Prompt",
@@ -6466,12 +6466,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 Path(self.cwd) / ".manifest.json",
             ))
             for _ in range(100):
-                active = agent_server.RUNS.active.get("chat-claude") or {}
+                active = hyadex_server.RUNS.active.get("chat-claude") or {}
                 if active.get("claude_sdk_run") is handle:
                     break
                 await asyncio.sleep(0)
 
-            active = agent_server.RUNS.active["chat-claude"]
+            active = hyadex_server.RUNS.active["chat-claude"]
             self.assertIs(active["claude_sdk_run"], handle)
             self.assertFalse(active["provider_turn_ready"])
             self.assertTrue(active["provider_starting"])
@@ -6480,15 +6480,15 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 "queued_id": "queued-pre-ack",
                 "prompt": "Steer only after delivery is certain",
                 "file_ids": [],
-                "backend": agent_server.BACKEND_CLAUDE,
+                "backend": hyadex_server.BACKEND_CLAUDE,
                 "client_capabilities": [
-                    agent_server.CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY
+                    hyadex_server.CLAUDE_SDK_INTERACTIVE_CLIENT_CAPABILITY
                 ],
             }
-            agent_server.RUNS.queued = {
+            hyadex_server.RUNS.queued = {
                 "chat-claude": deque([selected]),
             }
-            deferred = await agent_server._run_queued_turn_now_once(
+            deferred = await hyadex_server._run_queued_turn_now_once(
                 "chat-claude",
                 "queued-pre-ack",
             )
@@ -6499,28 +6499,28 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 [
                     item.get("queued_id")
-                    for item in agent_server.RUNS.queued["chat-claude"]
+                    for item in hyadex_server.RUNS.queued["chat-claude"]
                 ],
                 ["queued-pre-ack"],
             )
             self.assertTrue(
-                agent_server.RUNS.active["chat-claude"][
+                hyadex_server.RUNS.active["chat-claude"][
                     "native_steer_queue"
                 ].empty()
             )
 
             handle.acknowledge()
             for _ in range(100):
-                if agent_server.RUNS.active["chat-claude"].get(
+                if hyadex_server.RUNS.active["chat-claude"].get(
                     "provider_turn_ready"
                 ):
                     break
                 await asyncio.sleep(0)
             self.assertTrue(
-                agent_server.RUNS.active["chat-claude"]["provider_turn_ready"]
+                hyadex_server.RUNS.active["chat-claude"]["provider_turn_ready"]
             )
             self.assertFalse(
-                agent_server.RUNS.active["chat-claude"]["provider_starting"]
+                hyadex_server.RUNS.active["chat-claude"]["provider_starting"]
             )
 
             await handle.messages.put({
@@ -6539,12 +6539,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_deletion_cleanup_waits_for_one_approval_not_sdk_receiver(self) -> None:
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "interactive_agent_sdk": True,
                 "stop_requested": False,
                 "claude_sdk_owner_token": manager.owner_token,
@@ -6553,16 +6553,16 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             }
         }
         with patch.dict(sys.modules, fake_claude_sdk_modules()), patch.object(
-            agent_server,
+            hyadex_server,
             "update_claude_pending_session_metadata",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ):
             callback = asyncio.create_task(
-                agent_server.handle_claude_tool_permission(
+                hyadex_server.handle_claude_tool_permission(
                     "chat-claude",
                     "Bash",
                     {"command": "pwd"},
@@ -6571,19 +6571,19 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             for _ in range(100):
-                if agent_server.CLAUDE_PENDING_INTERACTIONS:
+                if hyadex_server.CLAUDE_PENDING_INTERACTIONS:
                     break
                 await asyncio.sleep(0)
-            self.assertTrue(agent_server.CLAUDE_PENDING_INTERACTIONS)
+            self.assertTrue(hyadex_server.CLAUDE_PENDING_INTERACTIONS)
 
-            agent_server.DELETING_SESSIONS.add("chat-claude")
-            await agent_server.cancel_claude_interactions(
+            hyadex_server.DELETING_SESSIONS.add("chat-claude")
+            await hyadex_server.cancel_claude_interactions(
                 "chat-claude",
                 resolution="session_deleted",
             )
             self.assertTrue(
-                await agent_server.wait_for_session_tasks(
-                    agent_server.CLAUDE_INTERACTION_HANDLER_TASKS,
+                await hyadex_server.wait_for_session_tasks(
+                    hyadex_server.CLAUDE_INTERACTION_HANDLER_TASKS,
                     "chat-claude",
                     timeout=0.5,
                 )
@@ -6592,22 +6592,22 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsInstance(result, FakePermissionResultDeny)
         self.assertTrue(getattr(result, "interrupt", False))
-        self.assertFalse(agent_server.CLAUDE_PENDING_INTERACTIONS)
+        self.assertFalse(hyadex_server.CLAUDE_PENDING_INTERACTIONS)
 
     async def test_delete_rejects_while_explicit_stop_cleanup_is_active(self) -> None:
         stop_operation = asyncio.create_task(wait_forever())
         try:
             with patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "explicit_stops",
                 {"chat-claude": stop_operation},
-            ), patch.object(agent_server, "SESSION_LIFECYCLE_LOCKS", {}):
+            ), patch.object(hyadex_server, "SESSION_LIFECYCLE_LOCKS", {}):
                 with self.assertRaises(HTTPException) as raised:
-                    await agent_server.delete_session("chat-claude")
+                    await hyadex_server.delete_session("chat-claude")
 
             self.assertEqual(raised.exception.status_code, 409)
             self.assertIn("Stop cleanup", str(raised.exception.detail))
-            self.assertNotIn("chat-claude", agent_server.DELETING_SESSIONS)
+            self.assertNotIn("chat-claude", hyadex_server.DELETING_SESSIONS)
         finally:
             stop_operation.cancel()
             await asyncio.gather(stop_operation, return_exceptions=True)
@@ -6616,12 +6616,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         handle = FakeClaudeRun()
         manager = FakeClaudeManager(handle)
         manager.active_run_id = "run-claude"
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "claude_sdk_run": handle,
                 "interactive_agent_sdk": True,
                 "stop_requested": False,
@@ -6631,8 +6631,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             }
         }
         turn_task = asyncio.create_task(wait_forever())
-        agent_server.register_session_task(
-            agent_server.RUNS.turn_tasks,
+        hyadex_server.register_session_task(
+            hyadex_server.RUNS.turn_tasks,
             "chat-claude",
             turn_task,
         )
@@ -6642,39 +6642,39 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             state_dir = Path(temporary)
             (state_dir / "sessions" / "chat-claude").mkdir(parents=True)
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "STATE_DIR",
                 state_dir,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "SESSIONS_FILE",
                 state_dir / "sessions.json",
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_dirs",
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "CODEX_SESSION_CLEANUP_TIMEOUT_SECONDS",
                 0.01,
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "wait_for_session_tasks",
                 AsyncMock(side_effect=[True, True, False, True]),
             ), patch.object(
-                agent_server.JOBS,
+                hyadex_server.JOBS,
                 "delete_for_session",
                 AsyncMock(return_value=0),
             ), patch.object(
-                agent_server,
+                hyadex_server,
                 "kill_terminal_session",
             ):
                 try:
                     result = await asyncio.wait_for(
-                        agent_server.delete_session("chat-claude"),
+                        hyadex_server.delete_session("chat-claude"),
                         0.5,
                     )
                 finally:
-                    agent_server.DELETED_SESSION_TOMBSTONES.discard(
+                    hyadex_server.DELETED_SESSION_TOMBSTONES.discard(
                         "chat-claude"
                     )
 
@@ -6708,39 +6708,39 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 state_dir = Path(temporary)
                 (state_dir / "sessions" / "chat-claude").mkdir(parents=True)
                 with patch.object(
-                    agent_server,
+                    hyadex_server,
                     "STATE_DIR",
                     state_dir,
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "SESSIONS_FILE",
                     state_dir / "sessions.json",
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "ensure_dirs",
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "CODEX_SESSION_CLEANUP_TIMEOUT_SECONDS",
                     0.01,
                 ), patch.object(
-                    agent_server.RUNS,
+                    hyadex_server.RUNS,
                     "run_now_requests",
                     run_now_requests,
                 ), patch.object(
-                    agent_server.PROVIDERS,
+                    hyadex_server.PROVIDERS,
                     "codex_manager",
                     None,
                 ), patch.object(
-                    agent_server.JOBS,
+                    hyadex_server.JOBS,
                     "delete_for_session",
                     AsyncMock(return_value=0),
                 ), patch.object(
-                    agent_server,
+                    hyadex_server,
                     "kill_terminal_session",
                 ):
-                    with self.assertRaises(agent_server.HTTPException) as raised:
+                    with self.assertRaises(hyadex_server.HTTPException) as raised:
                         await asyncio.wait_for(
-                            agent_server.delete_session("chat-claude"),
+                            hyadex_server.delete_session("chat-claude"),
                             0.5,
                         )
 
@@ -6748,10 +6748,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn("Force Send cleanup", str(raised.exception.detail))
                     await asyncio.wait_for(cancellation_observed.wait(), 0.5)
                     self.assertFalse(run_now_task.done())
-                    self.assertIn("chat-claude", agent_server.STORE.sessions)
+                    self.assertIn("chat-claude", hyadex_server.STORE.sessions)
                     self.assertNotIn(
                         "chat-claude",
-                        agent_server.DELETING_SESSIONS,
+                        hyadex_server.DELETING_SESSIONS,
                     )
 
                     release.set()
@@ -6760,34 +6760,34 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                         {"ok": True},
                     )
                     result = await asyncio.wait_for(
-                        agent_server.delete_session("chat-claude"),
+                        hyadex_server.delete_session("chat-claude"),
                         0.5,
                     )
 
                     self.assertTrue(result["deleted"])
                     self.assertNotIn("chat-claude", run_now_requests)
-                    self.assertNotIn("chat-claude", agent_server.STORE.sessions)
+                    self.assertNotIn("chat-claude", hyadex_server.STORE.sessions)
         finally:
             release.set()
             if not run_now_task.done():
                 run_now_task.cancel()
             await asyncio.gather(run_now_task, return_exceptions=True)
-            agent_server.DELETED_SESSION_TOMBSTONES.discard("chat-claude")
+            hyadex_server.DELETED_SESSION_TOMBSTONES.discard("chat-claude")
 
     async def test_late_approval_response_is_rejected_after_delete_reservation(self) -> None:
-        agent_server.DELETING_SESSIONS.add("chat-claude")
+        hyadex_server.DELETING_SESSIONS.add("chat-claude")
         resolver = AsyncMock()
 
         with patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_claude_interaction",
             resolver,
         ):
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                await agent_server.post_claude_interaction_response(
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                await hyadex_server.post_claude_interaction_response(
                     "chat-claude",
                     "interaction-1",
-                    agent_server.ClaudeInteractionResponseRequest(
+                    hyadex_server.ClaudeInteractionResponseRequest(
                         response={"decision": "accept"},
                     ),
                 )
@@ -6798,12 +6798,12 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_approval_accepted_after_stop_fence_is_still_denied(self) -> None:
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "interactive_agent_sdk": True,
                 "stop_requested": False,
                 "claude_sdk_owner_token": manager.owner_token,
@@ -6812,16 +6812,16 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             }
         }
         with patch.dict(sys.modules, fake_claude_sdk_modules()), patch.object(
-            agent_server,
+            hyadex_server,
             "update_claude_pending_session_metadata",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ):
             callback = asyncio.create_task(
-                agent_server.handle_claude_tool_permission(
+                hyadex_server.handle_claude_tool_permission(
                     "chat-claude",
                     "Bash",
                     {"command": "pwd"},
@@ -6830,17 +6830,17 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             for _ in range(100):
-                if agent_server.CLAUDE_PENDING_INTERACTIONS:
+                if hyadex_server.CLAUDE_PENDING_INTERACTIONS:
                     break
                 await asyncio.sleep(0)
             interaction_id = next(iter(
-                agent_server.CLAUDE_PENDING_INTERACTIONS
+                hyadex_server.CLAUDE_PENDING_INTERACTIONS
             ))
-            async with agent_server.RUNS.active_lock:
-                active = agent_server.RUNS.active["chat-claude"]
+            async with hyadex_server.RUNS.active_lock:
+                active = hyadex_server.RUNS.active["chat-claude"]
                 active["stop_requested"] = True
                 active["claude_permissions_open"] = False
-            await agent_server.resolve_claude_interaction(
+            await hyadex_server.resolve_claude_interaction(
                 "chat-claude",
                 interaction_id,
                 {"decision": "accept"},
@@ -6849,20 +6849,20 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsInstance(result, FakePermissionResultDeny)
         self.assertTrue(getattr(result, "interrupt", False))
-        self.assertFalse(agent_server.CLAUDE_PENDING_INTERACTIONS)
+        self.assertFalse(hyadex_server.CLAUDE_PENDING_INTERACTIONS)
 
     async def test_no_prompt_modes_skip_questions_without_pending_interaction(self) -> None:
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
-        agent_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
         # A settings edit for the next turn must not change the current mode.
         self.session["claude_permission_mode"] = "default"
         for mode in ("bypassPermissions", "dontAsk"):
             with self.subTest(mode=mode):
-                agent_server.RUNS.active = {"chat-claude": {
+                hyadex_server.RUNS.active = {"chat-claude": {
                     "run_id": "run-claude",
-                    "backend": agent_server.BACKEND_CLAUDE,
-                    "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                    "backend": hyadex_server.BACKEND_CLAUDE,
+                    "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                     "interactive_agent_sdk": True,
                     "claude_sdk_owner_token": manager.owner_token,
                     "claude_permission_run_id": "run-claude",
@@ -6873,10 +6873,10 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 metadata = AsyncMock()
                 with (
                     patch.dict(sys.modules, fake_claude_sdk_modules()),
-                    patch.object(agent_server, "append_event", events),
-                    patch.object(agent_server, "update_claude_pending_session_metadata", metadata),
+                    patch.object(hyadex_server, "append_event", events),
+                    patch.object(hyadex_server, "update_claude_pending_session_metadata", metadata),
                 ):
-                    result = await asyncio.wait_for(agent_server.handle_claude_tool_permission(
+                    result = await asyncio.wait_for(hyadex_server.handle_claude_tool_permission(
                         "chat-claude", "AskUserQuestion",
                         {"questions": [{"question": "Choose one", "options": []}]},
                         {"tool_use_id": "question-no-prompts"}, owner_token=manager.owner_token,
@@ -6884,8 +6884,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsInstance(result, FakePermissionResultDeny)
                 self.assertFalse(result.interrupt)
                 self.assertIn("skipped", result.message.lower())
-                self.assertFalse(agent_server.CLAUDE_PENDING_INTERACTIONS)
-                self.assertFalse(agent_server.CLAUDE_INTERACTION_HANDLER_TASKS)
+                self.assertFalse(hyadex_server.CLAUDE_PENDING_INTERACTIONS)
+                self.assertFalse(hyadex_server.CLAUDE_INTERACTION_HANDLER_TASKS)
                 events.assert_not_awaited()
                 metadata.assert_not_awaited()
 
@@ -6894,13 +6894,13 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.session["claude_permission_mode"] = "dontAsk"
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
-        agent_server.PROVIDERS.claude_sdk_manager = manager
-        agent_server.RUNS.active = {
+        hyadex_server.PROVIDERS.claude_sdk_manager = manager
+        hyadex_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
                 "claude_permission_mode": "default",
-                "backend": agent_server.BACKEND_CLAUDE,
-                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "transport": hyadex_server.CLAUDE_TRANSPORT_AGENT_SDK,
                 "interactive_agent_sdk": True,
                 "stop_requested": False,
                 "claude_sdk_owner_token": manager.owner_token,
@@ -6909,16 +6909,16 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             }
         }
         with patch.dict(sys.modules, fake_claude_sdk_modules()), patch.object(
-            agent_server,
+            hyadex_server,
             "update_claude_pending_session_metadata",
             AsyncMock(),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "append_event",
             AsyncMock(return_value={}),
         ):
             callback = asyncio.create_task(
-                agent_server.handle_claude_tool_permission(
+                hyadex_server.handle_claude_tool_permission(
                     "chat-claude",
                     "AskUserQuestion",
                     {
@@ -6938,11 +6938,11 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             for _ in range(100):
-                if agent_server.CLAUDE_PENDING_INTERACTIONS:
+                if hyadex_server.CLAUDE_PENDING_INTERACTIONS:
                     break
                 await asyncio.sleep(0)
-            interaction_id = next(iter(agent_server.CLAUDE_PENDING_INTERACTIONS))
-            await agent_server.resolve_claude_interaction(
+            interaction_id = next(iter(hyadex_server.CLAUDE_PENDING_INTERACTIONS))
+            await hyadex_server.resolve_claude_interaction(
                 "chat-claude",
                 interaction_id,
                 {"answers": {}},

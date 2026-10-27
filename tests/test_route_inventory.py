@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-import agent_server
-
-
+from tests import hyadex_server
 MAC_CLIENT = {
     ("GET", "/api/health"),
     ("GET", "/api/runtime/catalog"),
@@ -112,7 +110,7 @@ def registered_routes(app) -> set[tuple[str, str]]:
 
 class RouteInventoryTests(unittest.TestCase):
     def test_client_routes_remain_registered(self) -> None:
-        routes = registered_routes(agent_server.app)
+        routes = registered_routes(hyadex_server.app)
         for name, required in (("Mac client", MAC_CLIENT), ("chat helpers", CHAT_HELPERS),
                                ("planned client features", PLANNED)):
             with self.subTest(callers=name):

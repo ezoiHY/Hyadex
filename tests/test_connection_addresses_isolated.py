@@ -5,22 +5,22 @@ from unittest.mock import patch
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 from hyadex.api.app import ApplicationBindings, create_app
-import agent_server
+from tests import hyadex_server
 from hyadex.ops import instances as server_instances
 from tests.runtime_state import patch_server_multiple
 
 
 class ConnectionAddressTests(unittest.TestCase):
     def setUp(self):
-        overrides = patch_server_multiple(agent_server, AGENT_TOKEN="synthetic-native-token",
+        overrides = patch_server_multiple(hyadex_server, AGENT_TOKEN="synthetic-native-token",
                                    SERVER_BIND_ADDRESS="0.0.0.0", SERVER_PORT=7852,
                                    server_identity=lambda: "fixture-server")
         overrides.__enter__()
         self.addCleanup(overrides.close)
-        self.ns = agent_server.__dict__
+        self.ns = hyadex_server.__dict__
         router = APIRouter()
-        router.add_api_route("/api/connection-addresses", agent_server.connection_addresses)
-        self.client = TestClient(create_app(ApplicationBindings(router, agent_server.require_agent_token)))
+        router.add_api_route("/api/connection-addresses", hyadex_server.connection_addresses)
+        self.client = TestClient(create_app(ApplicationBindings(router, hyadex_server.require_agent_token)))
         self.addCleanup(self.client.close)
         self.headers = {"X-Hyadex-Token": self.ns["AGENT_TOKEN"]}
 
@@ -42,7 +42,7 @@ class ConnectionAddressTests(unittest.TestCase):
             discovery.assert_not_called()
 
     def test_loopback_binding_never_advertises_other_interfaces(self):
-        agent_server.SERVER.bind_address = "127.0.0.1"
+        hyadex_server.SERVER.bind_address = "127.0.0.1"
         with patch.object(server_instances, "tailscale_status", return_value={"status": "connected", "ipv4": "100.64.0.2"}):
             response = self.client.get("/api/connection-addresses", headers=self.headers)
         self.assertEqual(response.json()["urls"], [])

@@ -7,9 +7,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-import agent_server
-
-
+from tests import hyadex_server
 class WorkingDirectoryCompletionTests(unittest.TestCase):
     def test_working_directory_completion_lists_only_matching_server_directories(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -19,8 +17,8 @@ class WorkingDirectoryCompletionTests(unittest.TestCase):
             (root / ".archive").mkdir()
             (root / "alpha.txt").write_text("not a directory")
 
-            exact = agent_server.complete_working_directory_sync(str(root), 24)
-            partial = agent_server.complete_working_directory_sync(str(root / "al"), 24)
+            exact = hyadex_server.complete_working_directory_sync(str(root), 24)
+            partial = hyadex_server.complete_working_directory_sync(str(root / "al"), 24)
 
         self.assertTrue(exact["exists"])
         self.assertEqual([item["name"] for item in exact["suggestions"]], ["Alpha", "alpine"])
@@ -33,8 +31,8 @@ class WorkingDirectoryCompletionTests(unittest.TestCase):
             root = Path(temporary)
             (root / "one").mkdir()
             (root / "only").mkdir()
-            with patch.object(agent_server, "DEFAULT_CWD", str(root)):
-                result = agent_server.complete_working_directory_sync("on", 1)
+            with patch.object(hyadex_server, "DEFAULT_CWD", str(root)):
+                result = hyadex_server.complete_working_directory_sync("on", 1)
 
         self.assertEqual([item["name"] for item in result["suggestions"]], ["one"])
         self.assertTrue(result["truncated"])
@@ -42,7 +40,7 @@ class WorkingDirectoryCompletionTests(unittest.TestCase):
 
     def test_working_directory_completion_reports_missing_parents_and_rejects_nul(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            result = agent_server.complete_working_directory_sync(
+            result = hyadex_server.complete_working_directory_sync(
                 str(Path(temporary) / "missing" / "child"),
                 24,
             )
@@ -50,7 +48,7 @@ class WorkingDirectoryCompletionTests(unittest.TestCase):
         self.assertEqual(result["suggestions"], [])
         self.assertEqual(result["message"], "Parent directory not found.")
         with self.assertRaises(HTTPException) as raised:
-            agent_server.complete_working_directory_sync("bad\x00path", 24)
+            hyadex_server.complete_working_directory_sync("bad\x00path", 24)
         self.assertEqual(raised.exception.status_code, 400)
 
 

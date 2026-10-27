@@ -8,31 +8,29 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
 
-import agent_server
-
-
+from tests import hyadex_server
 class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.previous_pending = agent_server.CODEX_PENDING_INTERACTIONS
-        self.previous_approval_items = agent_server.CODEX_APPROVAL_ITEM_CACHE
-        self.previous_sessions = agent_server.STORE.sessions
-        self.previous_thread_index = agent_server.CODEX_THREAD_SESSION_INDEX
-        agent_server.CODEX_PENDING_INTERACTIONS = {}
-        agent_server.CODEX_APPROVAL_ITEM_CACHE = agent_server.OrderedDict()
-        agent_server.CODEX_THREAD_SESSION_INDEX = {}
-        agent_server.STORE.sessions = {
+        self.previous_pending = hyadex_server.CODEX_PENDING_INTERACTIONS
+        self.previous_approval_items = hyadex_server.CODEX_APPROVAL_ITEM_CACHE
+        self.previous_sessions = hyadex_server.STORE.sessions
+        self.previous_thread_index = hyadex_server.CODEX_THREAD_SESSION_INDEX
+        hyadex_server.CODEX_PENDING_INTERACTIONS = {}
+        hyadex_server.CODEX_APPROVAL_ITEM_CACHE = hyadex_server.OrderedDict()
+        hyadex_server.CODEX_THREAD_SESSION_INDEX = {}
+        hyadex_server.STORE.sessions = {
             "chat": {
                 "id": "chat",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": "thread",
             }
         }
 
     async def asyncTearDown(self) -> None:
-        agent_server.CODEX_PENDING_INTERACTIONS = self.previous_pending
-        agent_server.CODEX_APPROVAL_ITEM_CACHE = self.previous_approval_items
-        agent_server.CODEX_THREAD_SESSION_INDEX = self.previous_thread_index
-        agent_server.STORE.sessions = self.previous_sessions
+        hyadex_server.CODEX_PENDING_INTERACTIONS = self.previous_pending
+        hyadex_server.CODEX_APPROVAL_ITEM_CACHE = self.previous_approval_items
+        hyadex_server.CODEX_THREAD_SESSION_INDEX = self.previous_thread_index
+        hyadex_server.STORE.sessions = self.previous_sessions
 
     def test_command_approval_is_fail_closed(self) -> None:
         pending = {
@@ -40,19 +38,19 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "params": {"availableDecisions": ["accept", "decline"]},
         }
         self.assertEqual(
-            agent_server.validate_codex_interaction_response(
+            hyadex_server.validate_codex_interaction_response(
                 pending,
                 {"decision": "decline"},
             ),
             {"decision": "decline"},
         )
         with self.assertRaises(HTTPException):
-            agent_server.validate_codex_interaction_response(
+            hyadex_server.validate_codex_interaction_response(
                 pending,
                 {"decision": "acceptForSession"},
             )
         with self.assertRaises(HTTPException):
-            agent_server.validate_codex_interaction_response(
+            hyadex_server.validate_codex_interaction_response(
                 pending,
                 {
                     "decision": {
@@ -88,14 +86,14 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             },
         }
         self.assertEqual(
-            agent_server.validate_codex_interaction_response(
+            hyadex_server.validate_codex_interaction_response(
                 pending,
                 {"decision": exec_decision},
             ),
             {"decision": exec_decision},
         )
         self.assertEqual(
-            agent_server.validate_codex_interaction_response(
+            hyadex_server.validate_codex_interaction_response(
                 pending,
                 {"decision": network_decision},
             ),
@@ -127,7 +125,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         ]
         for decision in invalid_decisions:
             with self.subTest(decision=decision), self.assertRaises(HTTPException):
-                agent_server.validate_codex_interaction_response(
+                hyadex_server.validate_codex_interaction_response(
                     pending,
                     {"decision": decision},
                 )
@@ -135,7 +133,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(available=available), self.assertRaises(
                 HTTPException
             ):
-                agent_server.validate_codex_interaction_response(
+                hyadex_server.validate_codex_interaction_response(
                     {
                         "method": pending["method"],
                         "params": {
@@ -147,7 +145,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_file_approval_includes_cached_proposed_changes(self) -> None:
-        agent_server.cache_codex_approval_item({
+        hyadex_server.cache_codex_approval_item({
             "method": "item/started",
             "params": {
                 "threadId": "thread",
@@ -164,24 +162,24 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         })
         with (
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_session_id_for_thread",
                 return_value="chat",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_request_is_interactive",
                 return_value=True,
             ),
-            patch.object(agent_server, "append_event", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock()),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "update_codex_pending_session_metadata",
                 AsyncMock(),
             ),
         ):
             request_task = asyncio.create_task(
-                agent_server.handle_codex_server_request(
+                hyadex_server.handle_codex_server_request(
                     7,
                     "item/fileChange/requestApproval",
                     {
@@ -193,13 +191,13 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             )
             await asyncio.sleep(0)
             interaction_id, pending = next(
-                iter(agent_server.CODEX_PENDING_INTERACTIONS.items())
+                iter(hyadex_server.CODEX_PENDING_INTERACTIONS.items())
             )
             self.assertEqual(
                 pending["params"]["changes"][0]["path"],
                 "/work/app.py",
             )
-            await agent_server.resolve_codex_interaction(
+            await hyadex_server.resolve_codex_interaction(
                 "chat",
                 interaction_id,
                 {"decision": "decline"},
@@ -216,32 +214,32 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         lifecycle_locks: dict[str, asyncio.Lock] = {}
         with (
             patch.object(
-                agent_server,
+                hyadex_server,
                 "CODEX_INTERACTION_HANDLER_TASKS",
                 handler_tasks,
             ),
-            patch.object(agent_server, "SESSION_LIFECYCLE_LOCKS", lifecycle_locks),
-            patch.object(agent_server, "DELETING_SESSIONS", set()),
-            patch.object(agent_server, "DELETED_SESSION_TOMBSTONES", set()),
+            patch.object(hyadex_server, "SESSION_LIFECYCLE_LOCKS", lifecycle_locks),
+            patch.object(hyadex_server, "DELETING_SESSIONS", set()),
+            patch.object(hyadex_server, "DELETED_SESSION_TOMBSTONES", set()),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_session_id_for_thread",
                 return_value="chat",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_request_is_interactive",
                 return_value=True,
             ),
-            patch.object(agent_server, "append_event", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock()),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "update_codex_pending_session_metadata",
                 AsyncMock(),
             ),
         ):
             request_task = asyncio.create_task(
-                agent_server.handle_codex_server_request(
+                hyadex_server.handle_codex_server_request(
                     9,
                     "item/commandExecution/requestApproval",
                     {
@@ -251,18 +249,18 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             for _attempt in range(20):
-                if agent_server.CODEX_PENDING_INTERACTIONS:
+                if hyadex_server.CODEX_PENDING_INTERACTIONS:
                     break
                 await asyncio.sleep(0)
 
-            self.assertTrue(agent_server.CODEX_PENDING_INTERACTIONS)
+            self.assertTrue(hyadex_server.CODEX_PENDING_INTERACTIONS)
             self.assertIn(request_task, handler_tasks["chat"])
-            lifecycle_lock = agent_server.session_lifecycle_lock("chat")
+            lifecycle_lock = hyadex_server.session_lifecycle_lock("chat")
             await asyncio.wait_for(lifecycle_lock.acquire(), timeout=0.1)
             lifecycle_lock.release()
 
-            interaction_id = next(iter(agent_server.CODEX_PENDING_INTERACTIONS))
-            await agent_server.resolve_codex_interaction(
+            interaction_id = next(iter(hyadex_server.CODEX_PENDING_INTERACTIONS))
+            await hyadex_server.resolve_codex_interaction(
                 "chat",
                 interaction_id,
                 {"decision": "decline"},
@@ -275,33 +273,33 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         deleting: set[str] = set()
         with (
             patch.object(
-                agent_server,
+                hyadex_server,
                 "CODEX_INTERACTION_HANDLER_TASKS",
                 handler_tasks,
             ),
-            patch.object(agent_server, "SESSION_LIFECYCLE_LOCKS", lifecycle_locks),
-            patch.object(agent_server, "DELETING_SESSIONS", deleting),
-            patch.object(agent_server, "DELETED_SESSION_TOMBSTONES", set()),
+            patch.object(hyadex_server, "SESSION_LIFECYCLE_LOCKS", lifecycle_locks),
+            patch.object(hyadex_server, "DELETING_SESSIONS", deleting),
+            patch.object(hyadex_server, "DELETED_SESSION_TOMBSTONES", set()),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_session_id_for_thread",
                 return_value="chat",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_request_is_interactive",
                 return_value=True,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "decline_server_request",
                 AsyncMock(return_value={"decision": "decline"}),
             ) as decline,
         ):
-            lifecycle_lock = agent_server.session_lifecycle_lock("chat")
+            lifecycle_lock = hyadex_server.session_lifecycle_lock("chat")
             await lifecycle_lock.acquire()
             request_task = asyncio.create_task(
-                agent_server.handle_codex_server_request(
+                hyadex_server.handle_codex_server_request(
                     10,
                     "item/commandExecution/requestApproval",
                     {
@@ -322,7 +320,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                 deleting.discard("chat")
 
             decline.assert_awaited_once()
-            self.assertFalse(agent_server.CODEX_PENDING_INTERACTIONS)
+            self.assertFalse(hyadex_server.CODEX_PENDING_INTERACTIONS)
             self.assertNotIn("chat", handler_tasks)
 
     def test_permission_grant_cannot_exceed_requested_subset(self) -> None:
@@ -335,7 +333,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                 }
             },
         }
-        accepted = agent_server.validate_codex_interaction_response(
+        accepted = hyadex_server.validate_codex_interaction_response(
             pending,
             {
                 "permissions": {
@@ -346,7 +344,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(accepted["scope"], "turn")
         with self.assertRaises(HTTPException):
-            agent_server.validate_codex_interaction_response(
+            hyadex_server.validate_codex_interaction_response(
                 pending,
                 {
                     "permissions": {
@@ -362,14 +360,14 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "params": {"questions": [{"id": "choice"}]},
         }
         self.assertEqual(
-            agent_server.validate_codex_interaction_response(
+            hyadex_server.validate_codex_interaction_response(
                 pending,
                 {"answers": {"choice": {"answers": ["A"]}}},
             ),
             {"answers": {"choice": {"answers": ["A"]}}},
         )
         with self.assertRaises(HTTPException):
-            agent_server.validate_codex_interaction_response(
+            hyadex_server.validate_codex_interaction_response(
                 pending,
                 {"answers": {"unknown": {"answers": ["A"]}}},
             )
@@ -378,7 +376,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         future: asyncio.Future[dict[str, object]] = (
             asyncio.get_running_loop().create_future()
         )
-        agent_server.CODEX_PENDING_INTERACTIONS["pending"] = {
+        hyadex_server.CODEX_PENDING_INTERACTIONS["pending"] = {
             "id": "pending",
             "native_request_id": 1,
             "session_id": "chat",
@@ -388,18 +386,18 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "future": future,
             "responded": False,
         }
-        with patch.object(agent_server.STORE, "save", AsyncMock()):
-            await agent_server.cancel_codex_interactions(
+        with patch.object(hyadex_server.STORE, "save", AsyncMock()):
+            await hyadex_server.cancel_codex_interactions(
                 "chat",
                 resolution="turn_stopped",
             )
         self.assertEqual(await future, {"decision": "decline"})
         self.assertEqual(
-            agent_server.CODEX_PENDING_INTERACTIONS["pending"]["resolution"],
+            hyadex_server.CODEX_PENDING_INTERACTIONS["pending"]["resolution"],
             "turn_stopped",
         )
         with self.assertRaises(HTTPException) as raised:
-            await agent_server.resolve_codex_interaction(
+            await hyadex_server.resolve_codex_interaction(
                 "chat",
                 "pending",
                 {"decision": "accept"},
@@ -417,11 +415,11 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "thread_id": "thread",
             "method": "item/fileChange/requestApproval",
             "params": {"availableDecisions": ["accept", "decline"]},
-            "created_at": agent_server.now_iso(),
+            "created_at": hyadex_server.now_iso(),
             "future": future,
             "responded": False,
         }
-        agent_server.CODEX_PENDING_INTERACTIONS["pending"] = pending
+        hyadex_server.CODEX_PENDING_INTERACTIONS["pending"] = pending
         decline_started = asyncio.Event()
         release_decline = asyncio.Event()
 
@@ -432,20 +430,20 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                agent_server,
+                hyadex_server,
                 "decline_server_request",
                 side_effect=delayed_decline,
             ),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
         ):
             cancel_task = asyncio.create_task(
-                agent_server.cancel_codex_interactions(
+                hyadex_server.cancel_codex_interactions(
                     "chat",
                     resolution="turn_stopped",
                 )
             )
             await decline_started.wait()
-            interaction = await agent_server.resolve_codex_interaction(
+            interaction = await hyadex_server.resolve_codex_interaction(
                 "chat",
                 "pending",
                 {"decision": "accept"},
@@ -461,50 +459,50 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         cases = (("never", None), (None, None), ("on-request", "never"))
         for stored_policy, captured_policy in cases:
             with self.subTest(stored=stored_policy, captured=captured_policy):
-                agent_server.STORE.sessions["chat"]["codex_approval_policy"] = stored_policy
+                hyadex_server.STORE.sessions["chat"]["codex_approval_policy"] = stored_policy
                 active = {"provider_thread_id": "thread", "codex_approval_policy": captured_policy}
                 events = AsyncMock()
                 metadata = AsyncMock()
                 with (
-                    patch.object(agent_server.RUNS, "active", {"chat": active}),
-                    patch.object(agent_server, "codex_request_is_interactive", return_value=True),
-                    patch.object(agent_server, "append_event", events),
-                    patch.object(agent_server, "update_codex_pending_session_metadata", metadata),
-                    patch.object(agent_server, "CODEX_INTERACTION_HANDLER_TASKS", {}),
+                    patch.object(hyadex_server.RUNS, "active", {"chat": active}),
+                    patch.object(hyadex_server, "codex_request_is_interactive", return_value=True),
+                    patch.object(hyadex_server, "append_event", events),
+                    patch.object(hyadex_server, "update_codex_pending_session_metadata", metadata),
+                    patch.object(hyadex_server, "CODEX_INTERACTION_HANDLER_TASKS", {}),
                 ):
-                    result = await asyncio.wait_for(agent_server.handle_codex_server_request(
+                    result = await asyncio.wait_for(hyadex_server.handle_codex_server_request(
                         1, "item/tool/requestUserInput",
                         {"threadId": "thread", "questions": [{"id": "choice"}]},
                     ), 0.2)
                     self.assertEqual(result, {"answers": {}})
-                    self.assertFalse(agent_server.CODEX_PENDING_INTERACTIONS)
-                    self.assertFalse(agent_server.CODEX_INTERACTION_HANDLER_TASKS)
+                    self.assertFalse(hyadex_server.CODEX_PENDING_INTERACTIONS)
+                    self.assertFalse(hyadex_server.CODEX_INTERACTION_HANDLER_TASKS)
                     events.assert_not_awaited()
                     metadata.assert_not_awaited()
 
     async def test_prompting_questions_keep_active_policy_when_settings_change(self) -> None:
         for policy in ("on-request", "untrusted"):
             with self.subTest(policy=policy):
-                agent_server.STORE.sessions["chat"]["codex_approval_policy"] = "never"
+                hyadex_server.STORE.sessions["chat"]["codex_approval_policy"] = "never"
                 events = AsyncMock()
                 with (
-                    patch.object(agent_server.RUNS, "active", {"chat": {
+                    patch.object(hyadex_server.RUNS, "active", {"chat": {
                         "provider_thread_id": "thread", "codex_approval_policy": policy,
                     }}),
-                    patch.object(agent_server, "codex_request_is_interactive", return_value=True),
-                    patch.object(agent_server, "append_event", events),
-                    patch.object(agent_server, "update_codex_pending_session_metadata", AsyncMock()),
+                    patch.object(hyadex_server, "codex_request_is_interactive", return_value=True),
+                    patch.object(hyadex_server, "append_event", events),
+                    patch.object(hyadex_server, "update_codex_pending_session_metadata", AsyncMock()),
                 ):
-                    task = asyncio.create_task(agent_server.handle_codex_server_request(
+                    task = asyncio.create_task(hyadex_server.handle_codex_server_request(
                         1, "item/tool/requestUserInput",
                         {"threadId": "thread", "questions": [{"id": "choice"}]},
                     ))
                     try:
                         await asyncio.sleep(0)
-                        interaction_id = next(iter(agent_server.CODEX_PENDING_INTERACTIONS))
+                        interaction_id = next(iter(hyadex_server.CODEX_PENDING_INTERACTIONS))
                         self.assertFalse(task.done())
                         self.assertEqual(events.await_args.args[1], "codex_interaction_requested")
-                        await agent_server.resolve_codex_interaction(
+                        await hyadex_server.resolve_codex_interaction(
                             "chat", interaction_id, {"answers": {"choice": {"answers": ["A"]}}},
                         )
                         self.assertEqual(await asyncio.wait_for(task, 0.2),
@@ -517,17 +515,17 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
     async def test_side_questions_use_the_side_policy_not_the_parent_turn(self) -> None:
         for side_policy, parent_policy in (("never", "on-request"), ("on-request", "never")):
             with self.subTest(side=side_policy):
-                agent_server.STORE.sessions["chat"]["codex_approval_policy"] = parent_policy
+                hyadex_server.STORE.sessions["chat"]["codex_approval_policy"] = parent_policy
                 events = AsyncMock()
                 metadata = AsyncMock()
                 with (
-                    patch.object(agent_server.RUNS, "active", {"chat": {
+                    patch.object(hyadex_server.RUNS, "active", {"chat": {
                         "provider_thread_id": "thread", "codex_approval_policy": parent_policy,
                     }}),
-                    patch.object(agent_server, "append_event", events),
-                    patch.object(agent_server, "update_codex_pending_session_metadata", metadata),
+                    patch.object(hyadex_server, "append_event", events),
+                    patch.object(hyadex_server, "update_codex_pending_session_metadata", metadata),
                 ):
-                    task = asyncio.create_task(agent_server.handle_codex_server_request(
+                    task = asyncio.create_task(hyadex_server.handle_codex_server_request(
                         1, "item/tool/requestUserInput",
                         {"threadId": "side-thread", "questions": [{"id": "choice"}]},
                         side_session_id="chat", side_owner_is_current=lambda: True,
@@ -536,13 +534,13 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                     try:
                         await asyncio.sleep(0)
                         if side_policy == "never":
-                            self.assertFalse(agent_server.CODEX_PENDING_INTERACTIONS)
+                            self.assertFalse(hyadex_server.CODEX_PENDING_INTERACTIONS)
                             events.assert_not_awaited()
                             metadata.assert_not_awaited()
                         else:
-                            interaction_id = next(iter(agent_server.CODEX_PENDING_INTERACTIONS))
+                            interaction_id = next(iter(hyadex_server.CODEX_PENDING_INTERACTIONS))
                             self.assertFalse(task.done())
-                            await agent_server.resolve_codex_interaction("chat", interaction_id, {"answers": {}})
+                            await hyadex_server.resolve_codex_interaction("chat", interaction_id, {"answers": {}})
                         self.assertEqual(await asyncio.wait_for(task, 0.2), {"answers": {}})
                     finally:
                         if not task.done():
@@ -550,7 +548,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.gather(task, return_exceptions=True)
 
     async def test_user_response_wins_race_with_auto_resolution(self) -> None:
-        agent_server.STORE.sessions["chat"]["codex_approval_policy"] = "on-request"
+        hyadex_server.STORE.sessions["chat"]["codex_approval_policy"] = "on-request"
         decline_started = asyncio.Event()
         release_decline = asyncio.Event()
 
@@ -561,29 +559,29 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_session_id_for_thread",
                 return_value="chat",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_request_is_interactive",
                 return_value=True,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "decline_server_request",
                 side_effect=delayed_decline,
             ),
-            patch.object(agent_server, "append_event", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock()),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "update_codex_pending_session_metadata",
                 AsyncMock(),
             ),
         ):
             request_task = asyncio.create_task(
-                agent_server.handle_codex_server_request(
+                hyadex_server.handle_codex_server_request(
                     1,
                     "item/tool/requestUserInput",
                     {
@@ -595,9 +593,9 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             )
             await decline_started.wait()
             interaction_id, pending = next(
-                iter(agent_server.CODEX_PENDING_INTERACTIONS.items())
+                iter(hyadex_server.CODEX_PENDING_INTERACTIONS.items())
             )
-            await agent_server.resolve_codex_interaction(
+            await hyadex_server.resolve_codex_interaction(
                 "chat",
                 interaction_id,
                 {"answers": {"choice": {"answers": ["A"]}}},
@@ -622,13 +620,13 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "thread_id": "thread",
             "method": "mcpServer/elicitation/request",
             "params": {},
-            "created_at": agent_server.now_iso(),
+            "created_at": hyadex_server.now_iso(),
             "future": future,
             "responded": False,
         }
-        agent_server.CODEX_PENDING_INTERACTIONS["secret"] = pending
+        hyadex_server.CODEX_PENDING_INTERACTIONS["secret"] = pending
 
-        interaction = await agent_server.resolve_codex_interaction(
+        interaction = await hyadex_server.resolve_codex_interaction(
             "chat",
             "secret",
             {"action": "accept", "content": {"password": "top-secret"}},
@@ -650,11 +648,11 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "codex_goal_time_budget_seconds": 20,
         }
         self.assertEqual(
-            agent_server.codex_goal_time_budget_remaining(session),
+            hyadex_server.codex_goal_time_budget_remaining(session),
             8,
         )
         session["codex_goal"]["status"] = "paused"
-        self.assertIsNone(agent_server.codex_goal_time_budget_remaining(session))
+        self.assertIsNone(hyadex_server.codex_goal_time_budget_remaining(session))
 
     def test_goal_time_budget_stays_exhausted_after_native_status_change(
         self,
@@ -668,12 +666,12 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "codex_goal_time_budget_exhausted": True,
         }
         self.assertEqual(
-            agent_server.codex_goal_time_budget_remaining(session),
+            hyadex_server.codex_goal_time_budget_remaining(session),
             0,
         )
 
     async def test_native_elapsed_budget_is_exposed_as_exhausted(self) -> None:
-        session = agent_server.STORE.sessions["chat"]
+        session = hyadex_server.STORE.sessions["chat"]
         session.update(
             {
                 "codex_goal": {
@@ -685,17 +683,17 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             }
         )
         self.assertTrue(
-            agent_server.public_session(session)[
+            hyadex_server.public_session(session)[
                 "codex_goal_time_budget_exhausted"
             ]
         )
-        goal = await agent_server.get_codex_goal("chat")
+        goal = await hyadex_server.get_codex_goal("chat")
         self.assertTrue(goal["time_budget_exhausted"])
-        runtime = await agent_server.get_codex_runtime("chat")
+        runtime = await hyadex_server.get_codex_runtime("chat")
         self.assertTrue(runtime["time_budget_exhausted"])
 
     async def test_exhausted_time_budget_blocks_a_new_turn(self) -> None:
-        agent_server.STORE.sessions["chat"].update(
+        hyadex_server.STORE.sessions["chat"].update(
             {
                 "codex_goal": {
                     "status": "budgetLimited",
@@ -706,29 +704,29 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             }
         )
         with self.assertRaises(HTTPException) as raised:
-            await agent_server.start_turn(
+            await hyadex_server.start_turn(
                 "chat",
-                agent_server.TurnRequest(prompt="continue"),
+                hyadex_server.TurnRequest(prompt="continue"),
             )
         self.assertEqual(raised.exception.status_code, 409)
 
     async def test_new_sessions_and_null_resets_use_canonical_permission_defaults(
         self,
     ) -> None:
-        store = agent_server.SessionStore()
+        store = hyadex_server.SessionStore()
         with (
-            patch.object(agent_server, "ensure_dirs"),
-            patch.object(agent_server, "append_event", AsyncMock()),
+            patch.object(hyadex_server, "ensure_dirs"),
+            patch.object(hyadex_server, "append_event", AsyncMock()),
             patch.object(store, "save", AsyncMock()),
         ):
             created = await store.create(
-                agent_server.CreateSessionRequest(
-                    backend=agent_server.BACKEND_CODEX,
+                hyadex_server.CreateSessionRequest(
+                    backend=hyadex_server.BACKEND_CODEX,
                 )
             )
             explicit = await store.create(
-                agent_server.CreateSessionRequest(
-                    backend=agent_server.BACKEND_CODEX,
+                hyadex_server.CreateSessionRequest(
+                    backend=hyadex_server.BACKEND_CODEX,
                     codex_approval_policy="never",
                     codex_sandbox_mode="read-only",
                     codex_permission_profile=":read-only",
@@ -747,32 +745,32 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             created["codex_approval_policy"],
-            agent_server.CODEX_DEFAULT_APPROVAL_POLICY,
+            hyadex_server.CODEX_DEFAULT_APPROVAL_POLICY,
         )
         self.assertEqual(
             created["codex_sandbox_mode"],
-            agent_server.CODEX_DEFAULT_SANDBOX_MODE,
+            hyadex_server.CODEX_DEFAULT_SANDBOX_MODE,
         )
         self.assertIs(
             created["codex_permission_profile"],
-            agent_server.CODEX_DEFAULT_PERMISSION_PROFILE,
+            hyadex_server.CODEX_DEFAULT_PERMISSION_PROFILE,
         )
         self.assertEqual(
             created["codex_approvals_reviewer"],
-            agent_server.CODEX_DEFAULT_APPROVALS_REVIEWER,
+            hyadex_server.CODEX_DEFAULT_APPROVALS_REVIEWER,
         )
         self.assertEqual(
             reset["codex_approval_policy"],
-            agent_server.CODEX_DEFAULT_APPROVAL_POLICY,
+            hyadex_server.CODEX_DEFAULT_APPROVAL_POLICY,
         )
         self.assertEqual(
             reset["codex_sandbox_mode"],
-            agent_server.CODEX_DEFAULT_SANDBOX_MODE,
+            hyadex_server.CODEX_DEFAULT_SANDBOX_MODE,
         )
         self.assertIsNone(reset["codex_permission_profile"])
         self.assertEqual(
             reset["codex_approvals_reviewer"],
-            agent_server.CODEX_DEFAULT_APPROVALS_REVIEWER,
+            hyadex_server.CODEX_DEFAULT_APPROVALS_REVIEWER,
         )
 
     async def test_session_load_defaults_missing_permissions_without_overwriting_choices(
@@ -785,11 +783,11 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                     {
                         "missing": {
                             "id": "missing",
-                            "backend": agent_server.BACKEND_CODEX,
+                            "backend": hyadex_server.BACKEND_CODEX,
                         },
                         "explicit": {
                             "id": "explicit",
-                            "backend": agent_server.BACKEND_CODEX,
+                            "backend": hyadex_server.BACKEND_CODEX,
                             "codex_approval_policy": "never",
                             "codex_sandbox_mode": "read-only",
                             "codex_permission_profile": ":read-only",
@@ -798,10 +796,10 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                     }
                 )
             )
-            store = agent_server.SessionStore()
+            store = hyadex_server.SessionStore()
             with (
-                patch.object(agent_server, "SESSIONS_FILE", sessions_file),
-                patch.object(agent_server, "ensure_dirs"),
+                patch.object(hyadex_server, "SESSIONS_FILE", sessions_file),
+                patch.object(hyadex_server, "ensure_dirs"),
                 patch.object(store, "save", AsyncMock()),
             ):
                 await store.load()
@@ -809,16 +807,16 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         missing = store.sessions["missing"]
         self.assertEqual(
             missing["codex_approval_policy"],
-            agent_server.CODEX_DEFAULT_APPROVAL_POLICY,
+            hyadex_server.CODEX_DEFAULT_APPROVAL_POLICY,
         )
         self.assertEqual(
             missing["codex_sandbox_mode"],
-            agent_server.CODEX_DEFAULT_SANDBOX_MODE,
+            hyadex_server.CODEX_DEFAULT_SANDBOX_MODE,
         )
         self.assertIsNone(missing["codex_permission_profile"])
         self.assertEqual(
             missing["codex_approvals_reviewer"],
-            agent_server.CODEX_DEFAULT_APPROVALS_REVIEWER,
+            hyadex_server.CODEX_DEFAULT_APPROVALS_REVIEWER,
         )
         explicit = store.sessions["explicit"]
         self.assertEqual(explicit["codex_approval_policy"], "never")
@@ -830,19 +828,19 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         with (
-            patch.object(agent_server.PROVIDERS, "codex_manager", None),
-            patch.object(agent_server, "CODEX_GOALS_ENABLED", False),
+            patch.object(hyadex_server.PROVIDERS, "codex_manager", None),
+            patch.object(hyadex_server, "CODEX_GOALS_ENABLED", False),
         ):
-            runtime = await agent_server.codex_runtime_snapshot("chat")
+            runtime = await hyadex_server.codex_runtime_snapshot("chat")
 
         self.assertFalse(runtime["goals_enabled"])
         self.assertEqual(
             runtime["policy"],
             {
-                "approval_policy": agent_server.CODEX_DEFAULT_APPROVAL_POLICY,
-                "sandbox_mode": agent_server.CODEX_DEFAULT_SANDBOX_MODE,
-                "permission_profile": agent_server.CODEX_DEFAULT_PERMISSION_PROFILE,
-                "approvals_reviewer": agent_server.CODEX_DEFAULT_APPROVALS_REVIEWER,
+                "approval_policy": hyadex_server.CODEX_DEFAULT_APPROVAL_POLICY,
+                "sandbox_mode": hyadex_server.CODEX_DEFAULT_SANDBOX_MODE,
+                "permission_profile": hyadex_server.CODEX_DEFAULT_PERMISSION_PROFILE,
+                "approvals_reviewer": hyadex_server.CODEX_DEFAULT_APPROVALS_REVIEWER,
             },
         )
 
@@ -850,7 +848,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         self.assertEqual(
-            agent_server.codex_thread_status_message(
+            hyadex_server.codex_thread_status_message(
                 {
                     "type": "active",
                     "activeFlags": ["waitingOnApproval"],
@@ -859,14 +857,14 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "Codex is waiting for approval.",
         )
         with (
-            patch.object(agent_server.RUNS, "active", {}),
+            patch.object(hyadex_server.RUNS, "active", {}),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "append_event",
                 AsyncMock(),
             ) as append_event,
         ):
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 {
                     "method": "item/completed",
                     "params": {
@@ -907,8 +905,8 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         active = {
             "chat": {
                 "run_id": "run-1",
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                "backend": hyadex_server.BACKEND_CODEX,
+                "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                 "provider_thread_id": "thread",
                 "provider_turn_id": "turn-1",
             }
@@ -917,22 +915,22 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         append_event = AsyncMock()
         broadcast = AsyncMock()
         with (
-            patch.object(agent_server.RUNS, "active", active),
+            patch.object(hyadex_server.RUNS, "active", active),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_session_id_for_thread",
                 return_value="chat",
             ),
-            patch.object(agent_server.STORE, "save", save),
-            patch.object(agent_server, "append_event", append_event),
-            patch.object(agent_server.HUB, "broadcast", broadcast),
+            patch.object(hyadex_server.STORE, "save", save),
+            patch.object(hyadex_server, "append_event", append_event),
+            patch.object(hyadex_server.HUB, "broadcast", broadcast),
             patch.object(
-                agent_server.time,
+                hyadex_server.time,
                 "time",
                 side_effect=[1_000, 1_001, 1_002, 1_003],
             ),
         ):
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 {
                     "method": "thread/tokenUsage/updated",
                     "params": {
@@ -942,7 +940,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                     },
                 }
             )
-            first_payload = agent_server.STORE.sessions["chat"][
+            first_payload = hyadex_server.STORE.sessions["chat"][
                 "codex_token_usage_snapshot"
             ]
             self.assertEqual(first_payload["run_id"], "run-1")
@@ -975,7 +973,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
 
             updated_usage = json.loads(json.dumps(usage))
             updated_usage["last"]["totalTokens"] = 25_500
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 {
                     "method": "thread/tokenUsage/updated",
                     "params": {
@@ -988,7 +986,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(save.await_count, 1)
             self.assertEqual(append_event.await_count, 0)
 
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 {
                     "method": "turn/completed",
                     "params": {
@@ -1004,7 +1002,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             active.clear()
             final_usage = json.loads(json.dumps(updated_usage))
             final_usage["last"]["totalTokens"] = 26_000
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 {
                     "method": "thread/tokenUsage/updated",
                     "params": {
@@ -1017,14 +1015,14 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(save.await_count, 3)
         self.assertEqual(append_event.await_count, 0)
-        final_payload = agent_server.STORE.sessions["chat"][
+        final_payload = hyadex_server.STORE.sessions["chat"][
             "codex_token_usage_snapshot"
         ]
         self.assertEqual(final_payload["raw_context_tokens"], 26_000)
         self.assertEqual(final_payload["context_tokens"], 26_000)
         self.assertEqual(final_payload["run_id"], "run-1")
         self.assertEqual(
-            agent_server.STORE.sessions["chat"]["codex_token_usage"],
+            hyadex_server.STORE.sessions["chat"]["codex_token_usage"],
             final_usage,
         )
 
@@ -1033,31 +1031,31 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "thread_id": "thread",
             "turn_id": "turn-old",
             "run_id": "run-old",
-            "snapshot_at": agent_server.now_iso(),
+            "snapshot_at": hyadex_server.now_iso(),
             "token_usage": {"last": {"totalTokens": 10}},
             "context_tokens": 10,
         }
-        agent_server.STORE.sessions["chat"]["codex_token_usage_snapshot"] = stale
+        hyadex_server.STORE.sessions["chat"]["codex_token_usage_snapshot"] = stale
         save = AsyncMock()
         active = {
             "chat": {
                 "run_id": "run-new",
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                "backend": hyadex_server.BACKEND_CODEX,
+                "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                 "provider_thread_id": "thread",
                 "provider_turn_id": "turn-new",
             }
         }
         with (
-            patch.object(agent_server.RUNS, "active", active),
+            patch.object(hyadex_server.RUNS, "active", active),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_session_id_for_thread",
                 return_value="chat",
             ),
-            patch.object(agent_server.STORE, "save", save),
+            patch.object(hyadex_server.STORE, "save", save),
         ):
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 {
                     "method": "turn/completed",
                     "params": {
@@ -1069,7 +1067,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(save.await_count, 0)
             self.assertEqual(
-                agent_server.STORE.sessions["chat"]["codex_token_usage_snapshot"],
+                hyadex_server.STORE.sessions["chat"]["codex_token_usage_snapshot"],
                 stale,
             )
 
@@ -1079,7 +1077,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                 "total": {"totalTokens": 100},
                 "modelContextWindow": 100,
             }
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 {
                     "method": "thread/tokenUsage/updated",
                     "params": {
@@ -1091,14 +1089,14 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(save.await_count, 1)
-        final_snapshot = agent_server.STORE.sessions["chat"][
+        final_snapshot = hyadex_server.STORE.sessions["chat"][
             "codex_token_usage_snapshot"
         ]
         self.assertEqual(final_snapshot["turn_id"], "turn-new")
         self.assertEqual(final_snapshot["run_id"], "run-new")
 
     async def test_token_usage_cannot_repopulate_a_replaced_thread(self) -> None:
-        snapshot = agent_server.codex_token_usage_snapshot(
+        snapshot = hyadex_server.codex_token_usage_snapshot(
             {
                 "last": {"totalTokens": 25_000},
                 "total": {"totalTokens": 25_000},
@@ -1109,11 +1107,11 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             run_id="run-old",
         )
         self.assertIsNotNone(snapshot)
-        agent_server.STORE.sessions["chat"]["codex_thread_id"] = "thread-new"
-        agent_server.STORE.sessions["chat"]["session_id"] = "thread-new"
+        hyadex_server.STORE.sessions["chat"]["codex_thread_id"] = "thread-new"
+        hyadex_server.STORE.sessions["chat"]["session_id"] = "thread-new"
         save = AsyncMock()
-        with patch.object(agent_server.STORE, "save", save):
-            recorded = await agent_server.record_codex_token_usage(
+        with patch.object(hyadex_server.STORE, "save", save):
+            recorded = await hyadex_server.record_codex_token_usage(
                 "chat",
                 snapshot,
                 force_checkpoint=True,
@@ -1122,12 +1120,12 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(recorded)
         self.assertNotIn(
             "codex_token_usage_snapshot",
-            agent_server.STORE.sessions["chat"],
+            hyadex_server.STORE.sessions["chat"],
         )
         self.assertEqual(save.await_count, 0)
 
     async def test_exec_invalidates_native_usage_and_rejects_late_samples(self) -> None:
-        session = agent_server.STORE.sessions["chat"]
+        session = hyadex_server.STORE.sessions["chat"]
         session.update(
             {
                 "context_usage_state": "available",
@@ -1152,21 +1150,21 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         active = {
             "chat": {
                 "run_id": "run-exec",
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_EXEC,
+                "backend": hyadex_server.BACKEND_CODEX,
+                "transport": hyadex_server.CODEX_TRANSPORT_EXEC,
             }
         }
         with (
-            patch.object(agent_server.STORE, "save", save),
-            patch.object(agent_server.HUB, "broadcast", broadcast),
-            patch.object(agent_server.RUNS, "active", active),
+            patch.object(hyadex_server.STORE, "save", save),
+            patch.object(hyadex_server.HUB, "broadcast", broadcast),
+            patch.object(hyadex_server.RUNS, "active", active),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_session_id_for_thread",
                 return_value="chat",
             ),
         ):
-            await agent_server.mark_codex_exec_context_usage_unavailable("chat")
+            await hyadex_server.mark_codex_exec_context_usage_unavailable("chat")
             for key in (
                 "context_usage_snapshot",
                 "codex_token_usage",
@@ -1178,7 +1176,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(session["context_usage_state"], "unavailable")
 
             save.reset_mock()
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 {
                     "method": "thread/tokenUsage/updated",
                     "params": {
@@ -1204,16 +1202,16 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "codex_compaction_token_usage_before": {"context_tokens": 1200},
         }}
         recorded = AsyncMock(return_value={})
-        with patch.object(agent_server.RUNS, "active", active), \
-                patch.object(agent_server, "codex_session_id_for_thread", return_value="chat"), \
-                patch.object(agent_server, "append_event", recorded), \
-                patch.object(agent_server.STORE, "save", AsyncMock()):
+        with patch.object(hyadex_server.RUNS, "active", active), \
+                patch.object(hyadex_server, "codex_session_id_for_thread", return_value="chat"), \
+                patch.object(hyadex_server, "append_event", recorded), \
+                patch.object(hyadex_server.STORE, "save", AsyncMock()):
             terminal = {"method": "turn/completed", "params": {
                 "threadId": "thread", "turn": {"id": "turn", "status": "failed"},
             }}
-            await agent_server.project_codex_notification(terminal)
-            await agent_server.project_codex_notification(terminal)
-            await agent_server.project_codex_notification({"method": "item/completed", "params": {
+            await hyadex_server.project_codex_notification(terminal)
+            await hyadex_server.project_codex_notification(terminal)
+            await hyadex_server.project_codex_notification({"method": "item/completed", "params": {
                 "threadId": "thread", "turnId": "turn",
                 "item": {"type": "contextCompaction", "id": "compact"},
             }})
@@ -1248,8 +1246,8 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         active = {
             "chat": {
                 "run_id": "run-compact",
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                "backend": hyadex_server.BACKEND_CODEX,
+                "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                 "provider_thread_id": "thread",
                 "provider_turn_id": "turn-1",
             }
@@ -1265,17 +1263,17 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with (
-            patch.object(agent_server.RUNS, "active", active),
+            patch.object(hyadex_server.RUNS, "active", active),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_session_id_for_thread",
                 return_value="chat",
             ),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
-            patch.object(agent_server, "append_event", side_effect=record_event),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", side_effect=record_event),
         ):
             for usage in (before_usage,):
-                await agent_server.project_codex_notification(
+                await hyadex_server.project_codex_notification(
                     {
                         "method": "thread/tokenUsage/updated",
                         "params": {
@@ -1285,7 +1283,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                         },
                     }
                 )
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 {
                     "method": "item/started",
                     "params": {
@@ -1295,7 +1293,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                     },
                 }
             )
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 {
                     "method": "thread/tokenUsage/updated",
                     "params": {
@@ -1305,7 +1303,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                     },
                 }
             )
-            await agent_server.project_codex_notification(
+            await hyadex_server.project_codex_notification(
                 {
                     "method": "item/completed",
                     "params": {
@@ -1353,8 +1351,8 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         active = {
             "chat": {
                 "run_id": "run-compact",
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                "backend": hyadex_server.BACKEND_CODEX,
+                "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                 "provider_thread_id": "thread",
                 "provider_turn_id": "turn-1",
             }
@@ -1370,15 +1368,15 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with (
-            patch.object(agent_server.RUNS, "active", active),
+            patch.object(hyadex_server.RUNS, "active", active),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_session_id_for_thread",
                 return_value="chat",
             ),
-            patch.object(agent_server, "append_event", side_effect=record_event),
+            patch.object(hyadex_server, "append_event", side_effect=record_event),
         ):
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "item/started",
                 "params": {
                     "threadId": "thread",
@@ -1386,7 +1384,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                     "item": {"id": "compact-1", "type": "contextCompaction"},
                 },
             })
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "item/completed",
                 "params": {
                     "threadId": "thread",
@@ -1416,8 +1414,8 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         active = {
             "chat": {
                 "run_id": "run-compact",
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                "backend": hyadex_server.BACKEND_CODEX,
+                "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                 "provider_thread_id": "thread",
                 "provider_turn_id": "turn-1",
             }
@@ -1433,16 +1431,16 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         with (
-            patch.object(agent_server.RUNS, "active", active),
+            patch.object(hyadex_server.RUNS, "active", active),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_session_id_for_thread",
                 return_value="chat",
             ),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
-            patch.object(agent_server, "append_event", side_effect=record_event),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server, "append_event", side_effect=record_event),
         ):
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "item/started",
                 "params": {
                     "threadId": "thread",
@@ -1450,7 +1448,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                     "item": {"id": "compact-1", "type": "contextCompaction"},
                 },
             })
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "thread/tokenUsage/updated",
                 "params": {
                     "threadId": "thread",
@@ -1458,7 +1456,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                     "tokenUsage": after_usage,
                 },
             })
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "item/completed",
                 "params": {
                     "threadId": "thread",
@@ -1488,7 +1486,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(event_type=event_type):
                 self.assertTrue(
-                    agent_server.should_bump_session_updated_at(
+                    hyadex_server.should_bump_session_updated_at(
                         event_type,
                         {"type": event_type},
                     )
@@ -1502,7 +1500,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(event_type=event_type):
                 self.assertFalse(
-                    agent_server.should_bump_session_updated_at(
+                    hyadex_server.should_bump_session_updated_at(
                         event_type,
                         {"type": event_type},
                     )
@@ -1512,7 +1510,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         original_updated_at = "2026-07-28T10:00:00Z"
-        agent_server.STORE.sessions["chat"].update(
+        hyadex_server.STORE.sessions["chat"].update(
             {
                 "updated_at": original_updated_at,
                 "codex_goal_time_budget_seconds": 30,
@@ -1522,15 +1520,15 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             sessions_file = Path(temp_dir) / "sessions.json"
             with (
-                patch.object(agent_server, "SESSIONS_FILE", sessions_file),
+                patch.object(hyadex_server, "SESSIONS_FILE", sessions_file),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "codex_session_id_for_thread",
                     return_value="chat",
                 ),
-                patch.object(agent_server, "append_event", AsyncMock()),
+                patch.object(hyadex_server, "append_event", AsyncMock()),
             ):
-                await agent_server.project_codex_notification(
+                await hyadex_server.project_codex_notification(
                     {
                         "method": "thread/goal/updated",
                         "params": {
@@ -1550,7 +1548,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(stored["updated_at"], original_updated_at)
 
-                await agent_server.project_codex_notification(
+                await hyadex_server.project_codex_notification(
                     {
                         "method": "thread/goal/cleared",
                         "params": {"threadId": "thread"},
@@ -1569,7 +1567,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             sessions_file.write_text(json.dumps({
                 "stale": {
                     "id": "stale",
-                    "backend": agent_server.BACKEND_CODEX,
+                    "backend": hyadex_server.BACKEND_CODEX,
                     "codex_thread_id": "thread-stale",
                     "codex_thread_status": {
                         "type": "active",
@@ -1580,8 +1578,8 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
                     "codex_token_usage": {"totalTokens": 100},
                 }
             }))
-            store = agent_server.SessionStore()
-            with patch.object(agent_server, "SESSIONS_FILE", sessions_file):
+            store = hyadex_server.SessionStore()
+            with patch.object(hyadex_server, "SESSIONS_FILE", sessions_file):
                 await store.load()
 
         session = store.sessions["stale"]
@@ -1590,23 +1588,23 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(session["codex_needs_user_action"])
         self.assertEqual(session["codex_token_usage"], {"totalTokens": 100})
         self.assertEqual(
-            agent_server.CODEX_THREAD_SESSION_INDEX["thread-stale"],
+            hyadex_server.CODEX_THREAD_SESSION_INDEX["thread-stale"],
             "stale",
         )
 
     async def test_runtime_never_trusts_stale_active_status_when_thread_is_unloaded(
         self,
     ) -> None:
-        agent_server.STORE.sessions["chat"]["codex_thread_status"] = {
+        hyadex_server.STORE.sessions["chat"]["codex_thread_status"] = {
             "type": "active",
             "activeFlags": ["waitingOnApproval"],
         }
-        previous_manager = agent_server.PROVIDERS.codex_manager
-        agent_server.PROVIDERS.codex_manager = None
+        previous_manager = hyadex_server.PROVIDERS.codex_manager
+        hyadex_server.PROVIDERS.codex_manager = None
         try:
-            runtime = await agent_server.get_codex_runtime("chat")
+            runtime = await hyadex_server.get_codex_runtime("chat")
         finally:
-            agent_server.PROVIDERS.codex_manager = previous_manager
+            hyadex_server.PROVIDERS.codex_manager = previous_manager
         self.assertEqual(runtime["status"], {"type": "notLoaded"})
 
     async def test_all_codex_control_acquisition_is_blocked_during_update(
@@ -1616,16 +1614,16 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             side_effect=AssertionError("app-server must not start during update")
         )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "server_lifecycle_admission_blocker",
             return_value="HyadexServer is preparing a managed update",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "codex_app_server_manager",
             manager_factory,
         ):
             with self.assertRaises(HTTPException) as raised:
-                await agent_server.acquire_codex_control_thread(
+                await hyadex_server.acquire_codex_control_thread(
                     "chat",
                     reserve_session=False,
                 )
@@ -1658,39 +1656,39 @@ class GatedNativeSubscription:
 
 class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.previous_sessions = agent_server.STORE.sessions
-        self.previous_active = agent_server.RUNS.active
-        self.previous_busy = agent_server.RUNS.busy
-        self.previous_current = agent_server.RUNS.current_turns
-        self.previous_tasks = agent_server.CODEX_NATIVE_ACTION_TASKS
+        self.previous_sessions = hyadex_server.STORE.sessions
+        self.previous_active = hyadex_server.RUNS.active
+        self.previous_busy = hyadex_server.RUNS.busy
+        self.previous_current = hyadex_server.RUNS.current_turns
+        self.previous_tasks = hyadex_server.CODEX_NATIVE_ACTION_TASKS
         self.previous_terminal_fences = (
-            agent_server.CODEX_CONTROL_TERMINAL_FENCES
+            hyadex_server.CODEX_CONTROL_TERMINAL_FENCES
         )
         self.previous_maintenance = (
-            agent_server.RUNS.maintenance
+            hyadex_server.RUNS.maintenance
         )
-        self.previous_pins = agent_server.CODEX_APP_SERVER_PINNED_THREADS
+        self.previous_pins = hyadex_server.CODEX_APP_SERVER_PINNED_THREADS
         self.previous_pin_counts = (
-            agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS
+            hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS
         )
         self.previous_interactive_threads = (
-            agent_server.CODEX_INTERACTIVE_CONTROL_THREADS
+            hyadex_server.CODEX_INTERACTIVE_CONTROL_THREADS
         )
         self.previous_interactive_counts = (
-            agent_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS
+            hyadex_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS
         )
-        self.previous_turn_tasks = agent_server.RUNS.turn_tasks
+        self.previous_turn_tasks = hyadex_server.RUNS.turn_tasks
         self.previous_interaction_tasks = (
-            agent_server.CODEX_INTERACTION_HANDLER_TASKS
+            hyadex_server.CODEX_INTERACTION_HANDLER_TASKS
         )
-        agent_server.STORE.sessions = {
+        hyadex_server.STORE.sessions = {
             "chat": {
                 "id": "chat",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": "thread",
             }
         }
-        agent_server.RUNS.active = {
+        hyadex_server.RUNS.active = {
             "chat": {
                 "run_id": "operation",
                 "provider_thread_id": "thread",
@@ -1700,55 +1698,55 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "codex_control_reservation_id": "control-operation",
             }
         }
-        agent_server.RUNS.busy = {"chat"}
-        agent_server.RUNS.current_turns = {
+        hyadex_server.RUNS.busy = {"chat"}
+        hyadex_server.RUNS.current_turns = {
             "chat": {
                 "run_id": None,
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "purpose": "codex_native_control",
                 "codex_control_reservation_id": "control-operation",
             }
         }
-        agent_server.CODEX_NATIVE_ACTION_TASKS = {}
-        agent_server.CODEX_CONTROL_TERMINAL_FENCES = {}
-        agent_server.RUNS.maintenance = set()
-        agent_server.CODEX_APP_SERVER_PINNED_THREADS = set()
-        agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS = {}
-        agent_server.CODEX_INTERACTIVE_CONTROL_THREADS = set()
-        agent_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS = {}
-        agent_server.RUNS.turn_tasks = {}
-        agent_server.CODEX_INTERACTION_HANDLER_TASKS = {}
+        hyadex_server.CODEX_NATIVE_ACTION_TASKS = {}
+        hyadex_server.CODEX_CONTROL_TERMINAL_FENCES = {}
+        hyadex_server.RUNS.maintenance = set()
+        hyadex_server.CODEX_APP_SERVER_PINNED_THREADS = set()
+        hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS = {}
+        hyadex_server.CODEX_INTERACTIVE_CONTROL_THREADS = set()
+        hyadex_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS = {}
+        hyadex_server.RUNS.turn_tasks = {}
+        hyadex_server.CODEX_INTERACTION_HANDLER_TASKS = {}
 
     async def asyncTearDown(self) -> None:
-        await agent_server.cancel_codex_native_actions()
-        agent_server.STORE.sessions = self.previous_sessions
-        agent_server.RUNS.active = self.previous_active
-        agent_server.RUNS.busy = self.previous_busy
-        agent_server.RUNS.current_turns = self.previous_current
-        agent_server.CODEX_NATIVE_ACTION_TASKS = self.previous_tasks
-        agent_server.CODEX_CONTROL_TERMINAL_FENCES = (
+        await hyadex_server.cancel_codex_native_actions()
+        hyadex_server.STORE.sessions = self.previous_sessions
+        hyadex_server.RUNS.active = self.previous_active
+        hyadex_server.RUNS.busy = self.previous_busy
+        hyadex_server.RUNS.current_turns = self.previous_current
+        hyadex_server.CODEX_NATIVE_ACTION_TASKS = self.previous_tasks
+        hyadex_server.CODEX_CONTROL_TERMINAL_FENCES = (
             self.previous_terminal_fences
         )
-        agent_server.RUNS.maintenance = (
+        hyadex_server.RUNS.maintenance = (
             self.previous_maintenance
         )
-        agent_server.CODEX_APP_SERVER_PINNED_THREADS = self.previous_pins
-        agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS = (
+        hyadex_server.CODEX_APP_SERVER_PINNED_THREADS = self.previous_pins
+        hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS = (
             self.previous_pin_counts
         )
-        agent_server.CODEX_INTERACTIVE_CONTROL_THREADS = (
+        hyadex_server.CODEX_INTERACTIVE_CONTROL_THREADS = (
             self.previous_interactive_threads
         )
-        agent_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS = (
+        hyadex_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS = (
             self.previous_interactive_counts
         )
-        agent_server.RUNS.turn_tasks = self.previous_turn_tasks
-        agent_server.CODEX_INTERACTION_HANDLER_TASKS = (
+        hyadex_server.RUNS.turn_tasks = self.previous_turn_tasks
+        hyadex_server.CODEX_INTERACTION_HANDLER_TASKS = (
             self.previous_interaction_tasks
         )
 
     async def test_compaction_captures_turn_and_waits_for_turn_completed(self) -> None:
-        agent_server.RUNS.active["chat"].update(
+        hyadex_server.RUNS.active["chat"].update(
             {
                 "codex_native_operation_kind": "compaction",
                 "codex_compaction_in_progress": True,
@@ -1807,15 +1805,15 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         manager = AsyncMock()
         with (
-            patch.object(agent_server, "append_event", side_effect=record_event),
+            patch.object(hyadex_server, "append_event", side_effect=record_event),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "release_codex_control_thread",
                 AsyncMock(),
             ) as release_thread,
         ):
             task = asyncio.create_task(
-                agent_server.consume_codex_native_turn(
+                hyadex_server.consume_codex_native_turn(
                     "chat",
                     "operation",
                     "compaction",
@@ -1828,10 +1826,10 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await subscription.waiting.wait()
             self.assertFalse(task.done())
             self.assertEqual(
-                agent_server.RUNS.active["chat"]["provider_turn_id"],
+                hyadex_server.RUNS.active["chat"]["provider_turn_id"],
                 "turn-compact",
             )
-            self.assertTrue(agent_server.RUNS.active["chat"]["provider_turn_ready"])
+            self.assertTrue(hyadex_server.RUNS.active["chat"]["provider_turn_ready"])
             release_thread.assert_not_awaited()
 
             subscription.release.set()
@@ -1859,7 +1857,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "Context compaction completed.",
         )
         manager.wait_for_notification_handler.assert_awaited_once_with(
-            agent_server.project_codex_notification,
+            hyadex_server.project_codex_notification,
             "thread",
         )
         release_thread.assert_awaited_once()
@@ -1867,7 +1865,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_sparse_late_replayed_compaction_completion_does_not_persist_twice(
         self,
     ) -> None:
-        agent_server.RUNS.active["chat"].update(
+        hyadex_server.RUNS.active["chat"].update(
             {
                 "codex_native_operation_kind": "compaction",
                 "codex_compaction_in_progress": True,
@@ -1931,7 +1929,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(reserved_session)
             self.assertEqual(reservation_id, "control-operation")
             self.assertTrue(lease_already_released)
-            released = await agent_server.release_codex_control_slot(
+            released = await hyadex_server.release_codex_control_slot(
                 session_id,
                 expected_thread_id=thread_id,
                 expected_reservation_id=reservation_id,
@@ -1939,22 +1937,22 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(released)
             self.assertNotIn(
                 session_id,
-                agent_server.RUNS.maintenance,
+                hyadex_server.RUNS.maintenance,
             )
 
         manager = AsyncMock()
         with (
-            patch.object(agent_server, "append_event", side_effect=record_event),
+            patch.object(hyadex_server, "append_event", side_effect=record_event),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "release_codex_control_thread",
                 side_effect=release_control_thread,
             ),
         ):
             # The global projector sees the provider completion while the
             # manual operation still owns ACTIVE and correctly suppresses it.
-            await agent_server.project_codex_notification(completed_notification)
-            await agent_server.consume_codex_native_turn(
+            await hyadex_server.project_codex_notification(completed_notification)
+            await hyadex_server.consume_codex_native_turn(
                 "chat",
                 "operation",
                 "compaction",
@@ -1963,7 +1961,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "control-operation",
                 subscription,
             )
-            self.assertNotIn("chat", agent_server.RUNS.active)
+            self.assertNotIn("chat", hyadex_server.RUNS.active)
 
             manual_completions = [
                 payload
@@ -1976,12 +1974,12 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             # Replaying either lifecycle edge after ACTIVE was released must
             # not leave an orphan start or a second automatic completion.
             # Either provider identity is sufficient when the other is sparse.
-            agent_server.RUNS.active["chat"] = {
+            hyadex_server.RUNS.active["chat"] = {
                 "run_id": "next-run",
                 "provider_thread_id": "thread",
                 "provider_turn_id": "turn-next",
             }
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "item/started",
                 "params": {
                     "threadId": "thread",
@@ -1993,14 +1991,14 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             })
             self.assertNotIn(
                 "codex_compaction_in_progress",
-                agent_server.RUNS.active["chat"],
+                hyadex_server.RUNS.active["chat"],
             )
             self.assertNotIn(
                 "codex_compaction_item_id",
-                agent_server.RUNS.active["chat"],
+                hyadex_server.RUNS.active["chat"],
             )
-            agent_server.RUNS.active.pop("chat")
-            await agent_server.project_codex_notification({
+            hyadex_server.RUNS.active.pop("chat")
+            await hyadex_server.project_codex_notification({
                 "method": "item/started",
                 "params": {
                     "threadId": "thread",
@@ -2008,8 +2006,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     "item": {"type": "contextCompaction"},
                 },
             })
-            await agent_server.project_codex_notification(completed_notification)
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification(completed_notification)
+            await hyadex_server.project_codex_notification({
                 "method": "item/completed",
                 "params": {
                     "threadId": "thread",
@@ -2019,7 +2017,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     },
                 },
             })
-            await agent_server.project_codex_notification({
+            await hyadex_server.project_codex_notification({
                 "method": "item/completed",
                 "params": {
                     "threadId": "thread",
@@ -2029,7 +2027,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             })
 
         lifecycle_keys = [
-            agent_server.timeline_index_codex_lifecycle_key(
+            hyadex_server.timeline_index_codex_lifecycle_key(
                 {"type": event_type, **payload}
             )
             for event_type, payload in events
@@ -2047,7 +2045,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     def test_native_compaction_terminal_aliases_never_use_thread_alone(self) -> None:
         self.assertEqual(
-            agent_server.native_codex_compaction_terminal_aliases(
+            hyadex_server.native_codex_compaction_terminal_aliases(
                 "thread",
                 None,
                 None,
@@ -2058,7 +2056,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_pending_stop_interrupts_when_compaction_turn_id_arrives(
         self,
     ) -> None:
-        agent_server.RUNS.active["chat"]["stop_requested"] = True
+        hyadex_server.RUNS.active["chat"]["stop_requested"] = True
         subscription = GatedNativeSubscription(
             [
                 {
@@ -2083,15 +2081,15 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         manager = AsyncMock()
         with (
-            patch.object(agent_server, "append_event", AsyncMock()),
+            patch.object(hyadex_server, "append_event", AsyncMock()),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "release_codex_control_thread",
                 AsyncMock(),
             ),
         ):
             task = asyncio.create_task(
-                agent_server.consume_codex_native_turn(
+                hyadex_server.consume_codex_native_turn(
                     "chat",
                     "operation",
                     "compaction",
@@ -2146,31 +2144,31 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         append = AsyncMock(return_value={})
         record_usage = AsyncMock()
         schedule = Mock()
-        agent_server.RUNS.stopped_runs.add("operation")
+        hyadex_server.RUNS.stopped_runs.add("operation")
         with (
-            patch.object(agent_server, "append_event", append),
+            patch.object(hyadex_server, "append_event", append),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "record_codex_token_usage",
                 record_usage,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "unpin_codex_app_server_thread",
                 AsyncMock(),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "release_codex_interactive_control_lease",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "schedule_next_queued_turn",
                 schedule,
             ),
         ):
             old_consumer = asyncio.create_task(
-                agent_server.consume_codex_native_turn(
+                hyadex_server.consume_codex_native_turn(
                     "chat",
                     "operation",
                     "shell",
@@ -2184,24 +2182,24 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             old_consumer.cancel()
             await asyncio.wait_for(handler_started.wait(), timeout=1)
 
-            released = await agent_server.release_codex_control_slot(
+            released = await hyadex_server.release_codex_control_slot(
                 "chat",
                 expected_thread_id="thread",
                 expected_reservation_id="control-operation",
             )
             self.assertTrue(released)
-            agent_server.RUNS.busy.add("chat")
-            agent_server.RUNS.current_turns["chat"] = {
+            hyadex_server.RUNS.busy.add("chat")
+            hyadex_server.RUNS.current_turns["chat"] = {
                 "run_id": "run-replacement",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
             }
-            agent_server.RUNS.active["chat"] = {
+            hyadex_server.RUNS.active["chat"] = {
                 "run_id": "run-replacement",
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                "backend": hyadex_server.BACKEND_CODEX,
+                "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                 "provider_thread_id": "thread-new",
             }
-            agent_server.STORE.sessions["chat"]["active_run"] = {
+            hyadex_server.STORE.sessions["chat"]["active_run"] = {
                 "run_id": "run-replacement"
             }
             finish_handler.set()
@@ -2212,17 +2210,17 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         record_usage.assert_not_awaited()
         schedule.assert_not_called()
         self.assertEqual(
-            agent_server.RUNS.active["chat"]["run_id"],
+            hyadex_server.RUNS.active["chat"]["run_id"],
             "run-replacement",
         )
         self.assertEqual(
-            agent_server.RUNS.current_turns["chat"]["run_id"],
+            hyadex_server.RUNS.current_turns["chat"]["run_id"],
             "run-replacement",
         )
-        self.assertIn("chat", agent_server.RUNS.busy)
-        self.assertNotIn("chat", agent_server.RUNS.maintenance)
-        self.assertNotIn("chat", agent_server.CODEX_CONTROL_TERMINAL_FENCES)
-        self.assertNotIn("operation", agent_server.RUNS.stopped_runs)
+        self.assertIn("chat", hyadex_server.RUNS.busy)
+        self.assertNotIn("chat", hyadex_server.RUNS.maintenance)
+        self.assertNotIn("chat", hyadex_server.CODEX_CONTROL_TERMINAL_FENCES)
+        self.assertNotIn("operation", hyadex_server.RUNS.stopped_runs)
 
     async def test_native_terminal_fence_releases_before_delayed_unpin(self) -> None:
         subscription = GatedNativeSubscription(
@@ -2249,27 +2247,27 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         schedule = Mock()
         with (
             patch.object(
-                agent_server,
+                hyadex_server,
                 "append_event",
                 AsyncMock(return_value={}),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "unpin_codex_app_server_thread",
                 side_effect=delayed_unpin,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "release_codex_interactive_control_lease",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "schedule_next_queued_turn",
                 schedule,
             ),
         ):
             old_consumer = asyncio.create_task(
-                agent_server.consume_codex_native_turn(
+                hyadex_server.consume_codex_native_turn(
                     "chat",
                     "operation",
                     "shell",
@@ -2282,37 +2280,37 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(unpin_started.wait(), timeout=1)
             self.assertNotIn(
                 "chat",
-                agent_server.RUNS.maintenance,
+                hyadex_server.RUNS.maintenance,
             )
             self.assertNotIn(
                 "chat",
-                agent_server.CODEX_CONTROL_TERMINAL_FENCES,
+                hyadex_server.CODEX_CONTROL_TERMINAL_FENCES,
             )
             schedule.assert_called_once_with("chat")
 
-            agent_server.RUNS.busy.add("chat")
-            agent_server.RUNS.current_turns["chat"] = {
+            hyadex_server.RUNS.busy.add("chat")
+            hyadex_server.RUNS.current_turns["chat"] = {
                 "run_id": "run-replacement",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
             }
-            agent_server.RUNS.active["chat"] = {
+            hyadex_server.RUNS.active["chat"] = {
                 "run_id": "run-replacement",
-                "backend": agent_server.BACKEND_CODEX,
-                "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+                "backend": hyadex_server.BACKEND_CODEX,
+                "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
                 "provider_thread_id": "thread-new",
             }
             finish_unpin.set()
             await old_consumer
 
         self.assertEqual(
-            agent_server.RUNS.active["chat"]["run_id"],
+            hyadex_server.RUNS.active["chat"]["run_id"],
             "run-replacement",
         )
         self.assertEqual(
-            agent_server.RUNS.current_turns["chat"]["run_id"],
+            hyadex_server.RUNS.current_turns["chat"]["run_id"],
             "run-replacement",
         )
-        self.assertIn("chat", agent_server.RUNS.busy)
+        self.assertIn("chat", hyadex_server.RUNS.busy)
 
     async def test_native_terminal_publication_fence_blocks_replacement_admission(
         self,
@@ -2346,24 +2344,24 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         manager = AsyncMock()
         schedule = Mock()
         with (
-            patch.object(agent_server, "append_event", side_effect=gated_append),
+            patch.object(hyadex_server, "append_event", side_effect=gated_append),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "unpin_codex_app_server_thread",
                 AsyncMock(),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "release_codex_interactive_control_lease",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "schedule_next_queued_turn",
                 schedule,
             ),
         ):
             old_consumer = asyncio.create_task(
-                agent_server.consume_codex_native_turn(
+                hyadex_server.consume_codex_native_turn(
                     "chat",
                     "operation",
                     "shell",
@@ -2374,20 +2372,20 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             await asyncio.wait_for(terminal_append_started.wait(), timeout=1)
-            self.assertNotIn("chat", agent_server.RUNS.active)
-            self.assertNotIn("chat", agent_server.RUNS.busy)
-            self.assertNotIn("chat", agent_server.RUNS.current_turns)
-            self.assertIn("chat", agent_server.RUNS.maintenance)
+            self.assertNotIn("chat", hyadex_server.RUNS.active)
+            self.assertNotIn("chat", hyadex_server.RUNS.busy)
+            self.assertNotIn("chat", hyadex_server.RUNS.current_turns)
+            self.assertIn("chat", hyadex_server.RUNS.maintenance)
             self.assertEqual(
-                agent_server.CODEX_CONTROL_TERMINAL_FENCES.get("chat"),
+                hyadex_server.CODEX_CONTROL_TERMINAL_FENCES.get("chat"),
                 "control-operation",
             )
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                await agent_server._start_turn_locked(
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                await hyadex_server._start_turn_locked(
                     "chat",
-                    agent_server.TurnRequest(prompt="replacement"),
+                    hyadex_server.TurnRequest(prompt="replacement"),
                     queue_if_busy=False,
-                    admission_backend=agent_server.BACKEND_CODEX,
+                    admission_backend=hyadex_server.BACKEND_CODEX,
                 )
             self.assertEqual(raised.exception.status_code, 409)
             self.assertIn("maintenance", str(raised.exception.detail))
@@ -2395,12 +2393,12 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             finish_terminal_append.set()
             await old_consumer
 
-        self.assertNotIn("chat", agent_server.RUNS.maintenance)
-        self.assertNotIn("chat", agent_server.CODEX_CONTROL_TERMINAL_FENCES)
+        self.assertNotIn("chat", hyadex_server.RUNS.maintenance)
+        self.assertNotIn("chat", hyadex_server.CODEX_CONTROL_TERMINAL_FENCES)
         schedule.assert_called_once_with("chat")
 
     async def test_budget_interrupt_survives_timeline_write_failure(self) -> None:
-        agent_server.STORE.sessions["chat"].update(
+        hyadex_server.STORE.sessions["chat"].update(
             {
                 "codex_goal": {
                     "status": "active",
@@ -2409,7 +2407,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "codex_goal_time_budget_seconds": 10,
             }
         )
-        agent_server.RUNS.active["chat"]["run_id"] = "run-budget"
+        hyadex_server.RUNS.active["chat"]["run_id"] = "run-budget"
         manager = AsyncMock()
         manager.set_thread_goal = AsyncMock(
             return_value={
@@ -2420,14 +2418,14 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         turn = AsyncMock()
         turn.turn_id = "turn-budget"
         with (
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "append_event",
                 AsyncMock(side_effect=OSError("disk full")),
             ),
         ):
-            await agent_server.apply_codex_goal_time_budget_limit(
+            await hyadex_server.apply_codex_goal_time_budget_limit(
                 "chat",
                 "run-budget",
                 manager,
@@ -2436,102 +2434,102 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 10,
             )
         turn.interrupt.assert_awaited_once()
-        self.assertTrue(agent_server.RUNS.active["chat"]["stop_requested"])
+        self.assertTrue(hyadex_server.RUNS.active["chat"]["stop_requested"])
         self.assertTrue(
-            agent_server.STORE.sessions["chat"][
+            hyadex_server.STORE.sessions["chat"][
                 "codex_goal_time_budget_exhausted"
             ]
         )
 
     async def test_native_tasks_can_be_cancelled_by_session(self) -> None:
-        agent_server.RUNS.active.pop("chat", None)
+        hyadex_server.RUNS.active.pop("chat", None)
         first = asyncio.create_task(asyncio.Event().wait())
         second = asyncio.create_task(asyncio.Event().wait())
-        agent_server.register_codex_native_action("chat", "first", first)
-        agent_server.register_codex_native_action("other", "second", second)
+        hyadex_server.register_codex_native_action("chat", "first", first)
+        hyadex_server.register_codex_native_action("other", "second", second)
 
-        await agent_server.cancel_codex_native_actions("chat")
+        await hyadex_server.cancel_codex_native_actions("chat")
 
         self.assertTrue(first.cancelled())
         self.assertFalse(second.done())
-        self.assertNotIn(("chat", "first"), agent_server.CODEX_NATIVE_ACTION_TASKS)
-        self.assertIn(("other", "second"), agent_server.CODEX_NATIVE_ACTION_TASKS)
+        self.assertNotIn(("chat", "first"), hyadex_server.CODEX_NATIVE_ACTION_TASKS)
+        self.assertIn(("other", "second"), hyadex_server.CODEX_NATIVE_ACTION_TASKS)
 
     async def test_native_task_without_turn_id_is_not_orphaned_by_cancel(
         self,
     ) -> None:
         task = asyncio.create_task(asyncio.Event().wait())
-        agent_server.register_codex_native_action("chat", "operation", task)
-        previous_manager = agent_server.PROVIDERS.codex_manager
-        agent_server.PROVIDERS.codex_manager = AsyncMock()
+        hyadex_server.register_codex_native_action("chat", "operation", task)
+        previous_manager = hyadex_server.PROVIDERS.codex_manager
+        hyadex_server.PROVIDERS.codex_manager = AsyncMock()
         try:
             with (
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "CODEX_SESSION_CLEANUP_TIMEOUT_SECONDS",
                     0.01,
                 ),
                 self.assertRaises(HTTPException) as raised,
             ):
-                await agent_server.cancel_codex_native_actions("chat")
+                await hyadex_server.cancel_codex_native_actions("chat")
             self.assertEqual(raised.exception.status_code, 409)
             self.assertFalse(task.done())
             self.assertTrue(
-                agent_server.RUNS.active["chat"]["stop_requested"]
+                hyadex_server.RUNS.active["chat"]["stop_requested"]
             )
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            agent_server.CODEX_NATIVE_ACTION_TASKS.pop(
+            hyadex_server.CODEX_NATIVE_ACTION_TASKS.pop(
                 ("chat", "operation"),
                 None,
             )
-            agent_server.PROVIDERS.codex_manager = previous_manager
+            hyadex_server.PROVIDERS.codex_manager = previous_manager
 
     async def test_thread_pins_and_interactive_controls_are_reference_counted(
         self,
     ) -> None:
         manager = AsyncMock()
-        await agent_server.pin_codex_app_server_thread("thread")
-        await agent_server.pin_codex_app_server_thread("thread")
-        await agent_server.unpin_codex_app_server_thread(manager, "thread")
+        await hyadex_server.pin_codex_app_server_thread("thread")
+        await hyadex_server.pin_codex_app_server_thread("thread")
+        await hyadex_server.unpin_codex_app_server_thread(manager, "thread")
         self.assertIn(
             "thread",
-            agent_server.CODEX_APP_SERVER_PINNED_THREADS,
+            hyadex_server.CODEX_APP_SERVER_PINNED_THREADS,
         )
         self.assertEqual(
-            agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"],
+            hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"],
             1,
         )
 
-        agent_server.acquire_codex_interactive_control_lease("thread")
-        agent_server.acquire_codex_interactive_control_lease("thread")
-        agent_server.release_codex_interactive_control_lease("thread")
+        hyadex_server.acquire_codex_interactive_control_lease("thread")
+        hyadex_server.acquire_codex_interactive_control_lease("thread")
+        hyadex_server.release_codex_interactive_control_lease("thread")
         self.assertIn(
             "thread",
-            agent_server.CODEX_INTERACTIVE_CONTROL_THREADS,
+            hyadex_server.CODEX_INTERACTIVE_CONTROL_THREADS,
         )
         self.assertEqual(
-            agent_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS["thread"],
+            hyadex_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS["thread"],
             1,
         )
 
     async def test_noninteractive_active_turn_allows_goal_clear_on_loaded_thread(
         self,
     ) -> None:
-        agent_server.STORE.sessions["chat"]["codex_goal"] = {
+        hyadex_server.STORE.sessions["chat"]["codex_goal"] = {
             "objective": "Finish the active task",
             "status": "active",
         }
-        agent_server.RUNS.active["chat"].update({
-            "backend": agent_server.BACKEND_CODEX,
-            "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+        hyadex_server.RUNS.active["chat"].update({
+            "backend": hyadex_server.BACKEND_CODEX,
+            "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
             "provider_thread_id": "thread",
             "interactive_app_server": False,
             "codex_native_operation": False,
         })
-        agent_server.CODEX_APP_SERVER_PINNED_THREADS.add("thread")
-        agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"] = 1
+        hyadex_server.CODEX_APP_SERVER_PINNED_THREADS.add("thread")
+        hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"] = 1
         manager = AsyncMock()
         manager.is_thread_loaded = Mock(return_value=True)
 
@@ -2539,7 +2537,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(thread_id, "thread")
             self.assertIn(
                 "chat",
-                agent_server.RUNS.maintenance,
+                hyadex_server.RUNS.maintenance,
             )
             return True
 
@@ -2547,23 +2545,23 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                agent_server.PROVIDERS,
+                hyadex_server.PROVIDERS,
                 "codex_manager",
                 manager,
             ),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "touch_codex_app_server_thread",
                 AsyncMock(),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_codex_app_server_thread",
                 AsyncMock(),
             ) as ensure_thread,
         ):
-            result = await agent_server._delete_codex_goal_locked("chat")
+            result = await hyadex_server._delete_codex_goal_locked("chat")
 
         self.assertEqual(
             result,
@@ -2576,37 +2574,37 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         manager.clear_thread_goal.assert_awaited_once_with("thread")
         ensure_thread.assert_not_awaited()
         self.assertIsNone(
-            agent_server.STORE.sessions["chat"]["codex_goal"],
+            hyadex_server.STORE.sessions["chat"]["codex_goal"],
         )
-        self.assertIn("chat", agent_server.RUNS.busy)
-        self.assertIn("chat", agent_server.RUNS.active)
+        self.assertIn("chat", hyadex_server.RUNS.busy)
+        self.assertIn("chat", hyadex_server.RUNS.active)
         self.assertIn(
             "thread",
-            agent_server.CODEX_APP_SERVER_PINNED_THREADS,
+            hyadex_server.CODEX_APP_SERVER_PINNED_THREADS,
         )
         self.assertEqual(
-            agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"],
+            hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"],
             1,
         )
         self.assertNotIn(
             "thread",
-            agent_server.CODEX_INTERACTIVE_CONTROL_THREADS,
+            hyadex_server.CODEX_INTERACTIVE_CONTROL_THREADS,
         )
         self.assertNotIn(
             "chat",
-            agent_server.RUNS.maintenance,
+            hyadex_server.RUNS.maintenance,
         )
 
     async def test_active_native_operation_allows_goal_clear_on_loaded_thread(
         self,
     ) -> None:
-        agent_server.STORE.sessions["chat"]["codex_goal"] = {
+        hyadex_server.STORE.sessions["chat"]["codex_goal"] = {
             "objective": "Stop this goal",
             "status": "active",
         }
-        agent_server.RUNS.active["chat"].update({
-            "backend": agent_server.BACKEND_CODEX,
-            "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+        hyadex_server.RUNS.active["chat"].update({
+            "backend": hyadex_server.BACKEND_CODEX,
+            "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
             "provider_thread_id": "thread",
             "interactive_app_server": True,
             "codex_native_operation": True,
@@ -2617,13 +2615,13 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                agent_server.PROVIDERS,
+                hyadex_server.PROVIDERS,
                 "codex_manager",
                 manager,
             ),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
         ):
-            result = await agent_server._delete_codex_goal_locked("chat")
+            result = await hyadex_server._delete_codex_goal_locked("chat")
 
         self.assertEqual(
             result,
@@ -2636,30 +2634,30 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         manager.clear_thread_goal.assert_awaited_once_with("thread")
         self.assertNotIn(
             "thread",
-            agent_server.CODEX_APP_SERVER_PINNED_THREADS,
+            hyadex_server.CODEX_APP_SERVER_PINNED_THREADS,
         )
         self.assertNotIn(
             "thread",
-            agent_server.CODEX_INTERACTIVE_CONTROL_THREADS,
+            hyadex_server.CODEX_INTERACTIVE_CONTROL_THREADS,
         )
 
     async def test_noninteractive_active_turn_allows_goal_update_on_loaded_thread(
         self,
     ) -> None:
-        agent_server.STORE.sessions["chat"]["codex_goal"] = {
+        hyadex_server.STORE.sessions["chat"]["codex_goal"] = {
             "objective": "Finish the active task",
             "status": "active",
             "timeUsedSeconds": 31,
         }
-        agent_server.RUNS.active["chat"].update({
-            "backend": agent_server.BACKEND_CODEX,
-            "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+        hyadex_server.RUNS.active["chat"].update({
+            "backend": hyadex_server.BACKEND_CODEX,
+            "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
             "provider_thread_id": "thread",
             "interactive_app_server": False,
             "codex_native_operation": False,
         })
-        agent_server.CODEX_APP_SERVER_PINNED_THREADS.add("thread")
-        agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"] = 1
+        hyadex_server.CODEX_APP_SERVER_PINNED_THREADS.add("thread")
+        hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"] = 1
         manager = AsyncMock()
         manager.is_thread_loaded = Mock(return_value=True)
         manager.set_thread_goal.return_value = {
@@ -2670,25 +2668,25 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                agent_server.PROVIDERS,
+                hyadex_server.PROVIDERS,
                 "codex_manager",
                 manager,
             ),
-            patch.object(agent_server.STORE, "save", AsyncMock()),
+            patch.object(hyadex_server.STORE, "save", AsyncMock()),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "touch_codex_app_server_thread",
                 AsyncMock(),
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_codex_app_server_thread",
                 AsyncMock(),
             ) as ensure_thread,
         ):
-            result = await agent_server._put_codex_goal_locked(
+            result = await hyadex_server._put_codex_goal_locked(
                 "chat",
-                agent_server.CodexGoalRequest(status="paused"),
+                hyadex_server.CodexGoalRequest(status="paused"),
             )
 
         self.assertEqual(result["goal"]["status"], "paused")
@@ -2697,18 +2695,18 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             status="paused",
         )
         ensure_thread.assert_not_awaited()
-        self.assertIn("chat", agent_server.RUNS.busy)
+        self.assertIn("chat", hyadex_server.RUNS.busy)
         self.assertIn(
             "thread",
-            agent_server.CODEX_APP_SERVER_PINNED_THREADS,
+            hyadex_server.CODEX_APP_SERVER_PINNED_THREADS,
         )
         self.assertEqual(
-            agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"],
+            hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"],
             1,
         )
         self.assertNotIn(
             "thread",
-            agent_server.CODEX_INTERACTIVE_CONTROL_THREADS,
+            hyadex_server.CODEX_INTERACTIVE_CONTROL_THREADS,
         )
 
     async def test_manager_shutdown_clears_lru_touched_by_turn_finalizer(
@@ -2733,79 +2731,79 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         async def finalize_after_close() -> None:
             await manager.closed.wait()
-            await agent_server.unpin_codex_app_server_thread(
+            await hyadex_server.unpin_codex_app_server_thread(
                 manager,
                 "thread",
             )
 
         task = asyncio.create_task(finalize_after_close())
-        agent_server.register_session_task(
-            agent_server.RUNS.turn_tasks,
+        hyadex_server.register_session_task(
+            hyadex_server.RUNS.turn_tasks,
             "chat",
             task,
         )
-        previous_manager = agent_server.PROVIDERS.codex_manager
-        agent_server.PROVIDERS.codex_manager = manager
-        agent_server.CODEX_APP_SERVER_PINNED_THREADS.add("thread")
-        agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"] = 1
+        previous_manager = hyadex_server.PROVIDERS.codex_manager
+        hyadex_server.PROVIDERS.codex_manager = manager
+        hyadex_server.CODEX_APP_SERVER_PINNED_THREADS.add("thread")
+        hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"] = 1
         try:
             with (
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "cancel_codex_interactions",
                     AsyncMock(),
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "cancel_codex_native_actions",
                     AsyncMock(),
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "reset_codex_ephemeral_runtime_metadata",
                     AsyncMock(),
                 ),
             ):
-                await agent_server.close_codex_app_server_manager()
-            self.assertFalse(agent_server.CODEX_APP_SERVER_THREAD_LRU)
-            self.assertFalse(agent_server.CODEX_APP_SERVER_PINNED_THREADS)
-            self.assertFalse(agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS)
+                await hyadex_server.close_codex_app_server_manager()
+            self.assertFalse(hyadex_server.CODEX_APP_SERVER_THREAD_LRU)
+            self.assertFalse(hyadex_server.CODEX_APP_SERVER_PINNED_THREADS)
+            self.assertFalse(hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS)
         finally:
-            agent_server.PROVIDERS.codex_manager = previous_manager
+            hyadex_server.PROVIDERS.codex_manager = previous_manager
 
     async def test_deleting_session_discards_append_waiting_on_event_lock(
         self,
     ) -> None:
-        lock = agent_server.event_delivery_lock("chat")
+        lock = hyadex_server.event_delivery_lock("chat")
         await lock.acquire()
         append_task = asyncio.create_task(
-            agent_server.append_event(
+            hyadex_server.append_event(
                 "chat",
                 "codex_thread_status",
                 {"message": "late"},
             )
         )
         await asyncio.sleep(0)
-        agent_server.DELETING_SESSIONS.add("chat")
+        hyadex_server.DELETING_SESSIONS.add("chat")
         try:
             lock.release()
             event = await append_task
         finally:
-            agent_server.DELETING_SESSIONS.discard("chat")
+            hyadex_server.DELETING_SESSIONS.discard("chat")
         self.assertTrue(event["discarded"])
         self.assertEqual(event["seq"], 0)
 
     async def test_session_turn_tasks_are_joinable_before_delete(self) -> None:
         release = asyncio.Event()
         task = asyncio.create_task(release.wait())
-        agent_server.register_session_task(
-            agent_server.RUNS.turn_tasks,
+        hyadex_server.register_session_task(
+            hyadex_server.RUNS.turn_tasks,
             "chat",
             task,
         )
         self.assertFalse(
-            await agent_server.wait_for_session_tasks(
-                agent_server.RUNS.turn_tasks,
+            await hyadex_server.wait_for_session_tasks(
+                hyadex_server.RUNS.turn_tasks,
                 "chat",
                 timeout=0.01,
             )
@@ -2813,8 +2811,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         release.set()
         await task
         self.assertTrue(
-            await agent_server.wait_for_session_tasks(
-                agent_server.RUNS.turn_tasks,
+            await hyadex_server.wait_for_session_tasks(
+                hyadex_server.RUNS.turn_tasks,
                 "chat",
                 timeout=0.01,
             )
@@ -2828,7 +2826,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "objective": "Finish the task",
             "status": "paused",
         }
-        agent_server.STORE.sessions["chat"]["codex_goal"] = {
+        hyadex_server.STORE.sessions["chat"]["codex_goal"] = {
             **paused_goal,
             "status": "active",
         }
@@ -2840,10 +2838,10 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             interrupted.set()
 
         native_turn.interrupt = AsyncMock(side_effect=interrupt)
-        agent_server.RUNS.active["chat"] = {
+        hyadex_server.RUNS.active["chat"] = {
             "run_id": "run",
-            "backend": agent_server.BACKEND_CODEX,
-            "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+            "backend": hyadex_server.BACKEND_CODEX,
+            "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
             "provider_thread_id": "thread",
             "provider_session_id": "thread",
             "provider_turn_id": "turn",
@@ -2868,8 +2866,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         manager.set_thread_goal = AsyncMock(side_effect=pause_goal)
         turn_task = asyncio.create_task(interrupted.wait())
-        agent_server.register_session_task(
-            agent_server.RUNS.turn_tasks,
+        hyadex_server.register_session_task(
+            hyadex_server.RUNS.turn_tasks,
             "chat",
             turn_task,
         )
@@ -2878,29 +2876,29 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             session_path = state_dir / "sessions" / "chat"
             session_path.mkdir(parents=True)
             with (
-                patch.object(agent_server, "STATE_DIR", state_dir),
+                patch.object(hyadex_server, "STATE_DIR", state_dir),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "SESSIONS_FILE",
                     state_dir / "sessions.json",
                 ),
-                patch.object(agent_server, "ensure_dirs"),
+                patch.object(hyadex_server, "ensure_dirs"),
                 patch.object(
-                    agent_server.PROVIDERS,
+                    hyadex_server.PROVIDERS,
                     "codex_manager",
                     manager,
                 ),
                 patch.object(
-                    agent_server.JOBS,
+                    hyadex_server.JOBS,
                     "delete_for_session",
                     AsyncMock(return_value=0),
                 ),
-                patch.object(agent_server, "kill_terminal_session"),
+                patch.object(hyadex_server, "kill_terminal_session"),
             ):
                 try:
-                    result = await agent_server.delete_session("chat")
+                    result = await hyadex_server.delete_session("chat")
                 finally:
-                    agent_server.DELETED_SESSION_TOMBSTONES.discard("chat")
+                    hyadex_server.DELETED_SESSION_TOMBSTONES.discard("chat")
 
         self.assertEqual(order, ["pause", "interrupt"])
         manager.set_thread_goal.assert_awaited_once_with(
@@ -2909,7 +2907,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         native_turn.interrupt.assert_awaited_once()
         self.assertTrue(result["deleted"])
-        self.assertNotIn("chat", agent_server.STORE.sessions)
+        self.assertNotIn("chat", hyadex_server.STORE.sessions)
 
     async def test_delete_preserves_session_when_active_goal_cannot_pause(
         self,
@@ -2920,13 +2918,13 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "objective": "Finish the task",
             "status": "active",
         }
-        agent_server.STORE.sessions["chat"]["codex_goal"] = active_goal
+        hyadex_server.STORE.sessions["chat"]["codex_goal"] = active_goal
         native_turn = Mock(turn_id="turn")
         native_turn.interrupt = AsyncMock()
-        agent_server.RUNS.active["chat"] = {
+        hyadex_server.RUNS.active["chat"] = {
             "run_id": "run",
-            "backend": agent_server.BACKEND_CODEX,
-            "transport": agent_server.CODEX_TRANSPORT_APP_SERVER,
+            "backend": hyadex_server.BACKEND_CODEX,
+            "transport": hyadex_server.CODEX_TRANSPORT_APP_SERVER,
             "provider_thread_id": "thread",
             "provider_session_id": "thread",
             "provider_turn_id": "turn",
@@ -2941,33 +2939,33 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                agent_server.PROVIDERS,
+                hyadex_server.PROVIDERS,
                 "codex_manager",
                 manager,
             ),
             self.assertRaises(HTTPException) as raised,
         ):
-            await agent_server.delete_session("chat")
+            await hyadex_server.delete_session("chat")
 
         self.assertEqual(raised.exception.status_code, 409)
         self.assertIn("goal control unavailable", str(raised.exception.detail))
-        self.assertIn("chat", agent_server.STORE.sessions)
+        self.assertIn("chat", hyadex_server.STORE.sessions)
         self.assertEqual(
-            agent_server.STORE.sessions["chat"]["codex_goal"],
+            hyadex_server.STORE.sessions["chat"]["codex_goal"],
             active_goal,
         )
-        self.assertNotIn("chat", agent_server.DELETED_SESSION_TOMBSTONES)
-        self.assertNotIn("chat", agent_server.DELETING_SESSIONS)
+        self.assertNotIn("chat", hyadex_server.DELETED_SESSION_TOMBSTONES)
+        self.assertNotIn("chat", hyadex_server.DELETING_SESSIONS)
         native_turn.interrupt.assert_not_awaited()
 
     async def test_delete_drains_late_turn_before_removing_session(self) -> None:
         late_event: dict[str, object] = {}
 
         async def finish_during_delete() -> None:
-            while "chat" not in agent_server.DELETING_SESSIONS:
+            while "chat" not in hyadex_server.DELETING_SESSIONS:
                 await asyncio.sleep(0)
             late_event.update(
-                await agent_server.append_event(
+                await hyadex_server.append_event(
                     "chat",
                     "assistant_text",
                     {"text": "too late"},
@@ -2975,8 +2973,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             )
 
         task = asyncio.create_task(finish_during_delete())
-        agent_server.register_session_task(
-            agent_server.RUNS.turn_tasks,
+        hyadex_server.register_session_task(
+            hyadex_server.RUNS.turn_tasks,
             "chat",
             task,
         )
@@ -2986,51 +2984,51 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             session_path.mkdir(parents=True)
             (session_path / "events.jsonl").write_text("{}\n")
             with (
-                patch.object(agent_server, "STATE_DIR", state_dir),
+                patch.object(hyadex_server, "STATE_DIR", state_dir),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "SESSIONS_FILE",
                     state_dir / "sessions.json",
                 ),
-                patch.object(agent_server, "ensure_dirs"),
+                patch.object(hyadex_server, "ensure_dirs"),
                 patch.object(
-                    agent_server.PROVIDERS,
+                    hyadex_server.PROVIDERS,
                     "codex_manager",
                     None,
                 ),
                 patch.object(
-                    agent_server.JOBS,
+                    hyadex_server.JOBS,
                     "delete_for_session",
                     AsyncMock(return_value=0),
                 ),
-                patch.object(agent_server, "kill_terminal_session"),
+                patch.object(hyadex_server, "kill_terminal_session"),
             ):
                 try:
-                    result = await agent_server.delete_session("chat")
+                    result = await hyadex_server.delete_session("chat")
                     self.assertIn(
                         "chat",
-                        agent_server.DELETED_SESSION_TOMBSTONES,
+                        hyadex_server.DELETED_SESSION_TOMBSTONES,
                     )
                 finally:
-                    agent_server.DELETED_SESSION_TOMBSTONES.discard("chat")
+                    hyadex_server.DELETED_SESSION_TOMBSTONES.discard("chat")
 
             self.assertTrue(result["deleted"])
             self.assertFalse(session_path.exists())
-        self.assertNotIn("chat", agent_server.STORE.sessions)
+        self.assertNotIn("chat", hyadex_server.STORE.sessions)
         self.assertTrue(late_event["discarded"])
 
     async def test_cancelled_committed_delete_finishes_all_cleanup(self) -> None:
-        store = agent_server.SessionStore()
+        store = hyadex_server.SessionStore()
         store.sessions = {
             "chat": {
                 "id": "chat",
-                "backend": agent_server.BACKEND_CODEX,
+                "backend": hyadex_server.BACKEND_CODEX,
                 "codex_thread_id": "thread",
             },
         }
         first_write_started = threading.Event()
         release_first_write = threading.Event()
-        real_write = agent_server.write_sessions_json_text
+        real_write = hyadex_server.write_sessions_json_text
 
         def blocked_write(
             path: Path,
@@ -3051,39 +3049,39 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             delete_jobs = AsyncMock(return_value=2)
             event_seq_cache = {"chat": 41}
             with (
-                patch.object(agent_server, "STORE", store),
-                patch.object(agent_server, "STATE_DIR", state_dir),
+                patch.object(hyadex_server, "STORE", store),
+                patch.object(hyadex_server, "STATE_DIR", state_dir),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "SESSIONS_FILE",
                     state_dir / "sessions.json",
                 ),
-                patch.object(agent_server, "ensure_dirs"),
+                patch.object(hyadex_server, "ensure_dirs"),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "EVENT_SEQ_CACHE",
                     event_seq_cache,
                 ),
-                patch.object(agent_server, "EVENT_SEQ_LOCK", asyncio.Lock()),
+                patch.object(hyadex_server, "EVENT_SEQ_LOCK", asyncio.Lock()),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "write_sessions_json_text",
                     side_effect=blocked_write,
                 ),
                 patch.object(
-                    agent_server.PROVIDERS,
+                    hyadex_server.PROVIDERS,
                     "codex_manager",
                     None,
                 ),
                 patch.object(
-                    agent_server.JOBS,
+                    hyadex_server.JOBS,
                     "delete_for_session",
                     delete_jobs,
                 ),
-                patch.object(agent_server, "kill_terminal_session"),
+                patch.object(hyadex_server, "kill_terminal_session"),
             ):
                 delete_task = asyncio.create_task(
-                    agent_server.delete_session("chat")
+                    hyadex_server.delete_session("chat")
                 )
                 try:
                     self.assertTrue(
@@ -3107,10 +3105,10 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("chat", store.sessions)
         self.assertNotIn("chat", event_seq_cache)
-        self.assertIn("chat", agent_server.DELETED_SESSION_TOMBSTONES)
-        self.assertNotIn("chat", agent_server.DELETING_SESSIONS)
+        self.assertIn("chat", hyadex_server.DELETED_SESSION_TOMBSTONES)
+        self.assertNotIn("chat", hyadex_server.DELETING_SESSIONS)
         delete_jobs.assert_awaited_once_with("chat")
-        agent_server.DELETED_SESSION_TOMBSTONES.discard("chat")
+        hyadex_server.DELETED_SESSION_TOMBSTONES.discard("chat")
 
     async def test_delete_job_cleanup_failure_is_retryable_without_resurrection(
         self,
@@ -3124,39 +3122,39 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=[OSError("job store unavailable"), 2]
             )
             with (
-                patch.object(agent_server, "STATE_DIR", state_dir),
+                patch.object(hyadex_server, "STATE_DIR", state_dir),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "SESSIONS_FILE",
                     state_dir / "sessions.json",
                 ),
-                patch.object(agent_server, "ensure_dirs"),
+                patch.object(hyadex_server, "ensure_dirs"),
                 patch.object(
-                    agent_server.PROVIDERS,
+                    hyadex_server.PROVIDERS,
                     "codex_manager",
                     None,
                 ),
                 patch.object(
-                    agent_server.JOBS,
+                    hyadex_server.JOBS,
                     "delete_for_session",
                     delete_jobs,
                 ),
-                patch.object(agent_server, "kill_terminal_session"),
+                patch.object(hyadex_server, "kill_terminal_session"),
             ):
                 try:
                     with self.assertRaisesRegex(
                         OSError,
                         "job store unavailable",
                     ):
-                        await agent_server.delete_session("chat")
+                        await hyadex_server.delete_session("chat")
 
-                    self.assertNotIn("chat", agent_server.STORE.sessions)
+                    self.assertNotIn("chat", hyadex_server.STORE.sessions)
                     self.assertIn(
                         "chat",
-                        agent_server.DELETED_SESSION_TOMBSTONES,
+                        hyadex_server.DELETED_SESSION_TOMBSTONES,
                     )
                     self.assertFalse(session_path.exists())
-                    late_event = await agent_server.append_event(
+                    late_event = await hyadex_server.append_event(
                         "chat",
                         "job_error",
                         {"message": "must not resurrect"},
@@ -3164,18 +3162,18 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(late_event["discarded"])
                     self.assertFalse(session_path.exists())
 
-                    retry = await agent_server.delete_session("chat")
+                    retry = await hyadex_server.delete_session("chat")
                     self.assertFalse(retry["deleted"])
                     self.assertEqual(retry["deleted_jobs"], 2)
                     self.assertEqual(delete_jobs.await_count, 2)
                     self.assertFalse(session_path.exists())
                 finally:
-                    agent_server.DELETED_SESSION_TOMBSTONES.discard("chat")
+                    hyadex_server.DELETED_SESSION_TOMBSTONES.discard("chat")
 
     async def test_delete_cleans_provider_thread_bound_while_turn_drains(
         self,
     ) -> None:
-        agent_server.STORE.sessions["chat"]["codex_thread_id"] = None
+        hyadex_server.STORE.sessions["chat"]["codex_thread_id"] = None
 
         class LateBindingManager:
             def __init__(self) -> None:
@@ -3186,26 +3184,26 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         manager = LateBindingManager()
         thread_index: dict[str, str] = {}
-        thread_lru = agent_server.OrderedDict()
-        approval_cache = agent_server.OrderedDict()
+        thread_lru = hyadex_server.OrderedDict()
+        approval_cache = hyadex_server.OrderedDict()
 
         async def bind_before_turn_finishes() -> None:
-            while "chat" not in agent_server.DELETING_SESSIONS:
+            while "chat" not in hyadex_server.DELETING_SESSIONS:
                 await asyncio.sleep(0)
-            session = agent_server.STORE.sessions["chat"]
+            session = hyadex_server.STORE.sessions["chat"]
             session["session_id"] = "late-thread"
             session["codex_thread_id"] = "late-thread"
             thread_index["late-thread"] = "chat"
             thread_lru["late-thread"] = 1.0
-            agent_server.CODEX_APP_SERVER_PINNED_THREADS.add("late-thread")
-            agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["late-thread"] = 1
-            agent_server.CODEX_INTERACTIVE_CONTROL_THREADS.add("late-thread")
-            agent_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS["late-thread"] = 1
+            hyadex_server.CODEX_APP_SERVER_PINNED_THREADS.add("late-thread")
+            hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["late-thread"] = 1
+            hyadex_server.CODEX_INTERACTIVE_CONTROL_THREADS.add("late-thread")
+            hyadex_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS["late-thread"] = 1
             approval_cache[("late-thread", "approval")] = {"id": "approval"}
 
         turn_task = asyncio.create_task(bind_before_turn_finishes())
-        agent_server.register_session_task(
-            agent_server.RUNS.turn_tasks,
+        hyadex_server.register_session_task(
+            hyadex_server.RUNS.turn_tasks,
             "chat",
             turn_task,
         )
@@ -3214,44 +3212,44 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             session_path = state_dir / "sessions" / "chat"
             session_path.mkdir(parents=True)
             with (
-                patch.object(agent_server, "STATE_DIR", state_dir),
+                patch.object(hyadex_server, "STATE_DIR", state_dir),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "SESSIONS_FILE",
                     state_dir / "sessions.json",
                 ),
-                patch.object(agent_server, "ensure_dirs"),
+                patch.object(hyadex_server, "ensure_dirs"),
                 patch.object(
-                    agent_server.PROVIDERS,
+                    hyadex_server.PROVIDERS,
                     "codex_manager",
                     manager,
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "CODEX_THREAD_SESSION_INDEX",
                     thread_index,
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "CODEX_APP_SERVER_THREAD_LRU",
                     thread_lru,
                 ),
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "CODEX_APPROVAL_ITEM_CACHE",
                     approval_cache,
                 ),
                 patch.object(
-                    agent_server.JOBS,
+                    hyadex_server.JOBS,
                     "delete_for_session",
                     AsyncMock(return_value=0),
                 ),
-                patch.object(agent_server, "kill_terminal_session"),
+                patch.object(hyadex_server, "kill_terminal_session"),
             ):
                 try:
-                    result = await agent_server.delete_session("chat")
+                    result = await hyadex_server.delete_session("chat")
                 finally:
-                    agent_server.DELETED_SESSION_TOMBSTONES.discard("chat")
+                    hyadex_server.DELETED_SESSION_TOMBSTONES.discard("chat")
 
         self.assertTrue(result["deleted"])
         manager.unsubscribe_thread.assert_awaited_once_with("late-thread")
@@ -3259,26 +3257,26 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("late-thread", thread_lru)
         self.assertNotIn(
             "late-thread",
-            agent_server.CODEX_APP_SERVER_PINNED_THREADS,
+            hyadex_server.CODEX_APP_SERVER_PINNED_THREADS,
         )
         self.assertNotIn(
             "late-thread",
-            agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS,
+            hyadex_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS,
         )
         self.assertNotIn(
             "late-thread",
-            agent_server.CODEX_INTERACTIVE_CONTROL_THREADS,
+            hyadex_server.CODEX_INTERACTIVE_CONTROL_THREADS,
         )
         self.assertNotIn(
             "late-thread",
-            agent_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS,
+            hyadex_server.CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS,
         )
         self.assertFalse(approval_cache)
 
     async def test_delete_timeout_preserves_session_for_retry(self) -> None:
         task = asyncio.create_task(asyncio.Event().wait())
-        agent_server.register_session_task(
-            agent_server.RUNS.turn_tasks,
+        hyadex_server.register_session_task(
+            hyadex_server.RUNS.turn_tasks,
             "chat",
             task,
         )
@@ -3288,30 +3286,30 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 _session_id: str,
                 **_kwargs: object,
             ) -> bool:
-                return registry is not agent_server.RUNS.turn_tasks
+                return registry is not hyadex_server.RUNS.turn_tasks
 
             with (
                 patch.object(
-                    agent_server,
+                    hyadex_server,
                     "wait_for_session_tasks",
                     side_effect=wait_for_tasks,
                 ),
                 self.assertRaises(HTTPException) as raised,
             ):
-                await agent_server.delete_session("chat")
+                await hyadex_server.delete_session("chat")
             self.assertEqual(raised.exception.status_code, 409)
-            self.assertIn("chat", agent_server.STORE.sessions)
+            self.assertIn("chat", hyadex_server.STORE.sessions)
             self.assertNotIn(
                 "chat",
-                agent_server.DELETED_SESSION_TOMBSTONES,
+                hyadex_server.DELETED_SESSION_TOMBSTONES,
             )
-            self.assertNotIn("chat", agent_server.DELETING_SESSIONS)
+            self.assertNotIn("chat", hyadex_server.DELETING_SESSIONS)
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
     async def test_deleted_session_does_not_receive_native_final_events(self) -> None:
-        agent_server.STORE.sessions = {}
+        hyadex_server.STORE.sessions = {}
         subscription = GatedNativeSubscription(
             [
                 {
@@ -3326,14 +3324,14 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         subscription.release.set()
         with (
-            patch.object(agent_server, "append_event", AsyncMock()) as append,
+            patch.object(hyadex_server, "append_event", AsyncMock()) as append,
             patch.object(
-                agent_server,
+                hyadex_server,
                 "release_codex_control_thread",
                 AsyncMock(),
             ),
         ):
-            await agent_server.consume_codex_native_turn(
+            await hyadex_server.consume_codex_native_turn(
                 "chat",
                 "operation",
                 "shell",

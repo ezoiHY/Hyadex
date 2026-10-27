@@ -7,7 +7,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import agent_server
+from tests import hyadex_server
 from tests.runtime_state import patch_server_multiple
 
 
@@ -21,11 +21,11 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.queued_id = "queued-accepted-followup"
         self.launch = AsyncMock(return_value={"run_id": "new-run", "queued": False})
         self.tasks = []
-        self.scope.enter_context(patch.object(agent_server.STORE, "sessions", {
+        self.scope.enter_context(patch.object(hyadex_server.STORE, "sessions", {
             self.session_id: {"id": self.session_id, "backend": "codex"},
         }))
         self.scope.enter_context(patch_server_multiple(
-            agent_server,
+            hyadex_server,
             QUEUED_TURNS={}, RUN_NOW_TURNS={}, ACTIVE={}, CURRENT_TURNS={},
             BUSY_SESSIONS=set(), STEERING_SESSIONS=set(), STEERING_WAIT_TASKS={},
             RUN_NOW_REQUESTS={}, QUEUE_START_TASKS={}, SESSION_TURN_TASKS={},
@@ -42,7 +42,7 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
     def schedule(self, session_id: str) -> None:
         # Run the actual promotion and reconciliation code, retaining task
         # handles so assertions cannot race detached queue scheduling.
-        self.tasks.append(asyncio.create_task(agent_server.start_next_queued_turn(session_id)))
+        self.tasks.append(asyncio.create_task(hyadex_server.start_next_queued_turn(session_id)))
 
     async def settle(self) -> None:
         while self.tasks:
@@ -75,13 +75,13 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_startup_recovery_does_not_redeliver_acknowledged_goal_followup(self) -> None:
         self.write_events(self.incident_events())
-        recovery = await agent_server.recover_queued_turns_after_start()
+        recovery = await hyadex_server.recover_queued_turns_after_start()
         await self.settle()
-        await agent_server.reconcile_idle_queue_session(self.session_id, schedule=True, reason="session_snapshot")
+        await hyadex_server.reconcile_idle_queue_session(self.session_id, schedule=True, reason="session_snapshot")
         await self.settle()
         self.launch.assert_not_awaited()
         self.assertEqual(recovery, (0, 0))
-        self.assertEqual(await agent_server.queued_turns_snapshot(self.session_id), [])
+        self.assertEqual(await hyadex_server.queued_turns_snapshot(self.session_id), [])
 
     async def test_stale_force_send_owner_cannot_restore_consumed_goal_followup(self) -> None:
         self.write_events(self.incident_events())
@@ -91,18 +91,18 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         owner = asyncio.create_task(abandoned_owner())
         owner._hyadex_force_send_started_at = time.monotonic() - 1000
-        agent_server.RUNS.run_now_requests[self.session_id] = (self.queued_id, owner)
-        agent_server.RUNS.steering.add(self.session_id)
+        hyadex_server.RUNS.run_now_requests[self.session_id] = (self.queued_id, owner)
+        hyadex_server.RUNS.steering.add(self.session_id)
         try:
-            repaired = await agent_server.reconcile_idle_queue_session(
+            repaired = await hyadex_server.reconcile_idle_queue_session(
                 self.session_id, schedule=True, reason="health_poll",
             )
             await self.settle()
             self.launch.assert_not_awaited()
             self.assertTrue(repaired)
             self.assertTrue(owner.cancelled())
-            self.assertFalse(await agent_server.restore_missing_durable_force_send_row(self.session_id, self.queued_id))
-            self.assertEqual(await agent_server.queued_turns_snapshot(self.session_id), [])
+            self.assertFalse(await hyadex_server.restore_missing_durable_force_send_row(self.session_id, self.queued_id))
+            self.assertEqual(await hyadex_server.queued_turns_snapshot(self.session_id), [])
         finally:
             owner.cancel()
             await asyncio.gather(owner, return_exceptions=True)
@@ -112,7 +112,7 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
             "type": "turn_queued", "queued_id": "queued-new-work",
             "prompt": "Genuinely waiting work", "backend": "codex", "file_ids": [],
         }])
-        recovery = await agent_server.recover_queued_turns_after_start()
+        recovery = await hyadex_server.recover_queued_turns_after_start()
         await self.settle()
         self.launch.assert_awaited_once()
         self.assertEqual(self.launch.await_args.kwargs["queued_id"], "queued-new-work")
@@ -133,15 +133,15 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
             cases.append(events)
         for index, events in enumerate(cases):
             with self.subTest(case=index):
-                agent_server.RUNS.queued.clear()
+                hyadex_server.RUNS.queued.clear()
                 self.launch.reset_mock()
                 self.write_events(events)
-                recovery = await agent_server.recover_queued_turns_after_start()
+                recovery = await hyadex_server.recover_queued_turns_after_start()
                 await self.settle()
-                await agent_server.start_next_queued_turn(self.session_id)
+                await hyadex_server.start_next_queued_turn(self.session_id)
                 self.launch.assert_not_awaited()
                 self.assertEqual(recovery, (1, 0))
-                queued = await agent_server.queued_turns_snapshot(self.session_id)
+                queued = await hyadex_server.queued_turns_snapshot(self.session_id)
                 self.assertEqual(len(queued), 1)
                 self.assertEqual(queued[0]["queued_id"], self.queued_id)
                 self.assertTrue(queued[0]["paused"])
@@ -151,7 +151,7 @@ class ConsumedGoalQueueRecoveryTests(unittest.IsolatedAsyncioTestCase):
         events = self.incident_events()
         ordinary_steer = {**events[-1], "purpose": None, "native_goal_steer": False}
         self.write_events([events[0], ordinary_steer])
-        self.assertEqual(await agent_server.recover_queued_turns_after_start(), (1, 1))
+        self.assertEqual(await hyadex_server.recover_queued_turns_after_start(), (1, 1))
         await self.settle()
         self.launch.assert_awaited_once()
         self.assertEqual(self.launch.await_args.kwargs["queued_id"], self.queued_id)

@@ -3,13 +3,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import agent_server
-
-
+from tests import hyadex_server
 class TerminalShellInitializationTests(unittest.TestCase):
     def test_tmux_bootstrap_environment_allowlists_and_drops_server_secrets(self) -> None:
         with patch.dict(
-            agent_server.os.environ,
+            hyadex_server.os.environ,
             {
                 "HOME": "/home/user",
                 "USER": "user",
@@ -24,24 +22,24 @@ class TerminalShellInitializationTests(unittest.TestCase):
             },
             clear=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "server_instance_environment",
             return_value={"XDG_RUNTIME_DIR": "/run/user/1000"},
         ):
-            environment = agent_server.tmux_bootstrap_environment()
+            environment = hyadex_server.tmux_bootstrap_environment()
 
         self.assertEqual(environment["HOME"], "/home/user")
         self.assertEqual(environment["XDG_RUNTIME_DIR"], "/run/user/1000")
-        for name in (*agent_server.PROVIDER_SECRET_ENV_NAMES, "HTTPS_PROXY"):
+        for name in (*hyadex_server.PROVIDER_SECRET_ENV_NAMES, "HTTPS_PROXY"):
             self.assertNotIn(name, environment)
 
     def test_existing_tmux_daemon_global_environment_is_scrubbed(self) -> None:
         with patch.object(
-            agent_server,
+            hyadex_server,
             "tmux_server_pid",
             return_value=4321,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_tmux",
             side_effect=lambda args, **_kwargs: subprocess.CompletedProcess(
                 args,
@@ -50,11 +48,11 @@ class TerminalShellInitializationTests(unittest.TestCase):
                 stderr="",
             ),
         ) as run_tmux:
-            agent_server.scrub_tmux_global_secret_environment()
+            hyadex_server.scrub_tmux_global_secret_environment()
 
         commands = [call.args[0] for call in run_tmux.call_args_list]
         rendered = " ; ".join(" ".join(command) for command in commands)
-        for name in agent_server.PROVIDER_SECRET_ENV_NAMES:
+        for name in hyadex_server.PROVIDER_SECRET_ENV_NAMES:
             self.assertIn(f"set-environment -gu {name}", rendered)
             self.assertIn(f"set-environment -t hx_one -u {name}", rendered)
             self.assertIn(f"set-environment -t other -u {name}", rendered)
@@ -62,7 +60,7 @@ class TerminalShellInitializationTests(unittest.TestCase):
     def test_terminal_attach_client_does_not_inherit_server_secrets(self) -> None:
         inherited = {
             name: f"secret-{index}"
-            for index, name in enumerate(agent_server.PROVIDER_SECRET_ENV_NAMES)
+            for index, name in enumerate(hyadex_server.PROVIDER_SECRET_ENV_NAMES)
         }
         captured: dict[str, str] = {}
 
@@ -71,73 +69,73 @@ class TerminalShellInitializationTests(unittest.TestCase):
             return SimpleNamespace(pid=1234)
 
         with (
-            patch.dict(agent_server.os.environ, inherited, clear=False),
+            patch.dict(hyadex_server.os.environ, inherited, clear=False),
             patch.dict(
-                agent_server.STORE.sessions,
+                hyadex_server.STORE.sessions,
                 {"chat": {"id": "chat", "cwd": "/tmp"}},
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_terminal_session",
                 return_value={"name": "hx_chat", "cwd": "/tmp"},
             ),
-            patch.object(agent_server.pty, "openpty", return_value=(10, 11)),
-            patch.object(agent_server, "set_pty_dimensions"),
-            patch.object(agent_server.subprocess, "Popen", side_effect=popen),
-            patch.object(agent_server.os, "close"),
-            patch.object(agent_server.os, "set_blocking") as set_blocking,
-            patch.object(agent_server, "tmux_bin", return_value="tmux"),
+            patch.object(hyadex_server.pty, "openpty", return_value=(10, 11)),
+            patch.object(hyadex_server, "set_pty_dimensions"),
+            patch.object(hyadex_server.subprocess, "Popen", side_effect=popen),
+            patch.object(hyadex_server.os, "close"),
+            patch.object(hyadex_server.os, "set_blocking") as set_blocking,
+            patch.object(hyadex_server, "tmux_bin", return_value="tmux"),
         ):
-            agent_server.spawn_terminal_client("chat", "/tmp", 80, 24)
+            hyadex_server.spawn_terminal_client("chat", "/tmp", 80, 24)
 
         set_blocking.assert_called_once_with(10, False)
-        for name in agent_server.PROVIDER_SECRET_ENV_NAMES:
+        for name in hyadex_server.PROVIDER_SECRET_ENV_NAMES:
             self.assertNotIn(name, captured)
 
     def test_shell_validation_rejects_disabled_relative_directory_and_null_paths(self) -> None:
-        self.assertIsNone(agent_server.valid_terminal_login_shell("/usr/sbin/nologin"))
-        self.assertIsNone(agent_server.valid_terminal_login_shell("relative/bash"))
-        self.assertIsNone(agent_server.valid_terminal_login_shell("~/bin/bash"))
-        self.assertIsNone(agent_server.valid_terminal_login_shell("/"))
-        self.assertIsNone(agent_server.valid_terminal_login_shell("/bin/bash\x00suffix"))
+        self.assertIsNone(hyadex_server.valid_terminal_login_shell("/usr/sbin/nologin"))
+        self.assertIsNone(hyadex_server.valid_terminal_login_shell("relative/bash"))
+        self.assertIsNone(hyadex_server.valid_terminal_login_shell("~/bin/bash"))
+        self.assertIsNone(hyadex_server.valid_terminal_login_shell("/"))
+        self.assertIsNone(hyadex_server.valid_terminal_login_shell("/bin/bash\x00suffix"))
 
     def test_account_shell_is_resolved_from_passwd_not_inherited_shell(self) -> None:
         validate = lambda value: value if value == "/bin/bash" else None
         with patch.object(
-            agent_server.pwd,
+            hyadex_server.pwd,
             "getpwuid",
             return_value=SimpleNamespace(pw_shell="/bin/bash"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "valid_terminal_login_shell",
             side_effect=validate,
-        ), patch.dict(agent_server.os.environ, {"SHELL": "/bin/sh"}):
-            self.assertEqual(agent_server.resolve_terminal_login_shell(), "/bin/bash")
+        ), patch.dict(hyadex_server.os.environ, {"SHELL": "/bin/sh"}):
+            self.assertEqual(hyadex_server.resolve_terminal_login_shell(), "/bin/bash")
 
     def test_disabled_account_shell_fails_closed(self) -> None:
         with patch.object(
-            agent_server.pwd,
+            hyadex_server.pwd,
             "getpwuid",
             return_value=SimpleNamespace(pw_shell="/usr/sbin/nologin"),
         ):
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                agent_server.resolve_terminal_login_shell()
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                hyadex_server.resolve_terminal_login_shell()
 
         self.assertEqual(raised.exception.status_code, 503)
         self.assertIn("disabled login shell", str(raised.exception.detail))
 
     def test_invalid_explicit_account_shell_does_not_grant_a_fallback_shell(self) -> None:
         with patch.object(
-            agent_server.pwd,
+            hyadex_server.pwd,
             "getpwuid",
             return_value=SimpleNamespace(pw_shell="/missing/account-shell"),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "valid_terminal_login_shell",
             return_value=None,
         ) as validate:
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                agent_server.resolve_terminal_login_shell()
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                hyadex_server.resolve_terminal_login_shell()
 
         self.assertEqual(raised.exception.status_code, 503)
         self.assertIn("configured login shell is unavailable", str(raised.exception.detail))
@@ -147,35 +145,35 @@ class TerminalShellInitializationTests(unittest.TestCase):
         def validate(value: str | None) -> str | None:
             return "/bin/zsh" if value == "/bin/zsh" else None
 
-        with patch.object(agent_server.pwd, "getpwuid", side_effect=KeyError), patch.object(
-            agent_server,
+        with patch.object(hyadex_server.pwd, "getpwuid", side_effect=KeyError), patch.object(
+            hyadex_server,
             "valid_terminal_login_shell",
             side_effect=validate,
         ):
-            self.assertEqual(agent_server.resolve_terminal_login_shell(), "/bin/zsh")
+            self.assertEqual(hyadex_server.resolve_terminal_login_shell(), "/bin/zsh")
 
     def test_blank_account_shell_uses_validated_fallback(self) -> None:
         def validate(value: str | None) -> str | None:
             return "/bin/bash" if value == "/bin/bash" else None
 
         with patch.object(
-            agent_server.pwd,
+            hyadex_server.pwd,
             "getpwuid",
             return_value=SimpleNamespace(pw_shell="   "),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "valid_terminal_login_shell",
             side_effect=validate,
         ):
-            self.assertEqual(agent_server.resolve_terminal_login_shell(), "/bin/bash")
+            self.assertEqual(hyadex_server.resolve_terminal_login_shell(), "/bin/bash")
 
     def test_session_path_enriches_and_deduplicates_minimal_path(self) -> None:
         with patch.object(
-            agent_server,
+            hyadex_server,
             "runner_env",
             return_value={"PATH": "/usr/bin:/bin:/usr/bin"},
         ):
-            entries = agent_server.terminal_session_path().split(agent_server.os.pathsep)
+            entries = hyadex_server.terminal_session_path().split(hyadex_server.os.pathsep)
 
         self.assertEqual(entries.count("/usr/bin"), 1)
         self.assertEqual(entries.count("/bin"), 1)
@@ -185,7 +183,7 @@ class TerminalShellInitializationTests(unittest.TestCase):
 
     def test_new_session_uses_login_shell_and_scoped_shell_defaults(self) -> None:
         session_id = "terminal-shell-test"
-        session_name = agent_server.terminal_session_name(session_id)
+        session_name = hyadex_server.terminal_session_name(session_id)
         calls: list[tuple[list[str], bool]] = []
 
         def fake_tmux(
@@ -199,34 +197,34 @@ class TerminalShellInitializationTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
         with patch.dict(
-            agent_server.STORE.sessions,
+            hyadex_server.STORE.sessions,
             {session_id: {"id": session_id, "cwd": "/workspace", "archived": False}},
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "tmux_session_exists",
             return_value=False,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "existing_cwd",
             return_value="/workspace",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_terminal_login_shell",
             return_value="/bin/bash",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "terminal_session_path",
             return_value="/home/user/.local/bin:/usr/bin:/bin",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_tmux",
             side_effect=fake_tmux,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "terminal_snapshot",
             return_value={"name": session_name},
         ):
-            agent_server.ensure_terminal_session(session_id)
+            hyadex_server.ensure_terminal_session(session_id)
 
         commands = [args for args, _check in calls]
         new_session = next(args for args in commands if args[0] == "new-session")
@@ -296,30 +294,30 @@ class TerminalShellInitializationTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
 
         with patch.dict(
-            agent_server.STORE.sessions,
+            hyadex_server.STORE.sessions,
             {session_id: {"id": session_id, "cwd": "/workspace", "archived": False}},
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "tmux_session_exists",
             return_value=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "resolve_terminal_login_shell",
             return_value="/bin/bash",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "terminal_session_path",
             return_value="/usr/bin:/bin",
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_tmux",
             side_effect=fake_tmux,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "terminal_snapshot",
             return_value={},
         ):
-            agent_server.ensure_terminal_session(session_id)
+            hyadex_server.ensure_terminal_session(session_id)
 
         self.assertFalse(
             any(args[0] in {"new-session", "respawn-pane", "send-keys"} for args in calls)
@@ -327,10 +325,10 @@ class TerminalShellInitializationTests(unittest.TestCase):
         self.assertTrue(any(args[-2:] == ["default-shell", "/bin/bash"] for args in calls))
 
     def test_session_shell_configuration_failure_is_not_silenced(self) -> None:
-        failure = agent_server.HTTPException(status_code=500, detail="tmux rejected option")
-        with patch.object(agent_server, "run_tmux", side_effect=failure):
-            with self.assertRaises(agent_server.HTTPException) as raised:
-                agent_server.configure_terminal_session_shell(
+        failure = hyadex_server.HTTPException(status_code=500, detail="tmux rejected option")
+        with patch.object(hyadex_server, "run_tmux", side_effect=failure):
+            with self.assertRaises(hyadex_server.HTTPException) as raised:
+                hyadex_server.configure_terminal_session_shell(
                     "hx_chat",
                     "/bin/bash",
                     "/usr/bin:/bin",
@@ -373,18 +371,18 @@ class TerminalHistoryScrollingTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
         with patch.dict(
-            agent_server.STORE.sessions,
+            hyadex_server.STORE.sessions,
             {self.session_id: {"id": self.session_id, "archived": False}},
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "tmux_session_exists",
             return_value=True,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "run_tmux",
             side_effect=fake_tmux,
         ):
-            result = agent_server.scroll_terminal_history(
+            result = hyadex_server.scroll_terminal_history(
                 self.session_id,
                 delta,
                 managed=managed,
@@ -394,7 +392,7 @@ class TerminalHistoryScrollingTests(unittest.TestCase):
 
     def test_upward_scroll_enters_copy_mode_without_top_row_indicator(self) -> None:
         result, calls = self.run_scroll(-6, initially_in_mode=False)
-        name = agent_server.terminal_session_name(self.session_id)
+        name = hyadex_server.terminal_session_name(self.session_id)
 
         self.assertTrue(result)
         self.assertIn(["copy-mode", "-eH", "-t", name], calls)
@@ -407,7 +405,7 @@ class TerminalHistoryScrollingTests(unittest.TestCase):
             initially_in_mode=False,
             hidden_entry_returncode=1,
         )
-        name = agent_server.terminal_session_name(self.session_id)
+        name = hyadex_server.terminal_session_name(self.session_id)
 
         self.assertTrue(result)
         self.assertIn(["copy-mode", "-eH", "-t", name], calls)

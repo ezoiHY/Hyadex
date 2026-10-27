@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import BackgroundTasks, HTTPException
 
-import agent_server
+from tests import hyadex_server
 from tests import server_source
 from hyadex.ops import lifecycle
 from tests.test_server_restart_endpoints import (
@@ -35,26 +35,26 @@ class QueueFenceTests(unittest.IsolatedAsyncioTestCase):
         stop_operation = asyncio.ensure_future(never)
         try:
             with patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "explicit_stops",
                 {"chat": stop_operation},
             ), patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "queued",
-                {"chat": agent_server.deque([{"queued_id": "q1", "_durable": True}])},
-            ), patch.object(agent_server, "QUEUE_FENCE_LOGGED_AT", {}), \
+                {"chat": hyadex_server.deque([{"queued_id": "q1", "_durable": True}])},
+            ), patch.object(hyadex_server, "QUEUE_FENCE_LOGGED_AT", {}), \
                  patch.object(
-                     agent_server,
+                     hyadex_server,
                      "schedule_next_queued_turn",
                  ) as schedule, \
-                 self.assertLogs(agent_server.logger, level="WARNING") as logs:
-                repaired = await agent_server.reconcile_idle_queue_session(
+                 self.assertLogs(hyadex_server.logger, level="WARNING") as logs:
+                repaired = await hyadex_server.reconcile_idle_queue_session(
                     "chat",
                     schedule=True,
                     reason="health_poll",
                 )
                 # A second reconcile within the log interval stays quiet.
-                await agent_server.reconcile_idle_queue_session(
+                await hyadex_server.reconcile_idle_queue_session(
                     "chat",
                     schedule=True,
                     reason="health_poll",
@@ -72,52 +72,52 @@ class QueueFenceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_reconcile_names_server_restart_fence(self):
         with patch.object(
-            agent_server,
+            hyadex_server,
             "server_lifecycle_admission_blocker",
-            return_value=agent_server.MANAGED_SERVER_RESTART_ACTIVE_DETAIL,
-        ), patch.object(agent_server.RUNS, "explicit_stops", {}):
+            return_value=hyadex_server.MANAGED_SERVER_RESTART_ACTIVE_DETAIL,
+        ), patch.object(hyadex_server.RUNS, "explicit_stops", {}):
             self.assertEqual(
-                agent_server.queue_promotion_fence("chat"),
+                hyadex_server.queue_promotion_fence("chat"),
                 "server_restart",
             )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "server_lifecycle_admission_blocker",
-            return_value=agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
-        ), patch.object(agent_server.RUNS, "explicit_stops", {}):
+            return_value=hyadex_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL,
+        ), patch.object(hyadex_server.RUNS, "explicit_stops", {}):
             self.assertEqual(
-                agent_server.queue_promotion_fence("chat"),
+                hyadex_server.queue_promotion_fence("chat"),
                 "server_lifecycle",
             )
         with patch.object(
-            agent_server,
+            hyadex_server,
             "server_lifecycle_admission_blocker",
             return_value=None,
-        ), patch.object(agent_server.RUNS, "explicit_stops", {}):
-            self.assertIsNone(agent_server.queue_promotion_fence("chat"))
+        ), patch.object(hyadex_server.RUNS, "explicit_stops", {}):
+            self.assertIsNone(hyadex_server.queue_promotion_fence("chat"))
 
     async def test_routine_idle_reconcile_logs_at_debug_only(self):
         with patch.object(
-            agent_server.RUNS,
+            hyadex_server.RUNS,
             "queued",
-            {"chat": agent_server.deque([{"queued_id": "q1", "_durable": True}])},
-        ), patch.object(agent_server.RUNS, "explicit_stops", {}), \
-             patch.object(agent_server.RUNS, "run_now_requests", {}), \
-             patch.object(agent_server.RUNS, "queue_start_tasks", {}), \
-             patch.object(agent_server.RUNS, "steering_waits", {}), \
-             patch.object(agent_server.RUNS, "steering", set()), \
-             patch.object(agent_server.RUNS, "run_now", {}), \
-             patch.object(agent_server.RUNS, "active", {}), \
-             patch.object(agent_server.RUNS, "busy", set()), \
-             patch.object(agent_server.RUNS, "current_turns", {}), \
+            {"chat": hyadex_server.deque([{"queued_id": "q1", "_durable": True}])},
+        ), patch.object(hyadex_server.RUNS, "explicit_stops", {}), \
+             patch.object(hyadex_server.RUNS, "run_now_requests", {}), \
+             patch.object(hyadex_server.RUNS, "queue_start_tasks", {}), \
+             patch.object(hyadex_server.RUNS, "steering_waits", {}), \
+             patch.object(hyadex_server.RUNS, "steering", set()), \
+             patch.object(hyadex_server.RUNS, "run_now", {}), \
+             patch.object(hyadex_server.RUNS, "active", {}), \
+             patch.object(hyadex_server.RUNS, "busy", set()), \
+             patch.object(hyadex_server.RUNS, "current_turns", {}), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "server_lifecycle_admission_blocker",
                  return_value=None,
              ), \
-             patch.object(agent_server, "schedule_next_queued_turn") as schedule, \
-             self.assertNoLogs(agent_server.logger, level="INFO"):
-            repaired = await agent_server.reconcile_idle_queue_session(
+             patch.object(hyadex_server, "schedule_next_queued_turn") as schedule, \
+             self.assertNoLogs(hyadex_server.logger, level="INFO"):
+            repaired = await hyadex_server.reconcile_idle_queue_session(
                 "chat",
                 schedule=True,
                 reason="health_poll",
@@ -128,15 +128,15 @@ class QueueFenceTests(unittest.IsolatedAsyncioTestCase):
 
 class RetryTimerTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_one_retry_timer_is_armed_per_chat(self):
-        with patch.object(agent_server, "QUEUE_RETRY_TASKS", {}) as timers, \
+        with patch.object(hyadex_server, "QUEUE_RETRY_TASKS", {}) as timers, \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "start_next_queued_turn",
                  new=AsyncMock(),
              ) as start:
-            self.assertTrue(agent_server.schedule_queued_turn_retry("chat", 5))
-            self.assertFalse(agent_server.schedule_queued_turn_retry("chat", 5))
-            self.assertFalse(agent_server.schedule_queued_turn_retry("chat", 5))
+            self.assertTrue(hyadex_server.schedule_queued_turn_retry("chat", 5))
+            self.assertFalse(hyadex_server.schedule_queued_turn_retry("chat", 5))
+            self.assertFalse(hyadex_server.schedule_queued_turn_retry("chat", 5))
             self.assertEqual(len(timers), 1)
             timers["chat"].cancel()
             await asyncio.gather(timers["chat"], return_exceptions=True)
@@ -144,7 +144,7 @@ class RetryTimerTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("chat", timers)
             start.assert_not_called()
             # Once the previous timer settled a new one may be armed.
-            self.assertTrue(agent_server.schedule_queued_turn_retry("chat", 5))
+            self.assertTrue(hyadex_server.schedule_queued_turn_retry("chat", 5))
             timers["chat"].cancel()
             await asyncio.gather(timers["chat"], return_exceptions=True)
 
@@ -152,32 +152,32 @@ class RetryTimerTests(unittest.IsolatedAsyncioTestCase):
 class HealthReconcileTests(unittest.IsolatedAsyncioTestCase):
     async def test_health_poll_reconcile_is_rate_limited(self):
         with patch.object(
-            agent_server,
+            hyadex_server,
             "HEALTH_QUEUE_RECONCILE_STATE",
             {"last_at": float("-inf"), "task": None},
         ) as state, patch.object(
-            agent_server,
+            hyadex_server,
             "reconcile_idle_queued_turns",
             new=AsyncMock(return_value=0),
         ) as reconcile, patch.object(
-            agent_server,
+            hyadex_server,
             "HEALTH_QUEUE_RECONCILE_INTERVAL_SECONDS",
             3600.0,
         ):
             self.assertTrue(
-                await agent_server.reconcile_idle_queued_turns_from_health_poll()
+                await hyadex_server.reconcile_idle_queued_turns_from_health_poll()
             )
             self.assertFalse(
-                await agent_server.reconcile_idle_queued_turns_from_health_poll()
+                await hyadex_server.reconcile_idle_queued_turns_from_health_poll()
             )
             self.assertFalse(
-                await agent_server.reconcile_idle_queued_turns_from_health_poll()
+                await hyadex_server.reconcile_idle_queued_turns_from_health_poll()
             )
             await state["task"]
             reconcile.assert_awaited_once_with(reason="health_poll")
             state["last_at"] = float("-inf")
             self.assertTrue(
-                await agent_server.reconcile_idle_queued_turns_from_health_poll()
+                await hyadex_server.reconcile_idle_queued_turns_from_health_poll()
             )
             await state["task"]
             self.assertEqual(reconcile.await_count, 2)
@@ -194,34 +194,34 @@ class HealthReconcileTests(unittest.IsolatedAsyncioTestCase):
 
         state = {"last_at": float("-inf"), "task": None}
         with patch.object(
-            agent_server,
+            hyadex_server,
             "HEALTH_QUEUE_RECONCILE_STATE",
             state,
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "reconcile_idle_queued_turns",
             side_effect=blocked_reconcile,
         ):
             scheduled = await asyncio.wait_for(
-                agent_server.reconcile_idle_queued_turns_from_health_poll(),
+                hyadex_server.reconcile_idle_queued_turns_from_health_poll(),
                 timeout=0.1,
             )
             self.assertTrue(scheduled)
             await asyncio.wait_for(started.wait(), timeout=0.1)
             self.assertFalse(
-                await agent_server.reconcile_idle_queued_turns_from_health_poll()
+                await hyadex_server.reconcile_idle_queued_turns_from_health_poll()
             )
             release.set()
             await asyncio.wait_for(state["task"], timeout=0.1)
 
     async def test_shutdown_fence_prevents_new_reconcile_and_queue_tasks(self):
-        with patch.object(agent_server.SERVER, "shutting_down", True), \
-             patch.object(agent_server.asyncio, "create_task") as create_task:
+        with patch.object(hyadex_server.SERVER, "shutting_down", True), \
+             patch.object(hyadex_server.asyncio, "create_task") as create_task:
             self.assertFalse(
-                await agent_server.reconcile_idle_queued_turns_from_health_poll()
+                await hyadex_server.reconcile_idle_queued_turns_from_health_poll()
             )
-            agent_server.schedule_next_queued_turn("chat")
-            agent_server.schedule_claude_stop_fence_retry("chat")
+            hyadex_server.schedule_next_queued_turn("chat")
+            hyadex_server.schedule_claude_stop_fence_retry("chat")
         create_task.assert_not_called()
 
 
@@ -246,57 +246,57 @@ class ExplicitStopDeadlineTests(unittest.IsolatedAsyncioTestCase):
         async def record_event(session_id, event_type, payload):
             events.append((event_type, payload))
 
-        with patch.object(agent_server, "stop_turn", new=hung_stop), \
-             patch.object(agent_server.RUNS, "explicit_stops", {}) as fences, \
-             patch.object(agent_server, "EXPLICIT_STOP_OPERATION_TIMEOUT_SECONDS", 1.0), \
-             patch.object(agent_server.RUNS, "detached_stop_tasks", set()) as detached, \
-             patch.object(agent_server.RUNS, "detached_stop_tasks_by_session", {}), \
-             patch.object(agent_server, "SESSION_LIFECYCLE_LOCKS", {}), \
-             patch.object(agent_server, "append_event", new=record_event), \
-             patch.object(agent_server, "schedule_next_queued_turn") as schedule, \
+        with patch.object(hyadex_server, "stop_turn", new=hung_stop), \
+             patch.object(hyadex_server.RUNS, "explicit_stops", {}) as fences, \
+             patch.object(hyadex_server, "EXPLICIT_STOP_OPERATION_TIMEOUT_SECONDS", 1.0), \
+             patch.object(hyadex_server.RUNS, "detached_stop_tasks", set()) as detached, \
+             patch.object(hyadex_server.RUNS, "detached_stop_tasks_by_session", {}), \
+             patch.object(hyadex_server, "SESSION_LIFECYCLE_LOCKS", {}), \
+             patch.object(hyadex_server, "append_event", new=record_event), \
+             patch.object(hyadex_server, "schedule_next_queued_turn") as schedule, \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "server_lifecycle_admission_blocker",
                  return_value=None,
              ), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "server_lifecycle_admission_blocker",
                  return_value=None,
              ), \
-             self.assertLogs(agent_server.logger, level="ERROR") as logs:
+             self.assertLogs(hyadex_server.logger, level="ERROR") as logs:
             result = await asyncio.wait_for(
-                agent_server.stop_turn_endpoint("chat"),
+                hyadex_server.stop_turn_endpoint("chat"),
                 timeout=5,
             )
-            self.assertFalse(agent_server.explicit_stop_in_progress("chat"))
+            self.assertFalse(hyadex_server.explicit_stop_in_progress("chat"))
             self.assertNotIn("chat", fences)
             # Teardown keeps running detached until the provider settles.
             self.assertEqual(len(detached), 1)
-            self.assertTrue(agent_server.detached_stop_in_progress("chat"))
-            self.assertTrue(agent_server.stop_cleanup_in_progress("chat"))
+            self.assertTrue(hyadex_server.detached_stop_in_progress("chat"))
+            self.assertTrue(hyadex_server.stop_cleanup_in_progress("chat"))
             self.assertEqual(
-                agent_server.queue_promotion_fence("chat"),
+                hyadex_server.queue_promotion_fence("chat"),
                 "explicit_stop",
             )
-            self.assertEqual(agent_server.explicit_stop_session_ids(), {"chat"})
+            self.assertEqual(hyadex_server.explicit_stop_session_ids(), {"chat"})
             self.assertEqual(
-                await agent_server.scheduled_job_blocker("chat"),
+                await hyadex_server.scheduled_job_blocker("chat"),
                 "chat is finishing an explicit Stop",
             )
             with self.assertRaises(HTTPException) as repeat_stop:
-                await agent_server.stop_turn_endpoint("chat")
+                await hyadex_server.stop_turn_endpoint("chat")
             self.assertEqual(repeat_stop.exception.status_code, 409)
             with self.assertRaises(HTTPException) as delete_raised:
-                await agent_server.delete_session("chat")
+                await hyadex_server.delete_session("chat")
             self.assertEqual(delete_raised.exception.status_code, 409)
             self.assertIn("Stop cleanup", str(delete_raised.exception.detail))
             release.set()
             await asyncio.gather(*detached, return_exceptions=True)
             await asyncio.sleep(0)
-            self.assertFalse(agent_server.detached_stop_in_progress("chat"))
-            self.assertFalse(agent_server.stop_cleanup_in_progress("chat"))
-            self.assertEqual(agent_server.explicit_stop_session_ids(), set())
+            self.assertFalse(hyadex_server.detached_stop_in_progress("chat"))
+            self.assertFalse(hyadex_server.stop_cleanup_in_progress("chat"))
+            self.assertEqual(hyadex_server.explicit_stop_session_ids(), set())
         self.assertTrue(result["timed_out"])
         self.assertFalse(result["stopped"])
         self.assertTrue(result["pending"])
@@ -318,19 +318,19 @@ class ExplicitStopDeadlineTests(unittest.IsolatedAsyncioTestCase):
                 _admission_ready.set()
             return {"ok": True, "stopped": True}
 
-        with patch.object(agent_server, "stop_turn", new=quick_stop), \
-             patch.object(agent_server.RUNS, "explicit_stops", {}) as fences, \
-             patch.object(agent_server, "SESSION_LIFECYCLE_LOCKS", {}), \
+        with patch.object(hyadex_server, "stop_turn", new=quick_stop), \
+             patch.object(hyadex_server.RUNS, "explicit_stops", {}) as fences, \
+             patch.object(hyadex_server, "SESSION_LIFECYCLE_LOCKS", {}), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "schedule_next_queued_turn",
              ) as schedule, \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "server_lifecycle_admission_blocker",
                  return_value=None,
              ):
-            result = await agent_server.stop_turn_endpoint("chat")
+            result = await hyadex_server.stop_turn_endpoint("chat")
         self.assertEqual(result, {"ok": True, "stopped": True})
         self.assertEqual(fences, {})
         schedule.assert_called_once_with("chat")
@@ -339,30 +339,30 @@ class ExplicitStopDeadlineTests(unittest.IsolatedAsyncioTestCase):
 class LifecycleAdmissionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_worker_maintenance_fences_manual_jobs(self):
-        with patch.object(agent_server, "execution_maintenance_blocks_work", return_value=True):
-            self.assertEqual(agent_server.server_lifecycle_admission_blocker(),
-                             agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
-            self.assertEqual(await agent_server.scheduled_job_blocker("other-chat", manual=True),
-                             agent_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
+        with patch.object(hyadex_server, "execution_maintenance_blocks_work", return_value=True):
+            self.assertEqual(hyadex_server.server_lifecycle_admission_blocker(),
+                             hyadex_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
+            self.assertEqual(await hyadex_server.scheduled_job_blocker("other-chat", manual=True),
+                             hyadex_server.EXECUTION_MAINTENANCE_ACTIVE_DETAIL)
 
     async def test_active_restart_still_fences_manual_jobs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with patch.object(
-                agent_server,
+                hyadex_server,
                 "SERVER_RESTART_STATUS_FILE",
                 root / "restart.json",
             ):
-                agent_server.write_server_restart_status(
+                hyadex_server.write_server_restart_status(
                     phase="signaling",
                     request_id="restart-1",
                 )
                 self.assertEqual(
-                    await agent_server.scheduled_job_blocker(
+                    await hyadex_server.scheduled_job_blocker(
                         "other-chat",
                         manual=True,
                     ),
-                    agent_server.MANAGED_SERVER_RESTART_ACTIVE_DETAIL,
+                    hyadex_server.MANAGED_SERVER_RESTART_ACTIVE_DETAIL,
                 )
 
 
@@ -371,10 +371,10 @@ class RestartDenialLoggingTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), \
-                 patch.object(agent_server.RUNS, "busy", {"chat"}), \
-                 self.assertLogs(agent_server.logger, level="WARNING") as logs:
+                 patch.object(hyadex_server.RUNS, "busy", {"chat"}), \
+                 self.assertLogs(hyadex_server.logger, level="WARNING") as logs:
                 with self.assertRaises(HTTPException) as raised:
-                    await agent_server.restart_server_endpoint(
+                    await hyadex_server.restart_server_endpoint(
                         restart_body(),
                         http_request(method="POST"),
                         BackgroundTasks(),
@@ -390,8 +390,8 @@ class RestartDenialLoggingTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with restart_environment(root), \
-                 patch.object(agent_server.RUNS, "maintenance", {"chat"}):
-                snapshot = agent_server.server_restart_blocker_snapshot_locked()
+                 patch.object(hyadex_server.RUNS, "maintenance", {"chat"}):
+                snapshot = hyadex_server.server_restart_blocker_snapshot_locked()
         self.assertTrue(snapshot["has_safety_blockers"])
         self.assertTrue(snapshot["force_restart_available"])
 
@@ -401,20 +401,20 @@ class HistoryImportAnchorTests(unittest.TestCase):
         message_keys = []
         for index, event in enumerate(events, 1):
             if event.get("type") == "turn_started":
-                key = agent_server.history_dedup_key("user", event.get("prompt"))
+                key = hyadex_server.history_dedup_key("user", event.get("prompt"))
             elif event.get("type") == "assistant_text":
-                key = agent_server.history_dedup_key(
+                key = hyadex_server.history_dedup_key(
                     "assistant", event.get("text")
                 )
             else:
                 continue
             message_keys.append((index, key))
         with patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             return_value=(message_keys, bool(message_keys), False),
         ) as scan:
-            fresh = agent_server.unsynced_history_items(
+            fresh = hyadex_server.unsynced_history_items(
                 "chat-x",
                 items,
                 timeline_through_seq=len(events),
@@ -434,7 +434,7 @@ class HistoryImportAnchorTests(unittest.TestCase):
             {"type": "turn_started", "prompt": "timeline only"},
             {"type": "assistant_text", "text": "timeline reply"},
         ]
-        with self.assertLogs(agent_server.logger, level="WARNING"):
+        with self.assertLogs(hyadex_server.logger, level="WARNING"):
             fresh, _read = self.select(
                 events,
                 [
@@ -452,24 +452,24 @@ class HistoryImportAnchorTests(unittest.TestCase):
 
 class SubagentReconcileBurstTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.previous_sessions = agent_server.STORE.sessions
-        self.previous_index = agent_server.CODEX_SUBAGENT_SESSION_INDEX
-        self.previous_states = agent_server.CODEX_SUBAGENT_STATE
+        self.previous_sessions = hyadex_server.STORE.sessions
+        self.previous_index = hyadex_server.CODEX_SUBAGENT_SESSION_INDEX
+        self.previous_states = hyadex_server.CODEX_SUBAGENT_STATE
         self.session = {
             "id": "chat",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "parent-thread",
             "session_id": "parent-thread",
         }
-        agent_server.STORE.sessions = {"chat": self.session}
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX = {}
-        agent_server.CODEX_SUBAGENT_STATE = {}
+        hyadex_server.STORE.sessions = {"chat": self.session}
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX = {}
+        hyadex_server.CODEX_SUBAGENT_STATE = {}
         self.events: list[tuple[str, dict]] = []
 
     async def asyncTearDown(self) -> None:
-        agent_server.STORE.sessions = self.previous_sessions
-        agent_server.CODEX_SUBAGENT_SESSION_INDEX = self.previous_index
-        agent_server.CODEX_SUBAGENT_STATE = self.previous_states
+        hyadex_server.STORE.sessions = self.previous_sessions
+        hyadex_server.CODEX_SUBAGENT_SESSION_INDEX = self.previous_index
+        hyadex_server.CODEX_SUBAGENT_STATE = self.previous_states
 
     async def append(self, session_id, event_type, payload):
         self.events.append((event_type, payload))
@@ -489,30 +489,30 @@ class SubagentReconcileBurstTests(unittest.IsolatedAsyncioTestCase):
              "updatedAt": f"2026-09-04T10:00:{index:02d}Z"}
             for index in range(5)
         ])
-        with patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)), \
-             patch.object(agent_server.STORE, "save", AsyncMock()):
-            result = await agent_server.reconcile_codex_subagents("chat", manager)
+        with patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)), \
+             patch.object(hyadex_server.STORE, "save", AsyncMock()):
+            result = await hyadex_server.reconcile_codex_subagents("chat", manager)
         self.assertEqual(result["reconciled"], 5)
         self.assertEqual(result["silent"], 5)
         self.assertEqual(self.events, [])
         self.assertEqual(
-            agent_server.CODEX_SUBAGENT_STATE["child-3"]["subagent_status"],
+            hyadex_server.CODEX_SUBAGENT_STATE["child-3"]["subagent_status"],
             "completed",
         )
-        self.assertEqual(agent_server.CODEX_SUBAGENT_SESSION_INDEX["child-3"], "chat")
+        self.assertEqual(hyadex_server.CODEX_SUBAGENT_SESSION_INDEX["child-3"], "chat")
 
     async def test_running_children_and_known_transitions_still_emit(self):
         manager = self.Manager([
             {"id": "child-run", "parentThreadId": "parent-thread",
              "preview": "Live", "status": {"type": "active", "activeFlags": []}},
         ])
-        with patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)), \
-             patch.object(agent_server.STORE, "save", AsyncMock()):
-            await agent_server.reconcile_codex_subagents("chat", manager)
+        with patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)), \
+             patch.object(hyadex_server.STORE, "save", AsyncMock()):
+            await hyadex_server.reconcile_codex_subagents("chat", manager)
             self.assertEqual([kind for kind, _ in self.events], ["subagent_state"])
             self.assertEqual(self.events[0][1]["subagent_status"], "running")
             manager.descendants[0]["status"] = {"type": "notLoaded"}
-            await agent_server.reconcile_codex_subagents("chat", manager)
+            await hyadex_server.reconcile_codex_subagents("chat", manager)
         self.assertEqual(len(self.events), 2)
         self.assertEqual(self.events[1][1]["subagent_status"], "completed")
 
@@ -529,12 +529,12 @@ class SubagentReconcileBurstTests(unittest.IsolatedAsyncioTestCase):
             {"id": "child-a", "parentThreadId": "parent-thread",
              "preview": "Audit A", "status": {"type": "notLoaded"}},
         ])
-        with patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)), \
-             patch.object(agent_server.STORE, "save", AsyncMock()):
-            await agent_server.reconcile_codex_subagents("chat", manager)
+        with patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)), \
+             patch.object(hyadex_server.STORE, "save", AsyncMock()):
+            await hyadex_server.reconcile_codex_subagents("chat", manager)
         self.assertEqual(self.events, [])
         self.assertEqual(
-            agent_server.CODEX_SUBAGENT_STATE["child-a"]["subagent_name"],
+            hyadex_server.CODEX_SUBAGENT_STATE["child-a"]["subagent_name"],
             "Leibniz",
         )
 
@@ -545,23 +545,23 @@ class SubagentReconcileBurstTests(unittest.IsolatedAsyncioTestCase):
              "updatedAt": f"2026-09-04T10:{index // 60:02d}:{index % 60:02d}Z"}
             for index in range(10)
         ])
-        with patch.object(agent_server, "CODEX_SUBAGENT_RECONCILE_LIMIT", 3), \
-             patch.object(agent_server, "append_event", AsyncMock(side_effect=self.append)), \
-             patch.object(agent_server.STORE, "save", AsyncMock()):
-            result = await agent_server.reconcile_codex_subagents("chat", manager)
+        with patch.object(hyadex_server, "CODEX_SUBAGENT_RECONCILE_LIMIT", 3), \
+             patch.object(hyadex_server, "append_event", AsyncMock(side_effect=self.append)), \
+             patch.object(hyadex_server.STORE, "save", AsyncMock()):
+            result = await hyadex_server.reconcile_codex_subagents("chat", manager)
         self.assertEqual(result["reconciled"], 3)
         self.assertEqual(result["skipped"], 7)
         self.assertEqual(result["descendants"], 10)
-        self.assertIn("child-9", agent_server.CODEX_SUBAGENT_STATE)
-        self.assertNotIn("child-0", agent_server.CODEX_SUBAGENT_STATE)
+        self.assertIn("child-9", hyadex_server.CODEX_SUBAGENT_STATE)
+        self.assertNotIn("child-0", hyadex_server.CODEX_SUBAGENT_STATE)
 
 
 class SessionsWriterFailureTests(unittest.IsolatedAsyncioTestCase):
     async def test_encode_failure_reaches_the_awaiter_and_does_not_strand_later_saves(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            with patch.object(agent_server, "SESSIONS_FILE", root / "sessions.json"):
-                store = agent_server.SessionStore()
+            with patch.object(hyadex_server, "SESSIONS_FILE", root / "sessions.json"):
+                store = hyadex_server.SessionStore()
                 store.sessions = {"chat": {"id": "chat", "bad": {1, 2}}}
                 with self.assertRaises(TypeError):
                     await asyncio.wait_for(store.save(), timeout=5)
@@ -576,78 +576,78 @@ class SessionsWriterFailureTests(unittest.IsolatedAsyncioTestCase):
     def test_bounded_writer_lock_refuses_instead_of_blocking(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "sessions.json"
-            agent_server.SESSIONS_WRITE_LOCK.acquire()
+            hyadex_server.SESSIONS_WRITE_LOCK.acquire()
             try:
                 with self.assertRaises(RuntimeError):
-                    agent_server.write_sessions_json_text(
+                    hyadex_server.write_sessions_json_text(
                         path,
                         "{}",
                         durable=False,
                         lock_timeout=0.05,
                     )
             finally:
-                agent_server.SESSIONS_WRITE_LOCK.release()
-            agent_server.write_sessions_json_text(path, "{}", durable=False, lock_timeout=0.05)
+                hyadex_server.SESSIONS_WRITE_LOCK.release()
+            hyadex_server.write_sessions_json_text(path, "{}", durable=False, lock_timeout=0.05)
             self.assertEqual(path.read_text(), "{}")
 
 
 class ManagedServiceProofTests(unittest.TestCase):
     def test_probe_timeout_keeps_prior_positive_proof(self):
-        with patch.object(agent_server.sys, "platform", "darwin"), \
-             patch.object(agent_server, "official_server_release_tree", return_value=True), \
+        with patch.object(hyadex_server.sys, "platform", "darwin"), \
+             patch.object(hyadex_server, "official_server_release_tree", return_value=True), \
              patch.object(lifecycle, "MANAGED_SERVER_SERVICE_KIND_CACHE", "launch-agent"), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "macos_launchd_owns_current_process",
                  return_value=None,
              ):
             self.assertEqual(
-                agent_server.detect_managed_server_service_kind(),
+                hyadex_server.detect_managed_server_service_kind(),
                 "launch-agent",
             )
-            self.assertEqual(agent_server.managed_server_service_kind(), "launch-agent")
+            self.assertEqual(hyadex_server.managed_server_service_kind(), "launch-agent")
 
     def test_probe_timeout_without_prior_proof_fails_closed(self):
-        with patch.object(agent_server.sys, "platform", "darwin"), \
-             patch.object(agent_server, "official_server_release_tree", return_value=True), \
+        with patch.object(hyadex_server.sys, "platform", "darwin"), \
+             patch.object(hyadex_server, "official_server_release_tree", return_value=True), \
              patch.object(lifecycle, "MANAGED_SERVER_SERVICE_KIND_CACHE", None), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "macos_launchd_owns_current_process",
                  return_value=None,
              ):
-            self.assertIsNone(agent_server.detect_managed_server_service_kind())
+            self.assertIsNone(hyadex_server.detect_managed_server_service_kind())
 
     def test_launchctl_timeout_reports_unknown(self):
-        with patch.object(agent_server.sys, "platform", "darwin"), \
-             patch.object(agent_server.Path, "is_file", return_value=True), \
+        with patch.object(hyadex_server.sys, "platform", "darwin"), \
+             patch.object(hyadex_server.Path, "is_file", return_value=True), \
              patch.object(
-                 agent_server.subprocess,
+                 hyadex_server.subprocess,
                  "run",
-                 side_effect=agent_server.subprocess.TimeoutExpired(cmd="launchctl", timeout=3),
+                 side_effect=hyadex_server.subprocess.TimeoutExpired(cmd="launchctl", timeout=3),
              ):
-            self.assertIsNone(agent_server.macos_launchd_owns_current_process())
+            self.assertIsNone(hyadex_server.macos_launchd_owns_current_process())
 
     def test_cooperative_kill_delay_covers_every_shutdown_phase(self):
         self.assertGreaterEqual(
-            agent_server.SERVER_RESTART_GRACEFUL_KILL_DELAY_SECONDS,
-            agent_server.configured_uvicorn_graceful_shutdown_seconds()
-            + agent_server.SERVER_SHUTDOWN_PHASE_COUNT
-            * agent_server.SERVER_SHUTDOWN_PHASE_TIMEOUT_SECONDS,
+            hyadex_server.SERVER_RESTART_GRACEFUL_KILL_DELAY_SECONDS,
+            hyadex_server.configured_uvicorn_graceful_shutdown_seconds()
+            + hyadex_server.SERVER_SHUTDOWN_PHASE_COUNT
+            * hyadex_server.SERVER_SHUTDOWN_PHASE_TIMEOUT_SECONDS,
         )
         source = server_source.text()
         self.assertEqual(
             source.count("await bounded_shutdown_phase("),
-            agent_server.SERVER_SHUTDOWN_PHASE_COUNT,
+            hyadex_server.SERVER_SHUTDOWN_PHASE_COUNT,
         )
 
 
 class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_imported_turns_never_set_active_run(self):
-        sessions = {"chat": {"id": "chat", "backend": agent_server.BACKEND_CODEX}}
-        with patch.object(agent_server.STORE, "sessions", sessions), \
-             patch.object(agent_server.STORE, "save", AsyncMock()):
-            await agent_server.update_session_event_metadata("chat", {
+        sessions = {"chat": {"id": "chat", "backend": hyadex_server.BACKEND_CODEX}}
+        with patch.object(hyadex_server.STORE, "sessions", sessions), \
+             patch.object(hyadex_server.STORE, "save", AsyncMock()):
+            await hyadex_server.update_session_event_metadata("chat", {
                 "type": "turn_started",
                 "run_id": "import_abc123",
                 "imported": True,
@@ -655,7 +655,7 @@ class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "ts": "2026-09-04T10:00:00Z",
             })
             self.assertNotIn("active_run", sessions["chat"])
-            await agent_server.update_session_event_metadata("chat", {
+            await hyadex_server.update_session_event_metadata("chat", {
                 "type": "turn_started",
                 "run_id": "run_live",
                 "prompt": "new message",
@@ -668,8 +668,8 @@ class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "a": {"id": "a", "active_run": {"run_id": "import_dead"}},
             "b": {"id": "b", "active_run": {"run_id": "run_live"}},
         }
-        with patch.object(agent_server.STORE, "sessions", sessions):
-            self.assertEqual(agent_server.clear_imported_active_runs(), 1)
+        with patch.object(hyadex_server.STORE, "sessions", sessions):
+            self.assertEqual(hyadex_server.clear_imported_active_runs(), 1)
         self.assertNotIn("active_run", sessions["a"])
         self.assertEqual(sessions["b"]["active_run"]["run_id"], "run_live")
 
@@ -683,9 +683,9 @@ class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 for index, (event_type, payload) in enumerate(event_specs, 1)
             ]
 
-        sess = {"id": "chat", "backend": agent_server.BACKEND_CODEX, "codex_thread_id": "t1"}
-        with patch.object(agent_server, "append_durable_event_batch", new=record):
-            await agent_server.append_imported_history(
+        sess = {"id": "chat", "backend": hyadex_server.BACKEND_CODEX, "codex_thread_id": "t1"}
+        with patch.object(hyadex_server, "append_durable_event_batch", new=record):
+            await hyadex_server.append_imported_history(
                 sess, Path("/tmp/rollout.jsonl"), [{"kind": "user", "text": "hello"}],
             )
         self.assertEqual([kind for kind, _ in appended], ["history_imported", "turn_started", "turn_finished"])
@@ -694,12 +694,12 @@ class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(appended[-1][1]["run_id"], appended[1][1]["run_id"])
 
     async def test_sync_skips_unchanged_transcripts(self):
-        sess = {"id": "chat", "backend": agent_server.BACKEND_CODEX, "codex_thread_id": "t1"}
+        sess = {"id": "chat", "backend": hyadex_server.BACKEND_CODEX, "codex_thread_id": "t1"}
         live = {"chat": dict(sess)}
         stamp = ["/tmp/rollout.jsonl", 10, 20, 30, 40]
         cursor = {
-            "version": agent_server.HISTORY_SYNC_CURSOR_VERSION,
-            "backend": agent_server.BACKEND_CODEX,
+            "version": hyadex_server.HISTORY_SYNC_CURSOR_VERSION,
+            "backend": hyadex_server.BACKEND_CODEX,
             "provider_session_id": "t1",
             "source_path": stamp[0],
             "source_size": stamp[1],
@@ -711,10 +711,10 @@ class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "last_item_digest": "",
             "timeline_seq": 0,
         }
-        with patch.object(agent_server.STORE, "sessions", live), \
-             patch.object(agent_server, "provider_history_source_stamp", return_value=stamp), \
+        with patch.object(hyadex_server.STORE, "sessions", live), \
+             patch.object(hyadex_server, "provider_history_source_stamp", return_value=stamp), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "load_provider_history_with_cursor",
                  return_value=(
                      Path("/tmp/rollout.jsonl"),
@@ -723,11 +723,11 @@ class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
                      False,
                  ),
              ) as parse, \
-             patch.object(agent_server, "unsynced_history_items", return_value=[]), \
-             patch.object(agent_server, "last_event_seq_from_file", return_value=0), \
-             patch.object(agent_server.STORE, "save", new=AsyncMock()) as save:
-            first = await agent_server.sync_provider_history(dict(sess))
-            second = await agent_server.sync_provider_history(dict(sess))
+             patch.object(hyadex_server, "unsynced_history_items", return_value=[]), \
+             patch.object(hyadex_server, "last_event_seq_from_file", return_value=0), \
+             patch.object(hyadex_server.STORE, "save", new=AsyncMock()) as save:
+            first = await hyadex_server.sync_provider_history(dict(sess))
+            second = await hyadex_server.sync_provider_history(dict(sess))
         self.assertEqual(parse.call_count, 1)
         save.assert_awaited_once_with(durable=True)
         self.assertIn("Already up to date", first["message"])
@@ -736,13 +736,13 @@ class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_sync_does_not_cache_source_stamp(self):
         sess = {
             "id": "chat",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "t1",
         }
         live = {"chat": dict(sess)}
         cursor = {
-            "version": agent_server.HISTORY_SYNC_CURSOR_VERSION,
-            "backend": agent_server.BACKEND_CODEX,
+            "version": hyadex_server.HISTORY_SYNC_CURSOR_VERSION,
+            "backend": hyadex_server.BACKEND_CODEX,
             "provider_session_id": "t1",
             "source_path": "/tmp/rollout.jsonl",
             "source_size": 10,
@@ -754,9 +754,9 @@ class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "last_item_digest": "",
             "timeline_seq": 0,
         }
-        with patch.object(agent_server.STORE, "sessions", live), \
+        with patch.object(hyadex_server.STORE, "sessions", live), \
              patch.object(
-                 agent_server,
+                 hyadex_server,
                  "load_provider_history_with_cursor",
                  return_value=(
                      Path("/tmp/rollout.jsonl"),
@@ -765,27 +765,27 @@ class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
                      False,
                  ),
              ), patch.object(
-                 agent_server,
+                 hyadex_server,
                  "unsynced_history_items",
                  return_value=[{"kind": "user", "text": "new"}],
              ), patch.object(
-                 agent_server,
+                 hyadex_server,
                  "append_imported_history",
                  new=AsyncMock(side_effect=OSError("disk full")),
              ), patch.object(
-                 agent_server.STORE,
+                 hyadex_server.STORE,
                  "save",
                  new=AsyncMock(),
              ) as save:
             with self.assertRaises(OSError):
-                await agent_server.sync_provider_history(dict(sess))
+                await hyadex_server.sync_provider_history(dict(sess))
         self.assertNotIn("_history_sync_cursor", live["chat"])
         save.assert_not_awaited()
 
     async def test_forced_import_only_appends_unsynced_suffix(self):
         sess = {
             "id": "chat",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "t1",
         }
         transcript = [
@@ -793,23 +793,23 @@ class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
             {"kind": "assistant", "text": "also present"},
         ]
         with patch.object(
-            agent_server,
+            hyadex_server,
             "load_provider_history_with_cursor",
             return_value=(Path("/tmp/rollout.jsonl"), transcript, None, False),
         ), patch.object(
-            agent_server,
+            hyadex_server,
             "unsynced_history_items",
             return_value=[],
         ) as unsynced, patch.object(
-            agent_server,
+            hyadex_server,
             "append_imported_history",
             new=AsyncMock(),
         ) as append, patch.object(
-            agent_server,
+            hyadex_server,
             "last_event_seq_from_file",
             return_value=0,
         ):
-            result = await agent_server.import_session_history(sess, force=True)
+            result = await hyadex_server.import_session_history(sess, force=True)
 
         unsynced.assert_called_once_with(
             "chat",
@@ -829,29 +829,29 @@ class ImportedHistoryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         timeline_keys = [
             (
                 1,
-                agent_server.history_dedup_key("user", "latest question"),
+                hyadex_server.history_dedup_key("user", "latest question"),
             ),
             (
                 2,
-                agent_server.history_dedup_key("assistant", "same answer"),
+                hyadex_server.history_dedup_key("assistant", "same answer"),
             ),
         ]
         with patch.object(
-            agent_server,
+            hyadex_server,
             "history_timeline_message_keys",
             return_value=(timeline_keys, True, False),
         ):
-            fresh = agent_server.unsynced_history_items("chat", transcript)
+            fresh = hyadex_server.unsynced_history_items("chat", transcript)
 
         self.assertEqual(fresh, [])
 
 class DarwinMetricsTests(unittest.TestCase):
     def test_elapsed_time_parsing(self):
-        self.assertEqual(agent_server.parse_elapsed_seconds("05:33"), 333)
-        self.assertEqual(agent_server.parse_elapsed_seconds("01:02:03"), 3723)
-        self.assertEqual(agent_server.parse_elapsed_seconds("10-17:57:40"), 928660)
+        self.assertEqual(hyadex_server.parse_elapsed_seconds("05:33"), 333)
+        self.assertEqual(hyadex_server.parse_elapsed_seconds("01:02:03"), 3723)
+        self.assertEqual(hyadex_server.parse_elapsed_seconds("10-17:57:40"), 928660)
         with self.assertRaises(ValueError):
-            agent_server.parse_elapsed_seconds("")
+            hyadex_server.parse_elapsed_seconds("")
 
     def test_darwin_ps_rows_parse_bsd_output(self):
         stdout = (
@@ -860,7 +860,7 @@ class DarwinMetricsTests(unittest.TestCase):
             "  900     1   900 S  01:02:03  1.0  0.2 4096 /Applications/Activity Monitor.app/Contents/MacOS/Activity Monitor\n"
             "garbage line\n"
         )
-        rows = agent_server.parse_darwin_ps_rows(stdout)
+        rows = hyadex_server.parse_darwin_ps_rows(stdout)
         self.assertEqual(len(rows), 3)
         self.assertEqual(rows[0]["pid"], 52965)
         self.assertEqual(rows[0]["sid"], 52924)
@@ -885,8 +885,8 @@ class DarwinMetricsTests(unittest.TestCase):
             "Pages wired down:                         900000.\n"
         )
         expected = int((100000 + 200000 + 50000 + 10000) * 16384 / (1024 * 1024))
-        self.assertEqual(agent_server.parse_vm_stat_available_mb(stdout), expected)
-        self.assertIsNone(agent_server.parse_vm_stat_available_mb("no pages here"))
+        self.assertEqual(hyadex_server.parse_vm_stat_available_mb(stdout), expected)
+        self.assertIsNone(hyadex_server.parse_vm_stat_available_mb("no pages here"))
 
     def test_darwin_memory_probe_is_cached(self):
         completed = MagicMock(returncode=0, stdout=(
@@ -894,12 +894,12 @@ class DarwinMetricsTests(unittest.TestCase):
             "Pages free: 1024.\n"
         ))
         with patch.object(
-            agent_server,
+            hyadex_server,
             "DARWIN_MEMORY_CACHE",
             {"at": float("-inf"), "mb": None},
-        ), patch.object(agent_server.subprocess, "run", return_value=completed) as run:
-            first = agent_server.darwin_available_memory_mb()
-            second = agent_server.darwin_available_memory_mb()
+        ), patch.object(hyadex_server.subprocess, "run", return_value=completed) as run:
+            first = hyadex_server.darwin_available_memory_mb()
+            second = hyadex_server.darwin_available_memory_mb()
         self.assertEqual(first, 4)
         self.assertEqual(second, 4)
         self.assertEqual(run.call_count, 1)

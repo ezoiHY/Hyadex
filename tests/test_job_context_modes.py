@@ -5,14 +5,12 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-import agent_server
-
-
+from tests import hyadex_server
 class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
     def test_standalone_session_preserves_runtime_but_clears_continuity(self) -> None:
         parent = {
             "id": "sess_parent",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "backend_locked": True,
             "cwd": "/tmp/work",
             "model": "gpt-test",
@@ -29,14 +27,14 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
             "codex_goal_time_budget_exhausted": True,
         }
 
-        isolated = agent_server.standalone_provider_session(parent)
+        isolated = hyadex_server.standalone_provider_session(parent)
 
         self.assertEqual(isolated["id"], "sess_parent")
         self.assertEqual(isolated["cwd"], "/tmp/work")
         self.assertEqual(isolated["model"], "gpt-test")
         self.assertEqual(isolated["effort"], "high")
         self.assertEqual(isolated["system_prompt"], "Keep this policy")
-        self.assertIsNone(agent_server.session_provider_id(isolated))
+        self.assertIsNone(hyadex_server.session_provider_id(isolated))
         self.assertFalse(isolated["backend_locked"])
         self.assertIsNone(isolated["memory_seed"])
         self.assertIsNone(isolated["fork_from"])
@@ -47,7 +45,7 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
 
     def test_standalone_ignores_exhausted_parent_goal_budget(self) -> None:
         session = {
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "backend_locked": True,
             "codex_goal": {
                 "objective": "Parent goal",
@@ -59,10 +57,10 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         }
 
         self.assertTrue(
-            agent_server.provider_context_goal_is_exhausted(session, "chat")
+            hyadex_server.provider_context_goal_is_exhausted(session, "chat")
         )
         self.assertFalse(
-            agent_server.provider_context_goal_is_exhausted(
+            hyadex_server.provider_context_goal_is_exhausted(
                 session,
                 "standalone",
             )
@@ -73,24 +71,24 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         manager.start_thread.return_value = "thread_standalone"
         session = {
             "id": "sess_parent",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "model": "gpt-test",
             "effort": "high",
         }
         with (
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_thread_instructions",
                 return_value="parent policy",
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_thread_params",
                 return_value={"cwd": "/tmp/work", "model": "gpt-test"},
             ) as thread_params,
         ):
             thread_id = (
-                await agent_server.start_standalone_codex_app_server_thread(
+                await hyadex_server.start_standalone_codex_app_server_thread(
                     manager,
                     "sess_parent",
                     session,
@@ -112,17 +110,17 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         runner = AsyncMock()
         with (
             patch.object(
-                agent_server,
+                hyadex_server,
                 "CODEX_TRANSPORT",
-                agent_server.CODEX_TRANSPORT_APP_SERVER,
+                hyadex_server.CODEX_TRANSPORT_APP_SERVER,
             ),
-            patch.object(agent_server, "run_codex_app_server", runner),
+            patch.object(hyadex_server, "run_codex_app_server", runner),
         ):
-            await agent_server.run_codex(
+            await hyadex_server.run_codex(
                 "sess_parent",
                 "run_job",
                 "Do the scheduled work",
-                {"id": "sess_parent", "backend": agent_server.BACKEND_CODEX},
+                {"id": "sess_parent", "backend": hyadex_server.BACKEND_CODEX},
                 Path("/tmp/manifest.json"),
                 standalone_provider_context=True,
             )
@@ -136,39 +134,39 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         events = AsyncMock()
         with (
             patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "active",
                 {"sess_parent": {"run_id": "run_chat"}},
             ),
             patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "busy",
                 {"sess_parent"},
             ),
             patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "current_turns",
                 {"sess_parent": {"run_id": "run_chat"}},
             ),
             patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "save_provider_session",
                 save_provider,
             ),
-            patch.object(agent_server, "append_event", events),
+            patch.object(hyadex_server, "append_event", events),
         ):
-            standalone_saved = await agent_server.persist_run_provider_session(
+            standalone_saved = await hyadex_server.persist_run_provider_session(
                 "sess_parent",
                 "run_standalone",
-                agent_server.BACKEND_CLAUDE,
+                hyadex_server.BACKEND_CLAUDE,
                 "claude_standalone",
                 cwd="/tmp/work",
                 standalone_provider_context=True,
             )
-            chat_saved = await agent_server.persist_run_provider_session(
+            chat_saved = await hyadex_server.persist_run_provider_session(
                 "sess_parent",
                 "run_chat",
-                agent_server.BACKEND_CLAUDE,
+                hyadex_server.BACKEND_CLAUDE,
                 "claude_parent",
                 cwd="/tmp/work",
                 standalone_provider_context=False,
@@ -179,7 +177,7 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         save_provider.assert_awaited_once_with(
             "sess_parent",
             "claude_parent",
-            agent_server.BACKEND_CLAUDE,
+            hyadex_server.BACKEND_CLAUDE,
             cwd="/tmp/work",
             defer_runtime_broadcast=True,
         )
@@ -193,7 +191,7 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         manager = AsyncMock()
         session = {
             "id": "sess_parent",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "codex_thread_id": "thread_parent",
         }
         start_standalone = AsyncMock(return_value="thread_standalone")
@@ -201,25 +199,25 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         pin = AsyncMock()
         with (
             patch.object(
-                agent_server,
+                hyadex_server,
                 "start_standalone_codex_app_server_thread",
                 start_standalone,
             ),
             patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_codex_app_server_thread",
                 ensure_chat,
             ),
-            patch.object(agent_server, "pin_codex_app_server_thread", pin),
+            patch.object(hyadex_server, "pin_codex_app_server_thread", pin),
         ):
-            standalone_id = await agent_server.acquire_codex_run_thread(
+            standalone_id = await hyadex_server.acquire_codex_run_thread(
                 manager,
                 "sess_parent",
-                agent_server.standalone_provider_session(session),
+                hyadex_server.standalone_provider_session(session),
                 "/tmp/work",
                 standalone_provider_context=True,
             )
-            chat_id = await agent_server.acquire_codex_run_thread(
+            chat_id = await hyadex_server.acquire_codex_run_thread(
                 manager,
                 "sess_parent",
                 session,
@@ -249,7 +247,7 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
             "title": "Parent chat",
             "folder": "General",
             "cwd": "/tmp/work",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "model": "gpt-5.6-sol",
             "effort": "ultra",
             "session_id": "thread_parent",
@@ -259,12 +257,12 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         target = {
             "id": "sess_target",
             "title": "Target",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
         }
         unrelated = {
             "id": "sess_unrelated",
             "title": "Unrelated",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
         }
         runtime_before = {
             key: parent.get(key)
@@ -291,12 +289,12 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         run_metadata: dict[str, dict[str, object]] = {}
         append_event = AsyncMock(return_value={"seq": 1})
         append_durable_event = AsyncMock(return_value={"seq": 1})
-        job_revision = agent_server.new_job_revision()
+        job_revision = hyadex_server.new_job_revision()
 
         with ExitStack() as stack:
             temporary = stack.enter_context(tempfile.TemporaryDirectory())
             stack.enter_context(patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "sessions",
                 {
                     "sess_parent": parent,
@@ -305,98 +303,98 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
                 },
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "AGENT_TOKEN",
                 "test-token",
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "PROVIDER_AUTHORITY_ROOT",
                 Path(temporary) / "authority",
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "PROVIDER_AUTHORITIES",
                 {},
             ))
             stack.enter_context(patch.object(
-                agent_server.STORE,
+                hyadex_server.STORE,
                 "save",
                 AsyncMock(),
             ))
-            stack.enter_context(patch.object(agent_server.RUNS, "busy", busy))
+            stack.enter_context(patch.object(hyadex_server.RUNS, "busy", busy))
             stack.enter_context(patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "maintenance",
                 set(),
             ))
-            stack.enter_context(patch.object(agent_server.RUNS, "current_turns", current))
-            stack.enter_context(patch.object(agent_server.RUNS, "queued", {}))
+            stack.enter_context(patch.object(hyadex_server.RUNS, "current_turns", current))
+            stack.enter_context(patch.object(hyadex_server.RUNS, "queued", {}))
             stack.enter_context(patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "turn_tasks",
                 tasks,
             ))
             stack.enter_context(patch.object(
-                agent_server.RUNS,
+                hyadex_server.RUNS,
                 "run_metadata",
                 run_metadata,
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "server_lifecycle_admission_blocker",
                 return_value=None,
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "server_lifecycle_admission_blocker",
                 return_value=None,
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "turn_start_blocker",
                 AsyncMock(return_value=None),
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "ensure_runtime_available",
                 AsyncMock(),
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "build_turn_provider_prompt",
                 return_value="scheduled prompt",
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "codex_manifest_path",
                 return_value=Path("/tmp/hyadex-standalone-test-manifest.json"),
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "append_event",
                 append_event,
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "append_durable_event",
                 append_durable_event,
             ))
             stack.enter_context(patch.object(
-                agent_server.JOBS,
+                hyadex_server.JOBS,
                 "assert_dispatch_revision",
                 AsyncMock(),
             ))
             stack.enter_context(patch.object(
-                agent_server,
+                hyadex_server,
                 "run_claude",
                 run_claude,
             ))
-            result = await agent_server._start_turn_locked(
+            result = await hyadex_server._start_turn_locked(
                 "sess_parent",
-                agent_server.TurnRequest(
+                hyadex_server.TurnRequest(
                     prompt="Run independently",
-                    backend=agent_server.BACKEND_CLAUDE,
+                    backend=hyadex_server.BACKEND_CLAUDE,
                     model="sonnet",
                     effort="high",
                     purpose="scheduled_job",
@@ -411,7 +409,7 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(provider_entered.wait(), timeout=1)
             try:
                 capabilities = list(
-                    agent_server.PROVIDER_AUTHORITIES.values()
+                    hyadex_server.PROVIDER_AUTHORITIES.values()
                 )
                 self.assertEqual(len(capabilities), 1)
                 capability = capabilities[0]
@@ -439,7 +437,7 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["queued"])
         self.assertFalse(parent.get("backend_locked", False))
         launched = run_claude.await_args.args[3]
-        self.assertEqual(launched["backend"], agent_server.BACKEND_CLAUDE)
+        self.assertEqual(launched["backend"], hyadex_server.BACKEND_CLAUDE)
         self.assertEqual(launched["model"], "sonnet")
         self.assertEqual(launched["effort"], "high")
         self.assertIsNone(launched["session_id"])
@@ -457,7 +455,7 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
         )
         append_durable_event.assert_awaited_once()
         started = append_durable_event.await_args.args[2]
-        self.assertEqual(started["backend"], agent_server.BACKEND_CLAUDE)
+        self.assertEqual(started["backend"], hyadex_server.BACKEND_CLAUDE)
         self.assertEqual(started["job_revision"], job_revision)
         self.assertEqual(started["job_scheduled_run_at"], 1_000.0)
         self.assertNotIn("chat_references", started)
@@ -465,21 +463,21 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
     def test_standalone_backend_change_clears_inherited_runtime_defaults(self) -> None:
         parent = {
             "id": "sess_parent",
-            "backend": agent_server.BACKEND_CODEX,
+            "backend": hyadex_server.BACKEND_CODEX,
             "backend_locked": True,
             "model": "gpt-5.6-sol",
             "effort": "ultra",
             "session_id": "thread_parent",
             "codex_thread_id": "thread_parent",
         }
-        isolated = agent_server.standalone_provider_session(parent)
+        isolated = hyadex_server.standalone_provider_session(parent)
 
-        preview = agent_server.preview_session_runtime_update(
+        preview = hyadex_server.preview_session_runtime_update(
             isolated,
-            {"backend": agent_server.BACKEND_CLAUDE},
+            {"backend": hyadex_server.BACKEND_CLAUDE},
         )
 
-        self.assertEqual(preview["backend"], agent_server.BACKEND_CLAUDE)
+        self.assertEqual(preview["backend"], hyadex_server.BACKEND_CLAUDE)
         self.assertIsNone(preview["model"])
         self.assertIsNone(preview["effort"])
         self.assertEqual(parent["model"], "gpt-5.6-sol")

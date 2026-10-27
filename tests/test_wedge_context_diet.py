@@ -11,21 +11,19 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import agent_server
-
-
+from tests import hyadex_server
 class ThreadInstructionTests(unittest.TestCase):
     def thread_instructions(self) -> tuple[str, str]:
-        session = {"id": "chat-1", "backend": agent_server.BACKEND_CODEX, "cwd": "/repo"}
+        session = {"id": "chat-1", "backend": hyadex_server.BACKEND_CODEX, "cwd": "/repo"}
         with patch.object(
-            agent_server,
+            hyadex_server,
             "codex_user_developer_instructions",
             return_value="",
         ):
-            codex = agent_server.codex_thread_instructions("chat-1", session)
-        claude = agent_server.session_system_prompt(
+            codex = hyadex_server.codex_thread_instructions("chat-1", session)
+        claude = hyadex_server.session_system_prompt(
             "chat-1",
-            {"id": "chat-1", "backend": agent_server.BACKEND_CLAUDE, "cwd": "/repo"},
+            {"id": "chat-1", "backend": hyadex_server.BACKEND_CLAUDE, "cwd": "/repo"},
             Path("/tmp/manifest.json"),
         )
         return codex, claude
@@ -35,7 +33,7 @@ class ThreadInstructionTests(unittest.TestCase):
 
         for instructions in (codex, claude):
             self.assertEqual(
-                instructions.count(agent_server.PROVIDER_AUTHORITY_USAGE_INSTRUCTIONS.strip()),
+                instructions.count(hyadex_server.PROVIDER_AUTHORITY_USAGE_INSTRUCTIONS.strip()),
                 1,
             )
             self.assertIn("never user content", instructions)
@@ -48,19 +46,19 @@ class ThreadInstructionTests(unittest.TestCase):
             self.assertNotIn("--chat-id chat-1", instructions)
 
     def test_policy_version_migrates_resumed_codex_threads(self) -> None:
-        self.assertEqual(agent_server.CODEX_THREAD_POLICY_VERSION, "11")
+        self.assertEqual(hyadex_server.CODEX_THREAD_POLICY_VERSION, "11")
 
     def test_static_addendum_is_format_safe(self) -> None:
         # Both preludes are rendered with str.format, so the appended static
         # text must not contain literal braces.
-        self.assertNotIn("{", agent_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM)
-        self.assertNotIn("}", agent_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM)
-        agent_server.CODEX_PROMPT_PRELUDE.format(
+        self.assertNotIn("{", hyadex_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM)
+        self.assertNotIn("}", hyadex_server.PROVIDER_THREAD_INSTRUCTION_ADDENDUM)
+        hyadex_server.CODEX_PROMPT_PRELUDE.format(
             manifest_path="/tmp/manifest.json",
             terminal_session="hx_sess_1",
             chat_id="chat-1",
         )
-        agent_server.CLAUDE_PROMPT_PRELUDE.format()
+        hyadex_server.CLAUDE_PROMPT_PRELUDE.format()
 
 
 if __name__ == "__main__":
