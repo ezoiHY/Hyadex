@@ -21,7 +21,7 @@ import tomllib
 
 
 HANDOFF_MESSAGE = (
-    "Codex sign-in changed or was explicitly reloaded. This chat is waiting for "
+    "Codex sign-in changed. This chat is waiting for "
     "its running work, approvals, goals or background terminals before switching. "
     "Your running work has not been stopped and this message has not been sent. "
     "Retry after that work finishes."
@@ -133,8 +133,7 @@ def native_login_revision(env: dict[str, str], *, cwd: str) -> LoginRevision | N
     Ignore rotating access/refresh tokens and last_refresh. OIDC auth_time is
     stable across refresh but changes on an interactive authentication. Without
     it we can detect an account switch, not prove a same-account re-login.
-    Explicit native-admin reload can hand off opaque/keyring logins; an
-    unchanged known revision remains observational even on explicit reload.
+    Opaque/keyring stores yield no revision, so they never trigger a handoff.
     Missing/malformed files are not evidence of a new login. No secret survives
     this bounded read except a process-keyed comparison digest.
     """

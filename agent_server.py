@@ -958,7 +958,6 @@ MAX_CODEX_GOAL_CHARS = 4_000
 MAX_CODEX_INTERACTION_TEXT_CHARS = 24_000
 MAX_CODEX_PENDING_INTERACTIONS = 128
 MAX_CODEX_APPROVAL_ITEM_CACHE = 256
-CODEX_PERMISSION_PROFILES_CACHE_SECONDS = 60.0
 CODEX_SESSION_CLEANUP_TIMEOUT_SECONDS = 15.0
 STOP_CONFIRM_TIMEOUT_SECONDS = 5.0
 # Bound the user-visible Stop operation so callers do not hang forever. Its
@@ -7964,12 +7963,7 @@ CLAUDE_INTERACTION_HANDLER_TASKS: dict[str, set[asyncio.Task[Any]]] = {}
 SESSION_LIFECYCLE_LOCKS: dict[str, asyncio.Lock] = {}
 DELETING_SESSIONS: set[str] = set()
 DELETED_SESSION_TOMBSTONES: set[str] = set()
-CODEX_BACKGROUND_TERMINALS_SUPPORTED: bool | None = None
 CLAUDE_NO_SESSION_PERSISTENCE_SUPPORTED: bool | None = None
-CODEX_PERMISSION_PROFILES_CACHE: dict[
-    str,
-    tuple[CodexAppServerManager, int, float, list[dict[str, Any]]],
-] = {}
 PROVIDER_AUTHORITY_LOCK = asyncio.Lock()
 # Indexed only by SHA-256(token); plaintext exists solely in the mode-0600
 # per-run authority file supplied to the provider. This scopes API authority;
@@ -8196,25 +8190,6 @@ async def wait_for_session_tasks(
         return True
     _done, pending = await asyncio.wait(tasks, timeout=max(0.01, timeout))
     return not pending
-
-
-def cached_codex_permission_profiles(
-    cwd: str,
-    manager: CodexAppServerManager | None,
-) -> list[dict[str, Any]] | None:
-    cached = CODEX_PERMISSION_PROFILES_CACHE.get(cwd)
-    generation = manager.generation if manager is not None and manager.ready else None
-    if cached is None or generation is None:
-        return None
-    cached_manager, cached_generation, cached_at, profiles = cached
-    if (
-        cached_manager is not manager
-        or cached_generation != generation
-        or time.monotonic() - cached_at >= CODEX_PERMISSION_PROFILES_CACHE_SECONDS
-    ):
-        CODEX_PERMISSION_PROFILES_CACHE.pop(cwd, None)
-        return None
-    return list(profiles)
 
 
 def acquire_codex_interactive_control_lease(thread_id: str) -> None:
@@ -27573,14 +27548,14 @@ def session_subagent_limit_control(sess: dict[str, Any]) -> dict[str, Any]:
         if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC:
             reason = "unsupported_transport"
         applies_to = "new_or_reloaded_threads"
-        message = "Applies to new or reloaded Codex threads. Reload provider when this chat is idle; saving does not interrupt current work."
+        message = "Applies to new or reloaded Codex threads; saving does not interrupt current work."
         pending = sess.get("_codex_subagent_limit_reset_pending")
         if sess.get("subagent_limit") is None and isinstance(pending, list) and len(pending) == 3 and pending[0] == SERVER_INSTANCE_ID:
             manager = existing_codex_app_server_manager(sess)
             inherited = codex_effective_thread_config(sess).get("agents", {}).get("max_concurrent_threads_per_session")
             if manager is not None and manager.ready and pending[1:] == [getattr(manager, "_subagent_limit_instance", None), manager.generation] and not _codex_config_positive_int(inherited):
                 applies_to = "next_provider_process_start"
-                message = "The saved override is cleared. This loaded Codex process can retain its previous limit until a fresh provider process starts; Reload provider alone cannot clear the native default. Current work is not interrupted."
+                message = "The saved override is cleared. This loaded Codex process can retain its previous limit until a fresh provider process starts. Current work is not interrupted."
     elif backend == BACKEND_CLAUDE:
         with RUNTIME_DIAGNOSTICS_LOCK:
             version = str((RUNTIME_DIAGNOSTICS.get(BACKEND_CLAUDE) or {}).get("version") or "")
@@ -27669,9 +27644,6 @@ def public_session(sess: dict[str, Any], *, summary: bool = False) -> dict[str, 
     # Provider ids are intentionally omitted from summary responses, but the
     # UI still needs the authoritative first-turn backend fence.
     public["backend_locked"] = session_backend_locked(sess)
-    # Capability, not proof of emptiness: dismiss-empty repeats the full proof.
-    if sess.get("title") == "New chat" and not public["backend_locked"]:
-        public["empty_chat_cleanup"] = "client-v1"
     if summary and "codex_goal" in sess:
         goal = sess.get("codex_goal")
         public["codex_goal_status"] = goal.get("status") if isinstance(goal, dict) else None
@@ -31145,9 +31117,8 @@ async def refresh_codex_app_server_login(*, source: str = "manager_lookup") -> b
                         manager._hyadex_login_superseded = False
                     if changed:
                         if getattr(manager, "_hyadex_login_superseded", False) is not True:
-                            reason = "login_revision_changed" if changed else "explicit_reload_opaque_login"
                             manager._hyadex_login_handoff_source = source
-                            logger.info("Codex login handoff requested source=%s reason=%s manager=%x", source, reason, id(manager))
+                            logger.info("Codex login handoff requested source=%s reason=login_revision_changed manager=%x", source, id(manager))
                         manager._hyadex_login_superseded = True
                         if not any(manager is item for item in CODEX_RETIRED_APP_SERVER_MANAGERS):
                             CODEX_RETIRED_APP_SERVER_MANAGERS.append(manager)
@@ -32033,7 +32004,6 @@ async def close_codex_app_server_manager() -> None:
         CODEX_APPROVAL_ITEM_CACHE.clear()
         CODEX_INTERACTIVE_CONTROL_THREADS.clear()
         CODEX_INTERACTIVE_CONTROL_THREAD_COUNTS.clear()
-        CODEX_PERMISSION_PROFILES_CACHE.clear()
         CODEX_QUARANTINED_GOAL_THREADS.clear()
         await reset_codex_ephemeral_runtime_metadata()
         async with CODEX_APP_SERVER_MANAGER_LOCK:
@@ -48238,9 +48208,8 @@ def codex_subagents_admin_status() -> dict[str, Any]:
         "provider_config_key": "agents.max_concurrent_threads_per_session",
         "applies_to": "new_or_reloaded_threads",
         "message": (
-            "Applies to new or reloaded Codex threads. Existing chats need Reload provider "
-            "when idle. A chat-specific override takes precedence. No override means "
-            "Codex chooses its default, not unlimited."
+            "Applies to new or reloaded Codex threads. A chat-specific override takes "
+            "precedence. No override means Codex chooses its default, not unlimited."
         ),
     }
 
@@ -50488,13 +50457,6 @@ async def codex_runtime_snapshot(session_id: str) -> dict[str, Any]:
         )
     else:
         status = {"type": "notLoaded"}
-    permission_cache_key = existing_cwd(
-        str(session.get("cwd") or DEFAULT_CWD)
-    )
-    permission_profiles = cached_codex_permission_profiles(
-        permission_cache_key,
-        manager,
-    ) or []
     thread_hygiene = codex_thread_hygiene_public(
         await codex_thread_hygiene(session)
     )
@@ -50513,8 +50475,6 @@ async def codex_runtime_snapshot(session_id: str) -> dict[str, Any]:
         "token_usage_snapshot": session.get("codex_token_usage_snapshot"),
         **context_usage_runtime_fields(session, backend=BACKEND_CODEX),
         "pending_interactions": pending,
-        "permission_profiles": permission_profiles,
-        "background_terminals_supported": CODEX_BACKGROUND_TERMINALS_SUPPORTED,
         "config_overrides": codex_session_config_overrides(session),
         "thread_hygiene": thread_hygiene,
         "rotated_threads": [

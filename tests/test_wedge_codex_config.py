@@ -383,12 +383,7 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
         agent_server.STORE.sessions = {"chat": session}
         agent_server.CODEX_APP_SERVER_MANAGER = None
         try:
-            with patch.object(
-                agent_server,
-                "cached_codex_permission_profiles",
-                return_value=[],
-            ):
-                snapshot = await agent_server.codex_runtime_snapshot("chat")
+            snapshot = await agent_server.codex_runtime_snapshot("chat")
         finally:
             agent_server.STORE.sessions = previous_sessions
             agent_server.CODEX_APP_SERVER_MANAGER = previous_manager

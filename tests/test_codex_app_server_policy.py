@@ -292,7 +292,7 @@ class CodexThreadPolicyTests(unittest.IsolatedAsyncioTestCase):
             await agent_server.ensure_codex_app_server_thread(manager, "chat-1", session, "/repo")
             self.assertEqual(manager.resume_calls, [])
             self.assertEqual(manager.unsubscribe_calls, [])
-            manager.loaded.clear()  # The existing explicit Reload provider action.
+            manager.loaded.clear()  # A fresh provider process forgets loaded threads.
             await agent_server.ensure_codex_app_server_thread(manager, "chat-1", session, "/repo")
             self.assertEqual(manager.resume_calls[-1][1]["config"]["agents.max_concurrent_threads_per_session"], 3)
             session["subagent_limit"] = None
