@@ -29,6 +29,7 @@ from hyadex.core.sessions import (
     STORE,
     UpdateSessionRequest,
 )
+from hyadex.core.state import EVENTS
 from hyadex.core.stop import request_explicit_stop
 from hyadex.core.turns import (
     _put_codex_goal_locked,
@@ -198,6 +199,11 @@ class HyadexGroupRuntime:
 
 
 GROUPS = group_chat.GroupEngine(STATE_DIR / "groups", HyadexGroupRuntime())
+
+# Group discussions follow their member chats' turns; observing only schedules
+# the engine's own work and never delays the chat's event path.
+EVENTS.on_observe(lambda session_id, event: GROUPS.observe_member_event(session_id, event),
+                  types=group_chat.OBSERVED_EVENT_TYPES)
 
 
 async def start_group_job_run(group_id: str, job: dict[str, Any], job_id: str) -> dict[str, Any]:

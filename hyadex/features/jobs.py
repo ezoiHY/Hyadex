@@ -70,6 +70,7 @@ from hyadex.core.state import (
 )
 from hyadex.core.turns import start_turn
 from hyadex.core.util import ensure_dirs, low_available_memory_message, TransientAdmissionWait
+from hyadex.core.wiring import WIRING
 from hyadex.features.group_runtime import new_job_revision, start_group_job_run
 from hyadex.features.side_questions import CODEX_GOALS_RECONFIGURING
 from hyadex.features.terminal import terminal_windows_snapshot
@@ -1988,6 +1989,8 @@ class JobStore:
 
 
 JOBS = JobStore()
+# The turn engine reaches the job store through WIRING (it sits below jobs).
+WIRING.jobs = JOBS
 
 
 SEMANTIC_TIMELINE_JOB_RUN_LIMIT = 7

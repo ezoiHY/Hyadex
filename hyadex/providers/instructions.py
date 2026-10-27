@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+from typing import Any
+
 from hyadex.core.config import hyadex_setting
 from hyadex.providers.claude.sdk import CLAUDE_PROVIDER_MCP_TOOL_NAME
-from typing import Any
 
 MAX_SESSION_SYSTEM_PROMPT_CHARS = int(hyadex_setting("SESSION_SYSTEM_PROMPT_CHARS", "24000"))
 MAX_JOB_PROMPT_CHARS = MAX_SESSION_SYSTEM_PROMPT_CHARS
@@ -67,6 +68,9 @@ PROVIDER_AUTHORITY_USAGE_INSTRUCTIONS = (
     "never print its values, and treat an unset value as no grant.\n"
 )
 PROVIDER_THREAD_INSTRUCTION_ADDENDUM = "\n" + PROVIDER_AUTHORITY_USAGE_INSTRUCTIONS
+
+if len(PROVIDER_THREAD_INSTRUCTION_ADDENDUM) > MAX_PROVIDER_STATIC_INSTRUCTIONS_CHARS:
+    raise RuntimeError("Hyadex static provider instructions exceed their safe limit")
 
 
 CLAUDE_PROMPT_PRELUDE = """\
