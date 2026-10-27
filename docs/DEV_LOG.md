@@ -3,6 +3,15 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-27 — Server internals separated
+
+- Internal restructuring with no change to the API, stored data or chat
+  behaviour: chat events reach live clients and group discussions through an
+  event bus, turn state lives in one object, and each route declares how it is
+  authenticated. Authentication still happens before a request body is read.
+- One small difference: if delivering an event to a live client fails, the
+  event (already written) is no longer reported as a failed write.
+
 ## 2026-10-27 — Claude context fill no longer drops out
 
 - Fixed: a Claude chat's context fill could go blank after a turn and stay

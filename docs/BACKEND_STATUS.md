@@ -50,7 +50,7 @@ logic. This checkpoint does not claim that P2 decomposition is complete.
   restored service files, configuration, layout and current link; the prior
   runtime restarted successfully. Uninstall removed only the selected instance
   and preserved its state.
-- Full suite at `81a837f`: **2,934 tests, all passing**. Before the removals
+- Full suite at `b565f8d`: **2,947 tests, all passing**. Before the removals
   began, the suite had 4,230 tests with six failures. The difference is the
   tests of the deleted features, which were deleted with them; no tests were
   skipped to reach this count. Three of the six earlier failures were fixed and

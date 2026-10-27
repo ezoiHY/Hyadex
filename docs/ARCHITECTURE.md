@@ -14,11 +14,36 @@ route collection, authorization middleware and lifespan to the application facto
 | `hyadex/providers/runtime.py` | Exact user input, bounded runtime control data and environment scrubbing | No runtime state |
 | `hyadex/providers/claude.py` | Claude SDK actor ownership and lifecycle | Native SDK factory and callbacks; lazy model-catalog/side-question adapters |
 | `hyadex/providers/codex.py` | Multiplexed Codex app-server JSON-RPC transport and CLI configuration overrides | Process factory and explicit callbacks |
+| `hyadex/events.py` | Fan-out of committed chat events to live sockets and observers | Subscribers registered by the application |
+| `hyadex/runs.py` | In-memory turn lifecycle state: provider slot, stop, steering, durable queue | No I/O |
 | `hyadex/groups.py` | Group models, timeline, dispatch, recovery | `GroupRuntime` supplied by the application |
 | `hyadex/autopilot.py` | Planning, approval, verification, review, worktree checkpoints | Group engine |
 | `hyadex/routes/groups.py` | Group HTTP and WebSocket endpoints | Group engine and explicit WebSocket callbacks |
 | `hyadex/routes/autopilot.py` | Autopilot HTTP endpoints | Autopilot engine |
 | `agent_server.py:HyadexGroupRuntime` | Bridge to ordinary member sessions | Existing queue, native providers, jobs and event storage |
+
+## Boundaries inside `agent_server.py`
+
+The server is still one module, but its parts meet only through these
+interfaces; `tests/test_architecture_boundaries.py` fails if one is bypassed.
+
+- **Events.** `append_event` and the durable batch writer write, sequence and
+  publish to `EVENTS`. Live sockets subscribe as an ordered `deliver`
+  subscriber (awaited under the chat's event lock, so a chat's events arrive
+  in sequence); group discussions subscribe as a non-blocking `observe`
+  subscriber. The writers do not know their consumers.
+- **Sessions.** `STORE.transaction()` is the one way to serialize a
+  read-modify-write of the session registry. Its lock is private.
+- **Turn state.** `RUNS` (`hyadex.runs.RunState`) owns every in-memory turn
+  registry and its two locks (`active_lock` for the provider slot,
+  `queue_lock` for the durable queue). `holds_turn()` and `has_waiting_work()`
+  answer the checks admission, stop and the queue share.
+- **Authentication.** Each route declares how it is admitted with
+  `dependencies=route_auth(kind, body_limit)`: `user` (the default bearer),
+  `agent_helper`, `provider_mcp`, `native_admin` or `restart`. The middleware
+  enforces the declaration of the route a request reaches, from headers,
+  before the body is read; it holds no route paths of its own. Every
+  `/api/agent/` and `/api/admin/` route must declare one.
 
 Importing `hyadex` or its engine/router modules does not import the server,
 create state directories, start provider processes, or construct global engines.
