@@ -64,6 +64,7 @@ FILES = (
     'NOTICE',
     'hyadex/installation.py',
     'hyadex/inventory.py',
+    'hyadex/features/side_questions.py',
     'hyadex/providers/claude/runtime.py',
     'hyadex/providers/subagents.py',
     'hyadex/features/files.py',

@@ -178,6 +178,13 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
 logger = logging.getLogger("hyadex-server")
 
 # --- Extracted modules ---
+from hyadex.features.side_questions import (
+    codex_app_server_service_tier,
+    CODEX_APP_SERVER_SERVICE_TIER_ALIASES,
+    CODEX_GOALS_RECONFIGURING,
+    flatten_codex_config_overrides,
+    require_side_question_admission,
+)
 from hyadex.providers.claude.runtime import (
     acknowledge_claude_background_reconciliation,
     active_claude_permission_mode,
@@ -3740,7 +3747,6 @@ async def broadcast_committed_emergency_removal(session_id: str) -> None:
 CODEX_APP_SERVER_MANAGER_LOCK = asyncio.Lock()
 CODEX_BINARY_PROBE_LOCK = asyncio.Lock()
 CODEX_LOGIN_PROBE_LOCK = asyncio.Lock()
-CODEX_GOALS_RECONFIGURING = False
 CODEX_APP_SERVER_THREAD_LRU: OrderedDict[str, float] = OrderedDict()
 CODEX_APP_SERVER_PINNED_THREADS: set[str] = set()
 CODEX_APP_SERVER_THREAD_PIN_COUNTS: dict[str, int] = {}
@@ -17141,21 +17147,6 @@ def codex_user_developer_instructions() -> str:
     return str(payload.get("developer_instructions") or "").strip()
 
 
-# The Codex app-server's thread/start and turn-override JSON-RPC params only
-# accept a narrower serviceTier enum ("fast"/"flex") than the canonical
-# service_tier values used for `codex exec` CLI config overrides (see
-# docs/DEV_LOG.md "GPT-5.6 Priority Tier Root Cause": "fast" is the documented
-# user-facing alias for the canonical "priority" tier). Translate at this
-# boundary only; the CLI-facing `-c service_tier=...` invocations keep using
-# the canonical value, which is already validated to work there.
-CODEX_APP_SERVER_SERVICE_TIER_ALIASES = {"priority": "fast"}
-
-
-def codex_app_server_service_tier(service_tier: str) -> str:
-    clean = str(service_tier or "").strip()
-    return CODEX_APP_SERVER_SERVICE_TIER_ALIASES.get(clean, clean)
-
-
 def discover_codex_catalog() -> dict[str, Any]:
     models: list[dict[str, Any]] = []
     model_options: list[dict[str, Any]] = []
@@ -17483,22 +17474,6 @@ def codex_thread_params(
             flat_config.pop(key, None)
     flat_config.update(codex_provider_mcp_config())
     return params
-
-
-def flatten_codex_config_overrides(
-    config: dict[str, Any],
-    prefix: str = "",
-) -> dict[str, Any]:
-    """Flatten a nested override map into dotted Codex config keys."""
-
-    flat: dict[str, Any] = {}
-    for key, value in config.items():
-        dotted = f"{prefix}{key}"
-        if isinstance(value, dict):
-            flat.update(flatten_codex_config_overrides(value, f"{dotted}."))
-        else:
-            flat[dotted] = value
-    return flat
 
 
 def codex_provider_mcp_config() -> dict[str, Any]:
@@ -29542,14 +29517,6 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
     return NativeSideChat()
 
 
-def require_side_question_admission():
-    # Side questions share worker-maintenance and restart admission with
-    # ordinary provider work.
-    blocker = server_lifecycle_admission_blocker()
-    if SERVER.shutting_down or blocker:
-        raise side_questions.SideQuestionError(503, blocker or "Server is shutting down")
-
-
 SIDE_QUESTIONS = side_questions.SideQuestions(native_factory=create_native_side_chat,
     storage_path=STATE_DIR / "side_chats.sqlite3", notify=lambda session_id, event: HUB.broadcast(session_id, event),
     admission_check=require_side_question_admission)
@@ -35162,7 +35129,7 @@ app = create_app(ApplicationBindings(
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], sys.modules['hyadex.features.usage'], sys.modules['hyadex.core.processes'], sys.modules['hyadex.core.sessions'], sys.modules['hyadex.providers.codex.history'], sys.modules['hyadex.providers.authority'], sys.modules['hyadex.core.event_log'], sys.modules['hyadex.features.terminal'], sys.modules['hyadex.features.history'], sys.modules['hyadex.features.files'], sys.modules['hyadex.providers.subagents'], sys.modules['hyadex.providers.claude.runtime'], sys.modules['hyadex.features.side_questions'], )
 
 
 # Module globals that core code reaches through WIRING.
