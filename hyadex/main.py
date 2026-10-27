@@ -87,6 +87,10 @@ import server_instances
 import side_questions
 
 
+# Provider runners register themselves with the turn engine on import.
+import hyadex.providers.claude.turns  # noqa: E402,F401
+import hyadex.providers.codex.turns  # noqa: E402,F401
+
 logger = logging.getLogger("hyadex-server")
 
 # Fail before reading another instance's config or resolving/migrating state.

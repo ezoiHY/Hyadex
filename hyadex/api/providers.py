@@ -14,12 +14,11 @@ from hyadex.core.sessions import (
     session_lifecycle_lock,
     STORE,
 )
-from hyadex.core.turns import (
+from hyadex.core.turns import set_claude_goal, start_claude_goal_command
+from hyadex.providers.codex.turns import (
     _delete_codex_goal_locked,
     _post_codex_compact_locked,
     _put_codex_goal_locked,
-    set_claude_goal,
-    start_claude_goal_command,
 )
 from hyadex.providers.claude.runtime import (
     claude_runtime_snapshot,

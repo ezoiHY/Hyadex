@@ -31,12 +31,8 @@ from hyadex.core.sessions import (
 )
 from hyadex.core.state import EVENTS
 from hyadex.core.stop import request_explicit_stop
-from hyadex.core.turns import (
-    _put_codex_goal_locked,
-    interactive_client_capabilities,
-    set_claude_goal,
-    start_turn_durably,
-)
+from hyadex.core.turns import interactive_client_capabilities, set_claude_goal, start_turn_durably
+from hyadex.providers.codex.turns import _put_codex_goal_locked
 from hyadex.core.util import clean_assistant_text
 from hyadex.core.wiring import WIRING
 from hyadex.features.terminal import _update_session
