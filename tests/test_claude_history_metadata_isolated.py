@@ -13,6 +13,7 @@ import re
 import unittest
 from unittest.mock import Mock
 from claude_history_provenance import ClaudeInterruptionTracker
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -44,7 +45,7 @@ CONSTANTS = {
 def load_projection() -> dict:
     """Compile only explicit pure helpers; no server imports or module startup."""
 
-    tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+    tree = ast.parse(server_source.text(), filename=str(SOURCE))
     selected = []
     found_functions = set()
     found_constants = set()

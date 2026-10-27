@@ -17,12 +17,13 @@ from unittest.mock import AsyncMock, Mock
 from hyadex.providers.codex import CodexAppServerClient, CodexAppServerTurn, CodexAppServerTimeout
 from tests import test_goal_followup_lifecycle_isolated as ordinary_fixture
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 NAMES = {"codex_collaboration_states", "codex_collaboration_thread_ids",
          "codex_child_status_from_thread", "normalize_subagent_status",
          "codex_subagent_thread_identity", "useful_subagent_identity_text",
          "compact_subagent_text", "project_codex_notification", "stop_turn"}
-nodes = [node for node in ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text()).body
+nodes = [node for node in ast.parse(server_source.text()).body
          if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in NAMES]
 assert {node.name for node in nodes} == NAMES
 PROJECTION_CODE = compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(

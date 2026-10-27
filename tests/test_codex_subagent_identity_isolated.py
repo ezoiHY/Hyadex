@@ -12,6 +12,7 @@ import unittest
 import weakref
 from unittest.mock import AsyncMock, Mock
 from hyadex.providers.codex import CodexAppServerClient
+from tests import server_source
 
 
 FUNCTIONS = {
@@ -27,7 +28,7 @@ FUNCTIONS = {
 
 class CodexSubagentIdentityTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        tree = ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text())
+        tree = ast.parse(server_source.text())
         nodes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                  and node.name in FUNCTIONS]
         self.assertEqual({node.name for node in nodes}, FUNCTIONS)

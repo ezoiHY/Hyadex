@@ -12,6 +12,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
+from tests import server_source
 
 
 FUNCTIONS = {
@@ -41,7 +42,7 @@ CONSTANTS = {
 
 def load_index(path: Path):
     source = (Path(__file__).resolve().parents[1] / "agent_server.py")
-    tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+    tree = ast.parse(server_source.text(), filename=str(source))
     selected = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS]
     assert {node.name for node in selected} == FUNCTIONS
     constants = {}

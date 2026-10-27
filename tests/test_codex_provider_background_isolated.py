@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 
 NAMES = {
@@ -19,7 +20,7 @@ NAMES = {
     "cached_codex_subagent_native_statuses", "cache_codex_subagent_native_statuses",
     "prepare_codex_subagent_terminal_snapshot", "provider_background_work_labels_from_snapshot",
 }
-TREE = ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text())
+TREE = ast.parse(server_source.text())
 NODES = [node for node in TREE.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
          and node.name in NAMES]
 assert {node.name for node in NODES} == NAMES

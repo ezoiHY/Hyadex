@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, Mock
 
+from tests import server_source
 from tests.test_codex_goal_history_isolated import SOURCE, load_projection, source_user
 
 
@@ -32,7 +33,7 @@ def projection():
         "reconcile_cursor_history_items", "unsynced_history_items",
         "append_durable_event_batch_sync", "append_imported_events_sync",
     }
-    tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+    tree = ast.parse(server_source.text(), filename=str(SOURCE))
     selected = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
     assert {node.name for node in selected} == names
     selected += [node for node in tree.body if isinstance(node, ast.Assign)

@@ -19,6 +19,7 @@ from hyadex.providers.codex import CodexAppServerDisconnected
 from tests.test_goal_followup_admission_isolated import AdmissionHTTPException, saved_route_snapshots
 from tests import test_goal_native_steer_isolated as native_goal_fixture
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -33,7 +34,7 @@ NAMES = {
     "is_codex_compaction_failure", "codex_compaction_retry_mode",
     "codex_compaction_error_message",
 }
-tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+tree = ast.parse(server_source.text(), filename=str(SOURCE))
 nodes = [node for node in tree.body if isinstance(node, (
     ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
 )) and node.name in NAMES]

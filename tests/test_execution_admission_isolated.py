@@ -14,6 +14,7 @@ import uuid
 from execution_control import ExecutionControlError
 from execution_maintenance import ExecutionMaintenance
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -26,7 +27,7 @@ FUNCTIONS = {
 
 
 def compile_helpers():
-    selected = [node for node in ast.parse(SOURCE.read_text()).body
+    selected = [node for node in ast.parse(server_source.text()).body
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                 and node.name in FUNCTIONS]
     assert len(selected) == len(FUNCTIONS)

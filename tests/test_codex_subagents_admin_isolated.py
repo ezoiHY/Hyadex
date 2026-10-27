@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from tests.test_codex_subagent_config_isolated import code as config_code
 from hyadex.store.files import atomic_json
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -36,7 +37,7 @@ FUNCTIONS = {
     "prebuffer_bounded_request_body", "prebuffer_declared_body", "require_agent_token",
 }
 MODELS = {"CodexSubagentsAdminRequest", "CodexGoalsAdminRequest"}
-tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+tree = ast.parse(server_source.text(), filename=str(SOURCE))
 nodes = [copy.deepcopy(node) for node in tree.body if (
     isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in FUNCTIONS
 ) or (isinstance(node, ast.ClassDef) and node.name in MODELS)]

@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from hyadex.providers.codex import CodexAppServerClient, CodexAppServerRequestError
 import codex_auth
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 
 class Manager:
@@ -61,7 +62,7 @@ class BinaryRefreshTests(unittest.IsolatedAsyncioTestCase):
             "existing_codex_app_server_manager_for_thread", "codex_app_server_manager",
             "close_codex_app_server_manager", "session_registry_has_live_tasks"}
         names.update({"handle_codex_server_request", "cache_codex_approval_item", "schedule_codex_manager_drain"})
-        nodes = [node for node in ast.parse(source.read_text()).body
+        nodes = [node for node in ast.parse(server_source.text()).body
                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
         module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *nodes], type_ignores=[])
         return compile(ast.fix_missing_locations(module), str(source), "exec")

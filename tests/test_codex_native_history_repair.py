@@ -14,6 +14,7 @@ from codex_history_repair import (
     filter_native_codex_history_items, _native_assistant_text,
 )
 from tests.test_codex_goal_history_isolated import load_projection
+from tests import server_source
 
 
 # The wake prompt that servers with cross-chat mail sent; old native history
@@ -223,7 +224,7 @@ class CodexNativeHistoryRepairTests(unittest.TestCase):
         self.assertTrue(getattr(error.exception, "deterministic", False))
 
     def test_assistant_normalization_matches_actual_native_cleaner(self):
-        tree = ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text())
+        tree = ast.parse(server_source.text())
         selected = [node for node in tree.body if (
             isinstance(node, ast.FunctionDef) and node.name == "clean_assistant_text"
         ) or (isinstance(node, ast.Assign) and any(

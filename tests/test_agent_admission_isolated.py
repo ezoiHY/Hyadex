@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -21,7 +22,7 @@ SETTINGS = {
 
 
 def compile_admission():
-    tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+    tree = ast.parse(server_source.text(), filename=str(SOURCE))
     selected = [node for node in tree.body if (
         isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in FUNCTIONS
     ) or (

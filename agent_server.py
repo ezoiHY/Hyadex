@@ -44,6 +44,7 @@ import stat
 import struct
 import subprocess
 import sys
+import types
 import termios
 import tempfile
 import threading
@@ -55453,6 +55454,30 @@ def uvicorn_graceful_shutdown_seconds() -> int:
 app = create_app(ApplicationBindings(
     router=router, authorize_http=require_agent_token, lifespan=lifespan,
 ))
+
+
+# --- Compatibility facade (temporary) ---------------------------------------
+# Code is moving from this module into hyadex/ packages; this module re-exports
+# what moved. Tests and launch code still assign attributes here
+# (``patch.object(agent_server, ...)``, ``module.SERVER_PORT = ...``). Each such
+# assignment is forwarded to the extracted modules that hold the same object
+# under that name, so the code that now lives there sees it too. Removed once
+# callers address the owning modules directly.
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = ()
+
+
+class _CompatibilityFacade(types.ModuleType):
+    def __setattr__(self, name: str, value: Any) -> None:
+        missing = object()
+        previous = self.__dict__.get(name, missing)
+        if previous is not missing:
+            for module in EXTRACTED_MODULES:
+                if module.__dict__.get(name, missing) is previous:
+                    module.__dict__[name] = value
+        super().__setattr__(name, value)
+
+
+sys.modules[__name__].__class__ = _CompatibilityFacade
 
 if __name__ == "__main__":
     raise SystemExit(main())

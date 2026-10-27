@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 
 _SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -27,7 +28,7 @@ _FUNCTIONS = {
     "codex_app_server_reasoning_plaintext",
     "session_lifecycle_lock",
 }
-_TREE = ast.parse(_SOURCE.read_text(encoding="utf-8"), filename=str(_SOURCE))
+_TREE = ast.parse(server_source.text(), filename=str(_SOURCE))
 _SELECTED = [node for node in _TREE.body if isinstance(
     node, (ast.FunctionDef, ast.AsyncFunctionDef)
 ) and node.name in _FUNCTIONS]

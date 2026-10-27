@@ -19,6 +19,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock
 import uuid
 from codex_history_repair import codex_public_item_origin, filter_native_codex_history_items
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -73,7 +74,7 @@ def imported(text=GOAL, **extra):
 
 
 def load_projection():
-    tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+    tree = ast.parse(server_source.text(), filename=str(SOURCE))
     selected = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in FUNCTIONS]
     assert {node.name for node in selected} == FUNCTIONS
     module = ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(

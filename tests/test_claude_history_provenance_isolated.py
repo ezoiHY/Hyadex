@@ -24,6 +24,7 @@ import uuid
 from claude_history_provenance import ClaudeInterruptionTracker, normalize_claude_interruption_context
 from claude_history_repair import filter_native_claude_mailbox_wake_items
 from codex_history_repair import CodexNativeHistoryRepairCache, filter_native_codex_history_items
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -75,7 +76,7 @@ def interruption_chain() -> list[dict]:
 
 
 def load_projection() -> dict:
-    tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+    tree = ast.parse(server_source.text(), filename=str(SOURCE))
     selected = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in FUNCTIONS]
     if {node.name for node in selected} != FUNCTIONS:
         raise AssertionError("Isolated provenance helper allowlist is incomplete")

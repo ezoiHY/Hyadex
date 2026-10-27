@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, Mock
 from hyadex.providers.codex import CodexAppServerError, CodexAppServerProtocolError, CodexAppServerRequestError
 from tests.test_goal_followup_admission_isolated import AdmissionHTTPException, saved_route_snapshots
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -32,7 +33,7 @@ NAMES = {
     "_run_queued_turn_now_once", "codex_goal_followup_requires_native",
     "queued_turn_uses_retired_routing", "NonNativeForceSendRequiresLifecycleLock",
 }
-TREE = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+TREE = ast.parse(server_source.text(), filename=str(SOURCE))
 NODES = [node for node in TREE.body if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in NAMES]
 assert {node.name for node in NODES} == NAMES
 CODE = compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(

@@ -16,6 +16,7 @@ import httpx
 import codex_auth
 from tests import test_codex_binary_refresh_isolated as binary
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 
 def jwt(claims):
@@ -124,7 +125,7 @@ class LoginHandoffTests(binary.BinaryRefreshTests):
 
     def catalog_app(self):
         source = Path(__file__).resolve().parents[1] / "agent_server.py"
-        nodes = [node for node in ast.parse(source.read_text()).body
+        nodes = [node for node in ast.parse(server_source.text()).body
                  if isinstance(node, ast.AsyncFunctionDef) and node.name == "runtime_catalog"]
         for node in nodes:
             node.decorator_list = []

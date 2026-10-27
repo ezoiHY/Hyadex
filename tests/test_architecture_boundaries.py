@@ -7,9 +7,10 @@ import ast
 from pathlib import Path
 import re
 import unittest
+from tests import server_source
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = (ROOT / "agent_server.py").read_text()
+SOURCE = server_source.text()
 TREE = ast.parse(SOURCE)
 
 

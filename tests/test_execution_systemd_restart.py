@@ -25,6 +25,7 @@ import uuid
 
 import execution_install as install
 from execution_manage import NativeServices
+from tests import server_source
 
 
 SOURCE = Path(__file__).resolve().parents[1]
@@ -86,7 +87,7 @@ class SystemdRestartProof(unittest.TestCase):
     def fixture_source(self):
         names = {"process_cgroup_paths", "hyadex_server_systemd_cgroup_from_paths",
                  "hyadex_server_systemd_cgroup", "cgroup_is_within"}
-        source = (SOURCE / "agent_server.py").read_text()
+        source = server_source.text()
         tree = ast.parse(source)
         definitions = [ast.get_source_segment(source, node) for node in tree.body
                        if isinstance(node, ast.FunctionDef) and node.name in names]

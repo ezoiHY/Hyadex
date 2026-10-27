@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 
 import claude_history_repair as repair
 from tests.test_claude_history_metadata_isolated import load_projection, user_event
+from tests import server_source
 
 
 def encode(events):
@@ -26,7 +27,7 @@ def load_server_repair(cache):
         "project_legacy_imported_provider_event",
         "project_provider_history_event_for_egress",
     }
-    nodes = [node for node in ast.parse(source.read_text()).body
+    nodes = [node for node in ast.parse(server_source.text()).body
              if isinstance(node, ast.FunctionDef) and node.name in wanted]
     assert {node.name for node in nodes} == wanted
     module = ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(

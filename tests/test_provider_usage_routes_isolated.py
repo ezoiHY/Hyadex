@@ -13,13 +13,14 @@ from fastapi.testclient import TestClient
 import provider_usage
 from tests import test_codex_subagents_admin_isolated as admin_fixture
 from tests.test_provider_usage import FakeManager
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
 NAMES = {"runtime_provider_usage", "observe_claude_provider_usage",
          "project_codex_usage_notification", "broadcast_codex_usage_changed",
          "broadcast_provider_usage_changed"}
-nodes = [node for node in ast.parse(SOURCE.read_text()).body
+nodes = [node for node in ast.parse(server_source.text()).body
          if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in NAMES]
 assert {node.name for node in nodes} == NAMES
 for node in nodes:

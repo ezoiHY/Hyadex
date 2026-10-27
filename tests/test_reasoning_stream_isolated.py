@@ -6,12 +6,13 @@ from types import SimpleNamespace
 from typing import Any
 import unittest
 from unittest.mock import AsyncMock, Mock
+from tests import server_source
 
 
 class ReasoningPlaintextExtractionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        tree = ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text())
+        tree = ast.parse(server_source.text())
         node = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
             and node.name == "codex_app_server_reasoning_plaintext")
         namespace = {"Any": Any}
@@ -46,7 +47,7 @@ class ReasoningSummaryStreamTests(unittest.IsolatedAsyncioTestCase):
             "flush_reasoning_summary_stream", "update_reasoning_summary_stream",
             "reasoning_summary_stream_item", "clear_reasoning_summary_stream",
             "persist_reasoning_summary", "finish_reasoning_summary_stream"}
-        tree = ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text())
+        tree = ast.parse(server_source.text())
         nodes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and node.name in names]
         locks = {}

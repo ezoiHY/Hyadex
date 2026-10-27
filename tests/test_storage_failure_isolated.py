@@ -17,13 +17,14 @@ import uuid
 
 from tests.test_claude_shutdown_status_isolated import load_probe
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
 
 
 def storage_source():
-    tree = ast.parse(SOURCE.read_text())
+    tree = ast.parse(server_source.text())
     names = {
         "append_turn_finished_event", "revoke_terminal_run_authority",
         "join_task_despite_caller_cancellation", "append_durable_event_batch_sync",

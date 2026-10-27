@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 import uuid
 
 import claude_background_reconciliation as receipts
+from tests import server_source
 
 
 def task(task_id="unfinished", status="running", owner="run-old"):
@@ -26,7 +27,7 @@ def load_helpers(path=None):
     names = {"persist_claude_background_task_receipts", "acknowledge_claude_background_reconciliation",
              "build_claude_subagent_snapshot", "normalize_subagent_status", "compact_subagent_text",
              "claude_subagent_child_activity", "claude_subagent_progress_activity"}
-    selected = [node for node in ast.parse(source.read_text()).body
+    selected = [node for node in ast.parse(server_source.text()).body
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
     assert {node.name for node in selected} == names
     namespace = {

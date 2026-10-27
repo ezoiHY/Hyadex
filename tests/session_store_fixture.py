@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 import local_session_ownership
 from tests import test_codex_subagent_config_isolated as config_fixture
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
 FUNCTIONS = {"retired_session_runtime_message", "preview_session_runtime_update", "session_backend_locked", "public_session", "title_runtime_key",
@@ -28,7 +29,7 @@ FUNCTIONS = {"retired_session_runtime_message", "preview_session_runtime_update"
     "record_codex_subagent_limit_application",
     "create_session", "create_session_with_history", "update_session", "_update_session", "ensure_backend_update_allowed", "codex_runtime_settings", "_fork_session_locked"}
 MODELS = {"CreateSessionRequest", "UpdateSessionRequest"}
-tree = ast.parse(SOURCE.read_text())
+tree = ast.parse(server_source.text())
 nodes = []
 for node in tree.body:
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in FUNCTIONS:

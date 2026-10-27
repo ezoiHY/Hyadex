@@ -12,13 +12,14 @@ from hyadex.runs import NamespaceRuns
 from unittest.mock import AsyncMock, Mock
 
 from hyadex.providers.claude import ClaudeSDKSupervisorClosed
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
 
 
 def load_probe(path, *, shutting_down, previous_error=None, result=None, projection_error=False):
-    tree = ast.parse(SOURCE.read_text())
+    tree = ast.parse(server_source.text())
     runner = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "run_claude_sdk")
     classify = next(node for node in runner.body if isinstance(node, ast.FunctionDef) and node.name == "record_sdk_stream_exception")
     finalize = next(node for node in runner.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "finalize_sdk_run")

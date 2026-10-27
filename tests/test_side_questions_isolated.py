@@ -19,6 +19,7 @@ from starlette.requests import Request
 
 import side_questions as side
 from hyadex.runs import NamespaceRuns
+from tests import server_source
 
 
 def event(kind, run="main", **kwargs):
@@ -31,7 +32,7 @@ def side_history(question="Previous question", answer="Previous answer"):
 
 class ShutdownBudgetTests(unittest.TestCase):
     def test_side_question_cleanup_is_included_in_cooperative_restart_budget(self):
-        tree = ast.parse((Path(__file__).resolve().parents[1] / "agent_server.py").read_text())
+        tree = ast.parse(server_source.text())
         lifespan = next(node for node in tree.body
                         if isinstance(node, ast.AsyncFunctionDef) and node.name == "lifespan")
         phases = [node.value for node in ast.walk(lifespan)
@@ -753,7 +754,7 @@ def fake_process(stdout, stderr):
 class ServerGlueTests(unittest.TestCase):
     def test_native_glue_has_no_snapshot_main_turn_or_state_writes(self):
         source = (Path(__file__).resolve().parents[1] / "agent_server.py")
-        tree = ast.parse(source.read_text(), filename=str(source))
+        tree = ast.parse(server_source.text(), filename=str(source))
         selected = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                     and node.name == "create_native_side_chat"]
         self.assertEqual(len(selected), 1)
@@ -774,7 +775,7 @@ class SideApprovalBridgeTests(unittest.IsolatedAsyncioTestCase):
         source = (Path(__file__).resolve().parents[1] / "agent_server.py")
         names = {"handle_codex_server_request", "public_codex_interaction", "validate_codex_interaction_response",
                  "resolve_codex_interaction", "finish_codex_interaction_locked", "cancel_codex_interactions"}
-        selected = [node for node in ast.parse(source.read_text()).body
+        selected = [node for node in ast.parse(server_source.text()).body
                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
         requested = asyncio.Event()
         async def append(*args):
@@ -821,7 +822,7 @@ class ServerCallbackTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
         source = (Path(__file__).resolve().parents[1] / "agent_server.py")
-        tree = ast.parse(source.read_text(), filename=str(source))
+        tree = ast.parse(server_source.text(), filename=str(source))
         selected = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                     and node.name == "create_native_side_chat"]
         cls.code = compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(

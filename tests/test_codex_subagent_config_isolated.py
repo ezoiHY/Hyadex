@@ -10,6 +10,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -25,7 +26,7 @@ CONSTANTS = {
     "CODEX_THREAD_CONFIG_AGENT_VALIDATORS", "CODEX_THREAD_CONFIG_TOP_LEVEL_VALIDATORS",
     "_CODEX_THREAD_CONFIG_WARNED_KEYS",
 }
-tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+tree = ast.parse(server_source.text(), filename=str(SOURCE))
 selected = []
 found = set()
 for node in tree.body:

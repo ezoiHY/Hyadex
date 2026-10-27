@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, Mock
 import uuid
 
 from codex_history_repair import CodexNativeHistoryProofUnavailable
+from tests import server_source
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -30,7 +31,7 @@ FUNCTIONS = {
 
 
 def load_deferral_glue():
-    tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+    tree = ast.parse(server_source.text(), filename=str(SOURCE))
     nodes = [node for node in tree.body
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in FUNCTIONS]
     assert {node.name for node in nodes} == FUNCTIONS

@@ -18,6 +18,7 @@ import unittest
 from unittest.mock import patch
 
 import server_instances as instances
+from tests import server_source
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -1129,7 +1130,7 @@ class RuntimeBindingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Extract just these pure/probe functions. Never import/start the server.
-        source = (ROOT / "agent_server.py").read_text()
+        source = server_source.text()
         tree = ast.parse(source)
         names = {"terminal_session_name", "run_tmux", "server_instance_environment"}
         cls.functions = compile(ast.Module(body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names], type_ignores=[]), "instance-runtime", "exec", flags=__import__("__future__").annotations.compiler_flag)
