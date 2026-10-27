@@ -178,6 +178,34 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
 logger = logging.getLogger("hyadex-server")
 
 # --- Extracted modules ---
+from hyadex.core.util import (
+    _patch_changed_paths,
+    _safe_config_parent,
+    bounded_jsonl_records_range,
+    bounded_lock,
+    clean_assistant_text,
+    compact_memory_text,
+    contained_jsonl_path,
+    decoded_exact_header_secret,
+    ensure_dirs,
+    LEADING_DECORATION_RE,
+    low_available_memory_message,
+    merged_file_ids,
+    normalized_file_id,
+    normalized_network_address,
+    normalized_tool_name,
+    runner_env,
+    server_identity,
+    SkillSelection,
+    strip_hyadex_memory_context,
+    terminal_dimensions,
+    TERMINAL_MAX_COLUMNS,
+    TERMINAL_MAX_ROWS,
+    TERMINAL_MIN_COLUMNS,
+    TERMINAL_MIN_ROWS,
+    TransientAdmissionWait,
+    utc_timestamp,
+)
 from hyadex.providers.instructions import (
     CLAUDE_PROMPT_PRELUDE,
     CLAUDE_SDK_CONFIGURATION_VERSION,
@@ -477,35 +505,6 @@ if CLAUDE_TRANSPORT not in {
 if len(PROVIDER_THREAD_INSTRUCTION_ADDENDUM) > MAX_PROVIDER_STATIC_INSTRUCTIONS_CHARS:
     raise RuntimeError("Hyadex static provider instructions exceed their safe limit")
 
-def server_identity() -> str:
-    """Return a stable identity, freezing the legacy value on first use."""
-
-    path = SERVER_IDENTITY_FILE
-    cache_key = str(path)
-    cached = SERVER_IDENTITY_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-    with SERVER_IDENTITY_LOCK:
-        cached = SERVER_IDENTITY_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
-        persisted = read_server_identity_file(path)
-        if persisted is not None:
-            SERVER_IDENTITY_CACHE[cache_key] = persisted
-            return persisted
-
-        identity = legacy_server_identity()
-        if not write_server_identity_file(path, identity):
-            persisted = read_server_identity_file(path)
-            if persisted is None:
-                raise RuntimeError(
-                    "persisted server identity disappeared during creation"
-                )
-            identity = persisted
-        SERVER_IDENTITY_CACHE[cache_key] = identity
-        return identity
-
-
 # Provider command selectors are deliberately scoped to one server process.
 # The native path remains opaque even to an authenticated inventory client.
 # A restart rotates this key; durable queued selections then fail visibly and
@@ -518,19 +517,6 @@ def provider_command_selector_secret() -> str:
     """Return this process's private HMAC key for opaque native selectors."""
 
     return PROVIDER_COMMAND_SELECTOR_SECRET
-
-
-def ensure_dirs(session_id: str | None = None) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    FILES_ROOT.mkdir(parents=True, exist_ok=True)
-    CODE_DIFFS_ROOT.mkdir(parents=True, exist_ok=True)
-    PROVIDER_AUTHORITY_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if session_id:
-        session_dir(session_id).mkdir(parents=True, exist_ok=True)
-        uploads_dir(session_id).mkdir(parents=True, exist_ok=True)
-        manifests_dir(session_id).mkdir(parents=True, exist_ok=True)
-        artifact_publications_dir(session_id).mkdir(parents=True, exist_ok=True)
-        code_diffs_dir(session_id).mkdir(parents=True, exist_ok=True)
 
 
 def _git_command(
@@ -1077,32 +1063,6 @@ def _parse_git_numstat(source: bytes) -> list[dict[str, Any]]:
             record["old_path"] = old_path
         files.append(record)
     return files
-
-
-def _patch_changed_paths(source: str) -> set[str]:
-    paths: set[str] = set()
-    # Codex's orchestration tool embeds apply_patch in a JavaScript string, so
-    # patch newlines arrive as literal `\\n` sequences rather than line breaks.
-    expanded = str(source or "").replace("\\r\\n", "\n").replace("\\n", "\n")
-    for raw_line in expanded.splitlines():
-        line = raw_line.strip()
-        match = re.match(r"^\*\*\* (?:Add|Update|Delete) File:\s*(.+?)\s*$", line)
-        if match:
-            paths.add(match.group(1).rstrip("\\").strip())
-            continue
-        match = re.match(r"^\*\*\* Move to:\s*(.+?)\s*$", line)
-        if match:
-            paths.add(match.group(1).rstrip("\\").strip())
-            continue
-        match = re.match(r"^(?:---|\+\+\+)\s+(?:[ab]/)?(.+?)\s*$", line)
-        if match and match.group(1) != "/dev/null":
-            paths.add(match.group(1).rstrip("\\").strip())
-    return paths
-
-
-def normalized_tool_name(tool: dict[str, Any]) -> str:
-    raw_name = str(tool.get("name") or "").strip().replace("-", "_")
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", raw_name).lower()
 
 
 def tool_changed_paths(tool: dict[str, Any]) -> set[str]:
@@ -2012,22 +1972,6 @@ def request_authorized(request: Request) -> bool:
     )
 
 
-def decoded_exact_header_secret(value: bytes) -> str | None:
-    """Decode one native secret without normalizing an ambiguous wire value."""
-
-    try:
-        candidate = value.decode("ascii")
-    except UnicodeDecodeError:
-        return None
-    if (
-        not candidate
-        or candidate != candidate.strip()
-        or any(character.isspace() for character in candidate)
-    ):
-        return None
-    return candidate
-
-
 def request_exact_native_token_header_authorized(request: Request) -> bool:
     """Accept exactly one desktop/mobile native token header.
 
@@ -2175,15 +2119,6 @@ def request_client_is_loopback(request: Request) -> bool:
         return False
     client = request.client
     return bool(client and network_host_is_loopback(str(client.host or "")))
-
-
-def normalized_network_address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
-    """Parse an address and collapse IPv4-mapped IPv6 for exact comparisons."""
-
-    address = ipaddress.ip_address(str(host or ""))
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-        return address.ipv4_mapped
-    return address
 
 
 def codex_provider_mcp_connection_host(bind_address: str | None = None) -> str:
@@ -2443,15 +2378,6 @@ class AcknowledgeEmergencyRequest(BaseModel):
         if (self.expected_alert_id is None) == (self.through_alert_id is None):
             raise ValueError("provide exactly one of expected_alert_id or through_alert_id")
         return self
-
-
-class SkillSelection(BaseModel):
-    """Opaque selection of one server-discovered provider command."""
-
-    model_config = {"extra": "forbid"}
-
-    id: str = Field(pattern=r"^pcmd_[0-9a-f]{32}$")
-    revision: str = Field(pattern=r"^pcmdrev_[0-9a-f]{32}$")
 
 
 class ProviderCommandSelectionInvalid(HTTPException):
@@ -7173,10 +7099,6 @@ LIVE_STDOUT_MAX_LINES = 400
 LIVE_STDOUT_MAX_LINE_CHARS = 12_000
 TMUX_CAPTURE_MAX_LINES = 2_000
 TMUX_COMMAND_TIMEOUT_SECONDS = 4
-TERMINAL_MIN_COLUMNS = 2
-TERMINAL_MAX_COLUMNS = 500
-TERMINAL_MIN_ROWS = 1
-TERMINAL_MAX_ROWS = 200
 TERMINAL_READ_BYTES = 64 * 1024
 TERMINAL_INPUT_MAX_BYTES = 1024 * 1024
 TERMINAL_INPUT_WRITE_TIMEOUT_SECONDS = 5.0
@@ -7958,18 +7880,6 @@ def queue_positions(queue: deque[dict[str, Any]]) -> list[dict[str, Any]]:
         {"queued_id": str(item.get("queued_id") or ""), "position": idx + 1}
         for idx, item in enumerate(queue)
     ]
-
-
-def merged_file_ids(*groups: list[str] | tuple[str, ...]) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-    for group in groups:
-        for value in group:
-            file_id = str(value or "").strip()
-            if file_id and file_id not in seen:
-                seen.add(file_id)
-                merged.append(file_id)
-    return merged
 
 
 def file_attachment_prompt_lines(
@@ -13262,12 +13172,6 @@ def configure_terminal_session_shell(name: str, shell: str, path: str) -> None:
     run_tmux(["set-option", "-t", name, "default-command", login_command])
 
 
-def terminal_dimensions(columns: int | None = None, rows: int | None = None) -> tuple[int, int]:
-    cols = max(TERMINAL_MIN_COLUMNS, min(int(columns or 120), TERMINAL_MAX_COLUMNS))
-    lines = max(TERMINAL_MIN_ROWS, min(int(rows or 36), TERMINAL_MAX_ROWS))
-    return cols, lines
-
-
 def set_pty_dimensions(fd: int, columns: int, rows: int) -> None:
     cols, lines = terminal_dimensions(columns, rows)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", lines, cols, 0, 0))
@@ -14549,19 +14453,6 @@ def event_establishes_session_file_origin(event: dict[str, Any], session_id: str
         and (not event_owner or event_owner == session_id)
         and (not original_owner or original_owner == session_id)
     )
-
-
-def normalized_file_id(value: Any) -> str:
-    file_id = str(value or "").strip()
-    if (
-        not file_id
-        or file_id in {".", ".."}
-        or Path(file_id).name != file_id
-        or "/" in file_id
-        or "\\" in file_id
-    ):
-        return ""
-    return file_id
 
 
 def read_file_meta_record(file_id: str) -> dict[str, Any] | None:
@@ -21079,13 +20970,6 @@ def compact_import_text(text: str) -> str:
     return text[:MAX_IMPORTED_TEXT_CHARS].rstrip() + "\n\n[import trimmed]"
 
 
-def compact_memory_text(text: str, max_chars: int = MAX_FORK_MEMORY_ITEM_CHARS) -> str:
-    text = re.sub(r"\n{3,}", "\n\n", str(text or "").strip())
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars].rstrip() + "\n[trimmed]"
-
-
 def codex_goals_cli_args() -> list[str]:
     """Apply the server-wide goal policy to every one-shot Codex process."""
 
@@ -21462,15 +21346,6 @@ async def append_turn_finished_event(session_id: str, payload: dict[str, Any]) -
     return event
 
 
-LEADING_DECORATION_RE = re.compile(
-    r"(?m)^[ \t]*(?:(?::[A-Za-z0-9_+\-]+:|[\U0001F300-\U0001FAFF\u2600-\u27BF]\ufe0f?)[ \t]*)+"
-)
-
-
-def clean_assistant_text(text: str) -> str:
-    return LEADING_DECORATION_RE.sub("", str(text or "")).strip()
-
-
 def is_import_boilerplate(text: str) -> bool:
     stripped = text.strip()
     boilerplate_prefixes = (
@@ -21634,23 +21509,6 @@ def provider_session_identifier(value: Any) -> str | None:
     return clean
 
 
-def contained_jsonl_path(path: Path, root: Path) -> Path | None:
-    """Resolve a regular transcript without permitting root escape or symlinks."""
-
-    try:
-        resolved_root = root.expanduser().resolve(strict=True)
-        expanded = path.expanduser()
-        if expanded.is_symlink():
-            return None
-        resolved = expanded.resolve(strict=True)
-        resolved.relative_to(resolved_root)
-        if resolved.suffix != ".jsonl" or not resolved.is_file():
-            return None
-        return resolved
-    except (OSError, RuntimeError, ValueError):
-        return None
-
-
 def bounded_jsonl_paths(
     root: Path,
     *,
@@ -21711,29 +21569,6 @@ def bounded_jsonl_events(path: Path, *, preserve_invalid: bool = False) -> Itera
         finished = os.fstat(stream.fileno())
         if any(int(getattr(finished, field)) != expected[field] for field in expected):
             raise ValueError("transcript changed during parsing")
-
-
-def bounded_jsonl_records_range(
-    path: Path, start: int, end: int, *, expected_stat: dict[str, int],
-    require_newline: bool = True, allow_partial: bool = False,
-) -> Iterator[tuple[dict[str, Any] | None, int]]:
-    """Read every record and ending offset in one immutable JSONL range."""
-    if start < 0 or end < start or end > expected_stat["st_size"]:
-        raise ValueError("transcript cursor range is invalid")
-    with path.open("rb") as stream:
-        before = os.fstat(stream.fileno())
-        if any(int(getattr(before, field)) != int(expected_stat[field]) for field in ("st_dev", "st_ino", "st_size", "st_mtime_ns")):
-            raise ValueError("transcript changed before cursor parsing")
-        stream.seek(start)
-        for count, (event, offset, _raw) in enumerate(jsonl_records(stream, end=end,
-                require_newline=require_newline, max_records=MAX_LOCAL_TRANSCRIPT_SCAN_LINES,
-                max_retained_bytes=MAX_LOCAL_TRANSCRIPT_LINE_BYTES), 1):
-            yield event, offset
-            if allow_partial and count >= MAX_LOCAL_TRANSCRIPT_SCAN_LINES:
-                break
-        after = os.fstat(stream.fileno())
-        if any(int(getattr(after, field)) != int(expected_stat[field]) for field in ("st_dev", "st_ino", "st_size", "st_mtime_ns")):
-            raise ValueError("transcript changed during cursor parsing")
 
 
 def bounded_jsonl_events_range(
@@ -22478,38 +22313,6 @@ def strip_hyadex_provider_context(text: str, *, allow_jobless_legacy: bool = Fal
             return text
         remainder = remainder[system_end + len(system_end_marker):]
     return remainder
-
-
-def strip_hyadex_memory_context(text: str) -> str:
-    """Remove exact fallback-memory wrappers while preserving the current user text."""
-    cleaned = text
-    while True:
-        previous = cleaned
-        length_match = re.match(
-            r"^\[(Fork memory context|Codex rollover memory); chars=(\d+)\]\n",
-            cleaned,
-        )
-        if length_match:
-            label = length_match.group(1)
-            memory_chars = int(length_match.group(2))
-            memory_end = length_match.end() + memory_chars
-            boundary = f"\n[End {label}]\n\n[Current user prompt]\n"
-            if cleaned.startswith(boundary, memory_end):
-                cleaned = cleaned[memory_end + len(boundary):]
-                continue
-        for label, end_label in (
-            ("Fork memory context", "fork memory context"),
-            ("Codex rollover memory", "Codex rollover memory"),
-        ):
-            prefix = f"[{label}]\n"
-            boundary = f"\n[End {end_label}]\n\n[Current user prompt]\n"
-            if cleaned.startswith(prefix):
-                boundary_index = cleaned.rfind(boundary, len(prefix))
-                if boundary_index >= 0:
-                    cleaned = cleaned[boundary_index + len(boundary):]
-                    break
-        if cleaned == previous:
-            return cleaned
 
 
 LEGACY_PROVIDER_AUTHORITY_HEADER = "[Hyadex provider authority]"
@@ -26779,17 +26582,6 @@ def host_pressure_snapshot() -> dict[str, Any]:
     }
 
 
-def low_available_memory_message(available_mb: int, minimum_mb: int, *, action: str) -> str:
-    minimum = f"{minimum_mb} MiB"
-    if minimum_mb >= 1024 and minimum_mb % 1024 == 0:
-        minimum = f"{minimum_mb // 1024} GiB ({minimum_mb} MiB)"
-    return (
-        f"low available memory on the server: {available_mb} MiB available; "
-        f"at least {minimum} required to {action}. "
-        "Close unused applications or stop other agent runs on the server, then retry."
-    )
-
-
 def scheduled_job_resource_diagnostics(pressure: dict[str, Any], active_count: int) -> dict[str, Any]:
     """Explain resource admission from one snapshot, without taking run locks.
 
@@ -26892,28 +26684,6 @@ async def turn_start_blocker(*, ignore_session_id: str | None = None) -> str | N
         )
 
     return None
-
-
-def runner_env() -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDECODE")}
-    # Every caller launches provider-controlled/runtime code. Never let a
-    # legacy service bearer or a per-turn authority path leak through an
-    # inherited environment (including summarizers and runtime probes).
-    scrub_provider_runtime_environment(env)
-    home = env.get("HOME", str(Path.home()))
-    extra = [
-        f"{home}/.local/bin",
-        f"{home}/.npm-global/bin",
-        f"{home}/.cargo/bin",
-        f"{home}/.bun/bin",
-        "/opt/homebrew/bin",
-        "/usr/local/bin",
-    ]
-    nvm_root = Path(home) / ".nvm" / "versions" / "node"
-    if nvm_root.exists():
-        extra.extend(str(path / "bin") for path in sorted(nvm_root.glob("*"), reverse=True))
-    env["PATH"] = ":".join(extra + [env.get("PATH", "/usr/bin:/bin")])
-    return env
 
 
 def agent_runner_env(
@@ -44219,15 +43989,6 @@ MANAGED_SERVER_SERVICE_KIND_CACHE: str | None = None
 SERVER_RESTART_SIGNAL_LOCK = threading.Lock()
 
 
-class TransientAdmissionWait(HTTPException):
-    """A 409/503 that only means "try again shortly", never a rejection.
-
-    Raised for Codex goals reconfiguration, per-chat maintenance, and host
-    capacity/memory deferrals. Queue promotion requeues such rows without
-    counting them toward the cross-chat delivery discard bound.
-    """
-
-
 class UnsafeMutationAdmissionRejected(RuntimeError):
     """A body finished only after lifecycle admission had closed."""
 
@@ -44544,10 +44305,6 @@ def server_restart_capability(
     if blocker_snapshot is not None:
         capability["blocker_snapshot"] = blocker_snapshot
     return capability
-
-
-def utc_timestamp() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def read_server_restart_status() -> dict[str, Any]:
@@ -44955,35 +44712,6 @@ def server_restart_blocker_snapshot_locked(
         # emergency restart control based on the counts in this snapshot.
         "force_restart_available": True,
     }
-
-
-@asynccontextmanager
-async def bounded_lock(
-    lock: asyncio.Lock,
-    timeout_seconds: float,
-) -> AsyncIterator[bool]:
-    """Hold ``lock`` if it can be acquired within ``timeout_seconds``.
-
-    Yields ``True`` when the lock is held and ``False`` when the wait timed
-    out. Restart status and emergency restart paths use this so a lock that is
-    wedged by the very fault an operator is trying to escape cannot make the
-    restart control hang or refuse.
-    """
-
-    acquired = False
-    try:
-        await asyncio.wait_for(
-            lock.acquire(),
-            timeout=max(0.0, float(timeout_seconds)),
-        )
-        acquired = True
-    except (TimeoutError, asyncio.TimeoutError):
-        acquired = False
-    try:
-        yield acquired
-    finally:
-        if acquired:
-            lock.release()
 
 
 async def bounded_restart_tmux_cgroup_state(
@@ -45709,21 +45437,6 @@ def server_instance_environment() -> dict[str, str]:
 HYADEX_SERVER_DISPLAY_NAME = canonical_server_display_name(
     os.environ.get("HYADEX_SERVER_NAME")
 )
-
-
-def _safe_config_parent(path: Path) -> tuple[Path, int]:
-    parent = path.parent
-    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    info = parent.lstat()
-    if (
-        not stat.S_ISDIR(info.st_mode)
-        or info.st_uid != os.getuid()
-        or stat.S_IMODE(info.st_mode) & 0o022
-    ):
-        raise PermissionError("HyadexServer configuration directory is unsafe")
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    return parent, os.open(parent, flags)
 
 
 async def join_cancelled_tasks(*tasks: Any) -> None:
@@ -54384,7 +54097,7 @@ app = create_app(ApplicationBindings(
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], )
 
 
 # Module globals that core code reaches through WIRING.

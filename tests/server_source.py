@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "agent_server.py"
 
 # Modules extracted from agent_server.py, in dependency order.
-EXTRACTED: tuple[str, ...] = ('hyadex/core/config.py', 'hyadex/core/paths.py', 'hyadex/core/identity.py', 'hyadex/providers/codex/config.py', 'hyadex/providers/instructions.py', )
+EXTRACTED: tuple[str, ...] = ('hyadex/core/config.py', 'hyadex/core/paths.py', 'hyadex/core/identity.py', 'hyadex/providers/codex/config.py', 'hyadex/providers/instructions.py', 'hyadex/core/util.py', )
 
 
 @lru_cache(maxsize=1)
