@@ -15,7 +15,7 @@ from hyadex.core.sessions import (
     STORE,
 )
 from hyadex.core.turns import set_claude_goal, start_claude_goal_command
-from hyadex.providers.codex.turns import (
+from hyadex.providers.codex.controls import (
     _delete_codex_goal_locked,
     _post_codex_compact_locked,
     _put_codex_goal_locked,
