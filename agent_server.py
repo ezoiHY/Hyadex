@@ -175,6 +175,77 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
 logger = logging.getLogger("hyadex-server")
 
 # --- Extracted modules ---
+from hyadex.providers.instructions import (
+    CLAUDE_PROMPT_PRELUDE,
+    CLAUDE_SDK_CONFIGURATION_VERSION,
+    CODEX_PROMPT_PRELUDE,
+    CODEX_THREAD_POLICY_VERSION,
+    HYADEX_CONTEXT_END_MARKER,
+    MAX_JOB_PROMPT_CHARS,
+    MAX_PROVIDER_STATIC_INSTRUCTIONS_CHARS,
+    MAX_SESSION_SYSTEM_PROMPT_CHARS,
+    PROVIDER_AUTHORITY_USAGE_INSTRUCTIONS,
+    PROVIDER_THREAD_INSTRUCTION_ADDENDUM,
+    PROVIDER_TOOL_DESCRIPTION,
+    PROVIDER_TOOL_HELPERS,
+    PROVIDER_TOOL_INPUT_SCHEMA,
+    PROVIDER_TOOL_MAX_ARGUMENT_BYTES,
+    PROVIDER_TOOL_MAX_ARGUMENT_CHARS,
+    PROVIDER_TOOL_MAX_ARGUMENTS,
+    PROVIDER_TOOL_MAX_BODY_BYTES,
+    PROVIDER_TOOL_MAX_CONCURRENT_PER_CLAUDE_CHAT,
+    PROVIDER_TOOL_MAX_OUTPUT_BYTES,
+    PROVIDER_TOOL_MAX_STDIN_BYTES,
+    PROVIDER_TOOL_MAX_STDIN_CHARS,
+    PROVIDER_TOOL_READ_ONLY_COMMANDS,
+    PROVIDER_TOOL_REPLAY,
+    PROVIDER_TOOL_REPLAY_LIMIT,
+    PROVIDER_TOOL_REPLAY_LOCK,
+    PROVIDER_TOOL_REPLAY_TOMBSTONE_LIMIT,
+    PROVIDER_TOOL_REPLAY_TOMBSTONES,
+    PROVIDER_TOOL_TIMEOUT_SECONDS,
+    SYSTEM_PROMPT,
+)
+from hyadex.providers.codex.config import (
+    _codex_config_non_empty_str,
+    _codex_config_positive_int,
+    _CODEX_THREAD_CONFIG_WARNED_KEYS,
+    _warn_codex_thread_config_once,
+    codex_effective_thread_config,
+    codex_session_config_overrides,
+    CODEX_THREAD_CONFIG_AGENT_VALIDATORS,
+    CODEX_THREAD_CONFIG_DEFAULTS,
+    CODEX_THREAD_CONFIG_LEGACY_MAX_THREADS_KEY,
+    CODEX_THREAD_CONFIG_TOP_LEVEL_VALIDATORS,
+    merge_codex_thread_config,
+    read_codex_thread_config_overrides,
+    sanitize_codex_thread_config,
+)
+from hyadex.core.identity import (
+    legacy_server_identity,
+    read_server_identity_file,
+    SERVER_IDENTITY_CACHE,
+    SERVER_IDENTITY_FILE,
+    SERVER_IDENTITY_LOCK,
+    SERVER_IDENTITY_RE,
+    write_server_identity_file,
+)
+from hyadex.core.paths import (
+    artifact_publications_dir,
+    code_diffs_dir,
+    codex_manifest_path,
+    complete_working_directory_sync,
+    events_path,
+    existing_cwd,
+    iso_from_timestamp,
+    manifests_dir,
+    now_iso,
+    safe_name,
+    session_dir,
+    uploads_dir,
+    validated_fork_cwd,
+    write_all,
+)
 from hyadex.core.config import (
     _configured_codex_effort,
     ABANDONED_FORK_THREADS_FILE,
@@ -393,185 +464,10 @@ try:
     SERVER_VERSION = SERVER_VERSION_FILE.read_text().strip() or "development"
 except OSError:
     SERVER_VERSION = "development"
-SERVER_IDENTITY_FILE = STATE_DIR / "server-identity"
 if CODEX_DEFAULT_EFFORT not in CODEX_EFFORTS:
     CODEX_DEFAULT_EFFORT = "xhigh"
 if DEFAULT_BACKEND not in VALID_BACKENDS:
     DEFAULT_BACKEND = BACKEND_CLAUDE
-
-
-# Per-thread Codex config overrides (codex-cli 0.149.1: thread/start,
-# thread/resume and thread/fork accept a "config" object). Leave concurrency
-# unset unless the operator or chat explicitly configures it: Codex owns its
-# default, and Hyadex must not silently replace it with a four-child cap.
-# Only allow-listed keys are forwarded; unknown settings are warned once.
-CODEX_THREAD_CONFIG_DEFAULTS: dict[str, Any] = {}
-# Legacy alias for max_concurrent_threads_per_session.
-CODEX_THREAD_CONFIG_LEGACY_MAX_THREADS_KEY = "max_threads"
-
-
-def _codex_config_positive_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
-
-
-def _codex_config_non_empty_str(value: Any) -> bool:
-    return isinstance(value, str) and bool(value.strip())
-
-
-CODEX_THREAD_CONFIG_AGENT_VALIDATORS: dict[str, Any] = {
-    "enabled": lambda value: isinstance(value, bool),
-    "max_concurrent_threads_per_session": _codex_config_positive_int,
-    CODEX_THREAD_CONFIG_LEGACY_MAX_THREADS_KEY: _codex_config_positive_int,
-    "default_subagent_model": _codex_config_non_empty_str,
-    "default_subagent_reasoning_effort": _codex_config_non_empty_str,
-    "job_max_runtime_seconds": _codex_config_positive_int,
-}
-CODEX_THREAD_CONFIG_TOP_LEVEL_VALIDATORS: dict[str, Any] = {
-    "model_auto_compact_token_limit": _codex_config_positive_int,
-    "model_auto_compact_token_limit_scope": _codex_config_non_empty_str,
-}
-_CODEX_THREAD_CONFIG_WARNED_KEYS: set[tuple[str, str]] = set()
-
-
-def _warn_codex_thread_config_once(source: str, key: str, reason: str) -> None:
-    marker = (source, key)
-    if marker in _CODEX_THREAD_CONFIG_WARNED_KEYS:
-        return
-    _CODEX_THREAD_CONFIG_WARNED_KEYS.add(marker)
-    logger.warning(
-        "ignoring Codex thread config key %r from %s: %s",
-        key,
-        source,
-        reason,
-    )
-
-
-def sanitize_codex_thread_config(value: Any, *, source: str) -> dict[str, Any]:
-    """Return only allow-listed, well-typed Codex per-thread config overrides.
-
-    Unknown keys and values of the wrong type are dropped, warning once per
-    (source, key). The legacy ``agents.max_threads`` alias is canonicalized to
-    ``max_concurrent_threads_per_session`` unless the canonical key is present.
-    """
-
-    if not isinstance(value, dict):
-        if value is not None:
-            _warn_codex_thread_config_once(source, "thread_config", "not an object")
-        return {}
-    clean: dict[str, Any] = {}
-    for key, raw in value.items():
-        key = str(key)
-        if key == "agents":
-            if not isinstance(raw, dict):
-                _warn_codex_thread_config_once(source, key, "not an object")
-                continue
-            agents: dict[str, Any] = {}
-            for agent_key, agent_value in raw.items():
-                agent_key = str(agent_key)
-                validator = CODEX_THREAD_CONFIG_AGENT_VALIDATORS.get(agent_key)
-                if validator is None:
-                    _warn_codex_thread_config_once(
-                        source, f"agents.{agent_key}", "not an allowed key"
-                    )
-                    continue
-                if not validator(agent_value):
-                    _warn_codex_thread_config_once(
-                        source, f"agents.{agent_key}", "invalid value type"
-                    )
-                    continue
-                agents[agent_key] = agent_value
-            legacy = agents.pop(CODEX_THREAD_CONFIG_LEGACY_MAX_THREADS_KEY, None)
-            if legacy is not None and "max_concurrent_threads_per_session" not in agents:
-                agents["max_concurrent_threads_per_session"] = legacy
-            if agents:
-                clean["agents"] = agents
-            continue
-        validator = CODEX_THREAD_CONFIG_TOP_LEVEL_VALIDATORS.get(key)
-        if validator is None:
-            _warn_codex_thread_config_once(source, key, "not an allowed key")
-            continue
-        if not validator(raw):
-            _warn_codex_thread_config_once(source, key, "invalid value type")
-            continue
-        clean[key] = raw
-    return clean
-
-
-def merge_codex_thread_config(
-    base: dict[str, Any],
-    overlay: dict[str, Any],
-) -> dict[str, Any]:
-    """Overlay one sanitized config onto another; the [agents] table merges."""
-
-    merged: dict[str, Any] = {
-        key: (dict(value) if isinstance(value, dict) else value)
-        for key, value in base.items()
-    }
-    for key, value in overlay.items():
-        if key == "agents" and isinstance(value, dict):
-            agents = dict(merged.get("agents") or {})
-            agents.update(value)
-            merged["agents"] = agents
-        else:
-            merged[key] = value
-    return merged
-
-
-def read_codex_thread_config_overrides(path: Path | None = None) -> dict[str, Any]:
-    """Read server-wide Codex per-thread config overrides from the settings file.
-
-    The ``thread_config`` object in ``codex-settings.json`` is merged over
-    :data:`CODEX_THREAD_CONFIG_DEFAULTS`. A missing file or key keeps the
-    defaults without injecting a subagent limit. Explicit operator and chat
-    overrides still take precedence over the provider's own defaults.
-    """
-
-    settings_path = path or CODEX_SETTINGS_FILE
-    defaults = merge_codex_thread_config(CODEX_THREAD_CONFIG_DEFAULTS, {})
-    try:
-        value = json.loads(settings_path.read_text())
-    except FileNotFoundError:
-        return defaults
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning(
-            "could not read Codex thread config from %s: %s",
-            settings_path,
-            exc,
-        )
-        return defaults
-    if not isinstance(value, dict) or "thread_config" not in value:
-        return defaults
-    return merge_codex_thread_config(
-        defaults,
-        sanitize_codex_thread_config(
-            value.get("thread_config"),
-            source=str(settings_path),
-        ),
-    )
-
-
-def codex_session_config_overrides(sess: dict[str, Any]) -> dict[str, Any]:
-    """Sanitized per-chat Codex config overrides (``codex_config_overrides``)."""
-
-    raw = sess.get("codex_config_overrides") if isinstance(sess, dict) else None
-    clean = sanitize_codex_thread_config(
-        raw,
-        source=f"session {str(sess.get('id') or '') or '<unknown>'}",
-    ) if raw is not None else {}
-    if _codex_config_positive_int(sess.get("subagent_limit")):
-        agents = dict(clean.get("agents") or {})
-        agents["max_concurrent_threads_per_session"] = sess["subagent_limit"]
-        clean["agents"] = agents
-    return clean
-
-
-def codex_effective_thread_config(sess: dict[str, Any]) -> dict[str, Any]:
-    """Server defaults, then the settings file, then the chat's own overrides."""
-
-    return merge_codex_thread_config(
-        read_codex_thread_config_overrides(),
-        codex_session_config_overrides(sess),
-    )
 
 
 if CODEX_TRANSPORT not in {CODEX_TRANSPORT_AUTO, CODEX_TRANSPORT_APP_SERVER, CODEX_TRANSPORT_EXEC}:
@@ -582,376 +478,10 @@ if CLAUDE_TRANSPORT not in {
     CLAUDE_TRANSPORT_PRINT,
 }:
     CLAUDE_TRANSPORT = CLAUDE_TRANSPORT_AUTO
-MAX_SESSION_SYSTEM_PROMPT_CHARS = int(hyadex_setting("SESSION_SYSTEM_PROMPT_CHARS", "24000"))
-MAX_JOB_PROMPT_CHARS = MAX_SESSION_SYSTEM_PROMPT_CHARS
 SERVER_BIND_ADDRESS = hyadex_setting("AGENT_BIND", "0.0.0.0")
 SERVER_PORT = int(hyadex_setting("AGENT_PORT", "7870"))
-PROVIDER_TOOL_HELPERS = frozenset({
-    "jobs", "publish", "emergency", "notify",
-})
-PROVIDER_TOOL_READ_ONLY_COMMANDS = {
-    "jobs": frozenset({"list", "get", "runs"}),
-}
-PROVIDER_TOOL_MAX_BODY_BYTES = 512 * 1024
-PROVIDER_TOOL_MAX_ARGUMENTS = 64
-PROVIDER_TOOL_MAX_ARGUMENT_CHARS = 100_000
-PROVIDER_TOOL_MAX_ARGUMENT_BYTES = 400 * 1024
-PROVIDER_TOOL_MAX_STDIN_CHARS = 100_000
-PROVIDER_TOOL_MAX_STDIN_BYTES = 400 * 1024
-PROVIDER_TOOL_MAX_OUTPUT_BYTES = 128 * 1024
-PROVIDER_TOOL_TIMEOUT_SECONDS = 90.0
-PROVIDER_TOOL_MAX_CONCURRENT_PER_CLAUDE_CHAT = 2
-PROVIDER_TOOL_INPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "helper": {"type": "string", "enum": sorted(PROVIDER_TOOL_HELPERS)},
-        "arguments": {
-            "type": "array",
-            "items": {"type": "string", "maxLength": PROVIDER_TOOL_MAX_ARGUMENT_CHARS},
-            "maxItems": PROVIDER_TOOL_MAX_ARGUMENTS,
-        },
-        "stdin": {"type": "string", "maxLength": PROVIDER_TOOL_MAX_STDIN_CHARS},
-    },
-    "required": ["helper", "arguments"],
-    "additionalProperties": False,
-}
-PROVIDER_TOOL_DESCRIPTION = (
-    "Run one capability-scoped Hyadex helper for the exact live turn. "
-    "Choose jobs, publish, emergency, or notify; pass ordinary CLI arguments "
-    "without authority/chat identity flags."
-)
-# Static helper-tool usage and delivery-provenance rules live once in the
-# thread-level developer instructions of backends that retain them (Codex
-# thread instructions, Claude system prompt). Dynamic grant material never
-# enters their prompts or transcripts.
-# These constants are appended to `.format()`-ed preludes, so they must not
-# contain literal braces.
-MAX_PROVIDER_STATIC_INSTRUCTIONS_CHARS = 16 * 1024
-PROVIDER_AUTHORITY_USAGE_INSTRUCTIONS = (
-    "Hyadex provider actions (run-scoped, never user content):\n"
-    f"- Use only `{CLAUDE_PROVIDER_MCP_TOOL_NAME}` for Jobs, Publish, Emergency, and Notify helpers. "
-    "A user-configured MCP server named `hyadex` is unrelated and must never receive these calls. "
-    "Pass `helper`, the helper's ordinary argument list without authority/chat identity flags, and optional UTF-8 `stdin`. "
-    "The server binds every call to the exact live run and supplies its private authority; an unavailable action is denied. "
-    "The tool supplies helper authentication and its own chat, session, run, and provider identity.\n"
-    "- Jobs are allowed only when the live grant and durable chat policy allow them. Never attempt run-now.\n"
-    "- Publish only user-requested files and say attached only after a successful JSON receipt. Emergency is reserved for "
-    "urgent data-loss, security, irreversible-harm, or sustained-production-outage risks.\n"
-    "- Print-only provider fallback: when the `hyadex` tool is unavailable, the same static rules apply to the "
-    "Hyadex helper CLIs named by the process environment. Use the non-empty current authority environment only; "
-    "never print its values, and treat an unset value as no grant.\n"
-)
-PROVIDER_THREAD_INSTRUCTION_ADDENDUM = "\n" + PROVIDER_AUTHORITY_USAGE_INSTRUCTIONS
 if len(PROVIDER_THREAD_INSTRUCTION_ADDENDUM) > MAX_PROVIDER_STATIC_INSTRUCTIONS_CHARS:
     raise RuntimeError("Hyadex static provider instructions exceed their safe limit")
-
-CLAUDE_PROMPT_PRELUDE = """\
-You are operating through Hyadex, backed by HyadexServer.
-- Keep final answers concise; the UI separates tools, output, reasoning, and artifacts.
-- Render inline math as `$...$` and display math as `$$...$$`.
-- Continue through ordinary inspection errors when a safe retry or narrow fix is available.
-- Treat milestone completion as progress, not completion of the user's whole request. Before finishing, join child tasks you started and wait for every requested milestone and acceptance check; automate only when explicitly asked.
-- Never detach required work with `nohup`, `disown`, `setsid`, shell `&`, or Bash `run_in_background`. Keep work needed for the current reply in foreground. Async completion that must wake chat requires a tracked Agent/workflow; background Bash does not guarantee a completion wake-up.
-- This is Hyadex, not Slack; never use Slack file helpers.
-- Link editor-readable files with Markdown paths relative to the chat working directory, optionally with `#L42`; do not use `file://`.
-- Publish user-facing files only with the Hyadex provider tool described below. Say “attached” only after a successful JSON receipt. Older-server fallback: write `{{"files":["/absolute/path.ext"]}}` to resolved `$HYADEX_MANIFEST_PATH` and say only “submitted for attachment.” Use absolute paths and playable `.mp4`/`.mov` videos.
-- Never use Claude's `Monitor`, `ScheduleWakeup`, `/loop`, or `CronCreate`; under Hyadex they cannot durably deliver a later chat update. Only when explicitly asked, use the Jobs helper through the provider tool.
-- Inspect `$HYADEX_TMUX_SESSION` read-only unless explicitly asked to operate it.
-- Check skills and project playbooks before claiming an environment or remote path is unavailable.
-- If optional cleanup makes a compound command fail, immediately retry the still-safe requested operation without it.
-- Keep chat focused; delegate bounded noisy exploration and return summaries.
-- Preserve user work; avoid destructive actions without authorization; continue until complete or blocked.
-""" + PROVIDER_THREAD_INSTRUCTION_ADDENDUM
-
-# Compatibility alias for integrations which imported the historical name.
-SYSTEM_PROMPT = CLAUDE_PROMPT_PRELUDE
-
-# v8: static provider-authority usage moved from every per-turn prompt into
-# these thread instructions (context diet).
-CODEX_THREAD_POLICY_VERSION = "11"
-CLAUDE_SDK_CONFIGURATION_VERSION = 10
-CODEX_PROMPT_PRELUDE = """\
-You are operating through Hyadex, backed by HyadexServer.
-- Keep the final answer concise; the UI renders tool calls, command output, reasoning, and artifacts separately.
-- Render inline math as `$...$` and display math as `$$...$$`.
-- Continue through ordinary inspection errors when a safe retry or narrow fix is available.
-- Never detach required work with `nohup`, `disown`, `setsid`, or shell `&`. Keep work needed for the current reply in foreground. Async completion that must wake chat requires a provider-tracked exec, Agent, or workflow; an explicitly requested durable service must use an observable service manager.
-- This is Hyadex, not Slack; create files locally and never call Slack file helpers.
-- Link editor-readable files with Markdown paths relative to the chat working directory, optionally with `#L42`; do not use `file://`.
-- Publish user-facing files only with the Hyadex provider tool described below. Say “attached” only after a successful JSON receipt. Older-server fallback: write `{{"files":["/absolute/path.ext"]}}` to `{manifest_path}` and say only “submitted for attachment.” Use absolute paths and playable `.mp4`/`.mov` videos.
-- Never rely on provider-local timers, loops, or detached processes to wake this Hyadex chat or deliver a later reply. Manage durable scheduled jobs only when explicitly asked through the run-bound provider tool; query it instead of relying on a prompt snapshot.
-- The persistent terminal is tmux session `{terminal_session}`; inspect it read-only unless the user explicitly asks you to operate it.
-- Check installed skills and project playbooks before claiming a specialized environment or remote path is unavailable.
-- If an incidental cleanup or optional clause makes a compound command fail, immediately retry the still-safe requested operation without that clause.
-- Keep the main chat focused; delegate bounded noisy exploration and return summaries instead of dumping large logs or tool output into the thread.
-- When you call `spawn_agent`, pass `fork_turns` as a small number written as a string (for example `"3"`) or `"none"`, never `"all"`: a full-history fork copies the entire compacted parent transcript (hundreds of MB per child) and exhausts the server.
-- Preserve user work; avoid destructive actions without authorization; continue until complete or blocked.
-""" + PROVIDER_THREAD_INSTRUCTION_ADDENDUM
-
-
-HYADEX_CONTEXT_END_MARKER = "[End Hyadex context]"
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def iso_from_timestamp(ts: float) -> str:
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def safe_name(name: str) -> str:
-    cleaned = "".join(c if c.isalnum() or c in ("-", "_", ".", " ") else "_" for c in name)
-    return cleaned.strip(" .") or "file"
-
-
-def session_dir(session_id: str) -> Path:
-    return STATE_DIR / "sessions" / session_id
-
-
-def events_path(session_id: str) -> Path:
-    return session_dir(session_id) / "events.jsonl"
-
-
-def uploads_dir(session_id: str) -> Path:
-    return session_dir(session_id) / "uploads"
-
-
-def manifests_dir(session_id: str) -> Path:
-    return session_dir(session_id) / "manifests"
-
-
-def artifact_publications_dir(session_id: str) -> Path:
-    return session_dir(session_id) / "artifact_publications"
-
-
-def codex_manifest_path(session_id: str) -> Path:
-    """Stable per-chat artifact handoff path used by provider turns."""
-    return manifests_dir(session_id) / "current.json"
-
-
-def code_diffs_dir(session_id: str) -> Path:
-    return CODE_DIFFS_ROOT / session_id
-
-
-def existing_cwd(requested: str | None) -> str:
-    candidates = [requested, DEFAULT_CWD, str(Path.home()), "/tmp"]
-    for candidate in candidates:
-        if not candidate:
-            continue
-        path = Path(str(candidate)).expanduser()
-        if path.is_dir():
-            return str(path)
-    return "/tmp"
-
-
-def complete_working_directory_sync(requested: str | None, limit: int = 24) -> dict[str, Any]:
-    """Return bounded directory-only completions from the HyadexServer host.
-
-    Electron may be connected to a remote server, so resolving this field on
-    the desktop host would offer paths that the agent cannot use.  This helper
-    intentionally performs one shallow scan and returns no file names.
-    """
-    raw = str(requested or "").strip()
-    if "\x00" in raw:
-        raise HTTPException(status_code=400, detail="working directory paths cannot contain NUL bytes")
-    if len(raw) > MAX_WORKSPACE_PATH_CHARS:
-        raise HTTPException(status_code=400, detail="working directory path is too long")
-    bounded_limit = max(1, min(int(limit), MAX_WORKING_DIRECTORY_COMPLETIONS))
-    source = raw or existing_cwd(DEFAULT_CWD)
-    expanded = os.path.expanduser(source)
-    if not os.path.isabs(expanded):
-        expanded = os.path.join(existing_cwd(DEFAULT_CWD), expanded)
-    normalized = os.path.normpath(expanded)
-    exact = os.path.isdir(normalized)
-    scan_path = normalized if exact else os.path.dirname(normalized)
-    prefix = "" if exact else os.path.basename(normalized)
-    if not scan_path:
-        scan_path = os.path.abspath(os.sep)
-
-    suggestions: list[dict[str, Any]] = []
-    truncated = False
-    scan_error: str | None = None
-    try:
-        with os.scandir(scan_path) as entries:
-            candidates: list[tuple[str, bool]] = []
-            for scanned, entry in enumerate(entries):
-                if scanned >= MAX_WORKING_DIRECTORY_SCAN_ENTRIES:
-                    truncated = True
-                    break
-                name = entry.name
-                if not prefix.startswith(".") and name.startswith("."):
-                    continue
-                if prefix and not name.casefold().startswith(prefix.casefold()):
-                    continue
-                try:
-                    if not entry.is_dir(follow_symlinks=True):
-                        continue
-                    candidates.append((name, entry.is_symlink()))
-                except OSError:
-                    continue
-        candidates.sort(key=lambda item: (item[0].casefold(), item[0]))
-        truncated = truncated or len(candidates) > bounded_limit
-        for name, is_symlink in candidates[:bounded_limit]:
-            completed = os.path.join(scan_path, name)
-            if not completed.endswith(os.sep):
-                completed += os.sep
-            suggestions.append({"name": name, "path": completed, "symlink": is_symlink})
-    except FileNotFoundError:
-        scan_error = "Parent directory not found."
-    except NotADirectoryError:
-        scan_error = "Parent path is not a directory."
-    except PermissionError:
-        scan_error = "Permission denied while reading this directory."
-    except OSError:
-        scan_error = "This directory could not be read."
-
-    return {
-        "input": raw,
-        "resolved_path": normalized,
-        "exists": exact,
-        "base_path": scan_path,
-        "suggestions": suggestions,
-        "truncated": truncated,
-        "message": scan_error,
-    }
-
-
-def validated_fork_cwd(session: dict[str, Any]) -> str:
-    """Require an exact usable parent workspace instead of silently falling back."""
-    raw = str(session.get("cwd") or "").strip()
-    if not raw:
-        raise HTTPException(
-            status_code=409,
-            detail="the parent chat has no working directory; set one before forking",
-        )
-    expanded = Path(raw).expanduser()
-    if not expanded.is_absolute():
-        raise HTTPException(
-            status_code=409,
-            detail="the parent chat working directory must be an absolute path",
-        )
-    normalized = Path(os.path.normpath(str(expanded)))
-    if not normalized.is_dir():
-        raise HTTPException(
-            status_code=409,
-            detail=f"the parent chat working directory is unavailable: {normalized}",
-        )
-    return str(normalized)
-
-
-def write_all(file_fd: int, data: bytes) -> None:
-    offset = 0
-    while offset < len(data):
-        written = os.write(file_fd, data[offset:])
-        if written <= 0:
-            raise OSError(errno.EIO, "short workspace write")
-        offset += written
-
-
-SERVER_IDENTITY_LOCK = threading.Lock()
-SERVER_IDENTITY_CACHE: dict[str, str] = {}
-SERVER_IDENTITY_RE = re.compile(r"[0-9a-f]{24}")
-
-
-def legacy_server_identity() -> str:
-    """Compute the identity used before it became durable."""
-
-    machine = ""
-    for path in (Path("/etc/machine-id"), Path("/var/lib/dbus/machine-id")):
-        with suppress(Exception):
-            machine = path.read_text(encoding="utf-8").strip()
-            if machine:
-                break
-    if not machine:
-        machine = os.uname().nodename
-    payload = f"{machine}|{STATE_DIR.resolve()}".encode("utf-8", errors="ignore")
-    return hashlib.sha256(payload).hexdigest()[:24]
-
-
-def read_server_identity_file(path: Path) -> str | None:
-    """Read one private regular identity file without following links."""
-
-    try:
-        metadata = path.lstat()
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        raise RuntimeError(f"could not inspect persisted server identity: {exc}") from exc
-    if not stat.S_ISREG(metadata.st_mode):
-        raise RuntimeError("persisted server identity is not a regular file")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise RuntimeError(f"could not open persisted server identity: {exc}") from exc
-    try:
-        opened = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or opened.st_dev != metadata.st_dev
-            or opened.st_ino != metadata.st_ino
-        ):
-            raise RuntimeError("persisted server identity changed while opening")
-        if os.name != "nt":
-            if opened.st_uid != os.geteuid():
-                raise RuntimeError(
-                    "persisted server identity is not owned by the current user"
-                )
-            if stat.S_IMODE(opened.st_mode) != 0o600:
-                os.fchmod(descriptor, 0o600)
-        raw = os.read(descriptor, 256)
-        if os.read(descriptor, 1):
-            raise RuntimeError("persisted server identity is too large")
-    except OSError as exc:
-        raise RuntimeError(f"could not read persisted server identity: {exc}") from exc
-    finally:
-        os.close(descriptor)
-    try:
-        persisted = raw.decode("ascii").strip()
-    except UnicodeError as exc:
-        raise RuntimeError("persisted server identity is not ASCII") from exc
-    if SERVER_IDENTITY_RE.fullmatch(persisted) is None:
-        raise RuntimeError("persisted server identity is invalid")
-    return persisted
-
-
-def write_server_identity_file(path: Path, identity: str) -> bool:
-    """Create one private identity without replacing a concurrent winner."""
-
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    descriptor = os.open(
-        tmp,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-        0o600,
-    )
-    try:
-        with os.fdopen(descriptor, "w", encoding="ascii") as stream:
-            stream.write(identity + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        try:
-            # A hard link publishes the fully-fsynced inode only if the final
-            # name is still absent. Unlike os.replace, it cannot overwrite a
-            # different identity created by an overlapping server process.
-            os.link(tmp, path, follow_symlinks=False)
-        except FileExistsError:
-            return False
-        if os.name != "nt":
-            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-            directory_fd = os.open(path.parent, directory_flags)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-        return True
-    except BaseException:
-        raise
-    finally:
-        with suppress(OSError):
-            tmp.unlink()
-
 
 def server_identity() -> str:
     """Return a stable identity, freezing the legacy value on first use."""
@@ -7392,17 +6922,6 @@ PROVIDER_AUTHORITY_LOCK = asyncio.Lock()
 # it is not an OS sandbox against hostile processes running as the same Unix
 # account. Host account permissions remain the outer trust boundary.
 PROVIDER_AUTHORITIES: dict[str, dict[str, Any]] = {}
-PROVIDER_TOOL_REPLAY_LOCK = asyncio.Lock()
-PROVIDER_TOOL_REPLAY: OrderedDict[
-    tuple[str, str, str],
-    tuple[str, asyncio.Future[tuple[str, bool]]],
-] = OrderedDict()
-PROVIDER_TOOL_REPLAY_LIMIT = 128
-PROVIDER_TOOL_REPLAY_TOMBSTONES: OrderedDict[
-    tuple[str, str, str],
-    str,
-] = OrderedDict()
-PROVIDER_TOOL_REPLAY_TOMBSTONE_LIMIT = 4096
 PROVIDER_AUTHORITY_TTL_SECONDS = max(
     60,
     # Exact CURRENT_TURNS binding and terminal revocation are the primary
@@ -54900,7 +54419,7 @@ app = create_app(ApplicationBindings(
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], )
 
 
 class _CompatibilityFacade(types.ModuleType):
