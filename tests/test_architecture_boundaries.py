@@ -117,5 +117,14 @@ class ArchitectureBoundaryTests(unittest.TestCase):
         self.assertEqual(reexported, [])
 
 
+    def test_server_root_is_the_installation_root(self):
+        # Helper scripts and VERSION are found relative to SERVER_ROOT.
+        from hyadex.core import config
+
+        self.assertEqual(config.SERVER_ROOT, ROOT.resolve())
+        for helper in ("hyadex_jobs.py", "hyadex_publish.py", "hyadex_emergency.py", "hyadex_notify.py"):
+            self.assertTrue((config.SERVER_ROOT / helper).is_file(), helper)
+
+
 if __name__ == "__main__":
     unittest.main()

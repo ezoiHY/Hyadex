@@ -195,7 +195,8 @@ SERVER_INSTANCE_NAME = server_instances.instance_name(os.environ.get("HYADEX_SER
 TMUX_INSTANCE_ARGS = () if SERVER_INSTANCE_NAME == "default" else ("-L", f"hyadex-server-{SERVER_INSTANCE_NAME}")
 
 
-SERVER_ROOT = Path(__file__).resolve().parent
+# The installation root: hyadex/core/config.py -> repository root.
+SERVER_ROOT = Path(__file__).resolve().parents[2]
 SERVER_VERSION_FILE = SERVER_ROOT / "VERSION"
 
 
