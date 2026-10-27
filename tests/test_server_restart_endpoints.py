@@ -1275,9 +1275,9 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             with restart_environment(root):
                 maintenance = MagicMock()
                 maintenance.is_held.return_value = True
-                with patch.object(agent_server, "EXECUTION_MAINTENANCE", maintenance):
+                with patch.object(agent_server.SERVER, "execution_maintenance", maintenance):
                     self.assertTrue(agent_server.execution_maintenance_blocks_work())
-                maintenance_patch = patch.object(agent_server, "EXECUTION_MAINTENANCE", maintenance)
+                maintenance_patch = patch.object(agent_server.SERVER, "execution_maintenance", maintenance)
                 maintenance_patch.start()
                 self.addCleanup(maintenance_patch.stop)
                 with self.assertRaises(HTTPException) as raised:
@@ -1299,9 +1299,9 @@ class ServerRestartEndpointTests(unittest.IsolatedAsyncioTestCase):
             with restart_environment(root) as forced_signal:
                 maintenance = MagicMock()
                 maintenance.is_held.return_value = True
-                with patch.object(agent_server, "EXECUTION_MAINTENANCE", maintenance):
+                with patch.object(agent_server.SERVER, "execution_maintenance", maintenance):
                     self.assertTrue(agent_server.execution_maintenance_blocks_work())
-                maintenance_patch = patch.object(agent_server, "EXECUTION_MAINTENANCE", maintenance)
+                maintenance_patch = patch.object(agent_server.SERVER, "execution_maintenance", maintenance)
                 maintenance_patch.start()
                 self.addCleanup(maintenance_patch.stop)
                 status = await agent_server.restart_server_endpoint(

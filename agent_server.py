@@ -162,7 +162,8 @@ from hyadex import autopilot
 from hyadex.routes.autopilot import create_autopilot_router
 from hyadex import groups as group_chat
 from hyadex.events import EventBus
-from hyadex.runs import RunState
+from hyadex.core.server import ServerState
+from hyadex.core.runs import RunState
 from hyadex.routes.groups import create_group_router
 import side_questions
 import title_generation
@@ -453,13 +454,7 @@ from hyadex.core.config import (
 
 # Fail before reading another instance's config or resolving/migrating state.
 server_instances.validate_runtime_environment(os.environ, Path.home())
-# Claim state before identity/database initialization in the supported CLI.
-# Imports remain usable by helpers/tests; ASGI startup also claims state.
-SERVER_STATE_PROCESS_LOCK = (
-    server_instances.acquire_state_lock(STATE_DIR)
-    if __name__ == "__main__" and not {"-h", "--help"}.intersection(sys.argv[1:])
-    else None
-)
+SERVER = ServerState(bind_address=hyadex_setting("AGENT_BIND", "0.0.0.0"), port=int(hyadex_setting("AGENT_PORT", "7870")))
 try:
     SERVER_VERSION = SERVER_VERSION_FILE.read_text().strip() or "development"
 except OSError:
@@ -478,8 +473,6 @@ if CLAUDE_TRANSPORT not in {
     CLAUDE_TRANSPORT_PRINT,
 }:
     CLAUDE_TRANSPORT = CLAUDE_TRANSPORT_AUTO
-SERVER_BIND_ADDRESS = hyadex_setting("AGENT_BIND", "0.0.0.0")
-SERVER_PORT = int(hyadex_setting("AGENT_PORT", "7870"))
 if len(PROVIDER_THREAD_INSTRUCTION_ADDENDUM) > MAX_PROVIDER_STATIC_INSTRUCTIONS_CHARS:
     raise RuntimeError("Hyadex static provider instructions exceed their safe limit")
 
@@ -2144,7 +2137,7 @@ def network_host_is_loopback(host: str) -> bool:
 def validate_listener_auth() -> None:
     """Require a client credential before exposing any non-loopback listener."""
 
-    if not str(AGENT_TOKEN or "").strip() and not network_host_is_loopback(SERVER_BIND_ADDRESS):
+    if not str(AGENT_TOKEN or "").strip() and not network_host_is_loopback(SERVER.bind_address):
         raise RuntimeError(
             "Non-loopback listeners require HYADEX_AGENT_TOKEN. "
             "Set a token or use --bind 127.0.0.1 for local development."
@@ -2196,7 +2189,7 @@ def codex_provider_mcp_connection_host(bind_address: str | None = None) -> str:
     """Resolve a reachable same-host MCP address for every supported bind."""
 
     configured = str(
-        SERVER_BIND_ADDRESS if bind_address is None else bind_address
+        SERVER.bind_address if bind_address is None else bind_address
     ).strip()
     if configured.lower() == "localhost":
         return "127.0.0.1"
@@ -2218,7 +2211,7 @@ def request_client_is_provider_helper_local(request: Request) -> bool:
         return False
     try:
         peer = normalized_network_address(str(client.host or ""))
-        configured = normalized_network_address(str(SERVER_BIND_ADDRESS or ""))
+        configured = normalized_network_address(str(SERVER.bind_address or ""))
     except ValueError:
         return False
     # Wildcard listeners are always addressed through a family-matched
@@ -2250,7 +2243,7 @@ def provider_helper_server_origin() -> str:
         if isinstance(normalized_network_address(host), ipaddress.IPv6Address)
         else host
     )
-    return f"http://{url_host}:{SERVER_PORT}"
+    return f"http://{url_host}:{SERVER.port}"
 
 
 def add_provider_no_proxy_environment(
@@ -6184,7 +6177,7 @@ class JobStore:
 
     def start_scheduler(self) -> None:
         if (
-            not SERVER_SHUTTING_DOWN
+            not SERVER.shutting_down
             and (self._scheduler_task is None or self._scheduler_task.done())
         ):
             self._scheduler_task = asyncio.create_task(self.scheduler_loop())
@@ -6769,13 +6762,6 @@ CLAUDE_STOP_FENCE_RETRY_TASKS: dict[str, asyncio.Task[Any]] = {}
 CLAUDE_STOP_FENCE_RETRY_DELAYS_SECONDS = (5.0, 15.0, 30.0, 60.0)
 CLAUDE_STOP_FENCE_ATTEMPT_LOCKS: dict[str, asyncio.Lock] = {}
 CLAUDE_STOP_FENCE_ATTEMPT_TASKS: dict[str, set[asyncio.Task[Any]]] = {}
-SERVER_SHUTTING_DOWN = False
-# Startup rebuilds durable queue rows from append-only chat timelines. While
-# this task is present, every queue/start admission must wait for the same
-# generation (or fail retryably) so a new prompt cannot leapfrog an older row
-# that the scan has not discovered yet. A completed failed task intentionally
-# remains installed and keeps admission fail-closed.
-QUEUE_RECOVERY_TASK: asyncio.Task[tuple[int, int]] | None = None
 QUEUE_RECOVERY_READY: set[str] = set()
 QUEUE_CHECKPOINT_DIRTY: set[str] = set()
 QUEUE_RECOVERY_ADMISSION_WAIT_SECONDS = 2.0
@@ -7765,7 +7751,7 @@ async def update_session_event_metadata(session_id: str, event: dict[str, Any]) 
 
 
 def queue_recovery_readiness() -> dict[str, Any]:
-    recovery = QUEUE_RECOVERY_TASK
+    recovery = SERVER.queue_recovery_task
     if recovery is None or (recovery.done() and not recovery.cancelled() and recovery.exception() is None):
         return {"ready": True, "state": "ready", "message": None}
     if not recovery.done():
@@ -7790,7 +7776,7 @@ async def wait_for_queue_recovery_admission(session_id: str | None = None) -> No
 
     if session_id is not None and session_id in QUEUE_RECOVERY_READY:
         return
-    recovery = QUEUE_RECOVERY_TASK
+    recovery = SERVER.queue_recovery_task
     if recovery is None or recovery is asyncio.current_task():
         return
     # asyncio.wait does not propagate the task's own TimeoutError and never
@@ -7806,7 +7792,7 @@ async def wait_for_queue_recovery_admission(session_id: str | None = None) -> No
     try:
         recovery.result()
     except asyncio.CancelledError:
-        if SERVER_SHUTTING_DOWN:
+        if SERVER.shutting_down:
             raise
         raise TransientAdmissionWait(
             status_code=503,
@@ -11678,7 +11664,7 @@ async def _start_next_queued_turn_locked(
 
 
 def schedule_next_queued_turn(session_id: str) -> None:
-    if SERVER_SHUTTING_DOWN:
+    if SERVER.shutting_down:
         return
     asyncio.create_task(start_next_queued_turn(session_id))
 
@@ -11983,7 +11969,7 @@ def rebuild_queued_turns_from_events() -> int:
 async def queue_checkpoint_loop() -> None:
     while True:
         await asyncio.sleep(60)
-        if QUEUE_RECOVERY_TASK is not None:
+        if SERVER.queue_recovery_task is not None:
             continue
         for session_id in tuple(QUEUE_CHECKPOINT_DIRTY):
             sess = STORE.sessions.get(session_id)
@@ -23354,7 +23340,7 @@ def title_runtime_key(sess: dict[str, Any]) -> tuple:
 def generated_title_eligible(sess: dict[str, Any], *, allow_attempted: bool = False) -> bool:
     return bool(
         os.environ.get("HYADEX_AUTO_TITLES", "1").strip().lower() not in {"0", "false", "off"}
-        and not SERVER_SHUTTING_DOWN
+        and not SERVER.shutting_down
         and sess.get("backend") in {BACKEND_CODEX}
         and sess.get("auto_title_enabled", True) is not False
         and not sess.get("archived") and not sess.get("parent_id") and not sess.get("fork_from")
@@ -23401,7 +23387,7 @@ async def generate_session_title(session_id: str, snapshot: dict, reply: str) ->
                 raise
         # A forced restart may close admission during the awaited save. These
         # optional requests must not start a new provider after that fence.
-        if SERVER_SHUTTING_DOWN or server_lifecycle_admission_blocker():
+        if SERVER.shutting_down or server_lifecycle_admission_blocker():
             return
         options = {"model": snapshot.get("model"), "env": runner_env()}
         options["model"] = codex_runtime_settings(snapshot)[0]
@@ -25207,7 +25193,7 @@ async def run_provider_history_sync(session_id: str) -> None:
                 await asyncio.to_thread(save_history_maintenance_state, session_id, dict(state))
         HISTORY_SYNC_SCHEDULED.discard(session_id)
         HISTORY_MAINTENANCE_TASKS.pop(session_id, None)
-        if pending and state.get("status") == "pending" and not SERVER_SHUTTING_DOWN:
+        if pending and state.get("status") == "pending" and not SERVER.shutting_down:
             def continue_history():
                 current = STORE.sessions.get(session_id)
                 if current is not None:
@@ -30747,7 +30733,7 @@ async def retry_claude_stop_fence(session_id: str) -> None:
 def schedule_claude_stop_fence_retry(session_id: str) -> None:
     """Start the single retry owner for one failed Claude stop fence."""
 
-    if SERVER_SHUTTING_DOWN:
+    if SERVER.shutting_down:
         return
     current = CLAUDE_STOP_FENCE_RETRY_TASKS.get(session_id)
     if current is not None and not current.done():
@@ -38421,7 +38407,7 @@ async def run_claude_sdk(
         # an earlier provider/projection fault, and an unexpected closed
         # supervisor must remain an error. This never retries the prompt.
         shutdown_interrupted = bool(
-            SERVER_SHUTTING_DOWN
+            SERVER.shutting_down
             and isinstance(exc, ClaudeSDKSupervisorClosed)
             and not (
                 stream_error
@@ -44254,7 +44240,6 @@ UNSAFE_HTTP_MUTATION_TASKS: dict[str, asyncio.Task[Any] | None] = {}
 EXECUTION_MAINTENANCE_ACTIVE_DETAIL = "HyadexServer execution worker is in maintenance"
 MANAGED_SERVER_RESTART_ACTIVE_DETAIL = "HyadexServer is restarting"
 MANAGED_SERVER_SERVICE_KIND_CACHE: str | None = None
-EXECUTION_MAINTENANCE: Any = None
 SERVER_RESTART_SIGNAL_LOCK = threading.Lock()
 
 
@@ -44315,7 +44300,7 @@ def scheduled_job_runtime_unavailable_reason(error: Exception) -> str | None:
 
 def execution_maintenance_blocks_work() -> bool:
     """Return whether the owned execution worker is reserved for retirement."""
-    return EXECUTION_MAINTENANCE is not None and EXECUTION_MAINTENANCE.is_held()
+    return SERVER.execution_maintenance is not None and SERVER.execution_maintenance.is_held()
 
 
 async def execution_maintenance_control(
@@ -44326,7 +44311,7 @@ async def execution_maintenance_control(
 ) -> dict[str, Any]:
     """Hold actual turn/mutation admission before authorizing worker retirement."""
 
-    if EXECUTION_MAINTENANCE is None:
+    if SERVER.execution_maintenance is None:
         raise RuntimeError("This process is not an independent execution worker")
     provider_snapshot = await prepare_provider_background_work_snapshot(timeout_seconds=5.0)
     async with RUNS.active_lock:
@@ -44344,8 +44329,8 @@ async def execution_maintenance_control(
                     "managed_restart": int(managed_server_restart_blocks_work()),
                 })
                 if action is None:
-                    return EXECUTION_MAINTENANCE.status(blockers)
-                return EXECUTION_MAINTENANCE.apply(
+                    return SERVER.execution_maintenance.status(blockers)
+                return SERVER.execution_maintenance.apply(
                     action, operation_id, lease_id, lifetime_seconds, blockers,
                 )
 
@@ -44462,7 +44447,7 @@ def official_server_release_tree() -> bool:
     install_root = Path(configured).expanduser()
     try:
         current = (install_root / "current").resolve(strict=True)
-        if EXECUTION_MAINTENANCE is not None:
+        if SERVER.execution_maintenance is not None:
             from execution_install import active_worker_release
 
             # Only the owned installation manifest can authorize the older
@@ -45851,16 +45836,14 @@ async def lifespan(app: FastAPI):
     # Retain the descriptor until process exit: bounded shutdown can leave
     # finalizers alive after this lifespan returns.
     acquire_state_ownership(STATE_DIR)
-    global SERVER_SHUTTING_DOWN, QUEUE_RECOVERY_TASK, EXECUTION_MAINTENANCE
     install_root = os.environ.get("HYADEX_SERVER_INSTALL_DIR")
-    if EXECUTION_MAINTENANCE is None and install_root:
+    if SERVER.execution_maintenance is None and install_root:
         # Never admit work over a journal the retired in-app updater left.
         from execution_install import refuse_retired_activation
         refuse_retired_activation(Path(install_root).expanduser().resolve())
-    global SERVER_STATE_PROCESS_LOCK
-    if SERVER_STATE_PROCESS_LOCK is None:
-        SERVER_STATE_PROCESS_LOCK = server_instances.acquire_state_lock(STATE_DIR)
-    SERVER_SHUTTING_DOWN = False
+    if SERVER.state_process_lock is None:
+        SERVER.state_process_lock = server_instances.acquire_state_lock(STATE_DIR)
+    SERVER.shutting_down = False
     await STORE.load()
     # Prime the managed-service ownership proof once, off the loop, so the
     # restart controls never depend on a fresh launchctl/cgroup probe later.
@@ -45907,7 +45890,6 @@ async def lifespan(app: FastAPI):
     )
     JOBS.start_scheduler()
     async def recover_queue_before_admission() -> tuple[int, int]:
-        global QUEUE_RECOVERY_TASK
         succeeded = False
         try:
             result = await recover_queued_turns_after_start()
@@ -45924,14 +45906,14 @@ async def lifespan(app: FastAPI):
             raise
         finally:
             owner = asyncio.current_task()
-            if succeeded and QUEUE_RECOVERY_TASK is owner:
-                QUEUE_RECOVERY_TASK = None
+            if succeeded and SERVER.queue_recovery_task is owner:
+                SERVER.queue_recovery_task = None
 
     queue_recovery_task = asyncio.create_task(
         recover_queue_before_admission(),
         name="queued-turn-startup-recovery",
     )
-    QUEUE_RECOVERY_TASK = queue_recovery_task
+    SERVER.queue_recovery_task = queue_recovery_task
     startup_abandoned_fork_threads = set(ABANDONED_FORK_PROVIDER_THREADS)
     abandoned_fork_cleanup_task = asyncio.create_task(
         cleanup_abandoned_fork_provider_threads(startup_abandoned_fork_threads)
@@ -45967,7 +45949,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        SERVER_SHUTTING_DOWN = True
+        SERVER.shutting_down = True
         await bounded_shutdown_phase("side-questions", asyncio.gather(
             SIDE_QUESTIONS.close(), close_generated_session_titles(),
         ))
@@ -46032,8 +46014,8 @@ async def lifespan(app: FastAPI):
                 *claude_stop_fence_attempt_tasks,
             ),
         )
-        if QUEUE_RECOVERY_TASK is queue_recovery_task:
-            QUEUE_RECOVERY_TASK = None
+        if SERVER.queue_recovery_task is queue_recovery_task:
+            SERVER.queue_recovery_task = None
         await bounded_shutdown_phase(
             "terminal-attachments",
             TERMINAL_ATTACHMENTS.close_admission_and_all(permanent=True),
@@ -46675,7 +46657,7 @@ async def reconcile_idle_queue_session_from_snapshot(session_id: str) -> bool:
 async def reconcile_idle_queued_turns_from_health_poll() -> bool:
     """Schedule one queue repair pass without putting it on health's latency path."""
 
-    if SERVER_SHUTTING_DOWN:
+    if SERVER.shutting_down:
         return False
     state = HEALTH_QUEUE_RECONCILE_STATE
     running = state.get("task")
@@ -46880,8 +46862,8 @@ async def connection_addresses(request: Request) -> dict[str, Any]:
 
     def discover() -> list[str]:
         choices = connection_choices(
-            SERVER_BIND_ADDRESS, SERVER_PORT,
-            candidate_addresses(SERVER_BIND_ADDRESS, SERVER_PORT), tailscale_status(),
+            SERVER.bind_address, SERVER.port,
+            candidate_addresses(SERVER.bind_address, SERVER.port), tailscale_status(),
         )
         return list(dict.fromkeys(filter(None, [choices["tailscale"], *choices["lan"]])))[:6]
 
@@ -47913,7 +47895,7 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
     No visible-message projection, main turn, queue or goal mutation belongs
     here. Codex owns a separate native fork; Claude uses native /btw control.
     """
-    if SERVER_SHUTTING_DOWN:
+    if SERVER.shutting_down:
         raise side_questions.SideQuestionError(503, "Server is shutting down")
     if not native_session_available(session_id):
         raise side_questions.SideQuestionError(404, "Chat not found")
@@ -47937,7 +47919,7 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
         codex = None
 
         def current(self):
-            if SERVER_SHUTTING_DOWN:
+            if SERVER.shutting_down:
                 raise side_questions.SideQuestionError(503, "Server is shutting down")
             if backend == BACKEND_CODEX and CODEX_GOALS_RECONFIGURING:
                 raise side_questions.SideQuestionError(409, "Wait for Codex configuration to finish before using Side chat")
@@ -48045,7 +48027,7 @@ def require_side_question_admission():
     # Side questions share worker-maintenance and restart admission with
     # ordinary provider work.
     blocker = server_lifecycle_admission_blocker()
-    if SERVER_SHUTTING_DOWN or blocker:
+    if SERVER.shutting_down or blocker:
         raise side_questions.SideQuestionError(503, blocker or "Server is shutting down")
 
 
@@ -54368,7 +54350,6 @@ def configure_server_logging(
 
 
 def main() -> int:
-    global SERVER_BIND_ADDRESS, SERVER_PORT
     configure_server_logging(STATE_DIR)
     parser = argparse.ArgumentParser(description="HyadexServer")
     parser.add_argument("cmd", nargs="?", default="serve", choices=["serve"])
@@ -54377,8 +54358,8 @@ def main() -> int:
     args = parser.parse_args()
     # Downstream helper environments and the required Codex MCP transport
     # must target the socket selected by the CLI, not the import-time default.
-    SERVER_BIND_ADDRESS = str(args.bind)
-    SERVER_PORT = int(args.port)
+    SERVER.bind_address = str(args.bind)
+    SERVER.port = int(args.port)
     try:
         validate_listener_auth()
     except RuntimeError as exc:

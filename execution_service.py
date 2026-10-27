@@ -261,8 +261,8 @@ async def serve_worker(args: argparse.Namespace, lease: ProcessLease) -> None:
     if args.application == "agent_server:app":
         # Public addresses still describe the gateway, including Team Hub URLs.
         # Only provider callbacks use the worker-owned stable private listener.
-        module.SERVER_BIND_ADDRESS = args.bind
-        module.SERVER_PORT = args.port
+        module.SERVER.bind_address = args.bind
+        module.SERVER.port = args.port
         module.PROVIDER_CALLBACK_ORIGIN = callback_origin
         module.configure_server_logging(module.STATE_DIR)
         from execution_install import pending_worker_operation
@@ -281,7 +281,7 @@ async def serve_worker(args: argparse.Namespace, lease: ProcessLease) -> None:
                 maintenance.hold_for_startup(operation)
         # Set before app startup so recovered queues and scheduled work cannot
         # start in a candidate that has not passed activation health checks.
-        module.EXECUTION_MAINTENANCE = maintenance
+        module.SERVER.execution_maintenance = maintenance
     version = str(getattr(module, "SERVER_VERSION", source_version()))
     identity = {
         "protocol": PROTOCOL_VERSION,

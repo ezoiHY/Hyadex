@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, Mock
 
 from hyadex.providers.codex.app_server import CodexAppServerClient, CodexAppServerTurn, CodexAppServerTimeout
 from tests import test_goal_followup_lifecycle_isolated as ordinary_fixture
-from hyadex.runs import NamespaceRuns
+from hyadex.core.runs import NamespaceRuns
 from tests import server_source
 
 NAMES = {"codex_collaboration_states", "codex_collaboration_thread_ids",

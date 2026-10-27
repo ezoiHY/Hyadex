@@ -35,7 +35,7 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
             ('DELETING_SESSIONS', set()), ('DELETED_SESSION_TOMBSTONES', set()),
             ('HISTORY_SEARCH_DIRTY', set()),
         ):
-            self.enterContext(patch.object(server, target, value))
+            self.enterContext(patch_server(server, target, value))
         self.enterContext(patch.dict(os.environ, {'HYADEX_AUTO_TITLES': '1'}))
         self.enterContext(patch.object(server.title_generation, 'generate_title', self.generator))
         self.enterContext(patch.object(server, 'runner_env', return_value={'PATH': '/synthetic'}))
@@ -148,7 +148,7 @@ class GeneratedTitleLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_global_opt_out_shutdown_and_deletion(self):
         with patch.dict(os.environ, {'HYADEX_AUTO_TITLES': 'off'}):
             self.schedule()
-        with patch.object(server, 'SERVER_SHUTTING_DOWN', True):
+        with patch.object(server.SERVER, "shutting_down", True):
             self.schedule()
         server.DELETING_SESSIONS.add('title-chat')
         self.schedule()

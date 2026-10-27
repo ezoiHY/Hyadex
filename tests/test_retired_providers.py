@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 import agent_server as server
+from tests.runtime_state import patch_server
 from hyadex.groups import ParticipantSpec
 
 
@@ -44,7 +45,7 @@ class RetiredProviderTests(unittest.IsolatedAsyncioTestCase):
             ("HISTORY_MAINTENANCE_STATE", {}), ("HISTORY_MAINTENANCE_TASKS", {}),
             ("HISTORY_SYNC_SCHEDULED", set()),
         ):
-            self.enterContext(patch.object(server, name, value))
+            self.enterContext(patch_server(server, name, value))
         self.root.joinpath("sessions.json").write_text(json.dumps({self.session_id: self.session}))
         event_file = server.events_path(self.session_id)
         event_file.parent.mkdir(parents=True)

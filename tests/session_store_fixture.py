@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
 import local_session_ownership
 from tests import test_codex_subagent_config_isolated as config_fixture
-from hyadex.runs import NamespaceRuns
+from hyadex.core.runs import NamespaceRuns
 from tests import server_source
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")

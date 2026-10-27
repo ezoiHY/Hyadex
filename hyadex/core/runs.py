@@ -102,26 +102,32 @@ LEGACY_NAMES: dict[str, str] = {
 }
 
 
-class NamespaceRuns:
-    """A ``RunState`` read through a namespace's legacy names (test support).
+class NamespaceView:
+    """A state object read through a namespace's legacy names (test support).
 
-    Lookups happen on every access, so a test that replaces ``ns["ACTIVE"]``
-    is seen by code compiled against ``RUNS.active``.
+    Tests that compile server functions into their own namespace still provide
+    state under the old global names. Lookups happen on every access, so a test
+    that replaces ``ns["ACTIVE"]`` is seen by code compiled against
+    ``RUNS.active``. Methods of ``state_class`` work on the view.
     """
 
-    _attributes = {attribute: name for name, attribute in LEGACY_NAMES.items()}
-
-    def __init__(self, namespace: dict[str, Any]) -> None:
+    def __init__(self, namespace: dict[str, Any], legacy_names: dict[str, str], state_class: type) -> None:
         object.__setattr__(self, "_namespace", namespace)
+        object.__setattr__(self, "_names", {attribute: name for name, attribute in legacy_names.items()})
+        object.__setattr__(self, "_class", state_class)
 
     def __getattr__(self, attribute: str) -> Any:
-        method = getattr(RunState, attribute, None)
+        method = getattr(self._class, attribute, None)
         if callable(method):
             return method.__get__(self)
         try:
-            return self._namespace[self._attributes[attribute]]
+            return self._namespace[self._names[attribute]]
         except KeyError:
             raise AttributeError(attribute) from None
 
     def __setattr__(self, attribute: str, value: Any) -> None:
-        self._namespace[self._attributes[attribute]] = value
+        self._namespace[self._names[attribute]] = value
+
+
+def NamespaceRuns(namespace: dict[str, Any]) -> NamespaceView:
+    return NamespaceView(namespace, LEGACY_NAMES, RunState)

@@ -267,7 +267,7 @@ class EmergencyAlertServerTests(unittest.IsolatedAsyncioTestCase):
             for error in (TimeoutError, OSError):
                 task = asyncio.create_task(failed(error))
                 await asyncio.gather(task, return_exceptions=True)
-                with patch.object(agent_server, "QUEUE_RECOVERY_TASK", task):
+                with patch.object(agent_server.SERVER, "queue_recovery_task", task):
                     health = await client.get("/api/health")
                     self.assertEqual(health.status_code, 200)
                     self.assertEqual(health.json()["chat_readiness"]["state"], "failed")

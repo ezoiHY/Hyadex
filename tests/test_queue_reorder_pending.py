@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
-from hyadex.runs import NamespaceRuns
+from hyadex.core.runs import NamespaceRuns
 from tests import server_source
 
 

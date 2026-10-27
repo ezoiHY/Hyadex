@@ -54,15 +54,15 @@ class NetworkSecurityTests(unittest.TestCase):
         for token in ("", "   "):
             with patch.object(server, "AGENT_TOKEN", token):
                 for address in ("127.0.0.1", "127.2.3.4", "::1", "::ffff:127.0.0.1", "localhost"):
-                    with patch.object(server, "SERVER_BIND_ADDRESS", address):
+                    with patch.object(server.SERVER, "bind_address", address):
                         server.validate_listener_auth()
                 for address in ("0.0.0.0", "::", "192.0.2.10", "server.example"):
-                    with patch.object(server, "SERVER_BIND_ADDRESS", address):
+                    with patch.object(server.SERVER, "bind_address", address):
                         with self.assertRaisesRegex(RuntimeError, "HYADEX_AGENT_TOKEN"):
                             server.validate_listener_auth()
 
     def test_token_allows_non_loopback(self):
-        with patch.object(server, "SERVER_BIND_ADDRESS", "0.0.0.0"):
+        with patch.object(server.SERVER, "bind_address", "0.0.0.0"):
             server.validate_listener_auth()
 
     def test_health_resource_diagnostics_match_admission_defaults(self):
@@ -80,7 +80,7 @@ class NetworkSecurityTests(unittest.TestCase):
 
 class ListenerLifespanTests(unittest.IsolatedAsyncioTestCase):
     async def test_asgi_startup_rejects_exposure_before_loading_state(self):
-        with patch.object(server, "SERVER_BIND_ADDRESS", "0.0.0.0"), \
+        with patch.object(server.SERVER, "bind_address", "0.0.0.0"), \
              patch.object(server, "AGENT_TOKEN", ""), \
              patch.object(server.STORE, "load") as load:
             with self.assertRaisesRegex(RuntimeError, "HYADEX_AGENT_TOKEN"):

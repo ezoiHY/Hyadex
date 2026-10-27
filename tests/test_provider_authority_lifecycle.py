@@ -122,10 +122,10 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_authority_and_runtime_bind_the_exact_helper_origin(self) -> None:
         with patch.object(
-            agent_server,
-            "SERVER_BIND_ADDRESS",
+            agent_server.SERVER,
+            "bind_address",
             "::1",
-        ), patch.object(agent_server, "SERVER_PORT", 17850):
+        ), patch.object(agent_server.SERVER, "port", 17850):
             authority_path, _token = await self.issue("run_origin")
             payload = json.loads(authority_path.read_text(encoding="utf-8"))
             runtime_env = await agent_server.provider_authority_runtime_env(

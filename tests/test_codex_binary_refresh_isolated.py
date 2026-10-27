@@ -15,7 +15,7 @@ import weakref
 from fastapi import HTTPException
 from hyadex.providers.codex.app_server import CodexAppServerClient, CodexAppServerRequestError
 import codex_auth
-from hyadex.runs import NamespaceRuns
+from hyadex.core.runs import NamespaceRuns
 from tests import server_source
 
 

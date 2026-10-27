@@ -2,7 +2,7 @@
 from collections import deque
 import unittest
 
-from hyadex.runs import LEGACY_NAMES, NamespaceRuns, RunState
+from hyadex.core.runs import LEGACY_NAMES, NamespaceRuns, RunState
 
 
 class RunStateTests(unittest.TestCase):

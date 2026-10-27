@@ -213,7 +213,7 @@ class HealthReconcileTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(state["task"], timeout=0.1)
 
     async def test_shutdown_fence_prevents_new_reconcile_and_queue_tasks(self):
-        with patch.object(agent_server, "SERVER_SHUTTING_DOWN", True), \
+        with patch.object(agent_server.SERVER, "shutting_down", True), \
              patch.object(agent_server.asyncio, "create_task") as create_task:
             self.assertFalse(
                 await agent_server.reconcile_idle_queued_turns_from_health_poll()

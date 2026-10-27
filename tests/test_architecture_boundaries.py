@@ -60,12 +60,13 @@ class ArchitectureBoundaryTests(unittest.TestCase):
                             else {"native_admin", "restart"})
                 self.assertIn(auth.kind, expected)
 
-    def test_turn_state_lives_only_in_runs(self):
-        # RunState owns turn lifecycle state. A test patching an old module
-        # global would patch nothing the server reads.
-        from hyadex.runs import LEGACY_NAMES
+    def test_runtime_state_lives_only_on_state_objects(self):
+        # RunState owns turn lifecycle state and ServerState the server's own
+        # lifecycle. A test patching an old module global would patch nothing
+        # the server reads.
+        from hyadex.core import runs, server
 
-        names = "|".join(LEGACY_NAMES)
+        names = "|".join([*runs.LEGACY_NAMES, *server.LEGACY_NAMES])
         definitions = re.findall(rf"^({names})\s*[:=]", SOURCE, re.M)
         self.assertEqual(definitions, [])
         pattern = re.compile(rf"(?:agent_server|server)\.({names})\b|patch\.object\(\s*(?:agent_server|server)\s*,\s*[\"']({names})[\"']")

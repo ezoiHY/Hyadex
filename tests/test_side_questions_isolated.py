@@ -18,7 +18,8 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 import side_questions as side
-from hyadex.runs import NamespaceRuns
+from hyadex.core.runs import NamespaceRuns
+from hyadex.core.server import NamespaceServer
 from tests import server_source
 
 
@@ -869,6 +870,7 @@ class ServerCallbackTests(unittest.IsolatedAsyncioTestCase):
             runner_env=lambda: {"HYADEX_CHAT_ID": "parent", "HOME": "/synthetic"})
         self.namespace["native_session_available"] = lambda sid: sid in self.namespace["STORE"].sessions
         self.namespace["RUNS"] = NamespaceRuns(self.namespace)
+        self.namespace["SERVER"] = NamespaceServer(self.namespace)
         exec(self.code, self.namespace)
 
     async def test_codex_side_fork_carries_parent_permissions_and_scopes_approval_owner(self):

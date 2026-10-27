@@ -15,7 +15,7 @@ route collection, authorization middleware and lifespan to the application facto
 | `hyadex/providers/claude/sdk.py` | Claude SDK actor ownership and lifecycle | Native SDK factory and callbacks; lazy model-catalog/side-question adapters |
 | `hyadex/providers/codex/app_server.py` | Multiplexed Codex app-server JSON-RPC transport and CLI configuration overrides | Process factory and explicit callbacks |
 | `hyadex/events.py` | Fan-out of committed chat events to live sockets and observers | Subscribers registered by the application |
-| `hyadex/runs.py` | In-memory turn lifecycle state: provider slot, stop, steering, durable queue | No I/O |
+| `hyadex/core/runs.py` | In-memory turn lifecycle state: provider slot, stop, steering, durable queue | No I/O |
 | `hyadex/groups.py` | Group models, timeline, dispatch, recovery | `GroupRuntime` supplied by the application |
 | `hyadex/autopilot.py` | Planning, approval, verification, review, worktree checkpoints | Group engine |
 | `hyadex/routes/groups.py` | Group HTTP and WebSocket endpoints | Group engine and explicit WebSocket callbacks |
@@ -34,7 +34,7 @@ interfaces; `tests/test_architecture_boundaries.py` fails if one is bypassed.
   subscriber. The writers do not know their consumers.
 - **Sessions.** `STORE.transaction()` is the one way to serialize a
   read-modify-write of the session registry. Its lock is private.
-- **Turn state.** `RUNS` (`hyadex.runs.RunState`) owns every in-memory turn
+- **Turn state.** `RUNS` (`hyadex.core.runs.RunState`) owns every in-memory turn
   registry and its two locks (`active_lock` for the provider slot,
   `queue_lock` for the durable queue). `holds_turn()` and `has_waiting_work()`
   answer the checks admission, stop and the queue share.

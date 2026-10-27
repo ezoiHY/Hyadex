@@ -737,8 +737,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_main_cli_port_updates_required_provider_endpoint(self):
-        original_bind = agent_server.SERVER_BIND_ADDRESS
-        original_port = agent_server.SERVER_PORT
+        original_bind = agent_server.SERVER.bind_address
+        original_port = agent_server.SERVER.port
         run_server = MagicMock()
         try:
             with patch.object(
@@ -755,8 +755,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             ):
                 self.assertEqual(agent_server.main(), 0)
 
-            self.assertEqual(agent_server.SERVER_BIND_ADDRESS, "127.0.0.1")
-            self.assertEqual(agent_server.SERVER_PORT, 17850)
+            self.assertEqual(agent_server.SERVER.bind_address, "127.0.0.1")
+            self.assertEqual(agent_server.SERVER.port, 17850)
             config = agent_server.codex_provider_mcp_config()
             self.assertEqual(
                 config[
@@ -766,8 +766,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             )
             run_server.assert_called_once()
         finally:
-            agent_server.SERVER_BIND_ADDRESS = original_bind
-            agent_server.SERVER_PORT = original_port
+            agent_server.SERVER.bind_address = original_bind
+            agent_server.SERVER.port = original_port
 
     async def test_codex_provider_mcp_config_supports_every_bind_family(self):
         prefix = f"mcp_servers.{agent_server.CODEX_PROVIDER_MCP_NAME}.url"
@@ -782,10 +782,10 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         }
         for bind_address, expected in cases.items():
             with self.subTest(bind=bind_address), patch.object(
-                agent_server,
-                "SERVER_BIND_ADDRESS",
+                agent_server.SERVER,
+                "bind_address",
                 bind_address,
-            ), patch.object(agent_server, "SERVER_PORT", 17850):
+            ), patch.object(agent_server.SERVER, "port", 17850):
                 self.assertEqual(
                     agent_server.codex_provider_mcp_config()[prefix],
                     expected,
@@ -793,12 +793,12 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_provider_runner_env_uses_exact_origin_and_bypasses_proxies(self):
         with patch.object(
-            agent_server,
-            "SERVER_BIND_ADDRESS",
+            agent_server.SERVER,
+            "bind_address",
             "2001:db8::40",
         ), patch.object(
-            agent_server,
-            "SERVER_PORT",
+            agent_server.SERVER,
+            "port",
             17850,
         ), patch.dict(
             agent_server.os.environ,
@@ -838,8 +838,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             return_value=agent_server.JSONResponse({"jobs": []})
         )
         with patch.object(
-            agent_server,
-            "SERVER_BIND_ADDRESS",
+            agent_server.SERVER,
+            "bind_address",
             "192.0.2.40",
         ), patch.object(
             agent_server,
@@ -888,8 +888,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 return_value=agent_server.JSONResponse({"ok": True})
             )
             with patch.object(
-                agent_server,
-                "SERVER_BIND_ADDRESS",
+                agent_server.SERVER,
+                "bind_address",
                 "192.0.2.40",
             ), patch.object(
                 agent_server,

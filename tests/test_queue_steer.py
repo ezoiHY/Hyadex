@@ -3956,7 +3956,7 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
             raise TimeoutError("private diagnostic")
         task = asyncio.create_task(fail())
         await asyncio.gather(task, return_exceptions=True)
-        with patch.object(agent_server, "QUEUE_RECOVERY_TASK", task):
+        with patch.object(agent_server.SERVER, "queue_recovery_task", task):
             self.assertEqual(agent_server.queue_recovery_readiness()["state"], "failed")
             for _ in range(3):
                 with self.assertRaises(agent_server.TransientAdmissionWait) as raised:
@@ -3968,7 +3968,7 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
         released = asyncio.Event()
         task = asyncio.create_task(released.wait())
         try:
-            with patch.object(agent_server, "QUEUE_RECOVERY_TASK", task):
+            with patch.object(agent_server.SERVER, "queue_recovery_task", task):
                 self.assertEqual(agent_server.queue_recovery_readiness()["state"], "recovering")
                 request = asyncio.create_task(agent_server.wait_for_queue_recovery_admission())
                 await asyncio.sleep(0)
@@ -3988,12 +3988,12 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(asyncio.sleep(10))
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        with patch.object(agent_server, "QUEUE_RECOVERY_TASK", task):
+        with patch.object(agent_server.SERVER, "queue_recovery_task", task):
             self.assertEqual(agent_server.queue_recovery_readiness()["state"], "failed")
-            with patch.object(agent_server, "SERVER_SHUTTING_DOWN", False):
+            with patch.object(agent_server.SERVER, "shutting_down", False):
                 with self.assertRaises(agent_server.TransientAdmissionWait):
                     await agent_server.wait_for_queue_recovery_admission()
-            with patch.object(agent_server, "SERVER_SHUTTING_DOWN", True):
+            with patch.object(agent_server.SERVER, "shutting_down", True):
                 with self.assertRaises(asyncio.CancelledError):
                     await agent_server.wait_for_queue_recovery_admission()
 
@@ -4004,7 +4004,7 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
             raise TimeoutError("scan failed after partial work")
         recovery = asyncio.create_task(recovery_work())
         try:
-            with patch.object(agent_server, "QUEUE_RECOVERY_TASK", recovery), patch.object(
+            with patch.object(agent_server.SERVER, "queue_recovery_task", recovery), patch.object(
                     agent_server, "QUEUE_RECOVERY_ADMISSION_WAIT_SECONDS", 0.01):
                 pending = [asyncio.create_task(agent_server.wait_for_queue_recovery_admission()) for _ in range(12)]
                 responses = await asyncio.gather(*pending, return_exceptions=True)
@@ -4021,7 +4021,7 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(recovery, return_exceptions=True)
 
     async def test_recovery_owner_can_enqueue_without_waiting_on_itself(self):
-        with patch.object(agent_server, "QUEUE_RECOVERY_TASK", asyncio.current_task()):
+        with patch.object(agent_server.SERVER, "queue_recovery_task", asyncio.current_task()):
             async with asyncio.timeout(1):
                 await agent_server.wait_for_queue_recovery_admission()
 
@@ -4030,7 +4030,7 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         original_sessions = agent_server.STORE.sessions
         original_queue = agent_server.RUNS.queued
-        original_recovery = agent_server.QUEUE_RECOVERY_TASK
+        original_recovery = agent_server.SERVER.queue_recovery_task
         release_recovery = asyncio.Event()
         recovery_started = asyncio.Event()
         old = {
@@ -4057,7 +4057,7 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
                 }
             }
             agent_server.RUNS.queued = {}
-            agent_server.QUEUE_RECOVERY_TASK = recovery
+            agent_server.SERVER.queue_recovery_task = recovery
             await recovery_started.wait()
             request = agent_server.TurnRequest(prompt="New prompt")
             with patch.object(
@@ -4094,12 +4094,12 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(recovery, return_exceptions=True)
             agent_server.STORE.sessions = original_sessions
             agent_server.RUNS.queued = original_queue
-            agent_server.QUEUE_RECOVERY_TASK = original_recovery
+            agent_server.SERVER.queue_recovery_task = original_recovery
 
     async def test_failed_recovery_keeps_internal_start_admission_fail_closed(
         self,
     ) -> None:
-        original_recovery = agent_server.QUEUE_RECOVERY_TASK
+        original_recovery = agent_server.SERVER.queue_recovery_task
 
         async def failed_recovery() -> tuple[int, int]:
             raise OSError("timeline unreadable")
@@ -4107,7 +4107,7 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
         recovery = asyncio.create_task(failed_recovery())
         await asyncio.gather(recovery, return_exceptions=True)
         try:
-            agent_server.QUEUE_RECOVERY_TASK = recovery
+            agent_server.SERVER.queue_recovery_task = recovery
             with self.assertRaises(agent_server.TransientAdmissionWait) as raised:
                 await agent_server._start_turn_locked(
                     "chat-recovery",
@@ -4116,7 +4116,7 @@ class StartupQueueRecoveryAdmissionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raised.exception.status_code, 503)
             self.assertIn("did not complete", str(raised.exception.detail))
         finally:
-            agent_server.QUEUE_RECOVERY_TASK = original_recovery
+            agent_server.SERVER.queue_recovery_task = original_recovery
 
 
 class ClaudeResultDiagnosticTests(unittest.TestCase):

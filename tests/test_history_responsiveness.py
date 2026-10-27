@@ -196,7 +196,7 @@ class HistoryResponsivenessTests(unittest.IsolatedAsyncioTestCase):
     async def test_backlog_progress_does_not_wait_for_legacy_display_repair(self):
         with patch.object(server, "sync_provider_history", AsyncMock(return_value={"pending": True})), \
                 patch.object(server, "prepare_provider_history_metadata_repair") as repair, \
-                patch.object(server, "SERVER_SHUTTING_DOWN", True):
+                patch.object(server.SERVER, "shutting_down", True):
             await server.run_provider_history_sync(self.sid)
         repair.assert_not_called()
         self.assertEqual(server.HISTORY_MAINTENANCE_STATE[self.sid]["status"], "pending")
@@ -226,7 +226,7 @@ class HistoryResponsivenessTests(unittest.IsolatedAsyncioTestCase):
     async def test_recovered_chat_can_send_while_other_chat_recovery_waits(self):
         pending = asyncio.create_task(asyncio.sleep(10))
         try:
-            with patch.object(server, "QUEUE_RECOVERY_TASK", pending):
+            with patch.object(server.SERVER, "queue_recovery_task", pending):
                 server.QUEUE_RECOVERY_READY.add(self.sid)
                 await asyncio.wait_for(server.wait_for_queue_recovery_admission(self.sid), .1)
         finally:

@@ -8,7 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
-from hyadex.runs import NamespaceRuns
+from hyadex.core.runs import NamespaceRuns
+from hyadex.core.server import NamespaceServer
 from unittest.mock import AsyncMock, Mock
 
 from hyadex.providers.claude.sdk import ClaudeSDKSupervisorClosed
@@ -31,7 +32,6 @@ def load_probe(path, *, shutting_down, previous_error=None, result=None, project
         "message_task = None" in ast.unparse(node)) == (path == "iterator"))
     setup = ast.parse('''
 async def probe(error, late_shutdown=False):
-    global SERVER_SHUTTING_DOWN
     current_run_id = "exact-current-run"
     session_id = "isolated-chat"
     stream_error = previous_error
@@ -59,7 +59,7 @@ async def probe(error, late_shutdown=False):
     setup.body.append(ast.Try(body=[ast.Raise(exc=ast.Name(id="error", ctx=ast.Load()))], handlers=[handler], orelse=[], finalbody=[]))
     setup.body.extend(ast.parse('''
 if late_shutdown:
-    SERVER_SHUTTING_DOWN = True
+    SERVER.shutting_down = True
 ''').body)
     setup.body.append(finalize)
     setup.body.extend(ast.parse('await finalize_sdk_run()').body)
@@ -89,6 +89,7 @@ if late_shutdown:
         namespace[name] = AsyncMock()
     namespace["release_turn_slot"] = AsyncMock(return_value=True)
     namespace["RUNS"] = NamespaceRuns(namespace)
+    namespace["SERVER"] = NamespaceServer(namespace)
     exec(compile(module, str(SOURCE), "exec"), namespace)
     return namespace
 

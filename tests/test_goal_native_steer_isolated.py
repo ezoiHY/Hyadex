@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, Mock
 
 from hyadex.providers.codex.app_server import CodexAppServerError, CodexAppServerProtocolError, CodexAppServerRequestError
 from tests.test_goal_followup_admission_isolated import AdmissionHTTPException, saved_route_snapshots
-from hyadex.runs import NamespaceRuns
+from hyadex.core.runs import NamespaceRuns
 from tests import server_source
 
 

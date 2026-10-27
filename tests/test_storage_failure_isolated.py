@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, Mock
 import uuid
 
 from tests.test_claude_shutdown_status_isolated import load_probe
-from hyadex.runs import NamespaceRuns
+from hyadex.core.runs import NamespaceRuns
 from tests import server_source
 
 

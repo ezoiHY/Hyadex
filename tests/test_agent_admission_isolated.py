@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from hyadex.runs import NamespaceRuns
+from hyadex.core.runs import NamespaceRuns
 from tests import server_source
 
 

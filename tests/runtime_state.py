@@ -1,24 +1,28 @@
-"""Patch agent_server globals by name, including turn state that lives in RUNS."""
+"""Patch agent_server globals by name, including state that now lives on objects."""
 from contextlib import ExitStack
 from unittest.mock import patch
 
-from hyadex.runs import LEGACY_NAMES
+from hyadex.core import runs, server
+
+# Old module global -> (state object attribute on agent_server, field)
+LEGACY = {**{name: ("RUNS", field) for name, field in runs.LEGACY_NAMES.items()},
+          **{name: ("SERVER", field) for name, field in server.LEGACY_NAMES.items()}}
 
 
 def patch_server(module, name: str, value):
-    attribute = LEGACY_NAMES.get(name)
-    if attribute is not None:
-        return patch.object(module.RUNS, attribute, value)
+    if name in LEGACY:
+        holder, field = LEGACY[name]
+        return patch.object(getattr(module, holder), field, value)
     return patch.object(module, name, value)
 
 
 def patch_server_multiple(module, **values):
-    """``patch.multiple`` for agent_server, routing turn state to RUNS."""
-    runs = {LEGACY_NAMES[name]: value for name, value in values.items() if name in LEGACY_NAMES}
-    others = {name: value for name, value in values.items() if name not in LEGACY_NAMES}
+    """``patch.multiple`` for agent_server, routing moved state to its object."""
     stack = ExitStack()
-    if runs:
-        stack.enter_context(patch.multiple(module.RUNS, **runs))
-    if others:
-        stack.enter_context(patch.multiple(module, **others))
+    grouped: dict[str, dict] = {}
+    for name, value in values.items():
+        holder, field = LEGACY.get(name, (None, name))
+        grouped.setdefault(holder, {})[field] = value
+    for holder, fields in grouped.items():
+        stack.enter_context(patch.multiple(getattr(module, holder) if holder else module, **fields))
     return stack

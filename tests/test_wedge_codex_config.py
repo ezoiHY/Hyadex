@@ -275,7 +275,7 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             config[f"{prefix}.url"],
             (
-                f"http://127.0.0.1:{agent_server.SERVER_PORT}"
+                f"http://127.0.0.1:{agent_server.SERVER.port}"
                 f"{agent_server.CODEX_PROVIDER_MCP_PATH}"
             ),
         )

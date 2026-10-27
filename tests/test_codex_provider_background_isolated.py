@@ -9,7 +9,7 @@ import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock
-from hyadex.runs import NamespaceRuns
+from hyadex.core.runs import NamespaceRuns
 from tests import server_source
 
 
