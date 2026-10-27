@@ -33,6 +33,7 @@ FILES = (
     'hyadex/jobs/context.py',
     'hyadex/providers/__init__.py',
     'hyadex/providers/runtime.py',
+    'hyadex/events.py',
     'hyadex/groups.py',
     'hyadex/autopilot.py',
     'hyadex/routes/__init__.py',

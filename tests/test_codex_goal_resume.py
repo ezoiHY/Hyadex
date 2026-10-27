@@ -169,6 +169,7 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
             save=AsyncMock(),
             save_provider_session=AsyncMock(),
         )
+        self.store.transaction = lambda: self.store._lock
         self.events: list[tuple[str, dict]] = []
 
         async def append_event(_session_id: str, kind: str, data: dict) -> dict:

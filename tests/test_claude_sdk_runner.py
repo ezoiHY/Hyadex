@@ -2002,7 +2002,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                 "context_tokens": 30_000,
                 "usage_generation": 9,
             }
-            async with agent_server.STORE._lock:
+            async with agent_server.STORE.transaction():
                 self.session.update({
                     "_context_usage_generation": 9,
                     "context_usage_state": "available",

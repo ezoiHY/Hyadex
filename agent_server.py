@@ -160,6 +160,7 @@ from claude_background_reconciliation import (
 from hyadex import autopilot
 from hyadex.routes.autopilot import create_autopilot_router
 from hyadex import groups as group_chat
+from hyadex.events import EventBus
 from hyadex.routes.groups import create_group_router
 import side_questions
 import title_generation
@@ -4470,6 +4471,15 @@ class SessionStore:
         self._save_task: asyncio.Task[None] | None = None
         self.save_write_count = 0
 
+    def transaction(self) -> asyncio.Lock:
+        """Serialize a read-modify-write of ``sessions`` with every other
+        registry mutation: ``async with STORE.transaction(): ...``.
+
+        Persist changes inside it with ``save()``. Callers outside the store
+        use this, never the lock itself, so the store owns how it locks.
+        """
+        return self._lock
+
     async def load(self) -> None:
         ensure_dirs()
         runtime_changed = False
@@ -7693,6 +7703,15 @@ class SubscriberHub:
 
 
 HUB = SubscriberHub()
+# Committed chat events fan out here; the event log does not know its consumers.
+EVENTS = EventBus()
+
+
+@EVENTS.on_deliver
+async def deliver_event_to_live_clients(session_id: str, event: dict[str, Any]) -> None:
+    if event_files_belong_to_session(event, session_id) and is_client_visible_event(event):
+        await HUB.broadcast(session_id, client_safe_event(event))
+
 
 
 async def close_event_websocket_over_capacity(ws: WebSocket) -> None:
@@ -8219,7 +8238,7 @@ async def reset_codex_ephemeral_runtime_metadata() -> None:
         CODEX_SUBAGENT_LIVE_GENERATIONS.clear()
         CODEX_SUBAGENT_LIVE_MANAGERS.clear()
     changed = False
-    async with STORE._lock:
+    async with STORE.transaction():
         for session in STORE.sessions.values():
             if str(session.get("backend") or DEFAULT_BACKEND) != BACKEND_CODEX:
                 continue
@@ -8343,17 +8362,12 @@ async def append_event(
                 )
         HISTORY_SEARCH_DIRTY.add(session_id)
         await update_session_event_metadata(session_id, event)
-        if event_files_belong_to_session(event, session_id) and is_client_visible_event(event):
-            safe_event = client_safe_event(event)
-            await HUB.broadcast(session_id, safe_event)
+        await EVENTS.deliver(session_id, event)
     # A stopped run's provider authority ends with its terminal event. Revoke
     # it only after releasing the per-chat event delivery lock.
     if event_type == "turn_stopped":
         await revoke_terminal_run_authority(session_id, event)
-    if event_type in group_chat.OBSERVED_EVENT_TYPES:
-        # Group discussions follow their member chats' turns; this only
-        # schedules work and never delays the chat's own event path.
-        GROUPS.observe_member_event(session_id, event)
+    EVENTS.observe(session_id, event)
     return event
 
 
@@ -8565,23 +8579,10 @@ async def append_durable_event_batch_locked(
                     event.get("seq"),
                     concise_error_message(exc),
                 )
-            try:
-                if event_files_belong_to_session(event, session_id) and is_client_visible_event(event):
-                    safe_event = client_safe_event(event)
-                    await HUB.broadcast(session_id, safe_event)
-            except BaseException as exc:
-                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                    raise
-                logger.warning(
-                    "artifact event broadcast failed session=%s seq=%s: %s",
-                    session_id,
-                    event.get("seq"),
-                    concise_error_message(exc),
-                )
-            if event.get("type") in group_chat.OBSERVED_EVENT_TYPES:
-                # Queued turns start (and unqueue/stop) through this durable
-                # path; group discussions must see them exactly like append_event.
-                GROUPS.observe_member_event(session_id, event)
+            await EVENTS.deliver(session_id, event)
+            # Queued turns start (and unqueue/stop) through this durable path;
+            # observers must see them exactly like append_event's.
+            EVENTS.observe(session_id, event)
 
     # After fsync, cancellation cannot turn success into failure: that would
     # invite a duplicate retry or cleanup files referenced by durable events.
@@ -17153,7 +17154,7 @@ async def _emit_codex_subagent_state_once(
     with CODEX_SUBAGENT_INDEX_LOCK:
         CODEX_SUBAGENT_SESSION_INDEX[child_thread_id] = session_id
         CODEX_SUBAGENT_STATE[child_thread_id] = stored
-    async with STORE._lock:
+    async with STORE.transaction():
         session = STORE.sessions.get(session_id)
         if session is not None:
             indexed = session.get("codex_subagents")
@@ -23277,7 +23278,7 @@ async def warn_codex_thread_hygiene(
     warning = codex_thread_hygiene_warning(hygiene)
     if warning is None:
         return
-    async with STORE._lock:
+    async with STORE.transaction():
         current = STORE.sessions.get(session_id)
         if not current or str(session_provider_id(current) or "") != thread_id:
             return
@@ -24473,7 +24474,7 @@ async def generate_session_title(session_id: str, snapshot: dict, reply: str) ->
     async with GENERATED_TITLE_SLOTS:
         # Persist the claim before spending any provider usage. A restart does
         # not retry an ambiguous request. This is one optional attempt per chat.
-        async with STORE._lock:
+        async with STORE.transaction():
             current = STORE.sessions.get(session_id)
             if (not current or not generated_title_eligible(current)
                     or server_lifecycle_admission_blocker()
@@ -26179,7 +26180,7 @@ async def persist_history_sync_cursor(
         "timeline_seq": max(0, int(timeline_seq)),
     }
     stored.pop("source_caught_up", None)
-    async with STORE._lock:
+    async with STORE.transaction():
         current = STORE.sessions.get(session_id)
         if (
             not current
@@ -27492,7 +27493,7 @@ async def rollover_codex_provider_session(
     memory = build_fork_memory(snapshot, session_id, reason=reason, exclude_run_id=run_id)
     quarantined_goal_thread = False
     usage_signal: dict[str, Any] | None = None
-    async with STORE._lock:
+    async with STORE.transaction():
         current = STORE.sessions.get(session_id)
         if not current or session_provider_id(current) != provider_id:
             return None
@@ -28301,7 +28302,7 @@ async def mark_provider_context_usage_unavailable(
     backend: str,
 ) -> None:
     signal: dict[str, Any] | None = None
-    async with STORE._lock:
+    async with STORE.transaction():
         session = STORE.sessions.get(session_id)
         if (
             session is None
@@ -28513,7 +28514,7 @@ async def refresh_idle_claude_context_usage(session_id: str) -> bool:
                     ),
                 )
 
-        async with STORE._lock:
+        async with STORE.transaction():
             current = STORE.sessions.get(session_id)
             if not current:
                 raise HTTPException(status_code=404, detail="session not found")
@@ -28619,7 +28620,7 @@ async def refresh_idle_claude_context_usage(session_id: str) -> bool:
             )
 
         signal: dict[str, Any] | None = None
-        async with STORE._lock:
+        async with STORE.transaction():
             current = STORE.sessions.get(session_id)
             if (
                 current is None
@@ -28677,7 +28678,7 @@ async def record_claude_context_usage(
                 != ownership_token
             ):
                 return False
-        async with STORE._lock:
+        async with STORE.transaction():
             session = STORE.sessions.get(session_id)
             if (
                 session is None
@@ -28734,7 +28735,7 @@ async def invalidate_failed_claude_context_usage_sample(
                 != ownership_token
             ):
                 return False
-        async with STORE._lock:
+        async with STORE.transaction():
             session = STORE.sessions.get(session_id)
             if (
                 session is None
@@ -28779,7 +28780,7 @@ async def sample_claude_context_usage(
         stop_requested = bool(active.get("stop_requested"))
     if not ownership_token:
         return False
-    async with STORE._lock:
+    async with STORE.transaction():
         session = STORE.sessions.get(session_id)
         if (
             session is None
@@ -29022,7 +29023,7 @@ async def record_codex_token_usage(
     now_epoch = time.time()
     should_checkpoint = force_checkpoint
     signal: dict[str, Any] | None = None
-    async with STORE._lock:
+    async with STORE.transaction():
         session = STORE.sessions.get(session_id)
         if not session:
             return False
@@ -29173,7 +29174,7 @@ async def update_codex_pending_session_metadata(session_id: str) -> None:
             if pending.get("session_id") == session_id
             and not pending.get("responded")
         )
-    async with STORE._lock:
+    async with STORE.transaction():
         session = STORE.sessions.get(session_id)
         if not session:
             return
@@ -29647,7 +29648,7 @@ async def update_claude_pending_session_metadata(session_id: str) -> None:
             if pending.get("session_id") == session_id
             and not pending.get("responded")
         )
-    async with STORE._lock:
+    async with STORE.transaction():
         session = STORE.sessions.get(session_id)
         if not session:
             return
@@ -30582,7 +30583,7 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
         if not isinstance(status, dict):
             return
         changed = False
-        async with STORE._lock:
+        async with STORE.transaction():
             session = STORE.sessions.get(session_id)
             if session and session.get("codex_thread_status") != status:
                 session["codex_thread_status"] = status
@@ -30607,7 +30608,7 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
             # must never resurrect automatic continuation after the server-wide
             # policy was disabled.
             goal = {**goal, "status": "paused"}
-        async with STORE._lock:
+        async with STORE.transaction():
             session = STORE.sessions.get(session_id)
             if session:
                 session["codex_goal"] = goal
@@ -30621,7 +30622,7 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
         return
 
     if method == "thread/goal/cleared":
-        async with STORE._lock:
+        async with STORE.transaction():
             session = STORE.sessions.get(session_id)
             if session:
                 session["codex_goal"] = None
@@ -30725,7 +30726,7 @@ async def project_codex_notification(notification: dict[str, Any]) -> None:
                     await append_event(session_id, "codex_compaction_completed", failed_compaction)
                     remember_codex_native_compaction_terminal(session_id, thread_id, turn_id, item_id)
         if turn_id is not None and run_id is not None:
-            async with STORE._lock:
+            async with STORE.transaction():
                 session = STORE.sessions.get(session_id)
                 if session is not None:
                     # App-server dispatches notification handlers
@@ -34900,7 +34901,7 @@ async def apply_codex_goal_time_budget_limit(
     time_budget_seconds: Any,
 ) -> None:
     """Persist and enforce an Hyadex time limit without trusting I/O."""
-    async with STORE._lock:
+    async with STORE.transaction():
         current = STORE.sessions.get(session_id)
         if current:
             current["codex_goal_time_budget_exhausted"] = True
@@ -34913,7 +34914,7 @@ async def apply_codex_goal_time_budget_limit(
             status="budgetLimited",
         )
     if isinstance(goal, dict):
-        async with STORE._lock:
+        async with STORE.transaction():
             current = STORE.sessions.get(session_id)
             if current:
                 current["codex_goal"] = goal
@@ -35098,7 +35099,7 @@ async def persist_reconciled_codex_goal(
     """Persist provider-authoritative goal state without reordering the chat."""
 
     changed = False
-    async with STORE._lock:
+    async with STORE.transaction():
         current = STORE.sessions.get(session_id)
         if current is None:
             return False
@@ -35444,7 +35445,7 @@ async def ensure_codex_app_server_thread(
                     )
                 ],
             )
-            async with STORE._lock:
+            async with STORE.transaction():
                 current = STORE.sessions.get(session_id)
                 if current:
                     current["memory_seed_used"] = True
@@ -35500,7 +35501,7 @@ async def record_codex_subagent_limit_application(
         manager._subagent_limit_instance = manager_identity
     process = [SERVER_INSTANCE_ID, manager_identity, manager.generation]
     inherited = codex_effective_thread_config({**requested, "subagent_limit": None}).get("agents", {}).get("max_concurrent_threads_per_session")
-    async with STORE._lock:
+    async with STORE.transaction():
         current = STORE.sessions.get(session_id)
         if current is None:
             return
@@ -37005,7 +37006,7 @@ async def bind_forked_codex_thread(
         # Any failed bind (resume, policy injection, persistence, or goal
         # reconciliation) must leave neither an attached nor a loaded provider
         # fork. The caller can safely fall back to bounded memory afterward.
-        async with STORE._lock:
+        async with STORE.transaction():
             current = STORE.sessions.get(session_id)
             if current and session_provider_id(current) == bound_thread_id:
                 current["session_id"] = None
@@ -37128,7 +37129,7 @@ async def save_staged_fork_provider_reference(
     clean_thread_id = str(thread_id or "").strip()
     if not clean_thread_id:
         raise ValueError("missing staged provider fork thread")
-    async with STORE._lock:
+    async with STORE.transaction():
         session = STORE.sessions.get(session_id)
         if not session or not session.get("_fork_initializing"):
             raise RuntimeError("staged fork session is unavailable")
@@ -37148,7 +37149,7 @@ async def clear_staged_fork_provider_reference(
     """Release staged ownership only after cleanup is independently durable."""
 
     clean_thread_id = str(thread_id or "").strip()
-    async with STORE._lock:
+    async with STORE.transaction():
         session = STORE.sessions.get(session_id)
         if not session or not session.get("_fork_initializing"):
             raise RuntimeError("staged fork session is unavailable")
@@ -39125,7 +39126,7 @@ async def persist_claude_background_task_receipts(
         "tasks": tasks,
         "overflow_count": overflow,
     }
-    async with STORE._lock:
+    async with STORE.transaction():
         session = STORE.sessions.get(session_id)
         if session is None:
             return None
@@ -39160,7 +39161,7 @@ async def acknowledge_claude_background_reconciliation(
     })
     if stored.get("discarded"):
         return batches
-    async with STORE._lock:
+    async with STORE.transaction():
         session = STORE.sessions.get(session_id)
         pending = session.get(CLAUDE_BACKGROUND_SESSION_FIELD) if session is not None else None
         if isinstance(pending, dict) and pending.get("provider_session_id") == provider_id and pending.get("reconciliation_id") in identifiers:
@@ -41137,7 +41138,7 @@ async def run_codex_exec(
             memory_seed,
             prompt,
         )
-        async with STORE._lock:
+        async with STORE.transaction():
             current = STORE.sessions.get(session_id)
             if current:
                 current["memory_seed_used"] = True
@@ -49209,7 +49210,7 @@ class HyadexGroupRuntime:
             codex_sandbox_mode=spec.get("codex_sandbox_mode"),
         )
         session = await STORE.create(request)
-        async with STORE._lock:
+        async with STORE.transaction():
             session["group_member"] = {"group_id": group_id, "handle": handle}
         await STORE.save()
         return str(session["id"])
@@ -49326,6 +49327,10 @@ class HyadexGroupRuntime:
 
 
 GROUPS = group_chat.GroupEngine(STATE_DIR / "groups", HyadexGroupRuntime())
+# Group discussions follow their member chats' turns; observing only schedules
+# the engine's own work and never delays the chat's event path.
+EVENTS.on_observe(lambda session_id, event: GROUPS.observe_member_event(session_id, event),
+                  types=group_chat.OBSERVED_EVENT_TYPES)
 AUTOPILOT = autopilot.AutopilotEngine(STATE_DIR / "autopilot", GROUPS)
 router.include_router(create_autopilot_router(AUTOPILOT))
 
@@ -51085,7 +51090,7 @@ async def _put_codex_goal_locked(
             and float(used) >= float(time_budget_seconds)
         ):
             time_budget_exhausted = True
-        async with STORE._lock:
+        async with STORE.transaction():
             current = STORE.sessions.get(session_id)
             if current:
                 # Native goal notifications may finish or pause this goal
@@ -51226,7 +51231,7 @@ async def _delete_codex_goal_locked(session_id: str) -> dict[str, Any]:
             manager.clear_thread_goal(thread_id),
             timeout=CODEX_GOAL_CONTROL_TIMEOUT_SECONDS,
         )
-        async with STORE._lock:
+        async with STORE.transaction():
             current = STORE.sessions.get(session_id)
             if current:
                 current["codex_goal"] = None
@@ -52297,7 +52302,7 @@ async def _fork_session_locked(
         and str(parent_goal.get("status") or "") == "active"
     )
     if parent_backend == BACKEND_CODEX and isinstance(parent_goal, dict):
-        async with STORE._lock:
+        async with STORE.transaction():
             current = STORE.sessions.get(child["id"])
             if current:
                 current["codex_goal"] = {
@@ -52368,14 +52373,14 @@ async def _fork_session_locked(
         child["memory_seed_used"] = False
         child["memory_forked"] = True
         child["memory_fork_reason"] = codex_fork_error[:2000]
-        async with STORE._lock:
+        async with STORE.transaction():
             STORE.sessions[child["id"]] = child
             await STORE.save()
     if parent_claude_session_id:
         child["fork_from"] = parent_claude_session_id
         if claude_cutoff:
             child["fork_resume_session_at"] = claude_cutoff
-        async with STORE._lock:
+        async with STORE.transaction():
             STORE.sessions[child["id"]] = child
             await STORE.save()
     # Individual missing/corrupt attachments degrade to visible artifact_error
@@ -52432,7 +52437,7 @@ async def _fork_session_locked(
     # newly created chat itself at the current edge of the sidebar ordering and
     # persist any memory-fork metadata after the clone completes.
     child = await STORE.update(child["id"], {})
-    async with STORE._lock:
+    async with STORE.transaction():
         current = STORE.sessions.get(child["id"])
         if current is None:
             raise HTTPException(status_code=409, detail="forked session disappeared before publish")
@@ -52826,7 +52831,7 @@ async def quarantine_codex_goal_thread(
     if not thread_id:
         CODEX_GOAL_SYNC_GENERATIONS.pop(session_id, None)
         changed = False
-        async with STORE._lock:
+        async with STORE.transaction():
             current = STORE.sessions.get(session_id)
             if current is None:
                 return False
@@ -52861,7 +52866,7 @@ async def quarantine_codex_goal_thread(
     CODEX_GOAL_SYNC_GENERATIONS.pop(session_id, None)
     should_rollover = False
     changed = False
-    async with STORE._lock:
+    async with STORE.transaction():
         current = STORE.sessions.get(session_id)
         if current is None:
             return True
@@ -54508,7 +54513,7 @@ async def emergency_alert_events(ws: WebSocket) -> None:
             return
         # State writes use the same lock. Sending the snapshot before
         # registration while holding it closes the snapshot/live-update race.
-        async with STORE._lock:
+        async with STORE.transaction():
             sessions = [
                 public_emergency_session(sess)
                 for sess in sorted_sessions(list(STORE.sessions.values()))

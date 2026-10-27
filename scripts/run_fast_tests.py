@@ -20,6 +20,7 @@ MODULES = (
     "tests.test_claude_sdk_client",
     "tests.test_codex_app_server",
     "tests.test_group_chat",
+    "tests.test_event_bus",
     "tests.test_autopilot",
     "tests.test_application_factory",
     "tests.test_package_boundaries",

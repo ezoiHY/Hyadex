@@ -36,7 +36,8 @@ for node in tree.body:
     elif isinstance(node, ast.ClassDef) and node.name in MODELS:
         nodes.append(node)
     elif isinstance(node, ast.ClassDef) and node.name == "SessionStore":
-        node.body = [method for method in node.body if isinstance(method, ast.AsyncFunctionDef) and method.name in {"create", "update"}]
+        node.body = [method for method in node.body if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                     and method.name in {"create", "update", "transaction"}]
         nodes.append(node)
 assert {node.name for node in nodes} == FUNCTIONS | MODELS | {"SessionStore"}
 CODE = compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(module="__future__",

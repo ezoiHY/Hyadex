@@ -65,7 +65,7 @@ class CodexHistoryDeferralTests(unittest.IsolatedAsyncioTestCase):
                         "_history_sync_cursor": deepcopy(self.cursor)}
         self.items = [{"kind": "assistant", "text": "Candidate provider replay"}]
         self.cache = SimpleNamespace(forget=Mock(), is_prepared=Mock(return_value=False), prepare=Mock())
-        self.store = SimpleNamespace(sessions={"chat": self.session}, _lock=asyncio.Lock(), save=AsyncMock())
+        self.store = SimpleNamespace(sessions={"chat": self.session}, _lock=(_store_lock := asyncio.Lock()), transaction=lambda: _store_lock, save=AsyncMock())
         self.ns = self.functions
         self.ns.update(
             STORE=self.store, logger=Mock(), BACKEND_CODEX="codex", BACKEND_CLAUDE="claude", DEFAULT_BACKEND="codex",

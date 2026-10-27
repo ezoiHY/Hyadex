@@ -38,7 +38,7 @@ def load_helpers(path=None):
         "CLAUDE_BACKGROUND_SESSION_FIELD": receipts.SESSION_FIELD,
         "normalize_task_receipts": receipts.normalize_task_receipts,
         "pending_reconciliation_state": receipts.pending_reconciliation_state,
-        "STORE": SimpleNamespace(_lock=asyncio.Lock(), sessions={"qa-claude-lifecycle": {}}, save=AsyncMock()),
+        "STORE": SimpleNamespace(_lock=(_store_lock := asyncio.Lock()), transaction=lambda: _store_lock, sessions={"qa-claude-lifecycle": {}}, save=AsyncMock()),
         "append_event": AsyncMock(return_value={"seq": 1}),
         "events_path": lambda _session: path,
     }

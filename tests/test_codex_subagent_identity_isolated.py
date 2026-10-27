@@ -32,7 +32,7 @@ class CodexSubagentIdentityTests(unittest.IsolatedAsyncioTestCase):
                  and node.name in FUNCTIONS]
         self.assertEqual({node.name for node in nodes}, FUNCTIONS)
         self.session = {"id": "chat", "backend": "codex", "codex_thread_id": "parent"}
-        self.store = SimpleNamespace(sessions={"chat": self.session}, _lock=asyncio.Lock(), save=AsyncMock())
+        self.store = SimpleNamespace(sessions={"chat": self.session}, _lock=(_store_lock := asyncio.Lock()), transaction=lambda: _store_lock, save=AsyncMock())
         self.sequence = 0
         self.now = "2026-09-14T04:00:00Z"
 
