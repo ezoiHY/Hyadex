@@ -178,6 +178,13 @@ except ModuleNotFoundError:  # Python 3.10 agent hosts
 logger = logging.getLogger("hyadex-server")
 
 # --- Extracted modules ---
+from hyadex.features.titles import (
+    active_generated_title_work_labels,
+    generated_title_eligible,
+    GENERATED_TITLE_SLOTS,
+    GENERATED_TITLE_TASKS,
+    session_accepts_auto_title,
+)
 from hyadex.providers.claude.history import (
     add_history_item,
     bounded_claude_transcript_regions,
@@ -22447,17 +22454,6 @@ def normalized_local_session_cwd(value: Any) -> str | None:
     return os.path.normpath(str(candidate))
 
 
-def session_accepts_auto_title(sess: dict[str, Any]) -> bool:
-    # Never infer ownership from a title's wording: a user can intentionally
-    # name a chat "New chat" or the exact first line of their prompt.
-    return (
-        sess.get("_title_source") in {"placeholder", "prompt", "provider", "generated"}
-        and sess.get("_title_auto_value") == sess.get("title")
-        and not sess.get("_fork_initializing")
-        and not sess.get("_history_import_initializing")
-    )
-
-
 def read_native_session_title(sess: dict[str, Any]) -> str | None:
     """Read existing native metadata only; never launch a CLI or model request.
 
@@ -22514,36 +22510,8 @@ async def refresh_native_session_title(session_id: str) -> None:
         )
 
 
-GENERATED_TITLE_TASKS: dict[str, asyncio.Task] = {}
-GENERATED_TITLE_SLOTS = asyncio.Semaphore(2)
-
-
-def active_generated_title_work_labels() -> list[str]:
-    """Include owned title requests until their provider cleanup has finished."""
-    return sorted(
-        f"Automatic title for {session_id}"
-        for session_id, task in GENERATED_TITLE_TASKS.items()
-        if not task.done()
-    )
-
-
 def title_runtime_key(sess: dict[str, Any]) -> tuple:
     return (sess.get("backend") or DEFAULT_BACKEND, session_provider_id(sess), sess.get("model"))
-
-
-def generated_title_eligible(sess: dict[str, Any], *, allow_attempted: bool = False) -> bool:
-    return bool(
-        os.environ.get("HYADEX_AUTO_TITLES", "1").strip().lower() not in {"0", "false", "off"}
-        and not SERVER.shutting_down
-        and sess.get("backend") in {BACKEND_CODEX}
-        and sess.get("auto_title_enabled", True) is not False
-        and not sess.get("archived") and not sess.get("parent_id") and not sess.get("fork_from")
-        and sess.get("id") not in DELETING_SESSIONS
-        and sess.get("id") not in DELETED_SESSION_TOMBSTONES
-        and session_accepts_auto_title(sess)
-        and sess.get("_title_source") in {"placeholder", "prompt"}
-        and (allow_attempted or not sess.get("_title_generation_attempted"))
-    )
 
 
 def cancel_generated_session_title(session_id: str) -> None:
@@ -53030,7 +52998,7 @@ app = create_app(ApplicationBindings(
 # assignment is forwarded to the extracted modules that hold the same object
 # under that name, so the code that now lives there sees it too. Removed once
 # callers address the owning modules directly.
-EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], )
+EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], sys.modules['hyadex.core.util'], sys.modules['hyadex.core.server_logging'], sys.modules['hyadex.core.state'], sys.modules['hyadex.providers.claude.history'], sys.modules['hyadex.features.titles'], )
 
 
 # Module globals that core code reaches through WIRING.
