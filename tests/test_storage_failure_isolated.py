@@ -18,6 +18,7 @@ import uuid
 from tests.test_claude_shutdown_status_isolated import load_probe
 from hyadex.core.runs import NamespaceRuns
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -53,6 +54,7 @@ def storage_source():
               schedule_generated_session_title=Mock(),
               concise_error_message=str)
     ns["RUNS"] = NamespaceRuns(ns)
+    ns["PROVIDERS"] = NamespaceProviders(ns)
     exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), "<isolated-storage>", "exec"), ns)
     return ns
 

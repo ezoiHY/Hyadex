@@ -13,6 +13,7 @@ import weakref
 from unittest.mock import AsyncMock, Mock
 from hyadex.providers.codex.app_server import CodexAppServerClient
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 FUNCTIONS = {
@@ -65,6 +66,7 @@ class CodexSubagentIdentityTests(unittest.IsolatedAsyncioTestCase):
         self.ns["existing_codex_app_server_manager_for_thread"] = lambda thread: self.ns["CODEX_APP_SERVER_MANAGER"]
         self.ns["codex_session_id_for_thread"] = lambda thread: (
             "chat" if thread == "parent" else self.ns["CODEX_SUBAGENT_SESSION_INDEX"].get(thread))
+        self.ns["PROVIDERS"] = NamespaceProviders(self.ns)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "subagent-identity-isolated", "exec"), self.ns)
 
     async def seed(self, *, status="running", title="Old title", nickname="Kepler"):

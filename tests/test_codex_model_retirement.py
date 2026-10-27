@@ -19,7 +19,7 @@ class CodexModelRetirementTests(unittest.IsolatedAsyncioTestCase):
         self.write_auth({'auth_mode': 'chatgpt', 'tokens': {'access_token': 'fixture-only'}})
         self.enterContext(patch.object(agent_server, 'codex_app_server_env', return_value=self.env))
         self.enterContext(patch.object(agent_server, 'DEFAULT_CWD', str(self.root)))
-        self.enterContext(patch.object(agent_server, 'CODEX_MODEL_MIGRATION_TARGET', 'gpt-6-luna'))
+        self.enterContext(patch.object(agent_server.PROVIDERS, "codex_model_migration_target", 'gpt-6-luna'))
         self.enterContext(patch.object(agent_server, 'CODEX_DEFAULT_MODEL', 'gpt-6-luna'))
         self.enterContext(patch.object(agent_server, 'codex_user_config_defaults', return_value=('', '', '')))
 

@@ -17,6 +17,7 @@ import codex_auth
 from tests import test_codex_binary_refresh_isolated as binary
 from hyadex.core.runs import NamespaceRuns
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 def jwt(claims):
@@ -132,6 +133,7 @@ class LoginHandoffTests(binary.BinaryRefreshTests):
         module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *nodes], type_ignores=[])
         self.ns["discover_runtime_catalog"] = lambda **kwargs: {"backends": {}, "forced": kwargs["force_runtime_probe"]}
         self.ns["RUNS"] = NamespaceRuns(self.ns)
+        self.ns["PROVIDERS"] = NamespaceProviders(self.ns)
         exec(compile(ast.fix_missing_locations(module), str(source), "exec"), self.ns)
         app = FastAPI()
         app.get("/api/runtime/catalog")(self.ns["runtime_catalog"])

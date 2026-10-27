@@ -1579,7 +1579,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             return {"active_count": 1}
 
         with patch.object(agent_server, "active_codex_work_labels", return_value=[]), \
-             patch.object(agent_server, "CLAUDE_SDK_MANAGER", manager), \
+             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", manager), \
              patch.object(
                  agent_server.STORE,
                  "sessions",
@@ -1611,7 +1611,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             return {"active_count": 0}
 
         with patch.object(agent_server, "active_codex_work_labels", return_value=[]), \
-             patch.object(agent_server, "CLAUDE_SDK_MANAGER", manager), \
+             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", manager), \
              patch.object(
                  agent_server.STORE,
                  "sessions",
@@ -1654,7 +1654,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             event_file = Path(temporary) / "events.jsonl"
             event_file.write_text("")
             with patch.object(agent_server, "active_codex_work_labels", return_value=[]), \
-                 patch.object(agent_server, "CLAUDE_SDK_MANAGER", manager), \
+                 patch.object(agent_server.PROVIDERS, "claude_sdk_manager", manager), \
                  patch.object(
                      agent_server.STORE,
                      "sessions",
@@ -1704,8 +1704,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
             "run_id": "parent-run",
             "subagent_status": "running",
         }
-        with patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager), \
-             patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
+        with patch.object(agent_server.PROVIDERS, "codex_manager", manager), \
+             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", None), \
              patch.object(agent_server.STORE, "sessions", {}), \
              patch.object(agent_server.RUNS, "busy", set()), \
              patch.object(agent_server.RUNS, "maintenance", set()), \
@@ -1760,8 +1760,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 return [{"id": "turn-terminal", "status": "completed"}]
 
         manager = CodexManager()
-        with patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager), \
-             patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
+        with patch.object(agent_server.PROVIDERS, "codex_manager", manager), \
+             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", None), \
              patch.object(agent_server.STORE, "sessions", {}), \
              patch.object(agent_server.RUNS, "busy", set()), \
              patch.object(agent_server.RUNS, "maintenance", set()), \
@@ -1814,8 +1814,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
         generations = {
             thread_id: manager.generation for thread_id in states
         }
-        with patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager), \
-             patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
+        with patch.object(agent_server.PROVIDERS, "codex_manager", manager), \
+             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", None), \
              patch.object(agent_server.STORE, "sessions", {}), \
              patch.object(agent_server.RUNS, "busy", set()), \
              patch.object(agent_server.RUNS, "maintenance", set()), \
@@ -1862,8 +1862,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 return [{"id": "turn-live", "status": "inProgress"}]
 
         manager = CodexManager()
-        with patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager), \
-             patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
+        with patch.object(agent_server.PROVIDERS, "codex_manager", manager), \
+             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", None), \
              patch.object(agent_server.STORE, "sessions", {}), \
              patch.object(agent_server.RUNS, "busy", set()), \
              patch.object(agent_server.RUNS, "maintenance", set()), \
@@ -1904,8 +1904,8 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("app-server unavailable")
 
         manager = CodexManager()
-        with patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager), \
-             patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
+        with patch.object(agent_server.PROVIDERS, "codex_manager", manager), \
+             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", None), \
              patch.object(agent_server.STORE, "sessions", {}), \
              patch.object(agent_server.RUNS, "busy", set()), \
              patch.object(agent_server.RUNS, "maintenance", set()), \
@@ -1968,7 +1968,7 @@ class ServerOpsSecurityTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as temporary, \
              patch.object(agent_server, "active_codex_work_labels", return_value=[]), \
-             patch.object(agent_server, "CLAUDE_SDK_MANAGER", manager), \
+             patch.object(agent_server.PROVIDERS, "claude_sdk_manager", manager), \
              patch.object(agent_server.STORE, "sessions", sessions), \
              patch.object(agent_server.RUNS, "busy", set()), \
              patch.object(agent_server.RUNS, "maintenance", set()), \

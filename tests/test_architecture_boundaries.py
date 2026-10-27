@@ -61,12 +61,13 @@ class ArchitectureBoundaryTests(unittest.TestCase):
                 self.assertIn(auth.kind, expected)
 
     def test_runtime_state_lives_only_on_state_objects(self):
-        # RunState owns turn lifecycle state and ServerState the server's own
-        # lifecycle. A test patching an old module global would patch nothing
+        # RunState owns turn lifecycle state, ServerState the server's own
+        # lifecycle and ProviderState the shared provider managers. A test patching an old module global would patch nothing
         # the server reads.
         from hyadex.core import runs, server
+        from hyadex.providers import state as providers
 
-        names = "|".join([*runs.LEGACY_NAMES, *server.LEGACY_NAMES])
+        names = "|".join([*runs.LEGACY_NAMES, *server.LEGACY_NAMES, *providers.LEGACY_NAMES])
         definitions = re.findall(rf"^({names})\s*[:=]", SOURCE, re.M)
         self.assertEqual(definitions, [])
         pattern = re.compile(rf"(?:agent_server|server)\.({names})\b|patch\.object\(\s*(?:agent_server|server)\s*,\s*[\"']({names})[\"']")

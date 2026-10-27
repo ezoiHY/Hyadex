@@ -830,7 +830,7 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         with (
-            patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", None),
+            patch.object(agent_server.PROVIDERS, "codex_manager", None),
             patch.object(agent_server, "CODEX_GOALS_ENABLED", False),
         ):
             runtime = await agent_server.codex_runtime_snapshot("chat")
@@ -1601,12 +1601,12 @@ class CodexControlValidationTests(unittest.IsolatedAsyncioTestCase):
             "type": "active",
             "activeFlags": ["waitingOnApproval"],
         }
-        previous_manager = agent_server.CODEX_APP_SERVER_MANAGER
-        agent_server.CODEX_APP_SERVER_MANAGER = None
+        previous_manager = agent_server.PROVIDERS.codex_manager
+        agent_server.PROVIDERS.codex_manager = None
         try:
             runtime = await agent_server.get_codex_runtime("chat")
         finally:
-            agent_server.CODEX_APP_SERVER_MANAGER = previous_manager
+            agent_server.PROVIDERS.codex_manager = previous_manager
         self.assertEqual(runtime["status"], {"type": "notLoaded"})
 
     async def test_all_codex_control_acquisition_is_blocked_during_update(
@@ -2462,8 +2462,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         task = asyncio.create_task(asyncio.Event().wait())
         agent_server.register_codex_native_action("chat", "operation", task)
-        previous_manager = agent_server.CODEX_APP_SERVER_MANAGER
-        agent_server.CODEX_APP_SERVER_MANAGER = AsyncMock()
+        previous_manager = agent_server.PROVIDERS.codex_manager
+        agent_server.PROVIDERS.codex_manager = AsyncMock()
         try:
             with (
                 patch.object(
@@ -2486,7 +2486,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 ("chat", "operation"),
                 None,
             )
-            agent_server.CODEX_APP_SERVER_MANAGER = previous_manager
+            agent_server.PROVIDERS.codex_manager = previous_manager
 
     async def test_thread_pins_and_interactive_controls_are_reference_counted(
         self,
@@ -2547,8 +2547,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                agent_server,
-                "CODEX_APP_SERVER_MANAGER",
+                agent_server.PROVIDERS,
+                "codex_manager",
                 manager,
             ),
             patch.object(agent_server.STORE, "save", AsyncMock()),
@@ -2617,8 +2617,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                agent_server,
-                "CODEX_APP_SERVER_MANAGER",
+                agent_server.PROVIDERS,
+                "codex_manager",
                 manager,
             ),
             patch.object(agent_server.STORE, "save", AsyncMock()),
@@ -2670,8 +2670,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                agent_server,
-                "CODEX_APP_SERVER_MANAGER",
+                agent_server.PROVIDERS,
+                "codex_manager",
                 manager,
             ),
             patch.object(agent_server.STORE, "save", AsyncMock()),
@@ -2744,8 +2744,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "chat",
             task,
         )
-        previous_manager = agent_server.CODEX_APP_SERVER_MANAGER
-        agent_server.CODEX_APP_SERVER_MANAGER = manager
+        previous_manager = agent_server.PROVIDERS.codex_manager
+        agent_server.PROVIDERS.codex_manager = manager
         agent_server.CODEX_APP_SERVER_PINNED_THREADS.add("thread")
         agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS["thread"] = 1
         try:
@@ -2771,7 +2771,7 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(agent_server.CODEX_APP_SERVER_PINNED_THREADS)
             self.assertFalse(agent_server.CODEX_APP_SERVER_THREAD_PIN_COUNTS)
         finally:
-            agent_server.CODEX_APP_SERVER_MANAGER = previous_manager
+            agent_server.PROVIDERS.codex_manager = previous_manager
 
     async def test_deleting_session_discards_append_waiting_on_event_lock(
         self,
@@ -2886,8 +2886,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 patch.object(agent_server, "ensure_dirs"),
                 patch.object(
-                    agent_server,
-                    "CODEX_APP_SERVER_MANAGER",
+                    agent_server.PROVIDERS,
+                    "codex_manager",
                     manager,
                 ),
                 patch.object(
@@ -2941,8 +2941,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                agent_server,
-                "CODEX_APP_SERVER_MANAGER",
+                agent_server.PROVIDERS,
+                "codex_manager",
                 manager,
             ),
             self.assertRaises(HTTPException) as raised,
@@ -2994,8 +2994,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 patch.object(agent_server, "ensure_dirs"),
                 patch.object(
-                    agent_server,
-                    "CODEX_APP_SERVER_MANAGER",
+                    agent_server.PROVIDERS,
+                    "codex_manager",
                     None,
                 ),
                 patch.object(
@@ -3071,8 +3071,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     side_effect=blocked_write,
                 ),
                 patch.object(
-                    agent_server,
-                    "CODEX_APP_SERVER_MANAGER",
+                    agent_server.PROVIDERS,
+                    "codex_manager",
                     None,
                 ),
                 patch.object(
@@ -3132,8 +3132,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 patch.object(agent_server, "ensure_dirs"),
                 patch.object(
-                    agent_server,
-                    "CODEX_APP_SERVER_MANAGER",
+                    agent_server.PROVIDERS,
+                    "codex_manager",
                     None,
                 ),
                 patch.object(
@@ -3222,8 +3222,8 @@ class CodexNativeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 patch.object(agent_server, "ensure_dirs"),
                 patch.object(
-                    agent_server,
-                    "CODEX_APP_SERVER_MANAGER",
+                    agent_server.PROVIDERS,
+                    "codex_manager",
                     manager,
                 ),
                 patch.object(

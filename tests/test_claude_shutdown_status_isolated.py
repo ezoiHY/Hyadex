@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, Mock
 
 from hyadex.providers.claude.sdk import ClaudeSDKSupervisorClosed
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -89,6 +90,7 @@ if late_shutdown:
         namespace[name] = AsyncMock()
     namespace["release_turn_slot"] = AsyncMock(return_value=True)
     namespace["RUNS"] = NamespaceRuns(namespace)
+    namespace["PROVIDERS"] = NamespaceProviders(namespace)
     namespace["SERVER"] = NamespaceServer(namespace)
     exec(compile(module, str(SOURCE), "exec"), namespace)
     return namespace

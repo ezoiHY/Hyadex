@@ -336,7 +336,7 @@ class StopTurnProviderReadinessTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(agent_server.RUNS, "busy", set()), \
                 patch.object(agent_server.RUNS, "queued", queued), \
                 patch.object(agent_server.RUNS, "run_now", {}), \
-                patch.object(agent_server, "CLAUDE_SDK_MANAGER", None), \
+                patch.object(agent_server.PROVIDERS, "claude_sdk_manager", None), \
                 patch.object(agent_server, "append_durable_event", append_durable_event), \
                 patch.object(agent_server, "cancel_codex_interactions", AsyncMock()), \
                 patch.object(agent_server, "cancel_claude_interactions", AsyncMock()), \

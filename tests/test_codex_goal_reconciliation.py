@@ -52,14 +52,14 @@ class CodexGoalReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.previous_sessions = agent_server.STORE.sessions
         self.previous_active = agent_server.RUNS.active
         self.previous_busy = agent_server.RUNS.busy
-        self.previous_manager = agent_server.CODEX_APP_SERVER_MANAGER
+        self.previous_manager = agent_server.PROVIDERS.codex_manager
         self.previous_index = agent_server.CODEX_THREAD_SESSION_INDEX
         self.previous_sync = agent_server.CODEX_GOAL_SYNC_GENERATIONS
         self.previous_quarantine = agent_server.CODEX_QUARANTINED_GOAL_THREADS
         agent_server.STORE.sessions = {}
         agent_server.RUNS.active = {}
         agent_server.RUNS.busy = set()
-        agent_server.CODEX_APP_SERVER_MANAGER = None
+        agent_server.PROVIDERS.codex_manager = None
         agent_server.CODEX_THREAD_SESSION_INDEX = {}
         agent_server.CODEX_GOAL_SYNC_GENERATIONS = {}
         agent_server.CODEX_QUARANTINED_GOAL_THREADS = {}
@@ -68,7 +68,7 @@ class CodexGoalReconciliationTests(unittest.IsolatedAsyncioTestCase):
         agent_server.STORE.sessions = self.previous_sessions
         agent_server.RUNS.active = self.previous_active
         agent_server.RUNS.busy = self.previous_busy
-        agent_server.CODEX_APP_SERVER_MANAGER = self.previous_manager
+        agent_server.PROVIDERS.codex_manager = self.previous_manager
         agent_server.CODEX_THREAD_SESSION_INDEX = self.previous_index
         agent_server.CODEX_GOAL_SYNC_GENERATIONS = self.previous_sync
         agent_server.CODEX_QUARANTINED_GOAL_THREADS = self.previous_quarantine
@@ -209,7 +209,7 @@ class CodexGoalReconciliationTests(unittest.IsolatedAsyncioTestCase):
         agent_server.CODEX_THREAD_SESSION_INDEX["thread-old"] = "chat"
         manager = GoalManager(session["codex_goal"])
         manager.request = AsyncMock(return_value={})  # type: ignore[attr-defined]
-        agent_server.CODEX_APP_SERVER_MANAGER = manager  # type: ignore[assignment]
+        agent_server.PROVIDERS.codex_manager = manager  # type: ignore[assignment]
 
         with patch.object(agent_server.STORE, "save", AsyncMock()):
             await agent_server.project_codex_notification({
@@ -330,7 +330,7 @@ class CodexGoalReconciliationTests(unittest.IsolatedAsyncioTestCase):
         manager.get_thread_goal = AsyncMock(
             side_effect=RuntimeError("goal get unavailable")
         )
-        agent_server.CODEX_APP_SERVER_MANAGER = manager  # type: ignore[assignment]
+        agent_server.PROVIDERS.codex_manager = manager  # type: ignore[assignment]
         with (
             patch.object(agent_server, "STOP_CONFIRM_TIMEOUT_SECONDS", 0.01),
             patch.object(agent_server.STORE, "save", AsyncMock()),

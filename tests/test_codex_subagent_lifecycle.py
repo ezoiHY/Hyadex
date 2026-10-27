@@ -258,7 +258,7 @@ class CodexSubagentLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(agent_server.RUNS, "active", {}),
             patch.object(agent_server.RUNS, "busy", set()),
-            patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager),
+            patch.object(agent_server.PROVIDERS, "codex_manager", manager),
             patch.object(agent_server, "stop_codex_descendant_subagents", cascade),
             patch.object(agent_server, "cancel_codex_interactions", AsyncMock()),
             patch.object(agent_server, "schedule_next_queued_turn"),

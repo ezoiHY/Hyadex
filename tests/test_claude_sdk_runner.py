@@ -529,7 +529,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.previous_stop_requests = agent_server.RUNS.stop_requests
         self.previous_stopped_runs = agent_server.RUNS.stopped_runs
         self.previous_turn_tasks = agent_server.RUNS.turn_tasks
-        self.previous_manager = agent_server.CLAUDE_SDK_MANAGER
+        self.previous_manager = agent_server.PROVIDERS.claude_sdk_manager
         self.previous_run_metadata = agent_server.RUNS.run_metadata
         self.previous_queue = agent_server.RUNS.queued
         self.previous_run_now = agent_server.RUNS.run_now
@@ -574,7 +574,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         agent_server.RUNS.stop_requests = set()
         agent_server.RUNS.stopped_runs = set()
         agent_server.RUNS.turn_tasks = {}
-        agent_server.CLAUDE_SDK_MANAGER = None
+        agent_server.PROVIDERS.claude_sdk_manager = None
         agent_server.RUNS.run_metadata = {}
         agent_server.RUNS.queued = {}
         agent_server.RUNS.run_now = {}
@@ -647,7 +647,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         agent_server.RUNS.stop_requests = self.previous_stop_requests
         agent_server.RUNS.stopped_runs = self.previous_stopped_runs
         agent_server.RUNS.turn_tasks = self.previous_turn_tasks
-        agent_server.CLAUDE_SDK_MANAGER = self.previous_manager
+        agent_server.PROVIDERS.claude_sdk_manager = self.previous_manager
         agent_server.RUNS.run_metadata = self.previous_run_metadata
         agent_server.RUNS.queued = self.previous_queue
         agent_server.RUNS.run_now = self.previous_run_now
@@ -1310,7 +1310,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "model": "claude-opus-4-1",
         }, 12)
         self.session["claude_session_id"] = "provider-manual"
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {}
         agent_server.RUNS.busy = set()
         agent_server.RUNS.current_turns = {}
@@ -1374,7 +1374,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {}
         agent_server.RUNS.current_turns = {}
         with patch.object(
@@ -1408,7 +1408,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_manual_context_refresh_cannot_overwrite_newer_generation(self) -> None:
         manager = FakeClaudeManager()
         self.session["claude_session_id"] = "provider-manual"
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {}
         agent_server.RUNS.busy = set()
         agent_server.RUNS.current_turns = {}
@@ -1470,7 +1470,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {}
         agent_server.RUNS.busy = set()
         agent_server.RUNS.current_turns = {}
@@ -1526,7 +1526,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             "context_usage_snapshot": stale_snapshot,
             "claude_context_usage_snapshot": stale_snapshot,
         })
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {}
         agent_server.RUNS.busy = set()
         agent_server.RUNS.current_turns = {}
@@ -1600,7 +1600,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             side_effect=delayed_evict
         )
         self.session["claude_session_id"] = "provider-manual"
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {}
         agent_server.RUNS.busy = set()
         agent_server.RUNS.current_turns = {}
@@ -2512,7 +2512,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.session["claude_permission_mode"] = "bypassPermissions"
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
@@ -2923,7 +2923,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         handle = FakeClaudeRun()
         manager = FakeClaudeManager(handle)
         manager.owner_token = "owner-old"
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         human_turn = {
             "queued_id": "queued-human",
             "prompt": "Continue on the replacement SDK client.",
@@ -3124,7 +3124,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager = FakeClaudeManager(handle)
         manager.active_run_id = "run-claude"
         runner = asyncio.create_task(wait_forever())
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {
             "chat-claude": {
                 "proc": None,
@@ -3166,7 +3166,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_idle_stop_retires_only_chat_with_background_subagents(self) -> None:
         manager = FakeClaudeManager()
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {}
         agent_server.RUNS.busy = set()
         agent_server.RUNS.current_turns = {}
@@ -3213,7 +3213,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_claude_supervisor_state_keeps_stop_fence_closed(self) -> None:
         manager = FakeClaudeManager()
         manager.is_loaded = Mock(side_effect=RuntimeError("ownership unavailable"))
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {}
         agent_server.RUNS.busy = set()
 
@@ -3232,7 +3232,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         manager.is_loaded = Mock(
             side_effect=[RuntimeError("ownership unavailable"), False]
         )
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {}
         agent_server.RUNS.busy = set()
         agent_server.RUNS.current_turns = {}
@@ -3326,7 +3326,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_claude_stop_fence_retries_and_releases_admission(self) -> None:
         manager = FakeClaudeManager()
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {}
         agent_server.RUNS.busy = set()
         agent_server.RUNS.current_turns = {}
@@ -3587,7 +3587,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             [handle],
             permission_on_calls={1},
         )
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
 
         async def permission_callback(
             tool_name: str,
@@ -3725,7 +3725,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             permission_on_calls={2},
             jobs_authorization_on_calls={2},
         )
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         predecessor_run_id = "run_claude"
         agent_server.RUNS.current_turns["chat-claude"]["run_id"] = predecessor_run_id
         predecessor_path = await agent_server.issue_provider_authority(
@@ -6539,7 +6539,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_deletion_cleanup_waits_for_one_approval_not_sdk_receiver(self) -> None:
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
@@ -6616,7 +6616,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         handle = FakeClaudeRun()
         manager = FakeClaudeManager(handle)
         manager.active_run_id = "run-claude"
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
@@ -6727,8 +6727,8 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
                     "run_now_requests",
                     run_now_requests,
                 ), patch.object(
-                    agent_server,
-                    "CODEX_APP_SERVER_MANAGER",
+                    agent_server.PROVIDERS,
+                    "codex_manager",
                     None,
                 ), patch.object(
                     agent_server.JOBS,
@@ -6798,7 +6798,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_approval_accepted_after_stop_fence_is_still_denied(self) -> None:
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",
@@ -6854,7 +6854,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_prompt_modes_skip_questions_without_pending_interaction(self) -> None:
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         # A settings edit for the next turn must not change the current mode.
         self.session["claude_permission_mode"] = "default"
         for mode in ("bypassPermissions", "dontAsk"):
@@ -6894,7 +6894,7 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.session["claude_permission_mode"] = "dontAsk"
         manager = FakeClaudeManager()
         manager.active_run_id = "run-claude"
-        agent_server.CLAUDE_SDK_MANAGER = manager
+        agent_server.PROVIDERS.claude_sdk_manager = manager
         agent_server.RUNS.active = {
             "chat-claude": {
                 "run_id": "run-claude",

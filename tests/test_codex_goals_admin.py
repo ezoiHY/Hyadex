@@ -16,7 +16,7 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.previous_enabled = agent_server.CODEX_GOALS_ENABLED
         self.previous_reconfiguring = agent_server.CODEX_GOALS_RECONFIGURING
-        self.previous_manager = agent_server.CODEX_APP_SERVER_MANAGER
+        self.previous_manager = agent_server.PROVIDERS.codex_manager
         self.previous_sessions = agent_server.STORE.sessions
         self.previous_busy = agent_server.RUNS.busy
         self.previous_active = agent_server.RUNS.active
@@ -34,7 +34,7 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
 
         agent_server.CODEX_GOALS_ENABLED = True
         agent_server.CODEX_GOALS_RECONFIGURING = False
-        agent_server.CODEX_APP_SERVER_MANAGER = None
+        agent_server.PROVIDERS.codex_manager = None
         agent_server.STORE.sessions = {
             "chat": {
                 "id": "chat",
@@ -61,7 +61,7 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         agent_server.CODEX_GOALS_ENABLED = self.previous_enabled
         agent_server.CODEX_GOALS_RECONFIGURING = self.previous_reconfiguring
-        agent_server.CODEX_APP_SERVER_MANAGER = self.previous_manager
+        agent_server.PROVIDERS.codex_manager = self.previous_manager
         agent_server.STORE.sessions = self.previous_sessions
         agent_server.RUNS.busy = self.previous_busy
         agent_server.RUNS.active = self.previous_active
@@ -306,7 +306,7 @@ class CodexGoalsAdminTests(unittest.IsolatedAsyncioTestCase):
         manager.is_thread_loaded.side_effect = (
             lambda thread_id: thread_id == "thread"
         )
-        agent_server.CODEX_APP_SERVER_MANAGER = manager
+        agent_server.PROVIDERS.codex_manager = manager
         settle = AsyncMock(return_value={})
 
         with patch.object(

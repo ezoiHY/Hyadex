@@ -3,10 +3,12 @@ from contextlib import ExitStack
 from unittest.mock import patch
 
 from hyadex.core import runs, server
+from hyadex.providers import state as providers
 
 # Old module global -> (state object attribute on agent_server, field)
 LEGACY = {**{name: ("RUNS", field) for name, field in runs.LEGACY_NAMES.items()},
-          **{name: ("SERVER", field) for name, field in server.LEGACY_NAMES.items()}}
+          **{name: ("SERVER", field) for name, field in server.LEGACY_NAMES.items()},
+          **{name: ("PROVIDERS", field) for name, field in providers.LEGACY_NAMES.items()}}
 
 
 def patch_server(module, name: str, value):

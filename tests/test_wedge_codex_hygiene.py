@@ -380,7 +380,7 @@ class RolloutHygieneTests(unittest.IsolatedAsyncioTestCase):
         try:
             with (
                 patch.object(agent_server, "CODEX_SESSIONS_ROOT", self.root),
-                patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", None),
+                patch.object(agent_server.PROVIDERS, "codex_manager", None),
                 patch.object(agent_server, "CODEX_ROLLOUT_WARN_BYTES", 1000),
             ):
                 runtime = await agent_server.codex_runtime_snapshot("chat")

@@ -14,6 +14,7 @@ import provider_usage
 from tests import test_codex_subagents_admin_isolated as admin_fixture
 from tests.test_provider_usage import FakeManager
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -50,6 +51,7 @@ class UsageRoutesTests(unittest.IsolatedAsyncioTestCase):
             "append_event": AsyncMock(), "broadcast_provider_runtime_changed": AsyncMock(),
             "CLAUDE_ACCOUNT_USAGE": {"stale": False},
             "read_claude_account_usage": AsyncMock(return_value=provider_usage.unavailable("claude"))})
+        self.ns["PROVIDERS"] = NamespaceProviders(self.ns)
         exec(CODE, self.ns)
         app = FastAPI()
         app.get("/api/runtime/usage")(self.ns["runtime_provider_usage"])

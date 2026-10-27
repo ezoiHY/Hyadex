@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock
 from hyadex.core.runs import NamespaceRuns
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 _SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -131,6 +132,7 @@ class NativeTurnProjectionTests(unittest.IsolatedAsyncioTestCase):
             completed.add(("reasoning", payload["item_id"]) if payload.get("phase") == "reasoning" else payload["item_id"])
         namespace["persist_reasoning_summary"] = persist_summary
         namespace["RUNS"] = NamespaceRuns(namespace)
+        namespace["PROVIDERS"] = NamespaceProviders(namespace)
         exec(_CODE, namespace)
         manager = SimpleNamespace(
             request=AsyncMock(), wait_for_notification_handler=AsyncMock(),

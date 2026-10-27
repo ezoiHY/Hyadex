@@ -162,7 +162,9 @@ from hyadex import autopilot
 from hyadex.routes.autopilot import create_autopilot_router
 from hyadex import groups as group_chat
 from hyadex.events import EventBus
+from hyadex.providers.state import ProviderState
 from hyadex.core.server import ServerState
+from hyadex.core.wiring import WIRING
 from hyadex.core.runs import RunState
 from hyadex.routes.groups import create_group_router
 import side_questions
@@ -6505,6 +6507,7 @@ class JobStore:
 
 
 JOBS = JobStore()
+WIRING.jobs = JOBS
 
 
 class SubscriberHub:
@@ -6804,21 +6807,12 @@ RUN_NOW_COMPLETED_RESULTS: OrderedDict[
     tuple[str, str],
     dict[str, Any],
 ] = OrderedDict()
-CODEX_APP_SERVER_MANAGER: CodexAppServerManager | None = None
+PROVIDERS = ProviderState()
 CODEX_APP_SERVER_MANAGER_LOCK = asyncio.Lock()
 CODEX_RETIRED_APP_SERVER_MANAGERS: list[CodexAppServerManager] = []
 CODEX_SESSION_APP_SERVER_MANAGERS: dict[str, CodexAppServerManager] = {}
-CODEX_BINARY_IDENTITY: tuple[Any, ...] | None = None
-CODEX_BINARY_CHECKED_AT = 0.0
 CODEX_BINARY_PROBE_LOCK = asyncio.Lock()
 CODEX_LOGIN_PROBE_LOCK = asyncio.Lock()
-CODEX_LOGIN_REVISION: codex_auth.LoginRevision | None = None
-CODEX_MANAGER_DRAIN_TASK: asyncio.Task[Any] | None = None
-CODEX_MANAGER_DRAIN_REQUESTED = False
-CODEX_MANAGER_CLOSING = False
-CODEX_APP_SERVER_MANAGER_EPOCH = 0
-CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH: int | None = None
-CLAUDE_SDK_MANAGER: ClaudeSDKSupervisorManager | None = None
 CLAUDE_SDK_MANAGER_LOCK = asyncio.Lock()
 CODEX_GOALS_CONFIG_LOCK = asyncio.Lock()
 CODEX_GOALS_RECONFIGURING = False
@@ -6921,7 +6915,6 @@ PROVIDER_AUTHORITY_TTL_SECONDS = max(
 RUNTIME_DIAGNOSTICS: dict[str, dict[str, Any]] = {}
 RUNTIME_DIAGNOSTICS_LOCK = threading.RLock()
 RUNTIME_DIAGNOSTIC_GENERATIONS: dict[str, int] = {}
-CODEX_MODEL_MIGRATION_TARGET = "gpt-6-luna"
 ABANDONED_FORK_PROVIDER_THREADS: set[str] = set()
 ABANDONED_FORK_PROVIDER_THREADS_LOCK = asyncio.Lock()
 
@@ -8619,7 +8612,7 @@ async def provider_tool_capability_snapshot(
         except asyncio.TimeoutError as exc:
             raise ProviderToolError("provider tool turn is not ready") from exc
     if backend == BACKEND_CLAUDE:
-        manager = CLAUDE_SDK_MANAGER
+        manager = PROVIDERS.claude_sdk_manager
         if manager is None or not manager.owns_active_run(
             session_id,
             claude_owner_token,
@@ -27314,7 +27307,7 @@ async def evict_failed_idle_claude_context_sample(
     never leave a late eviction task that could race a replacement turn.
     """
 
-    if globals().get("CLAUDE_SDK_MANAGER") is not manager:
+    if PROVIDERS.claude_sdk_manager is not manager:
         return
     evict = getattr(manager, "evict", None)
     if not callable(evict):
@@ -27364,7 +27357,7 @@ async def refresh_idle_claude_context_usage(session_id: str) -> bool:
                 detail="Claude context refresh requires the Agent SDK transport",
             )
 
-        manager = globals().get("CLAUDE_SDK_MANAGER")
+        manager = PROVIDERS.claude_sdk_manager
         checker = getattr(manager, "is_loaded", None) if manager else None
         if not callable(checker):
             raise HTTPException(
@@ -28743,7 +28736,7 @@ async def handle_claude_tool_permission(
                 permission_run_id = str(
                     (active or {}).get("claude_permission_run_id") or ""
                 )
-                manager = CLAUDE_SDK_MANAGER
+                manager = PROVIDERS.claude_sdk_manager
                 ownership_valid = bool(
                     active
                     and owner_token
@@ -28915,7 +28908,7 @@ async def handle_claude_tool_permission(
         # late click cannot authorize work on a fenced provider generation.
         async with RUNS.active_lock:
             active = RUNS.active.get(session_id)
-            manager = CLAUDE_SDK_MANAGER
+            manager = PROVIDERS.claude_sdk_manager
             still_owned = bool(
                 active
                 and not active.get("stop_requested")
@@ -29847,7 +29840,7 @@ def ensure_provider_manager_factory_admission(*, codex: bool = False) -> None:
     """Reject even read-route lazy starts while provider teardown owns state."""
 
     blocker = server_lifecycle_admission_blocker()
-    if blocker or (codex and (CODEX_MANAGER_CLOSING or CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH is not None)):
+    if blocker or (codex and (PROVIDERS.codex_manager_closing or PROVIDERS.codex_manager_cleanup_epoch is not None)):
         raise HTTPException(
             status_code=503,
             detail=blocker or "HyadexServer is finishing Codex provider cleanup",
@@ -29856,7 +29849,7 @@ def ensure_provider_manager_factory_admission(*, codex: bool = False) -> None:
 
 def codex_app_server_managers() -> tuple[CodexAppServerManager, ...]:
     managers: list[CodexAppServerManager] = []
-    for manager in (CODEX_APP_SERVER_MANAGER, *CODEX_RETIRED_APP_SERVER_MANAGERS):
+    for manager in (PROVIDERS.codex_manager, *CODEX_RETIRED_APP_SERVER_MANAGERS):
         if manager is not None and not any(manager is item for item in managers):
             managers.append(manager)
     return tuple(managers)
@@ -29909,7 +29902,7 @@ def retain_codex_manager_caller(manager: CodexAppServerManager, session_id: str)
         task = asyncio.current_task()
     except RuntimeError:
         return  # Read-only catalog helpers can run outside the event loop.
-    if task is None or task is CODEX_MANAGER_DRAIN_TASK:
+    if task is None or task is PROVIDERS.codex_manager_drain_task:
         return
     users = getattr(manager, "_hyadex_callers", None)
     if not isinstance(users, weakref.WeakKeyDictionary):
@@ -29943,41 +29936,39 @@ def codex_manager_has_callbacks(manager: CodexAppServerManager, session_id: str 
 
 
 def schedule_codex_manager_drain(_notification: Any = None) -> None:
-    global CODEX_MANAGER_DRAIN_TASK, CODEX_MANAGER_DRAIN_REQUESTED
-    if CODEX_MANAGER_CLOSING or not CODEX_RETIRED_APP_SERVER_MANAGERS:
+    if PROVIDERS.codex_manager_closing or not CODEX_RETIRED_APP_SERVER_MANAGERS:
         return
     if isinstance(_notification, dict) and _notification.get("method") not in {
         "turn/completed", "thread/closed", "thread/goal/updated", "thread/status/changed",
     }:
         return
-    CODEX_MANAGER_DRAIN_REQUESTED = True
-    if CODEX_MANAGER_DRAIN_TASK is None or CODEX_MANAGER_DRAIN_TASK.done():
-        CODEX_MANAGER_DRAIN_TASK = asyncio.create_task(drain_retired_codex_managers())
+    PROVIDERS.codex_manager_drain_requested = True
+    if PROVIDERS.codex_manager_drain_task is None or PROVIDERS.codex_manager_drain_task.done():
+        PROVIDERS.codex_manager_drain_task = asyncio.create_task(drain_retired_codex_managers())
 
 
 async def refresh_codex_app_server_binary(*, force: bool = False) -> None:
     """Change admission, never interrupt a process that still owns work."""
-    global CODEX_BINARY_IDENTITY, CODEX_BINARY_CHECKED_AT, CODEX_APP_SERVER_MANAGER
-    if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC or CODEX_MANAGER_CLOSING:
+    if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC or PROVIDERS.codex_manager_closing:
         return
     async with CODEX_BINARY_PROBE_LOCK:
-        if not force and time.monotonic() - CODEX_BINARY_CHECKED_AT < 30.0:
+        if not force and time.monotonic() - PROVIDERS.codex_binary_checked_at < 30.0:
             return
         identity = await asyncio.to_thread(codex_binary_identity)
-        CODEX_BINARY_CHECKED_AT = time.monotonic()
+        PROVIDERS.codex_binary_checked_at = time.monotonic()
         if identity is None:
             return  # A failed/mid-install probe must not disturb working clients.
         async with CODEX_GOALS_CONFIG_LOCK:
             async with CODEX_APP_SERVER_MANAGER_LOCK:
-                if CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH is not None or CODEX_MANAGER_CLOSING:
+                if PROVIDERS.codex_manager_cleanup_epoch is not None or PROVIDERS.codex_manager_closing:
                     return
-                previous = CODEX_BINARY_IDENTITY
-                CODEX_BINARY_IDENTITY = identity
-                manager = CODEX_APP_SERVER_MANAGER
+                previous = PROVIDERS.codex_binary_identity
+                PROVIDERS.codex_binary_identity = identity
+                manager = PROVIDERS.codex_manager
                 launched = getattr(manager, "_hyadex_binary_identity", None) or previous
                 if manager is not None and launched is not None and launched != identity:
                     CODEX_RETIRED_APP_SERVER_MANAGERS.append(manager)
-                    CODEX_APP_SERVER_MANAGER = None
+                    PROVIDERS.codex_manager = None
     schedule_codex_manager_drain()
 
 
@@ -29988,8 +29979,7 @@ async def refresh_codex_app_server_login(*, source: str = "manager_lookup") -> b
     files, so a `codex login` in the user's terminal moves new turns to a fresh
     app-server once the old one is idle. This is not a token refresh or login.
     """
-    global CODEX_APP_SERVER_MANAGER, CODEX_LOGIN_REVISION
-    if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC or CODEX_MANAGER_CLOSING:
+    if CODEX_TRANSPORT == CODEX_TRANSPORT_EXEC or PROVIDERS.codex_manager_closing:
         return False
     # Sources are server-owned labels, never request text, account IDs or keys.
     if source not in {"manager_lookup", "turn_admission", "catalog_refresh"}:
@@ -30002,10 +29992,10 @@ async def refresh_codex_app_server_login(*, source: str = "manager_lookup") -> b
             codex_app_server_env(), cwd=existing_cwd(DEFAULT_CWD))
         async with CODEX_GOALS_CONFIG_LOCK:
             async with CODEX_APP_SERVER_MANAGER_LOCK:
-                if CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH is not None or CODEX_MANAGER_CLOSING:
+                if PROVIDERS.codex_manager_cleanup_epoch is not None or PROVIDERS.codex_manager_closing:
                     return False
-                observed_change = revision is not None and revision != CODEX_LOGIN_REVISION
-                CODEX_LOGIN_REVISION = revision
+                observed_change = revision is not None and revision != PROVIDERS.codex_login_revision
+                PROVIDERS.codex_login_revision = revision
                 if observed_change:
                     expire_codex_login_diagnostic()
                 for manager in codex_app_server_managers():
@@ -30023,8 +30013,8 @@ async def refresh_codex_app_server_login(*, source: str = "manager_lookup") -> b
                         manager._hyadex_login_superseded = True
                         if not any(manager is item for item in CODEX_RETIRED_APP_SERVER_MANAGERS):
                             CODEX_RETIRED_APP_SERVER_MANAGERS.append(manager)
-                        if CODEX_APP_SERVER_MANAGER is manager:
-                            CODEX_APP_SERVER_MANAGER = None
+                        if PROVIDERS.codex_manager is manager:
+                            PROVIDERS.codex_manager = None
     schedule_codex_manager_drain()
     return True
 
@@ -30139,12 +30129,11 @@ async def prepare_codex_login_turn(session: dict[str, Any]) -> None:
 
 async def drain_retired_codex_managers() -> None:
     """Event-driven, bounded idle cleanup; failed proof retains the old owner."""
-    global CODEX_MANAGER_DRAIN_REQUESTED
-    while CODEX_MANAGER_DRAIN_REQUESTED:
-        CODEX_MANAGER_DRAIN_REQUESTED = False
-        if CODEX_GOALS_RECONFIGURING or CODEX_MANAGER_CLOSING:
+    while PROVIDERS.codex_manager_drain_requested:
+        PROVIDERS.codex_manager_drain_requested = False
+        if CODEX_GOALS_RECONFIGURING or PROVIDERS.codex_manager_closing:
             return
-        if CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH is not None:
+        if PROVIDERS.codex_manager_cleanup_epoch is not None:
             return
         for manager in tuple(CODEX_RETIRED_APP_SERVER_MANAGERS):
             for session_id, owner in tuple(CODEX_SESSION_APP_SERVER_MANAGERS.items()):
@@ -30181,7 +30170,7 @@ def existing_codex_app_server_manager(sess: dict[str, Any] | None = None) -> Cod
         thread_id = str(session_provider_id(sess) or "") if sess else ""
         owner = next((item for item in codex_app_server_managers()
                       if thread_id and item.is_thread_loaded(thread_id)), None)
-    return owner or CODEX_APP_SERVER_MANAGER
+    return owner or PROVIDERS.codex_manager
 
 
 def existing_codex_app_server_manager_for_thread(thread_id: str) -> CodexAppServerManager | None:
@@ -30236,8 +30225,8 @@ def project_codex_usage_notification(manager: CodexAppServerManager, notificatio
 
 
 async def observe_claude_provider_usage(session_id: str, generation: str, message: Any) -> None:
-    if (CLAUDE_SDK_MANAGER is not None
-            and CLAUDE_SDK_MANAGER.usage_generation(session_id) == generation
+    if (PROVIDERS.claude_sdk_manager is not None
+            and PROVIDERS.claude_sdk_manager.usage_generation(session_id) == generation
             and PROVIDER_USAGE.observe_claude(session_id, generation, message)):
         # A native rate-limit event means the account allowance moved.
         CLAUDE_ACCOUNT_USAGE["stale"] = True
@@ -30306,8 +30295,6 @@ async def read_claude_account_usage(*, refresh: bool = False) -> dict[str, Any]:
 
 async def codex_app_server_manager(sess: dict[str, Any] | None = None, *, allow_retired_login: bool = False) -> CodexAppServerManager:
     """Keep normal Codex stable; custom credentials own immutable managers."""
-    global CODEX_APP_SERVER_MANAGER
-    global CODEX_APP_SERVER_MANAGER_EPOCH
     ensure_provider_manager_factory_admission(codex=True)
     await refresh_codex_app_server_binary()
     await refresh_codex_app_server_login()
@@ -30320,7 +30307,7 @@ async def codex_app_server_manager(sess: dict[str, Any] | None = None, *, allow_
         if manager is not None and not any(manager is item for item in codex_app_server_managers()):
             CODEX_SESSION_APP_SERVER_MANAGERS.pop(session_id, None)
             manager = None
-        manager = manager or CODEX_APP_SERVER_MANAGER
+        manager = manager or PROVIDERS.codex_manager
         if manager is not None:
             if (getattr(manager, "_hyadex_login_superseded", False) is True and not allow_retired_login
                     and getattr(manager, "_hyadex_callers", {}).get(asyncio.current_task()) != session_id):
@@ -30333,7 +30320,7 @@ async def codex_app_server_manager(sess: dict[str, Any] | None = None, *, allow_
             return manager
         async with CODEX_APP_SERVER_MANAGER_LOCK:
             ensure_provider_manager_factory_admission(codex=True)
-            manager = CODEX_APP_SERVER_MANAGER
+            manager = PROVIDERS.codex_manager
             if manager is None:
                 manager = CodexAppServerManager(
                     CODEX_BIN,
@@ -30369,10 +30356,10 @@ async def codex_app_server_manager(sess: dict[str, Any] | None = None, *, allow_
                 manager.client.add_account_usage_handler(usage_handler)
                 manager.add_notification_handler(cache_codex_approval_item)
                 manager.add_notification_handler(schedule_codex_manager_drain)
-                manager._hyadex_binary_identity = CODEX_BINARY_IDENTITY
-                manager._hyadex_login_revision = CODEX_LOGIN_REVISION
-                CODEX_APP_SERVER_MANAGER_EPOCH += 1
-                CODEX_APP_SERVER_MANAGER = manager
+                manager._hyadex_binary_identity = PROVIDERS.codex_binary_identity
+                manager._hyadex_login_revision = PROVIDERS.codex_login_revision
+                PROVIDERS.codex_manager_epoch += 1
+                PROVIDERS.codex_manager = manager
             if session_id:
                 CODEX_SESSION_APP_SERVER_MANAGERS[session_id] = manager
             retain_codex_manager_caller(manager, session_id)
@@ -30382,14 +30369,13 @@ async def codex_app_server_manager(sess: dict[str, Any] | None = None, *, allow_
 async def claude_sdk_manager() -> ClaudeSDKSupervisorManager:
     """Return the bounded registry of independent per-chat Claude clients."""
 
-    global CLAUDE_SDK_MANAGER
     ensure_provider_manager_factory_admission()
-    manager = CLAUDE_SDK_MANAGER
+    manager = PROVIDERS.claude_sdk_manager
     if manager is not None:
         return manager
     async with CLAUDE_SDK_MANAGER_LOCK:
         ensure_provider_manager_factory_admission()
-        manager = CLAUDE_SDK_MANAGER
+        manager = PROVIDERS.claude_sdk_manager
         if manager is None:
             manager = ClaudeSDKSupervisorManager(
                 max_clients=CLAUDE_SDK_MAX_LOADED_CHATS,
@@ -30398,20 +30384,19 @@ async def claude_sdk_manager() -> ClaudeSDKSupervisorManager:
                 control_timeout_seconds=CLAUDE_MCP_CONTROL_TIMEOUT_SECONDS,
                 usage_observer=observe_claude_provider_usage,
             )
-            CLAUDE_SDK_MANAGER = manager
+            PROVIDERS.claude_sdk_manager = manager
         return manager
 
 
 async def close_claude_sdk_manager() -> None:
     """Resolve pending UI requests and stop every chat-owned Claude process."""
 
-    global CLAUDE_SDK_MANAGER
     async with CLAUDE_SDK_MANAGER_LOCK:
-        manager = CLAUDE_SDK_MANAGER
+        manager = PROVIDERS.claude_sdk_manager
         # Invalidate ownership before resolving existing cards. A late SDK
         # callback from a cancellation-hostile process must fail the manager
         # ownership check instead of registering after this cancellation pass.
-        CLAUDE_SDK_MANAGER = None
+        PROVIDERS.claude_sdk_manager = None
     await cancel_claude_interactions(resolution="server_closed")
     interaction_tasks = [
         task
@@ -30441,7 +30426,7 @@ async def evict_claude_sdk_chat(
 ) -> bool:
     """Return when one chat is absent/closed, without touching other clients."""
 
-    selected_manager = manager or CLAUDE_SDK_MANAGER
+    selected_manager = manager or PROVIDERS.claude_sdk_manager
     if selected_manager is None:
         return True
     try:
@@ -30501,7 +30486,7 @@ async def stop_idle_claude_background_subagents(
     session = STORE.sessions.get(session_id) or {}
     if str(session.get("backend") or DEFAULT_BACKEND) != BACKEND_CLAUDE:
         return result
-    manager = CLAUDE_SDK_MANAGER
+    manager = PROVIDERS.claude_sdk_manager
     loaded = False
     if manager is not None:
         try:
@@ -30836,31 +30821,27 @@ async def interrupt_claude_sdk_run_bounded(
 
 
 async def close_codex_app_server_manager() -> None:
-    global CODEX_MANAGER_CLOSING
-    if CODEX_MANAGER_CLOSING:
+    if PROVIDERS.codex_manager_closing:
         raise RuntimeError("Codex provider cleanup is already in progress")
-    CODEX_MANAGER_CLOSING = True
+    PROVIDERS.codex_manager_closing = True
     try:
-        global CODEX_APP_SERVER_MANAGER
-        global CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH
-        global CODEX_MANAGER_DRAIN_TASK, CODEX_MANAGER_DRAIN_REQUESTED
-        CODEX_MANAGER_DRAIN_REQUESTED = False
-        drain_task = CODEX_MANAGER_DRAIN_TASK
-        CODEX_MANAGER_DRAIN_TASK = None
+        PROVIDERS.codex_manager_drain_requested = False
+        drain_task = PROVIDERS.codex_manager_drain_task
+        PROVIDERS.codex_manager_drain_task = None
         if drain_task is not None and not drain_task.done():
             drain_task.cancel()
             await asyncio.gather(drain_task, return_exceptions=True)
         await cancel_codex_interactions(resolution="server_closed")
         await cancel_codex_native_actions()
         async with CODEX_APP_SERVER_MANAGER_LOCK:
-            if CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH is not None:
+            if PROVIDERS.codex_manager_cleanup_epoch is not None:
                 raise RuntimeError("Codex provider cleanup is already in progress")
             managers = codex_app_server_managers()
-            cleanup_epoch = CODEX_APP_SERVER_MANAGER_EPOCH
-            CODEX_APP_SERVER_MANAGER = None
+            cleanup_epoch = PROVIDERS.codex_manager_epoch
+            PROVIDERS.codex_manager = None
             CODEX_RETIRED_APP_SERVER_MANAGERS.clear()
             CODEX_SESSION_APP_SERVER_MANAGERS.clear()
-            CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH = cleanup_epoch
+            PROVIDERS.codex_manager_cleanup_epoch = cleanup_epoch
         async with CODEX_APP_SERVER_THREAD_LRU_LOCK:
             for event in CODEX_APP_SERVER_EVICTING_THREADS.values():
                 event.set()
@@ -30908,11 +30889,11 @@ async def close_codex_app_server_manager() -> None:
         CODEX_QUARANTINED_GOAL_THREADS.clear()
         await reset_codex_ephemeral_runtime_metadata()
         async with CODEX_APP_SERVER_MANAGER_LOCK:
-            if CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH == cleanup_epoch:
-                CODEX_APP_SERVER_MANAGER_CLEANUP_EPOCH = None
+            if PROVIDERS.codex_manager_cleanup_epoch == cleanup_epoch:
+                PROVIDERS.codex_manager_cleanup_epoch = None
 
     finally:
-        CODEX_MANAGER_CLOSING = False
+        PROVIDERS.codex_manager_closing = False
 
 
 def codex_control_http_error(exc: Exception) -> HTTPException:
@@ -32873,9 +32854,8 @@ def store_runtime_diagnostic(diagnostic: dict[str, Any], *, preserve_last_error:
 
 def expire_codex_login_diagnostic() -> None:
     """A login hint requires new native evidence, never reuse a cached denial."""
-    global CODEX_MODEL_MIGRATION_TARGET
     with RUNTIME_DIAGNOSTICS_LOCK:
-        CODEX_MODEL_MIGRATION_TARGET = "gpt-6-luna"
+        PROVIDERS.codex_model_migration_target = "gpt-6-luna"
         current = dict(RUNTIME_DIAGNOSTICS.get(BACKEND_CODEX) or runtime_diagnostic_payload(
             BACKEND_CODEX, "unknown", installed=None, authenticated=None))
         current["checked_at_epoch"] = 0.0
@@ -33152,7 +33132,7 @@ def codex_retired_model_replacements() -> dict[str, str]:
         checked_at = diagnostic.get("_codex_auth_mode_checked_at_epoch", diagnostic.get("checked_at_epoch")) or 0
         observed = (str(diagnostic.get("_codex_auth_mode") or "")
                     if time.time() - checked_at < RUNTIME_DIAGNOSTIC_TTL_SECONDS else "")
-        replacement = CODEX_MODEL_MIGRATION_TARGET
+        replacement = PROVIDERS.codex_model_migration_target
     mode = codex_auth.native_model_auth_mode(
         codex_app_server_env(), cwd=existing_cwd(DEFAULT_CWD), observed_mode=observed,
     )
@@ -33181,7 +33161,6 @@ def codex_app_server_service_tier(service_tier: str) -> str:
 
 
 def discover_codex_catalog() -> dict[str, Any]:
-    global CODEX_MODEL_MIGRATION_TARGET
     models: list[dict[str, Any]] = []
     model_options: list[dict[str, Any]] = []
     effort_options: list[dict[str, Any]] = []
@@ -33220,7 +33199,7 @@ def discover_codex_catalog() -> dict[str, Any]:
             preferred = next((str(entry.get("slug") or entry.get("id")) for entry in visible_models if entry.get("is_default") is True or entry.get("isDefault") is True), slugs[0])
         if preferred:
             with RUNTIME_DIAGNOSTICS_LOCK:
-                CODEX_MODEL_MIGRATION_TARGET = preferred
+                PROVIDERS.codex_model_migration_target = preferred
             replacements = {model: preferred for model in replacements}
     # The selectable "Server default" must describe the exact settings that
     # codex_runtime_settings() launches for a chat with no explicit override.
@@ -43689,7 +43668,7 @@ async def _start_turn_locked(
                 status_code=400,
                 detail="scheduled job id and dispatch revision must be paired",
             )
-        await JOBS.assert_dispatch_revision(
+        await WIRING.jobs.assert_dispatch_revision(
             req.job_id,
             session_id,
             scheduled_job_revision,
@@ -47207,7 +47186,7 @@ def codex_subagent_has_live_owner(
     return bool(
         generation is not None
         and (generation_manager is manager
-             or (generation_manager is None and manager is CODEX_APP_SERVER_MANAGER))
+             or (generation_manager is None and manager is PROVIDERS.codex_manager))
         and getattr(manager, "ready", False) is True
         and getattr(manager, "generation", None) == generation
     )
@@ -47278,7 +47257,7 @@ def codex_subagent_native_turn_candidates(manager: Any = None) -> tuple[
     authoritative ``thread/turns/list`` check before restart/update admission.
     """
 
-    manager = manager if manager is not None else CODEX_APP_SERVER_MANAGER
+    manager = manager if manager is not None else PROVIDERS.codex_manager
     generation = (
         getattr(manager, "generation", None) if manager is not None else None
     )
@@ -47335,7 +47314,7 @@ def codex_subagent_native_turn_candidates(manager: Any = None) -> tuple[
         ).strip()
         if direct_turn is None and (live_generation != generation or not (
             generation_manager is manager
-            or (generation_manager is None and manager is CODEX_APP_SERVER_MANAGER)
+            or (generation_manager is None and manager is PROVIDERS.codex_manager)
         )):
             continue
         if direct_turn is not None and not direct_turn_id:
@@ -47583,7 +47562,7 @@ def active_provider_background_work_labels() -> list[str]:
         + SIDE_QUESTIONS.active_work_labels()
     ))[:PROVIDER_WORK_LABEL_LIMIT]
     remaining = PROVIDER_WORK_LABEL_LIMIT - len(labels)
-    manager = CLAUDE_SDK_MANAGER
+    manager = PROVIDERS.claude_sdk_manager
     if remaining <= 0 or manager is None:
         return labels
 
@@ -47658,7 +47637,7 @@ async def prepare_provider_background_work_snapshot(
     codex_snapshot = await prepare_codex_subagent_terminal_snapshot(
         timeout_seconds=timeout_seconds,
     )
-    manager = CLAUDE_SDK_MANAGER
+    manager = PROVIDERS.claude_sdk_manager
     session_ids, unknown_labels = loaded_claude_background_session_state(manager)
     fingerprints_before = await asyncio.to_thread(
         claude_event_file_fingerprints,
@@ -47762,7 +47741,7 @@ def provider_background_work_labels_from_snapshot(
     if remaining <= 0:
         return labels
 
-    manager = CLAUDE_SDK_MANAGER
+    manager = PROVIDERS.claude_sdk_manager
     session_ids, unknown_labels = loaded_claude_background_session_state(manager)
     fingerprints = claude_event_file_fingerprints(session_ids)
     snapshot_is_current = (
@@ -48220,22 +48199,22 @@ class HyadexGroupRuntime:
         await HUB.broadcast(key, event)
 
     async def participant_removed(self, group_id: str, removed_session_id: str, anchor_session_id: str) -> None:
-        async with JOBS._lock:
+        async with WIRING.jobs._lock:
             moved = False
-            for job in JOBS.jobs.values():
+            for job in WIRING.jobs.jobs.values():
                 if job.get("group_id") == group_id and job.get("session_id") == removed_session_id:
                     job["session_id"] = anchor_session_id
                     job["updated_at"] = now_iso()
                     job["_revision"] = new_job_revision()
                     moved = True
             if moved:
-                await JOBS.save()
+                await WIRING.jobs.save()
 
     async def group_deleted(self, group_id: str) -> None:
-        for job_id, job in list(JOBS.jobs.items()):
+        for job_id, job in list(WIRING.jobs.jobs.items()):
             if job.get("group_id") == group_id:
                 with suppress(HTTPException):
-                    await JOBS.delete(job_id, expected_session_id=job.get("session_id"))
+                    await WIRING.jobs.delete(job_id, expected_session_id=job.get("session_id"))
 
 
 GROUPS = group_chat.GroupEngine(STATE_DIR / "groups", HyadexGroupRuntime())
@@ -48950,8 +48929,8 @@ async def runtime_provider_usage(
     else:
         result = await read_claude_account_usage(refresh=refresh)
         if result.get("status") != "available":
-            generation = (CLAUDE_SDK_MANAGER.usage_generation(session_id)
-                          if session_id and CLAUDE_SDK_MANAGER is not None else None)
+            generation = (PROVIDERS.claude_sdk_manager.usage_generation(session_id)
+                          if session_id and PROVIDERS.claude_sdk_manager is not None else None)
             observed = PROVIDER_USAGE.read_claude(session_id or "", generation)
             if observed.get("status") == "available":
                 result = observed
@@ -49285,7 +49264,7 @@ async def _update_session(
                     # after disabling jobs in memory. Force a durable write
                     # before clearing the archived session bit so restart can
                     # never resurrect them.
-                    await JOBS.pause_for_session(
+                    await WIRING.jobs.pause_for_session(
                         session_id,
                         persist_unchanged=True,
                     )
@@ -49317,7 +49296,7 @@ async def _update_session(
                     # Keep archive and its scheduling boundary serialized with
                     # unarchive and turn admission. Job create/enable also
                     # rechecks the durable archived bit under the job lock.
-                    await JOBS.pause_for_session(session_id)
+                    await WIRING.jobs.pause_for_session(session_id)
                 except Exception as exc:
                     # The archived session is already durable and the
                     # in-memory job store fails safe. A later unarchive forces
@@ -49616,7 +49595,7 @@ async def claude_runtime_snapshot(session_id: str) -> dict[str, Any]:
     is_claude = str(session.get("backend") or DEFAULT_BACKEND) == BACKEND_CLAUDE
     sdk_available = claude_sdk_dependency_available()
     configured = CLAUDE_TRANSPORT != CLAUDE_TRANSPORT_PRINT
-    manager = globals().get("CLAUDE_SDK_MANAGER")
+    manager = PROVIDERS.claude_sdk_manager
     loaded = False
     if manager is not None:
         checker = getattr(manager, "is_loaded", None)
@@ -50697,7 +50676,7 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
                             await manager.unsubscribe_thread(
                                 provider_thread_id
                             )
-            claude_manager = globals().get("CLAUDE_SDK_MANAGER")
+            claude_manager = PROVIDERS.claude_sdk_manager
             if claude_manager is not None:
                 claude_evicted = await evict_claude_sdk_chat(
                     session_id,
@@ -54403,6 +54382,10 @@ app = create_app(ApplicationBindings(
 EXTRACTED_MODULES: tuple[types.ModuleType, ...] = (sys.modules['hyadex.core.config'], sys.modules['hyadex.core.paths'], sys.modules['hyadex.core.identity'], sys.modules['hyadex.providers.codex.config'], sys.modules['hyadex.providers.instructions'], )
 
 
+# Module globals that core code reaches through WIRING.
+WIRED_NAMES = {"JOBS": "jobs"}
+
+
 class _CompatibilityFacade(types.ModuleType):
     def __setattr__(self, name: str, value: Any) -> None:
         missing = object()
@@ -54411,6 +54394,8 @@ class _CompatibilityFacade(types.ModuleType):
             for module in EXTRACTED_MODULES:
                 if module.__dict__.get(name, missing) is previous:
                     module.__dict__[name] = value
+            if name in WIRED_NAMES and getattr(WIRING, WIRED_NAMES[name]) is previous:
+                setattr(WIRING, WIRED_NAMES[name], value)
         super().__setattr__(name, value)
 
 

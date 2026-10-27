@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import AsyncMock
 from hyadex.core.runs import NamespaceRuns
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 NAMES = {
@@ -60,6 +61,7 @@ class ProviderBackgroundTests(unittest.IsolatedAsyncioTestCase):
             "claude_event_file_fingerprints": lambda sessions: (),
         }
         self.ns["RUNS"] = NamespaceRuns(self.ns)
+        self.ns["PROVIDERS"] = NamespaceProviders(self.ns)
         exec(CODE, self.ns)
 
     @staticmethod

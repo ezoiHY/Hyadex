@@ -379,14 +379,14 @@ class CodexThreadParamsConfigTests(unittest.IsolatedAsyncioTestCase):
             },
         }
         previous_sessions = agent_server.STORE.sessions
-        previous_manager = agent_server.CODEX_APP_SERVER_MANAGER
+        previous_manager = agent_server.PROVIDERS.codex_manager
         agent_server.STORE.sessions = {"chat": session}
-        agent_server.CODEX_APP_SERVER_MANAGER = None
+        agent_server.PROVIDERS.codex_manager = None
         try:
             snapshot = await agent_server.codex_runtime_snapshot("chat")
         finally:
             agent_server.STORE.sessions = previous_sessions
-            agent_server.CODEX_APP_SERVER_MANAGER = previous_manager
+            agent_server.PROVIDERS.codex_manager = previous_manager
 
         self.assertEqual(
             snapshot["config_overrides"],

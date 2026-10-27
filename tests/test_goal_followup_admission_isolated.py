@@ -18,6 +18,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock
 from hyadex.core.runs import NamespaceRuns
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -92,6 +93,7 @@ def load_admission():
         ),
     }
     namespace["RUNS"] = NamespaceRuns(namespace)
+    namespace["PROVIDERS"] = NamespaceProviders(namespace)
     exec(compile(module, str(SOURCE), "exec"), namespace)
     return namespace
 
@@ -104,6 +106,7 @@ class GoalFollowupAdmissionTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.ns = dict(self.source_namespace)
         self.ns["RUNS"] = NamespaceRuns(self.ns)
+        self.ns["PROVIDERS"] = NamespaceProviders(self.ns)
         # Extracted functions retain their defining globals. Re-execution into
         # this test's namespace keeps concurrent/previous cases fully isolated.
         for name in FUNCTIONS:

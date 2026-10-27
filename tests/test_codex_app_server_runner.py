@@ -2078,7 +2078,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         ) as finalize_mock, patch.object(
             agent_server, "pause_active_codex_goal_for_stop", AsyncMock(side_effect=pause_goal),
         ), patch.object(
-            agent_server, "CODEX_APP_SERVER_MANAGER", manager,
+            agent_server.PROVIDERS, "codex_manager", manager,
         ), patch.object(
             agent_server, "schedule_codex_subagent_finalization", Mock(),
         ):
@@ -2364,7 +2364,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with (
-            patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager),
+            patch.object(agent_server.PROVIDERS, "codex_manager", manager),
             patch.object(agent_server.STORE, "save", AsyncMock()) as save,
             patch.object(agent_server, "append_event", AsyncMock(return_value={})),
             patch.object(agent_server, "STOP_CONFIRM_TIMEOUT_SECONDS", 0.01),
@@ -2422,7 +2422,7 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with (
-            patch.object(agent_server, "CODEX_APP_SERVER_MANAGER", manager),
+            patch.object(agent_server.PROVIDERS, "codex_manager", manager),
             patch.object(agent_server.STORE, "save", AsyncMock()) as save,
             patch.object(agent_server, "append_event", AsyncMock(return_value={})) as events,
             patch.object(agent_server, "STOP_CONFIRM_TIMEOUT_SECONDS", 0.01),
@@ -2485,8 +2485,8 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
                 maintenance: set[str] = set()
                 with (
                     patch.object(
-                        agent_server,
-                        "CODEX_APP_SERVER_MANAGER",
+                        agent_server.PROVIDERS,
+                        "codex_manager",
                         manager,
                     ),
                     patch.object(

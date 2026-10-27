@@ -17,6 +17,7 @@ from hyadex.providers.codex.app_server import CodexAppServerClient, CodexAppServ
 import codex_auth
 from hyadex.core.runs import NamespaceRuns
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 class Manager:
@@ -130,6 +131,7 @@ class BinaryRefreshTests(unittest.IsolatedAsyncioTestCase):
             return True
         ns["evict_codex_app_server_thread"] = AsyncMock(side_effect=evict)
         ns["RUNS"] = NamespaceRuns(ns)
+        ns["PROVIDERS"] = NamespaceProviders(ns)
         exec(self.lifecycle_code(), ns)
         self.real_schedule_drain = ns["schedule_codex_manager_drain"]
         ns["schedule_codex_manager_drain"] = Mock()

@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from hyadex.core.runs import NamespaceRuns
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -38,6 +39,7 @@ def load_queue_reorder():
     namespace = {"Any": Any, "BaseModel": BaseModel, "Field": Field,
                  "HTTPException": HTTPException, "asyncio": asyncio, "deque": deque}
     namespace["RUNS"] = NamespaceRuns(namespace)
+    namespace["PROVIDERS"] = NamespaceProviders(namespace)
     exec(compile(module, str(SOURCE), "exec"), namespace)
     return namespace
 

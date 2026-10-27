@@ -20,6 +20,7 @@ from tests.test_goal_followup_admission_isolated import AdmissionHTTPException, 
 from tests import test_goal_native_steer_isolated as native_goal_fixture
 from hyadex.core.runs import NamespaceRuns
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -100,6 +101,7 @@ class GoalFollowupLifecycleTests(unittest.IsolatedAsyncioTestCase):
         # send/commit/fence/requeue helpers, never its production-import suite.
         native_goal_fixture.NativeGoalSteerTests.setUp(self)
         self.ns["RUNS"] = NamespaceRuns(self.ns)
+        self.ns["PROVIDERS"] = NamespaceProviders(self.ns)
         exec(CODE, self.ns)
         temporary = tempfile.TemporaryDirectory(prefix="goal-followup-lifecycle-")
         self.addCleanup(temporary.cleanup)

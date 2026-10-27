@@ -97,7 +97,7 @@ class NativeTitleOwnership(unittest.IsolatedAsyncioTestCase):
             patch.object(server, "HISTORY_SEARCH_DIRTY", set()),
             patch.object(server, "DELETING_SESSIONS", set()),
             patch.object(server, "DELETED_SESSION_TOMBSTONES", set()),
-            patch.object(server, "CODEX_APP_SERVER_MANAGER", None),
+            patch.object(server.PROVIDERS, "codex_manager", None),
         ]
         for patcher in self.patches:
             patcher.start()
@@ -225,7 +225,7 @@ class NativeTitleOwnership(unittest.IsolatedAsyncioTestCase):
             cached_thread_name=Mock(return_value="Cached title"),
             is_thread_loaded=Mock(return_value=True),
         )
-        with patch.object(server, "CODEX_APP_SERVER_MANAGER", manager), patch.object(server, "read_native_session_title") as reader:
+        with patch.object(server.PROVIDERS, "codex_manager", manager), patch.object(server, "read_native_session_title") as reader:
             self.assertIs(server.existing_codex_app_server_manager(self.sess), manager)
             await server.refresh_native_session_title("title-chat")
         self.assertEqual(self.sess["title"], "Cached title")

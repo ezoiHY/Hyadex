@@ -39,6 +39,8 @@ FILES = (
     'hyadex/groups.py',
     'hyadex/core/runs.py',
     'hyadex/core/server.py',
+    'hyadex/core/wiring.py',
+    'hyadex/providers/state.py',
     'hyadex/autopilot.py',
     'hyadex/routes/__init__.py',
     'hyadex/routes/groups.py',

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import unittest
 from hyadex.core.runs import NamespaceRuns
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -52,6 +53,7 @@ def load_admission(env=None):
         "stop_cleanup_in_progress": lambda _: False,
     }
     ns["RUNS"] = NamespaceRuns(ns)
+    ns["PROVIDERS"] = NamespaceProviders(ns)
     exec(ADMISSION_CODE, ns)
     return ns
 

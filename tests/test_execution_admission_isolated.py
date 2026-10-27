@@ -16,6 +16,7 @@ from execution_maintenance import ExecutionMaintenance
 from hyadex.core.runs import NamespaceRuns
 from hyadex.core.server import NamespaceServer
 from tests import server_source
+from hyadex.providers.state import NamespaceProviders
 
 
 SOURCE = (Path(__file__).resolve().parents[1] / "agent_server.py")
@@ -61,6 +62,7 @@ class AdmissionTests(unittest.IsolatedAsyncioTestCase):
             "managed_server_restart_blocks_work": lambda: False,
         }
         self.ns["RUNS"] = NamespaceRuns(self.ns)
+        self.ns["PROVIDERS"] = NamespaceProviders(self.ns)
         self.ns["SERVER"] = NamespaceServer(self.ns)
         exec(CODE, self.ns)
 
