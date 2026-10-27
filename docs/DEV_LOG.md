@@ -3,6 +3,16 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-27 — Claude context fill no longer drops out
+
+- Fixed: a Claude chat's context fill could go blank after a turn and stay
+  blank on every turn after. The server reads it from Claude Code once a turn
+  ends; the first reading after Claude's process starts takes one to two
+  seconds, and the old two-second limit treated a slow one as a failure, cleared
+  the reading and restarted the Claude process, so the next turn was slow again.
+  The limit is now ten seconds (`HYADEX_CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS`);
+  readings normally arrive in milliseconds, so turns do not end later.
+
 ## 2026-10-27 — Unused server features removed
 
 The server now carries only what the Mac app, the in-chat helpers (jobs,

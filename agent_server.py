@@ -980,9 +980,13 @@ HEALTH_QUEUE_RECONCILE_INTERVAL_SECONDS = float(
     hyadex_setting("HEALTH_QUEUE_RECONCILE_INTERVAL_SECONDS", "15")
 )
 QUEUE_FENCE_LOG_INTERVAL_SECONDS = 60.0
+# A warm sample answers in milliseconds, but the first one after the Claude
+# process starts takes one to two seconds, more on a busy machine. Timing out
+# also resets the SDK client, so the next turn starts cold again; a limit near
+# the cold time made a missed sample repeat on every following turn.
 CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS = max(
     0.1,
-    float(hyadex_setting("CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS", "2")),
+    float(hyadex_setting("CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS", "10")),
 )
 CODEX_CONTEXT_WINDOW_RESERVE_TOKENS = 12_000
 CODEX_GOAL_CONTROL_TIMEOUT_SECONDS = max(

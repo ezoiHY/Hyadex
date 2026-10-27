@@ -1260,6 +1260,45 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(packet["session_id"], "chat-claude")
         self.assertNotIn("seq", packet)
 
+    async def test_cold_first_sample_is_recorded_without_resetting_the_client(self) -> None:
+        # The first context sample after Claude's process starts takes one to
+        # two seconds. It must not hit the timeout: a timeout resets the SDK
+        # client, which made every following turn start cold and miss again.
+        self.assertGreaterEqual(agent_server.CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS, 5)
+        manager = FakeClaudeManager()
+        manager.context_usage_response = ({"totalTokens": 27_000, "maxTokens": 1_000_000}, 1)
+        answer = manager.get_context_usage
+
+        async def cold_answer(*args, **kwargs):
+            await asyncio.sleep(0.2)
+            return await answer(*args, **kwargs)
+
+        manager.get_context_usage = cold_answer
+        self.session["claude_session_id"] = "provider-cold"
+        agent_server.ACTIVE = {
+            "chat-claude": {
+                "run_id": "run-cold",
+                "backend": agent_server.BACKEND_CLAUDE,
+                "transport": agent_server.CLAUDE_TRANSPORT_AGENT_SDK,
+                "claude_sdk_owner_token": manager.owner_token,
+                "stop_requested": False,
+            }
+        }
+        with patch.object(agent_server.STORE, "save", AsyncMock()), patch.object(
+            agent_server.HUB, "broadcast", AsyncMock(),
+        ), patch.object(
+            # Scaled down: 0.2 s stands for a 1.5 s cold sample, this limit
+            # for the old 2 s default that cold samples could exceed.
+            agent_server, "CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS",
+            agent_server.CLAUDE_CONTEXT_USAGE_TIMEOUT_SECONDS / 20,
+        ):
+            stored = await agent_server.sample_claude_context_usage(
+                "chat-claude", "run-cold", "provider-cold", manager,
+            )
+        self.assertTrue(stored)
+        self.assertEqual(self.session["claude_context_usage_snapshot"]["context_tokens"], 27_000)
+        self.assertEqual(manager.evict_calls, [])
+
     async def test_manual_context_refresh_samples_loaded_idle_sdk_chat(self) -> None:
         manager = FakeClaudeManager()
         manager.context_usage_response = ({
