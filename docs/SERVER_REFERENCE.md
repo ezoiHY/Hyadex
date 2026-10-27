@@ -8,8 +8,8 @@ Together they provide persistent agent chats without routing private project
 files through a third-party chat service.
 
 HyadexServer exposes an authenticated HTTP/WebSocket API and streams normalized
-Claude/Codex events, files, videos, uploads, scheduled jobs, process inspection,
-and persistent tmux terminals to Hyadex clients.
+Claude/Codex events, files, videos, uploads, scheduled jobs, group discussions,
+Autopilot runs and persistent tmux terminals to Hyadex clients.
 
 ```text
 Hyadex (Mac, iPhone, iPad, Linux)
@@ -36,20 +36,18 @@ and personal machine paths outside tracked source.
 - Streams live agent events over WebSocket while preserving a JSONL event
   history on disk.
 - Accepts file uploads and serves generated artifacts, including videos.
-- Supports queued turns, stop requests, chat forking, context digests, and rough
-  history import from provider sessions.
+- Supports queued turns, stop requests, chat forking, and creating a chat that
+  resumes an existing Claude or Codex conversation with its history.
 - Recovers oversized Codex provider threads by rolling the same chat onto a
   fresh thread with bounded recent memory when remote compaction fails.
-- Creates handoff digests with an actual LLM summarizer; the raw transcript/file
-  pack is only internal source material.
 - Runs recurring/loop jobs per chat with host load/memory guardrails.
   Archiving a chat pauses every interval, cron, and RRULE job attached to it;
   unarchiving leaves those jobs paused until the user explicitly enables them.
-- Gives each live provider turn a private, chat-scoped Jobs/Publish authority
-  and rotates it with the logical run during native steering. Failed steering
-  restores the predecessor only when rejection is proven safe; stopped,
-  uncertain, and restarted runs fail closed.
-- Provides optional live process and tmux-pane inspection for active work.
+- Gives each live provider turn a private, chat-scoped authority for the jobs,
+  publish, emergency and notify helpers, and rotates it with the logical run
+  during native steering. Failed steering restores the predecessor only when
+  rejection is proven safe; stopped, uncertain, and restarted runs fail closed.
+- Provides optional tmux-pane inspection for active work.
 - Hosts one persistent interactive tmux terminal per chat. Clients attach over
   an authenticated PTY WebSocket; disconnecting a client does not stop the
   tmux session, its panes, or processes. Structured actions create, select,
@@ -95,6 +93,18 @@ readable and can be renamed, pinned, moved or archived. New turns, runtime
 changes, forks and native imports reject the removed backend. Existing jobs
 are persistently disabled with `provider_removed`. Native profile, credential
 and history files are retained; no replacement provider is selected.
+
+### Removed custom API endpoints
+
+Custom Codex providers and per-chat Claude API connections have been removed,
+with their admin routes and the `codex_provider_v1` and
+`provider_connections_v1` capabilities. Chats always run with the native Claude
+Code and Codex logins of the server's user. A chat saved against a removed
+custom endpoint keeps readable history and can still be renamed, moved or
+archived, but new turns, forks and runtime changes return 410 instead of
+continuing on the native login. The saved endpoint settings and API keys in
+`admin/codex-provider/` and `admin/provider-connections/` under the state
+directory are left on disk; delete them if you no longer need them.
 
 ### Optional: tmux
 
@@ -158,19 +168,22 @@ or stop active work, stop the selected instance and rerun its installer.
 
 ### Supported communication
 
-Hyadex provides same-server chat routes and the local chat mailbox. Team Hub,
-Team Network mail, shared team skills, and secure-peer server pairing have been
-removed. These routes and capabilities are no longer advertised. Old saved
-Team references are rejected or paused for repair rather than executed as plain
-prompts; local `@Chat` references retain their existing authorization contract.
-Existing Team Hub and secure-peer state is not deleted by running this version.
+Agents collaborate through [group discussions](GROUP_DISCUSSIONS.md) and
+[Autopilot](AUTOPILOT.md). Messaging between ordinary chats (handoffs, `@Chat`
+routes and the chat mailbox) has been removed; see
+[Removed cross-chat messaging](#removed-cross-chat-messaging). Team Hub, Team
+Network mail, shared team skills, and secure-peer server pairing were removed
+earlier. These routes and capabilities are no longer advertised. Old saved Team
+and `@Chat` references are rejected or paused for repair rather than executed
+as plain prompts. Existing Team Hub and secure-peer state is not deleted by
+running this version.
 
 Public snapshot and interactive browser sharing are also removed. Old viewer,
 media and sharing-management URLs no longer resolve; sharing cookies and tokens
 do not authorize native APIs. Existing sharing databases, registered files and
 chat history remain on disk. Previously accepted turns retain their attribution;
 new turn requests carrying sharing attribution are rejected with 422.
-Native side questions, file access and same-server chat routes remain available.
+Native side questions and chat file access remain available.
 
 ## Manual Onboarding
 
@@ -431,12 +444,14 @@ an already committed installation. Do not delete journals or maintenance leases.
 Older live-migration journals, `.activation-transaction` and pending uninstall evidence must be recovered
 with the previous retained installer/uninstaller before using this source
 installer. They are never silently adopted, resumed or discarded. The old helper
-modules remain temporarily for their remaining recovery/uninstall dependencies;
-the server does not launch update recovery on startup.
+modules have been deleted: installation, worker startup and uninstall refuse to
+proceed while such a journal is present, and the server does not launch update
+recovery on startup.
 
-The public API contract is now 29. Old update health fields and schedule-bound
-restart fields are absent; the remaining restart audit reports execution-worker
-maintenance. This retirement does not publish or install a new release.
+This retirement raised the public API contract to 29 (it is now 30). Old update
+health fields and schedule-bound restart fields are absent; the remaining
+restart audit reports execution-worker maintenance. This retirement does not
+publish or install a new release.
 
 ## Uninstalling HyadexServer
 
@@ -505,12 +520,10 @@ without losing chat state:
 | `HYADEX_MAX_ACTIVE_AGENT_RUNS` | Optional server-wide concurrency cap for chat, cron and goal runs (`0` means no count limit) | `0` |
 | `HYADEX_JOB_MIN_AVAILABLE_MEM_MB` | Additional job launch memory guardrail; the normal turn floor also applies | `1536` |
 | `HYADEX_MIN_START_AVAILABLE_MEM_MB` | Interactive launch memory guardrail | `2048` |
-| `HYADEX_HANDOFF_DIGEST_BACKEND` | LLM backend for context digests, `claude` or `codex` | `claude` |
-| `HYADEX_HANDOFF_DIGEST_MODEL` | LLM model for context digests | `sonnet` |
-| `HYADEX_HANDOFF_DIGEST_EFFORT` | Optional digest reasoning/effort setting | unset |
-| `HYADEX_HANDOFF_DIGEST_TIMEOUT_SECONDS` | Digest summarizer timeout | `180` |
-| `HYADEX_HANDOFF_DIGEST_CHARS` | Final digest character cap | `56000` |
-| `HYADEX_CODE_DIFF_SNAPSHOT_TIMEOUT_SECONDS` | Maximum time for each isolated Git worktree snapshot | `120` |
+| `HYADEX_CODE_DIFF_SNAPSHOT_TIMEOUT_SECONDS` | Maximum time for each isolated Git worktree snapshot | `15` |
+
+The `HYADEX_HANDOFF_DIGEST_*` and `HYADEX_WORKSPACE_TEXT_MAX_BYTES` settings
+belonged to removed features and are ignored.
 
 Runtime catalog refreshes share a 25-second CLI/network-probe budget so they
 can finish before the desktop and mobile clients' 30-second request timeout.
@@ -546,9 +559,11 @@ Legacy `exec` transport reports `configurable: false` with
 
 The choice persists in `admin/codex-settings.json` without replacing other
 settings. It is passed as a real dotted-key override when native threads start,
-resume unloaded, or fork. Already-loaded chats need **Reload provider** while
-idle; no current turn, goal, child agent, or provider process is interrupted by
-saving this setting. Explicit chat overrides take precedence. No polling or
+resume unloaded, or fork. An already-loaded thread keeps its current limit until
+Codex loads it again, for example after it is unloaded to make room for other
+chats or after a server restart; the per-chat provider reload route has been
+removed. No current turn, goal, child agent, or provider process is interrupted
+by saving this setting. Explicit chat overrides take precedence. No polling or
 background configuration refresh is added.
 
 ## Side Questions
@@ -560,24 +575,6 @@ fork; Claude uses its native side-question control on the existing connection.
 Saved settings for a later Claude turn do not reconfigure that connection when
 asking a side question. See [Native side conversations](../docs/NATIVE_SIDE_CHAT.md)
 for follow-ups, cancellation and context behavior.
-
-## Context Digests
-
-`POST /api/sessions/{session_id}/digest` creates a real LLM-summarized handoff
-for another chat. The server first builds a bounded source packet from recent
-events and files, then asks the configured digest backend to summarize it into
-a clean Markdown handoff. If the LLM summarizer fails, the endpoint fails
-visibly instead of returning the raw source packet as if it were a digest.
-
-By default, the digest summarizer uses Claude Sonnet:
-
-```bash
-HYADEX_HANDOFF_DIGEST_BACKEND=claude
-HYADEX_HANDOFF_DIGEST_MODEL=sonnet
-```
-
-You can switch it to Codex or another installed CLI model, but the relevant CLI
-must already be authenticated for the same Unix user that runs the service.
 
 ## Claude Agent SDK Transport
 
@@ -596,27 +593,11 @@ Idle SDK clients are retained for at most five minutes by default, with up to
 four chat processes loaded. Active chats are never evicted to enforce the idle
 limit.
 
-Claude-controls capability v3 adds authenticated MCP management without
-changing global API contract v13. Clients gate on
-`capabilities.claude_controls.features.mcp_management` and use the additive
-v1 endpoints:
-
-```text
-GET  /api/sessions/{session_id}/claude/mcp
-POST /api/sessions/{session_id}/claude/mcp
-```
-
-GET lazily connects an idle chat's Agent SDK client and returns an opaque
-generation string plus at most 100 exact-name-deduplicated, sorted, allowlisted
-server rows; `truncated` marks an incomplete list. POST requires that exact
-generation and supports `reconnect`, `reconnect_all`, `enable`, and `disable`.
-Both operations reject active/provider-starting turns, are lifecycle-serialized
-with worker-maintenance and restart admission, and have a bounded native-control timeout.
-Responses never expose MCP commands, environment, headers, configuration URLs,
-raw provider errors, or tool metadata. Print transport and SDK-unavailable
-hosts return an explicit unavailable snapshot; older servers continue to
-return 404. Tune the default 15-second bound with
-`HYADEX_CLAUDE_MCP_CONTROL_TIMEOUT_SECONDS`.
+In-app Claude MCP management and its `mcp_management` control feature have
+been removed; MCP servers come from Claude Code's own configuration.
+`HYADEX_CLAUDE_MCP_CONTROL_TIMEOUT_SECONDS` (default `15`) keeps its historical
+name and still bounds native SDK control requests such as the provider-command
+inventory read and goal clearing.
 
 ## Backend CLI Notes
 
@@ -656,11 +637,12 @@ reports `ready`, `missing`, `unauthenticated`, `unknown`, or probe `error`, plus
 actionable recovery instruction. It never returns account identity, auth
 output, or tokens.
 
-Catalog refresh is not a request to reload Codex sign-in. An unknown native
-login revision must not retire a working Codex process. Explicit sign-in reload
-uses the native-admin `POST /api/admin/codex/auth/reload` with `{}`; account GET
-advertises `login_reload_available` and the POST reports `login_reload_pending`.
-See [Codex login handoff](CODEX_LOGIN_HANDOFF.md) for ownership and audit behavior.
+HyadexServer has no in-app Codex sign-in management: the account and API-key
+routes, the manual login reload and the `codex_auth_v1` capability have been
+removed. Sign in on the server with `codex login`; new turns pick up a changed
+file-backed login automatically. Catalog refresh can observe such a change, but
+an unknown native login revision never retires a working Codex process. See
+[Codex login handoff](CODEX_LOGIN_HANDOFF.md) for ownership and audit behavior.
 
 Claude startup, automatic refresh, manual **Recheck CLIs**, and turn admission
 never execute `claude auth status`. Short-lived auth-status commands can start
@@ -753,255 +735,42 @@ Interval schedules are capped at ten years. RRULE `COUNT` is capped at 10,000,
 and leap-second `BYSECOND=60` is rejected because the runtime clock cannot
 represent second 60.
 
-## Cross-chat handoffs
-
-### Permanent chat pairs and independent messages (API contract 28)
-
-An accepted explicit structured `@Chat` grants the exact two chats permanent
-bidirectional permission. Each later run receives fresh, live-run-bound
-credentials and discovers its permitted routes with `chats list` when needed.
-The permission persists without another mention; it does not extend to other
-chats, forks, or a recipient's other routes.
-
-Clients negotiate `chat_conversation_async_route_v1` using the additive health
-capability. For paired routes advertising `mode: async_route_v1`, `send` and
-`ask` each send one independent message and return after acceptance. An idle
-recipient starts a normal turn; a busy recipient receives a normal queued
-message. `respond-current` explicitly sends another message on the exact
-reverse pair. Ordinary final answers are never forwarded automatically, and
-there is no reply obligation, exchange leg budget, or one-use route permission.
-Saved routes and configured-route messages have no count or hourly quota;
-message-size bounds remain. Provider discovery uses bounded cursor pages, not
-a permission limit. The existing per-message reference input bound and legacy
-exchange budgets remain separate from permanent pair permission.
-
-The desktop receives `chat_conversation_message_*` lifecycle events keyed by
-the message envelope, shows the sender's card at acceptance, and shows an
-incoming queued item until recipient execution starts. Cancel and revoke use
-the existing durable delivery ledger and final admission fence. See
-[the async route contract](../docs/ASYNC_CHAT_ROUTES.md) for negotiation, event
-fields, compatibility, and isolated validation.
-
-### Legacy route-hint exchange contract (capability v13)
-
-An inline structured `@Chat` is an optional target hint. It never forwards the
-raw user prompt. On successful ordinary-turn admission, an exact local
-single-`@Chat` reference authored by a v2 client with `grant_intent: true`
-idempotently creates or refreshes a durable directional source-to-target
-grant. Subsequent turns receive only that source chat's current grants; there
-is no ambient all-chat authority. An explicit user request to send, ask, tell,
-or contact a named chat requires the agent to use the matching helper; passive
-mentions remain optional. Every accepted configured-route Send carries one optional terminal
-reply path back to its immutable source; it creates no reply obligation, never
-automatically relays the target's ordinary final answer, cannot request a
-follow-up, and grants no durable reverse route. Ask explicitly requests one
-terminal answer over the same exchange-scoped return mechanism. It commits
-immediately as a durable two-leg agent message and keeps the source provider
-turn attached until that answer arrives or the exchange is explicitly stopped.
-The target delivery remains a normal durable turn and waits in its FIFO when
-that chat is busy. Each helper invocation observes one bounded HTTP heartbeat
-slice and returns either the answer or a resumable `pending=true` receipt. The
-provider immediately runs a new foreground `wait` call with the same exact
-lease after every pending receipt. Those slices stay below provider shell-tool
-caps; they never convert the exchange into a later source-chat turn or impose a
-semantic response deadline.
-
-`pending=true` is returned only when the server confirms it is still waiting.
-A lost connection instead produces an `ok=false`, `transport_error=true`,
-`retryable=true` receipt with the same exchange, inbound leg, and lease; the
-CLI prints that receipt and exits nonzero. Retry that exact `wait`, never the
-original Ask: the answer may already be saved. Completed-answer delivery does
-not wait indefinitely for disconnect-watcher cleanup.
-
-Active agent messaging is strictly same-server. Cross-server inbox messaging,
-Team Hub and secure-peer transport are no longer available.
-
-`/chat` is a composer alias for selecting the same structured hint.
-
-Scheduled runs never inherit the source chat's grants. Each job stores its own
-exact route selection, authorized by route ID in the job editor/helper flow,
-and revalidates its target, revision, and action on every firing. Its prompt
-contains the corresponding exact single `@Chat` marker for display and
-binding; no `@@` authoring syntax is required. The health surface advertises
-cross-chat version 13, `durable_route_grants`, configured-route
-`instruction_reply_once`, `configured_route_live_request_reply`,
-`configured_route_request_reply_default: live`,
-`live_wait_timeout_async_fallback: false`,
-`live_wait_restart_async_fallback: true`,
-`agent_ambient_local_handoffs: false`,
-scheduled Jobs version 5, and global API contract 27. Capability v13 also
-advertises the bounded transport heartbeat, no semantic live-wait deadline,
-and the explicit asynchronous source-chat recovery used only when a server
-restart loses the process-local provider call.
-
-Capability v10 retains this reply-once behavior for existing
-configured `instruction` grants as well as newly created ones. The return path
-is a property of each accepted delivery, not a new durable target grant: it is
-bound to the original source, delivery run, exchange generation, two-leg
-budget, and expiry. Revoking or revising the source route still blocks future
-deliveries immediately.
-
-Beta-era local `direct_message` and `@@` references remain readable only for
-safe migration/recovery. They are quarantined from ordinary authority and can
-never mint a durable grant; queued v6 snapshots are narrowed against current
-persisted grants and cannot recreate a revoked route. Nonterminal legacy UI
-envelopes are failed/cancelled during upgrade before they can be resubmitted.
-Existing same-server configured-route Send/Ask effects and final-result
-obligations retain their exact authorization and lifecycle checks.
-
-For a current ordinary turn, the provider-authority block exposes only opaque
-route IDs. The agent lists the available routes, then sends or asks when the
-user explicitly requests contact (and may otherwise decide no contact is
-warranted):
-
-```bash
-"$HYADEX_CHATS_CLI" --authority-file /path/from/turn.json list
-"$HYADEX_CHATS_CLI" --authority-file /path/from/turn.json \
-  send --route route_opaque --message "Verify the API contract."
-"$HYADEX_CHATS_CLI" --authority-file /path/from/turn.json \
-  ask --route route_opaque --message "Which rollout is blocked?"
-"$HYADEX_CHATS_CLI" --authority-file /path/from/turn.json \
-  wait --exchange exchange_exact --inbound-leg leg_exact --lease lease_exact
-```
-
-The helper never exposes or accepts an inferred chat ID. It accepts only the
-opaque IDs in that run's authority snapshot, uses loopback HyadexServer URLs,
-disables redirects and proxies, and submits one bounded agent-authored
-message. Send creates a correlated two-leg exchange with one optional terminal
-reply capability available only to its exact delivery run. If the target does
-not deliberately use that capability, its ordinary final stays local and the
-exchange closes without sending anything back. Ask creates the same bounded
-two-leg exchange and, by default, keeps the provider turn attached to its
-exact live lease through bounded foreground `wait` slices until the answer or
-a terminal failure. A pending receipt requires another exact `wait` call; it
-is not a timeout or permission to finish the turn. A live-request exchange
-does not expire merely because its original 24-hour authorization window
-elapsed.
-Explicit `--async-response` and restart recovery deliver the eventual result
-in a later source-chat turn.
-
-### Historical action-specific grants (v1-v2)
-
-API contract v11 added durable, same-server handoffs selected by the user in
-the Hyadex composer. API contract v13 upgraded
-`capabilities.cross_chat_handoffs_v1` to version 2 and added bounded
-request/reply exchanges. These historical structured references authorized
-one exact exchange, instruction, or automatic final-result delivery. They are
-retained for readable stored records and secure action-specific compatibility;
-they are not the current `@Chat` authoring model. Self, archived, deleted,
-legacy-transport, and unpaired foreign-server targets fail closed.
-
-When such an action-specific grant is replayed, the provider-authority block
-may print a one-use opaque target handle:
-
-```bash
-"$HYADEX_CHATS_CLI" --authority-file /path/from/turn.json \
-  send --target OPAQUE_HANDLE --message "Verify the API contract."
-```
-
-`OPAQUE_HANDLE` is capability data, never a session ID. Delivery is a normal
-durable target turn using the target chat's own provider, permission policy,
-queue, and timeline. A server restart reconciles the ledger and lifecycle
-outbox without silently duplicating a handoff. The desktop bearer remains
-required to inspect or cancel handoffs.
-
-Request/reply grants use the exact exchange ID reserved when the source turn
-is admitted. The source agent starts it with `ask`; a recipient may answer or
-ask a clarification with the exact `respond` command printed in that delivery
-turn's provider-authority block:
-
-```bash
-"$HYADEX_CHATS_CLI" --authority-file /path/from/turn.json \
-  ask --target OPAQUE_HANDLE --message "Which rollout is blocked?"
-"$HYADEX_CHATS_CLI" --authority-file /path/from/turn.json \
-  respond --exchange exchange_exact --inbound-leg leg_exact \
-  --message "Do you mean the desktop or server rollout?" --request-response
-```
-
-An exchange is limited to six directed conversational legs (three rounds).
-Asynchronous exchanges expire after 72 hours. An attached same-server live
-request does not time-expire while its exact source provider run remains its
-owner; explicit cancellation, Stop, participant deletion/archive, or a server
-restart closes or recovers it. A successful non-empty recipient final automatically
-returns one terminal answer when the inbound leg expects a reply and no
-explicit response won the one-use CAS.
-Failures, stops, expiry, participant deletion/archive, and queue-owner loss are
-durable visible outcomes; non-user failures also create one bounded native
-status wake for the waiting sender. Exchange turns reuse the existing hidden
-`cross_chat_handoff_delivery` purpose so older clients do not expose synthetic
-prompts or queue controls.
-
-### Durable directional route management (v8)
-
-The default-empty per-source-chat grant list is the sole ordinary cross-chat
-authority ceiling. Inline `@Chat` admission manages it automatically, while
-these authenticated endpoints support inspection and explicit administration:
-
-```text
-GET    /api/sessions/{source_session_id}/agent-handoff-routes
-POST   /api/sessions/{source_session_id}/agent-handoff-routes
-PATCH  /api/sessions/{source_session_id}/agent-handoff-routes/{route_id}
-DELETE /api/sessions/{source_session_id}/agent-handoff-routes/{route_id}?expected_revision={revision}
-```
-
-`PATCH` and `DELETE` use the route revision as a compare-and-swap precondition;
-a stale or missing valid route returns HTTP 409 with
-`code: route_revision_conflict`, a safe message, and the current route or
-`null`. A chat can hold at most 16 routes, aliases and targets are unique,
-routes cannot point to their source chat, and forks inherit neither routes nor
-their private mutation journal. Only v2 `agent_cross_chat_routes_v2`
-submissions carrying exact `grant_intent` provenance may persist an inline
-grant. Older v1/v6 turns and recovered queue hints remain one-run legacy data
-and never become durable policy.
-
-Grant mutation and turn admission cross two durable files. HyadexServer first
-stores a hidden pending route journal, then fsyncs the exact `turn_started` or
-`turn_queued` admission ID, and only then exposes the grant. Startup rolls the
-exact route revisions back when no matching event exists, or finalizes them
-when it does; later edits and revocations are never recreated. Scheduled,
-internal, digest, standalone, and cross-chat delivery turns receive no source
-grant snapshot. Every helper call intersects its issued snapshot with the
-exact live route revision and allowed actions, so removal or policy edits
-block future acceptance immediately; an already accepted ledger item remains
-visible and cancelable through authenticated desktop APIs.
-
-The turn-scoped helper surface accepts only opaque issued route IDs:
-
-```bash
-"$HYADEX_CHATS_CLI" --authority-file /path/from/turn.json list
-"$HYADEX_CHATS_CLI" --authority-file /path/from/turn.json \
-  send --route route_opaque --message "Apply the corresponding mobile change."
-"$HYADEX_CHATS_CLI" --authority-file /path/from/turn.json \
-  ask --route route_opaque --message "Which mobile behavior must match?"
-```
-
-`list` is capability-scoped; there is no provider chat search or arbitrary
-target parameter. `Ask` is not transcript access: it creates a normal target
-turn containing only the bounded relayed message, then keeps the source
-provider turn on the exact live lease through separate foreground `wait`
-slices until one terminal answer arrives. `--async-response`
-is the explicit compatibility mode that returns immediately and later queues
-the answer in the source chat. Configured-route Send and Ask are limited to two
-legs; non-live exchanges expire after 24 hours, while an attached live Ask is
-owned by its exact source run instead of a wall-clock deadline. A Send reply is
-always terminal; Ask also has no follow-up under the configured-route contract.
-Route bodies and answers are
-limited to 16,000 characters and 64 KiB UTF-8. A live run can accept at most
-one effect per route and four route handoffs total; durable source and target
-limits are 12 accepted route effects per rolling hour.
-
-Provider projections contain only the opaque route ID, safe alias, sanitized
-bounded title, backend, allowed actions, and generic availability. They never
-expose target/session IDs, folders, working directories, models, provider IDs,
-transcripts, rate counts, or route mutation history. Configured delivery
-prompts likewise omit route and ledger identifiers; a returning answer may
-include only the target's sanitized, explicitly untrusted display label.
-
 Agent-created jobs use the same job store as the desktop and mobile clients,
-so they immediately appear in the Jobs panel. The scoped helper routes are:
+so they immediately appear in the Jobs panel. The helper calls the agent-only
+routes; authenticated human clients use `/api/jobs` instead:
 
-- `GET/POST /api/sessions/{session_id}/jobs`
-- `PATCH/DELETE /api/sessions/{session_id}/jobs/{job_id}`
+- `GET/POST /api/agent/sessions/{session_id}/jobs`
+- `PATCH/DELETE /api/agent/sessions/{session_id}/jobs/{job_id}`
+- `GET /api/agent/sessions/{session_id}/jobs/{job_id}/runs`
+
+Jobs saved by older servers with `@Chat` or Team targets are paused for repair
+(HTTP 409) when they fire, rather than running the prompt without its targets.
+Replacing the prompt or sending an empty `chat_references` clears saved `@Chat`
+targets. New and updated jobs accept `chat_references` (and the helper's
+`chat_routes`) only as an empty list.
+
+## Removed cross-chat messaging
+
+Agent-to-agent messaging between ordinary chats has been removed: handoffs,
+request/reply exchanges and their legs, live waits, async routes, `@Chat`
+references and route grants, the chat mailbox and its wakes, handoff digests,
+and the `chats` helper. Their routes, chat search, the inbox and route
+management endpoints, and the `cross_chat_handoffs_v1` capability are no longer
+registered. Use [group discussions](GROUP_DISCUSSIONS.md) or
+[Autopilot](AUTOPILOT.md) for multi-agent work. The per-run provider authority
+used by the jobs, publish, emergency and notify helpers is unchanged.
+
+Saved data from older servers is handled deterministically:
+
+- Queued cross-chat deliveries, mailbox wakes and queued messages carrying
+  `@Chat` routing are discarded by queue recovery or promotion with a durable
+  `turn_unqueued` event; editing such a row returns 400.
+- `chat_references` on turns and queue edits accepts only an empty list.
+- `cross_chat.sqlite3`, `handoff_digest_jobs.json` and the route keys in
+  `sessions.json` stay on disk and are not read.
+- Old cross-chat timeline events remain hidden, as before.
+
+This removal raised the API contract to 30.
 
 ## Working-directory completion
 
@@ -1017,97 +786,26 @@ The authenticated endpoint performs one bounded, shallow scan and returns
 directories only. Older clients and servers continue to use the ordinary path
 field without a global API compatibility failure.
 
-## Workspace Files
+## Chat files without workspace browsing
 
-The optional `workspace_files` health capability exposes a chat-scoped text
-workspace rooted at that chat's exact `cwd`. It is additive to API contract v9,
-so older clients continue to work without a global compatibility failure.
+The chat-scoped workspace explorer and editor, its Git status, diff, conflict
+and action endpoints, and the `workspace_files` capability have been removed;
+the `HYADEX_WORKSPACE_TEXT_MAX_BYTES` setting is ignored. Agents still work in
+the chat's `cwd`. Clients show their results through
+[per-turn code review](#per-turn-code-review), the chat's registered files
+(`GET`/`POST /api/sessions/{session_id}/files` and
+`GET /api/sessions/{session_id}/files/{file_id}`), and
+`GET /api/sessions/{session_id}/links/file?target=...`, which resolves a file
+link in a message to exactly one of that chat's registered files.
 
-```text
-GET /api/sessions/{session_id}/workspace
-GET /api/sessions/{session_id}/workspace/entries?path=&offset=0&limit=500
-GET /api/sessions/{session_id}/workspace/search?q=app&limit=100
-GET /api/sessions/{session_id}/workspace/file?path=src/App.tsx
-PUT /api/sessions/{session_id}/workspace/file
-POST /api/sessions/{session_id}/workspace/entry
-PATCH /api/sessions/{session_id}/workspace/entry
-DELETE /api/sessions/{session_id}/workspace/entry?path=src/old.ts&expected_revision=...&recursive=false
-```
+## Resuming and importing provider history
 
-Reads accept complete UTF-8 regular files up to 32 MiB by default, replacing
-the legacy 2 MiB editor ceiling. Writes are atomic,
-require the SHA-256 revision returned by the read endpoint, and reject stale
-revisions, symlinks, special files, hard links, archived chats, and read-only
-targets. Directory traversal is descriptor-relative and fails closed when the
-host lacks secure no-follow file APIs. Configure the text limit with
-`HYADEX_WORKSPACE_TEXT_MAX_BYTES`; a positive value selects a bounded
-transport ceiling, while an explicit zero disables the HyadexServer ceiling.
-
-On macOS, recursive file search from Home (or a parent of Home) skips that
-user's `Library`, `Music`, `Pictures`, `Movies`, `Desktop`, `Documents`,
-`Downloads` and `.Trash` trees. Opening the file picker or entering a search
-term must not incidentally request access to other apps' data. This applies to
-both empty searches and Git/fallback discovery. It is a search policy, not a
-filesystem permission change: explicitly opening a path, browsing a directory,
-or setting a chat's working directory to a project within one of these trees
-still works subject to the OS permissions and existing symlink guards. Project
-subdirectories merely named `Library` or `Music` are not excluded.
-
-Workspace-files capability v2 adds an opaque `revision` to every explorer and
-search entry. Rename accepts `{path, new_name, expected_revision}`, is limited
-to the same parent directory, and uses the host's atomic no-replace primitive,
-so it never overwrites another entry. Delete requires the current entry
-revision. A non-recursive delete removes files, symlinks, or empty
-directories; `recursive=true` confirms deletion of a non-empty directory.
-Recursive traversal remains descriptor-relative, never follows symlinks, and
-rejects mounted filesystems rather than crossing them.
-
-Workspace-files capability v4 adds no-overwrite creation. Post
-`{path, kind: "file"}` to create an empty UTF-8 file or
-`{path, kind: "directory"}` to create one directory. Creation is
-descriptor-relative, rejects symlinked parents and existing destinations, and
-is unavailable for archived chats.
-
-## Workspace Git
-
-Native administrator clients can inspect the canonical Git worktree containing
-a chat's working directory, including changes outside that directory when the
-chat is rooted in a repository subdirectory. Shared and restricted principals
-cannot access these endpoints. Requests run on demand, off the event loop.
-
-```text
-GET /api/sessions/{session_id}/workspace/git
-GET /api/sessions/{session_id}/workspace/git/diff?path=src/app.ts&view=staged
-GET /api/sessions/{session_id}/workspace/git/conflict?path=src/app.ts
-POST /api/sessions/{session_id}/workspace/git/action
-```
-
-Actions are `stage`, `unstage`, `commit`, `resolve`, `continue`, and `abort`.
-Every action requires the current status `expected_revision`; stale reviews
-return HTTP 409. Abort additionally requires `confirmed: true`. Commit uses
-the reviewed staged index while preserving unstaged edits. Resolve accepts
-`path` and UTF-8 `content`, saves the text, and stages it. Archived chats remain
-read-only. Non-Git workspaces return `workspace_not_git` (HTTP 422).
-
-Commands have a 30-second deadline. Text conflict sides and edited results are
-limited to 2 MiB each; large diffs report `truncated`, and oversized conflict
-responses fail explicitly. Binary conflicts, executable Git hooks, and files
-with custom filters or merge drivers require the terminal; those mechanisms
-are never silently bypassed. A rebase that reaches another conflict returns
-the new conflicted status so the client can continue reviewing it.
-If publishing the resulting index fails, `git_index_recovery_required`
-identifies the retained index snapshot and lock. The lock blocks later writes
-until the user restores that snapshot using the supplied recovery instructions.
-
-## Imported provider history
-
-The Import Chat list shows local main conversations across projects. It excludes
-Claude sidechains and subagent directories, Codex subagent conversations and
-the native `archived_sessions` directory, and sessions already imported into
-Hyadex (including archived Hyadex chats). Older or stopped main chats,
-headless main sessions, and user-created forks remain eligible. These discovery
-filters do not delete transcripts or change existing chats or direct session-ID
-lookup.
+There is no server-side list of local Claude or Codex sessions and no bulk or
+manual history import. To continue an existing native conversation, create a
+chat with its provider ID (`provider_session_id`, `claude_session_id` or
+`codex_thread_id`) on `POST /api/sessions`. Its history is imported unless
+`import_history` is `false`. A conversation already used by another installed
+HyadexServer instance on this machine is rejected with 409.
 
 Opening a chat catches its timeline up with messages added to the provider
 transcript outside Hyadex. The sync anchors on the newest timeline
@@ -1116,18 +814,6 @@ import a transcript that matches nothing on a populated timeline, and closes
 every import batch with a `turn_finished` marked `imported: true`. Imported
 turns never set a chat's active run, so replayed history can never make a
 stopped chat look busy.
-
-Servers before 0.1.26-beta.30 could append the same transcript tail on every
-open. To remove those duplicates from a chat's event log:
-
-```text
-POST /api/sessions/{session_id}/history/prune-duplicates
-{"dry_run": true}
-```
-
-The default dry run reports how many events and import runs would be
-removed; `{"dry_run": false}` rewrites the log atomically while the chat is
-idle, keeping the first occurrence of every message.
 
 ## Whole-History Search
 
@@ -1197,43 +883,68 @@ the same result. Dismissal retains alert history and does not stop running work.
 
 ## Public API Sketch
 
-The server exposes JSON endpoints under `/api`.
+The server exposes JSON endpoints under `/api`; FastAPI serves the complete
+schema at `/openapi.json`. Paths below that begin with `.../` are relative to
+`/api/sessions/{session_id}`.
 
-- `GET /api/health`
-- `GET /api/sessions`
-- `GET /api/search`
-- `POST /api/sessions`
-- `PATCH /api/sessions/{session_id}`
-- `GET /api/sessions/{session_id}/events`
-- `GET /api/sessions/{session_id}/subagents`
-- `GET /api/sessions/{session_id}/provider-commands`
-- `POST /api/sessions/{session_id}/prompt`
-- `POST /api/sessions/{session_id}/stop`
-- `POST /api/sessions/{session_id}/fork`
-- `POST /api/sessions/{session_id}/digest`
-- `GET /api/sessions/{session_id}/files`
-- `GET /api/sessions/{session_id}/diffs/{run_id}`
-- `POST /api/sessions/{session_id}/upload`
-- `GET /api/jobs`
-- `POST /api/jobs`
-- `PATCH /api/jobs/{job_id}`
-- `DELETE /api/jobs/{job_id}`
-- `GET /api/sessions/{session_id}/jobs`
-- `POST /api/sessions/{session_id}/jobs`
-- `PATCH /api/sessions/{session_id}/jobs/{job_id}`
-- `DELETE /api/sessions/{session_id}/jobs/{job_id}`
-- `GET /api/cross-chat/handoffs/{envelope_id}`
-- `POST /api/cross-chat/handoffs/{envelope_id}/cancel`
-- `GET /api/sessions/{session_id}/processes`
-- `GET /api/sessions/{session_id}/tmux`
-- `GET /api/runtime/catalog`
-- `GET /api/runtime/usage?backend=codex&session_id=<chat>`
-- `GET /api/admin/codex/subagents`
-- `PUT /api/admin/codex/subagents`
-- `GET /ws/sessions/{session_id}`
+- Health and runtime: `GET /api/health`, `GET /api/runtime/catalog`,
+  `GET /api/runtime/usage?backend=codex&session_id=<chat>`,
+  `GET /api/connection-addresses`
+- Chats: `GET`/`POST /api/sessions`, `GET`/`PATCH`/`DELETE /api/sessions/{session_id}`,
+  `POST .../turns`, `POST .../stop`, `POST .../fork`, `POST .../read`,
+  `POST .../unread`, `GET .../timeline-index`, `GET .../search`,
+  `GET .../subagents`, `GET .../provider-commands`, `GET .../runs/{run_id}/trace`
+- Live events: `WS .../events?after=<seq>`, `WS /api/emergency-alerts/events`
+- Queue: `PATCH`/`DELETE .../queue/{queued_id}`, `POST .../queue/{queued_id}/move`,
+  `POST .../queue/{queued_id}/run-now`
+- Files and diffs: `GET`/`POST .../files`, `GET .../files/{file_id}`,
+  `GET .../links/file`, `GET .../diffs/{run_id}`
+- Claude controls: `GET .../claude/runtime`, `PUT`/`DELETE .../claude/goal`,
+  `POST .../claude/context-usage/refresh`,
+  `POST .../claude/interactions/{interaction_id}/resolve`
+- Codex controls: `GET .../codex/runtime`, `GET`/`PUT`/`DELETE .../codex/goal`,
+  `POST .../codex/compact`, `POST .../codex/interactions/{interaction_id}/resolve`
+- Side questions: `GET`/`POST .../side-chat`,
+  `DELETE .../side-chat/requests/{request_id}`, `DELETE .../side-chat/{side_chat_id}`,
+  `POST .../side-questions`, `DELETE .../side-questions/{request_id}`
+- Terminal and tmux: `GET`/`DELETE .../terminal`, `POST .../terminal/open`,
+  `POST .../terminal/input`, `POST .../terminal/resize`, `POST .../terminal/action`,
+  `GET .../terminal/windows`, `WS .../terminal/ws`, `GET .../tmux`,
+  `GET .../tmux/capture`
+- Emergency alerts: `POST .../emergency/acknowledge`
+- Jobs: `GET`/`POST /api/jobs`, `PATCH`/`DELETE /api/jobs/{job_id}`,
+  `POST /api/jobs/{job_id}/run`
+- Search and paths: `GET /api/search`, `GET /api/working-directories/complete`
+- Groups and Autopilot: `/api/groups...` and `/api/autopilot/runs...`; see
+  [group discussions](GROUP_DISCUSSIONS.md) and [Autopilot](AUTOPILOT.md)
+- Administration: `GET`/`PUT /api/admin/codex/goals`,
+  `GET`/`PUT /api/admin/codex/subagents`, `GET`/`POST /api/admin/restart`
+- Agent helpers, authorized by a live run's provider authority rather than the
+  client token: `/api/agent/sessions/{session_id}/jobs...`,
+  `POST /api/agent/sessions/{session_id}/artifacts`,
+  `POST /api/agent/sessions/{session_id}/emergency-alerts`,
+  `POST /api/agent/sessions/{session_id}/notifications` and
+  `POST /api/agent/provider-tools/mcp`
 
-The event stream is append-only JSONL on disk and paged through the events API.
-Large clients should page history instead of loading every event at once.
+Endpoints that no client used have been removed together with their health
+capabilities: local CLI session listing and bulk import, manual history import,
+maintenance and duplicate pruning, timeline pins (`pinned_items`), port tunnels
+(`port_forwarding_v1`), process listings, host diagnostics, the Codex load,
+rotate, rollback, review, shell-command, background-terminal and
+permission-profile controls, Claude MCP management, provider reload, empty-chat
+dismissal and sidebar ordering, the session-scoped copies of the jobs routes
+(use `/api/jobs` or the agent routes), and the unscoped and per-event file
+lookups (use `.../files/{file_id}`). `local_session_import_v1`,
+`workspace_files`, `codex_auth_v1`, `codex_provider_v1`,
+`provider_connections_v1` and `cross_chat_handoffs_v1` are no longer
+advertised. `codex_controls` and `claude_controls` no longer list the removed
+controls, and `scheduled_jobs` no longer lists chat-reference or mention
+features.
+
+The event stream is append-only JSONL on disk. `GET /api/sessions/{session_id}`
+pages it (`after`, `before`, `limit`), and the events WebSocket replays from
+`after` before streaming live events. Large clients should page history
+instead of loading every event at once.
 
 Servers advertising `event_stream_liveness_v1` (available, version 1) support
 `liveness=true` on `/api/sessions/{session_id}/events`. After complete catch-up
@@ -1271,8 +982,8 @@ Existing transient side-question routes remain available to older clients.
 Authenticated native clients can read provider-reported allowance separately
 from a chat's context usage. Codex uses its existing app-server account read;
 subsequent reads use the observed snapshot, and `refresh=true` requests a fresh
-native snapshot. Native rate-limit events update it without polling. Custom
-endpoints and API-key accounts do not expose a ChatGPT allowance.
+native snapshot. Native rate-limit events update it without polling. API-key
+accounts do not expose a ChatGPT allowance.
 
 Claude answers from Claude Code's own `/usage` data: a short-lived Agent SDK
 connection sends the native `get_usage` control request without a prompt,
@@ -1282,7 +993,7 @@ refreshed after a native rate-limit event; windows observed through rate-limit
 events are the fallback. Missing percentages stay unknown; no model request is
 made to obtain usage. Responses include observation times, reset times when reported, and
 Codex credit balance when supplied. Credits have no inferred currency. Caches
-are scoped to the provider connection and invalidated when its account or
+are scoped to the provider process and invalidated when its account or
 generation changes. A `provider_usage_changed` socket notification tells the
 native client to reread; account data never becomes a transcript event.
 
@@ -1318,7 +1029,7 @@ FIFO order.
 Before publishing:
 
 ```bash
-python3 -m py_compile agent_server.py hyadex_jobs.py hyadex_chats.py hyadex_emergency.py hyadex_notify.py hyadex_publish.py provider_commands.py hyadex/providers/claude.py hyadex/providers/codex.py hyadex/providers/runtime.py
+python3 -m py_compile agent_server.py hyadex_jobs.py hyadex_emergency.py hyadex_notify.py hyadex_publish.py provider_commands.py hyadex/providers/claude.py hyadex/providers/codex.py hyadex/providers/runtime.py
 rg -n 'private-host|/home/<name>|/Users/<name>|token-value' .
 ```
 
@@ -1331,27 +1042,13 @@ Do not commit:
 - compiled Python caches
 
 
-### Recoverable desktop empty-chat cleanup
+### Empty-chat cleanup
 
-New desktops pass a durable random `placeholder_client_id` to `GET /api/sessions`.
-A candidate session advertises `empty_chat_cleanup: "client-v1"`; this is a
-capability, not evidence that a row is safe to remove. On startup and explicit
-sidebar refresh, the desktop checks its unsent drafts, references and uploads,
-then calls `POST /api/sessions/{id}/dismiss-empty` with that client identity and
-`expected_updated_at`. The server repeats the existing conditional empty-history
-and live-resource checks under the session lifecycle lock and admission fence.
-
-The result `{ "dismissed": true }` hides only the unchanged row in that desktop's
-list. It persists across restarts without deleting the session or provider
-history, and never removes another desktop's offline drafts. Reading with no
-client identity still exposes retained rows; subsequent session/content changes
-invalidate a dismissal. Legacy blank records are adopted only after the same
-proof. Each row accepts at most 256 client identities and rejects overflow.
-
-An unsupported endpoint, stale session or failed proof preserves the chat. The
-new client never falls back to DELETE or the legacy `discard-empty` route.
-Explicit user deletion retains its existing behavior. Updating only the server
-or only an older client does not provide the complete new cleanup workflow.
+The desktop empty-chat dismissal and discard routes, and the sidebar ordering
+route, have been removed. Dismissals recorded by older desktops still hide the
+unchanged empty row when `GET /api/sessions` receives the same
+`placeholder_client_id`; a later content or settings change makes it visible
+again. Deleting a chat uses `DELETE /api/sessions/{session_id}`.
 
 ### Chat readiness after restart
 

@@ -3,6 +3,32 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-27 — Unused server features removed
+
+The server now carries only what the Mac app, the in-chat helpers (jobs,
+publish, emergency, notify) and planned client features use. API contract 30.
+
+- Removed endpoints no client called: handoff digests, listing and bulk
+  importing local CLI sessions (resuming a native conversation when creating a
+  chat still works), manual history maintenance, timeline pins, port tunnels,
+  process listings, host diagnostics, Codex load/rotate/rollback/review/shell and
+  background-terminal controls, Claude MCP management, provider reload,
+  empty-chat dismissal, sidebar ordering and duplicate file and job routes.
+- Removed workspace file browsing and editing, including its Git staging and
+  commit routes. Per-turn diffs, chat files, file links and working-directory
+  suggestions are unchanged.
+- Removed custom API endpoints for Codex and Claude and in-app Codex sign-in
+  management. Chats always use the native Claude Code and Codex logins, and a
+  `codex login` in the terminal is still picked up for new turns. Chats saved
+  against a custom endpoint keep their history and can be renamed or archived,
+  but no longer run; saved endpoint files stay on disk for the user to delete.
+- Removed messaging between chats (handoffs, @Chat references, the chat
+  mailbox and the `chats` helper). Group discussions cover multi-agent work.
+  Queued deliveries left from before are discarded visibly, scheduled jobs that
+  targeted another chat pause for editing, and old history stays readable.
+- The chat terminal (one persistent tmux session per chat) is kept; the Mac
+  app now has a terminal panel for it.
+
 ## 2026-10-26 — Retired updater, activation and npm code removed
 
 - Deleted the in-app updater and everything only it used: the signed-release

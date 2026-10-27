@@ -7,15 +7,13 @@ route collection, authorization middleware and lifespan to the application facto
 | Module | Owns | Depends on |
 | --- | --- | --- |
 | `hyadex/app.py` | FastAPI construction, middleware and lifespan composition | Explicit `ApplicationBindings` |
-| `hyadex/store/cross_chat.py` | Durable cross-chat ledger, transactions and migrations | Explicit `CrossChatBindings`; mailbox SQL |
-| `hyadex/store/mailbox.py` | Same-server mailbox SQL | Caller-owned SQLite transaction |
 | `hyadex/store/files.py` | Fsynced atomic JSON replacement | Caller-owned path and value |
 | `hyadex/store/transcripts.py` | Bounded JSONL parsing | Caller-owned binary streams |
 | `hyadex/jobs/schedules.py` | Interval, cron, RRULE and timezone calculations | Calendar libraries; no runtime state |
 | `hyadex/jobs/context.py` | Chat/standalone provider context policy | Explicit default backend and allowed backends |
 | `hyadex/providers/runtime.py` | Exact user input, bounded runtime control data and environment scrubbing | No runtime state |
 | `hyadex/providers/claude.py` | Claude SDK actor ownership and lifecycle | Native SDK factory and callbacks; lazy model-catalog/side-question adapters |
-| `hyadex/providers/codex.py` | Multiplexed Codex app-server JSON-RPC transport | Process factory and explicit callbacks |
+| `hyadex/providers/codex.py` | Multiplexed Codex app-server JSON-RPC transport and CLI configuration overrides | Process factory and explicit callbacks |
 | `hyadex/groups.py` | Group models, timeline, dispatch, recovery | `GroupRuntime` supplied by the application |
 | `hyadex/autopilot.py` | Planning, approval, verification, review, worktree checkpoints | Group engine |
 | `hyadex/routes/groups.py` | Group HTTP and WebSocket endpoints | Group engine and explicit WebSocket callbacks |
@@ -45,11 +43,24 @@ admission guard. Group and Autopilot tests use this same factory. Production
 route handlers still reference legacy process state; constructing a second
 factory instance with those same handlers does not isolate that legacy state.
 
-The cross-chat ledger receives clocks, validators, instance identity and runtime
-cancellation joining through `CrossChatBindings`. It does not import the server
-or keep a parallel copy of its state. Its SQL, transaction boundaries and
-cancellation semantics are retained. The six ledger fixtures import the actual
-class; some surrounding handler fixtures still compile source fragments.
+Cross-chat messaging is removed: `hyadex/store/cross_chat.py`,
+`hyadex/store/mailbox.py`, `CrossChatBindings` and the `hyadex_chats.py` helper
+no longer exist. `agent_server.py` keeps only the per-run provider authority
+(`PROVIDER_AUTHORITIES`) that the jobs, publish, emergency and notify helpers
+present; it is issued at turn start, reissued for native steering and revoked
+when the run ends. Its files stay in the state directory's
+`cross_chat_authority/` folder for compatibility. Queue recovery discards
+durable rows that carry retired cross-chat purposes or routing fields with a
+durable `turn_unqueued`, and `cross_chat.sqlite3` is no longer opened.
+
+Workspace browsing and editing (`workspace_git.py` and the `/workspace` routes),
+custom Codex providers (`codex_provider.py`), per-chat Claude API connections
+(`provider_connections.py`) and in-app Codex sign-in management are also
+removed. `codex_auth.py` now only reads the native Codex login: its kind, for
+model policy, and a keyed revision of the login files, so that a terminal
+`codex login` moves new turns to a fresh app-server. Sessions saved
+with a removed custom endpoint are refused at turn, fork and runtime-change
+admission with 410. Some handler fixtures still compile source fragments.
 
 Further migration should separate remaining persistence, turns,
 provider adapters and the remaining route families. Process state must move

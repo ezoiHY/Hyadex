@@ -12,6 +12,11 @@ explicitly named imports, forks, and child agents are not retroactively renamed.
 
 ## Resume and import labels
 
+HyadexServer no longer lists local sessions as import candidates or bulk-imports
+them; the candidate, preview-label and discovery notes below are historical.
+Resume by session ID, including its native title adoption and cross-instance
+ownership check, is current.
+
 - Claude import candidates prefer the last exact-session `custom-title`, then
   the last `ai-title`, then the first-user-message fallback. Metadata
   from another session or a sidechain is never used as the parent title.
@@ -80,8 +85,8 @@ diff checks passed. No full-suite or client UI success is claimed.
 
 ## Background generation: Codex
 
-- Uses the chat's provider/model and existing connection. Custom provider
-  bindings remain isolated; no separate title API key is required.
+- Uses the chat's provider/model and the native Codex login; no separate
+  title API key is required.
 - One optional attempt per eligible chat, claimed durably before provider usage.
   It consumes additional provider usage. Failures/timeouts keep the fallback;
   automatic retries do not accumulate usage.
@@ -125,7 +130,7 @@ mobile push of title-only updates would be a separate client improvement.
 | Provider | Existing title source |
 | --- | --- |
 | Claude | Bounded exact-session transcript head/tail reads of `custom-title` / `ai-title` records. No additional generation request. SDK sessions may not produce these records. |
-| Codex | App-server start/resume/read names, `thread/name/updated`, and existing `session_index.jsonl`. Custom providers use their own manager cache. Native names take precedence over generated fallback names. |
+| Codex | App-server start/resume/read names, `thread/name/updated`, and existing `session_index.jsonl`. Native names take precedence over generated fallback names. |
 
 Native metadata is checked before normal terminal events and when idle history
 is reopened. Child-name notifications continue updating child identities, never

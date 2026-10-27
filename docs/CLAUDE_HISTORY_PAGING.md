@@ -47,10 +47,10 @@ so editing an imported string cannot inherit a previously cached repair.
 Ambiguous ownership, missing IDs, changed content, and genuinely distinct
 replies remain visible. This applies to bounded recent and historical windows.
 
-The existing mailbox-wake pre-import filter uses the same proof for assistant
-output, not just its generated input. This matters because a native wake's
-empty public prompt cannot match the provider's internal prompt as an ordinary
-timeline credit. Proven replay imports become blank, metadata-only records
+The mailbox-wake pre-import filter, kept for wakes recorded before the chat
+mailbox was removed, uses the same proof for assistant output, not just its
+generated input. This matters because a native wake's empty public prompt
+cannot match the provider's internal prompt as an ordinary timeline credit. Proven replay imports become blank, metadata-only records
 before publication; a wholly metadata-only batch has neutral boundary events.
 No native answer or existing append-only event is rewritten or deleted.
 

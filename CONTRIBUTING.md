@@ -32,6 +32,10 @@ input validation, group/Autopilot engines and routes, the app factory, transcrip
 parsing and runtime inventories. It does not replace the
 full integration/provider/installer suite above; `--list` shows its exact scope.
 
+`tests/test_route_inventory.py` lists the routes that the Mac client, the
+in-chat helpers and planned client features call. Removing or renaming one of
+those routes must update its caller and that list together.
+
 Several modules read the home directory when `agent_server` is imported, so
 always use a temporary `HOME`; never point tests at installed services or real
 chat history. On macOS a few inherited suites (installer and memory-admission checks) depend on Linux or on free memory and may fail
@@ -54,9 +58,9 @@ releases. Tests are not included in release archives.
 
 Keep the README focused on installation and basic use. Detailed API contracts,
 security invariants and verification records belong in `docs/`, for example
-[group discussions](docs/GROUP_DISCUSSIONS.md), the
-[server reference](docs/SERVER_REFERENCE.md), the
-[chat mailbox](docs/CHAT_MAILBOX.md) and [async routes](docs/ASYNC_CHAT_ROUTES.md).
+[group discussions](docs/GROUP_DISCUSSIONS.md), [Autopilot](docs/AUTOPILOT.md),
+the [server reference](docs/SERVER_REFERENCE.md) and the
+[backend checkpoint](docs/BACKEND_STATUS.md).
 
 ## Before opening a pull request
 

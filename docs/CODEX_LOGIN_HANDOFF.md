@@ -1,9 +1,12 @@
 # Pick up a native Codex sign-in without restarting HyadexServer
 
-After signing in again with the native CLI, subsequent Hyadex work can use
-a fresh Codex app-server process. Existing chat IDs and native thread IDs are
-retained. HyadexServer does not log in, log out, write credentials, copy tokens
-into another authentication mode, or replay a previously submitted turn.
+After signing in again with the native CLI (`codex login` on the server, as the
+user that runs HyadexServer), subsequent Hyadex work can use a fresh Codex
+app-server process. Existing chat IDs and native thread IDs are retained.
+HyadexServer does not log in, log out, write credentials, copy tokens into
+another authentication mode, or replay a previously submitted turn. It has no
+in-app sign-in, account or API-key routes and no manual reload; the automatic
+handoff below is how a new login reaches existing chats.
 
 ## Triggers and limits
 
@@ -17,39 +20,26 @@ into another authentication mode, or replay a previously submitted turn.
   not cause process churn. Missing, malformed, oversized or unsupported data
   is inconclusive, not proof of logout or a new login.
 - **Recheck CLIs** and automatic catalog refreshes
-  (`GET /api/runtime/catalog?refresh=true`) refresh discovery only. They can
-  still observe a genuine file-backed login change, but an unknown revision
-  never requests a handoff. This also protects older clients that use the query
+  (`GET /api/runtime/catalog?refresh=true`) refresh discovery. They can also
+  observe a genuine file-backed login change, but an unknown revision never
+  requests a handoff. This also protects older clients that use the query
   during reconnect or server-instance changes.
-- **Reload sign-in** in the desktop Codex CLI Login card uses the separate
-  native-admin `POST /api/admin/codex/auth/reload` with an empty JSON object.
-  Use it after CLI login when an opaque credential store prevents automatic
-  detection. An unchanged known revision remains observational; keyring/auto
-  revisions are unknown and an explicit reload requests a safe handoff.
-  `GET /api/admin/codex/auth` advertises `login_reload_available`; the POST adds
-  `login_reload_pending` when old managers still need to settle. No credential
-  input or browser-origin request is accepted. It changes future process
-  selection, not authentication. Repeated explicit reloads can retire successive
-  process generations. Opening Settings, account reads and model refreshes
-  never issue this POST. Older servers keep the read-only account Recheck.
 - Automatic detection is conservative and is not a complete native credential
   resolver. User configuration selects file detection; managed requirements
   may select another store. A file change is only a hint to load a fresh native
   process, which remains responsible for effective policy and credential choice.
   The server does not read Keychain secrets. `auto`, `keyring`, unknown formats,
   environment authentication and process-only `ephemeral` credentials have no
-  automatic file detection. An ephemeral login cannot be recovered from an
-  unrelated CLI process by rechecking; recognized ephemeral stores and malformed
-  configurations reject explicit reload so a working process is preserved.
-- Custom endpoints retain their credential-owned managers and are not retired
-  by native login changes or this explicit recheck.
+  automatic file detection. With those stores, a new login reaches Hyadex chats
+  only when a fresh Codex app-server starts, for example after a server
+  restart. An ephemeral login cannot be recovered from an unrelated CLI process.
 
 Handoff logs distinguish server-owned sources (`catalog_refresh`,
-`turn_admission`, `account_status`, `manager_lookup`, `manual_login_reload`),
-the observed-change/explicit-reload reason, and blockers such as background
-terminals, goals, pending ownership or failed unload verification. Repeated
-identical blockers are coalesced per manager/chat. No credentials, revision
-digests, account identities, command bodies or credential paths are logged.
+`turn_admission`, `manager_lookup`), the observed-change reason, and blockers
+such as background terminals, goals, pending ownership or failed unload
+verification. Repeated identical blockers are coalesced per manager/chat. No
+credentials, revision digests, account identities, command bodies or credential
+paths are logged.
 
 Official [authentication guidance](https://learn.chatgpt.com/docs/auth) describes
 the native stores and managed overrides. The documented
@@ -75,9 +65,10 @@ credentials or restart a shared process.
 A new ordinary turn checks this before its admission/acceptance. Busy messages
 can follow the existing queue path; queue promotion repeats the check. A
 temporarily blocked handoff returns a retryable 409 rather than sending new
-work with a known superseded login. Existing approval/Stop controls, goal
-pause/clear and background-terminal cleanup remain tied to the old owner so
-users can settle the work blocking migration.
+work with a known superseded login. Existing approval/Stop controls and goal
+pause/clear remain tied to the old owner so users can settle the work blocking
+migration. Native background terminals started by the old process block
+migration until they finish; HyadexServer no longer lists or cleans them up.
 
 A login change expires cached readiness, including a previous login denial.
 Late success/failure from a superseded normal process cannot overwrite the
@@ -93,10 +84,10 @@ from revoking its credentials.
 ## Verification boundary
 
 Isolated regressions cover revision parsing, ordinary renewal, same-account
-login signals, account switches, custom endpoints, pending resumes, caller
-leases, start-lock races, idle/queued/busy chats, goals, side chats, subagents,
-background terminals, unsubscribe proof, cancellation and failed replacement.
-Existing native lifecycle, authentication and client contracts are checked too.
+login signals, account switches, pending resumes, caller leases, start-lock
+races, idle/queued/busy chats, goals, side chats, subagents, background
+terminals, unsubscribe proof, cancellation and failed replacement. Existing
+native lifecycle, authentication and client contracts are checked too.
 
 Original handoff validation: 621 focused server tests and 43 existing desktop
 runtime-catalog/health tests passed, with production-module compilation and
@@ -108,27 +99,29 @@ file-backed API-key data and disabled external connectivity, showed cached
 `apiKey` metadata after fixture removal, `none` after an explicit recheck, and
 `apiKey` after adding a new fixture login. HyadexServer stayed running throughout.
 This was metadata verification, not a valid account, OAuth renewal or model turn.
+It used the account route and explicit recheck that have since been removed.
 
 Before declaring ready, use a disposable real chat through the actual app:
-remember a phrase, re-login with the same native account, recheck if needed,
-and continue the same thread while a second chat remains active. Separately
-exercise account switching and a keychain-backed login. Verify no duplicate
-turn, unchanged provider ID/history, and truthful pending/failure states.
-These live OAuth/account-switch/client checks remain unverified.
+remember a phrase, re-login with the same native account, and continue the
+same thread while a second chat remains active. Separately exercise account
+switching and a keychain-backed login. Verify no duplicate turn, unchanged
+provider ID/history, and truthful pending/failure states. These live
+OAuth/account-switch/client checks remain unverified.
 
 ### Catalog-refresh separation validation
 
 The follow-up fix passed 67 focused server tests and 527 desktop tests, plus
-desktop typecheck and production build. HTTP regressions cover repeated forced
-catalog refreshes with an opaque login and owned background terminals, explicit
-reload, continued ownership protection, native-only authorization, and redacted
+desktop typecheck and production build. HTTP regressions covered repeated
+forced catalog refreshes with an opaque login and owned background terminals,
+continued ownership protection, native-only authorization, and redacted
 source/waiting logs.
 
 An isolated installed service was exercised using the production desktop
 transport (only the Electron log-directory lookup was substituted for headless
-execution). Account GET, explicit reload POST, browser/bearer rejection, five
-forced catalog refreshes and two real native Codex model turns passed. The
-follow-up retained the same provider thread. No native credentials were changed;
-no running training jobs were used. The opaque-login/background-work combination
+execution). Five forced catalog refreshes and two real native Codex model turns
+passed; the follow-up retained the same provider thread. The account GET,
+explicit reload POST and browser/bearer rejection checked in that run covered
+routes that have since been removed. No native credentials were changed; no
+running training jobs were used. The opaque-login/background-work combination
 is covered by isolated regressions, not live keychain/long-training acceptance.
 Actual App clicking remains pending because computer control was unavailable.

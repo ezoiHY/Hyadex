@@ -26,21 +26,21 @@ still work. `./instances.sh update local-test` reinstalls the code from the
 checkout containing that command; it does not fetch a newer release. In-app
 update routes have been retired.
 
-## Import exclusion across instances
+## Resume exclusion across instances
 
-Open Import Chat in the new instance. Conversations already present in another
-installed instance on this machine should be absent, including archived chats
-and chats in stopped services. No other instance's transcripts, configuration,
-or history are modified. A fresh chat without a provider ID needs no cross-
+The server no longer lists local sessions for import. Creating a chat that
+resumes a provider conversation already used by another installed instance on
+this machine is rejected with 409, including conversations in archived chats
+and stopped services. No other instance's transcripts, configuration, or
+history are modified. A fresh chat without a provider ID needs no cross-
 instance scan. This only covers installed/discoverable instances for this OS user.
 
 For a safe two-way test, use two disposable named instances running this branch,
-not the default server. Import one unused provider conversation into test A,
-then refresh Import Chat on test B: that conversation should disappear. A stale
-selection or manually pasting its ID on B must be rejected as already in use.
+not the default server. Resume one unused provider conversation in test A by
+its ID, then try the same ID on test B: it must be rejected as already in use.
 Restart or stop A: its conversation must remain excluded on B. Delete the test
 wrapper on A (not its native transcript) or uninstall A while preserving history:
-the conversation becomes available after refreshing B.
+resuming the conversation on B then succeeds.
 
 The old default server does not need restarting for a new server to exclude its
 saved chats. However, an old server's own picker will not gain the new behavior
@@ -101,9 +101,9 @@ terminal suites remain separate. Run the full suite as well as focused tests.
 Both default and named source installs now have worker and gateway services;
 `instances.sh start/stop/restart/logs` addresses the selected pair.
 
-`tests/test_cross_instance_import.py` covers ownership filtering, stale/manual
-imports, parked IDs, stopped/removed instances, unsafe indexes and cancellation
-using synthetic homes only.
+`tests/test_cross_instance_import.py` covers ownership filtering, manual
+resume (including `import_history: false`), parked IDs, stopped/removed
+instances, unsafe indexes and cancellation using synthetic homes only.
 
 `tests/test_instance_connection_output.py` checks labeled connection URLs, local
 Tailscale-status/bind checks, and blue service names. Redirected output,

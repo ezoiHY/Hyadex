@@ -29,17 +29,24 @@ goals, terminals and file previews. Clients connect over your LAN or Tailscale.
   or nothing, whether it works in an isolated worktree branch (one commit per
   step) or in place, and who reviews. See [Autopilot](docs/AUTOPILOT.md).
 - **Scheduled jobs and goals** for chats and groups.
-- **Persistent chats**: durable queues, restart recovery, history import from
-  local Claude/Codex sessions, forks and side questions.
-- **Workspace tools**: file browsing and previews, Git status/diffs, and
-  persistent terminals (tmux).
+- **Persistent chats**: durable queues, restart recovery, resuming an existing
+  Claude/Codex conversation with its history, forks and side questions.
+- **Workspace tools**: per-turn code diffs, chat file previews and persistent
+  terminals (tmux).
 - **Several servers per machine**: named instances with separate state.
 
 Public snapshot links and interactive browser sharing are no longer supported.
 Existing chat history and sharing data are retained.
 
-Same-server chat routes remain available. Team Hub, Team Network mail and
-secure-peer pairing have been removed; existing network state is preserved.
+Messaging between ordinary chats (handoffs, `@Chat` routes and the chat
+mailbox) has been removed; group discussions and Autopilot cover multi-agent
+work. Team Hub, Team Network mail and secure-peer pairing were removed earlier;
+existing network state is preserved.
+
+Chats always use the server user's own Claude Code and Codex logins. Custom API
+endpoints and in-app Codex sign-in were removed; sign in with the native CLI on
+the server (`codex login` is picked up automatically). Chats saved against a
+custom endpoint remain readable but no longer run.
 
 Claude Code and Codex are the supported runtimes. Cursor, Gemini and OpenCode
 support have been removed; their saved chats
