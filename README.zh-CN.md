@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/images/icon.png" alt="Hyadex" width="128">
+
 # Hyadex
 
 **一群编程代理，跑在你自己的机器上。**

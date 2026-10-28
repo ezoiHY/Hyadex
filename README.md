@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/images/icon.png" alt="Hyadex" width="128">
+
 # Hyadex
 
 **A cluster of coding agents, on a machine you control.**

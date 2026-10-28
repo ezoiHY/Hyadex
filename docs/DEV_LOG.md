@@ -3,6 +3,13 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-28 — New app icon
+
+- The icon keeps the V of the Hyades and orange Aldebaran, with crisp stars,
+  soft glows instead of hard halos, and stars in different colours for agents
+  with different gifts, meeting in one star at the vertex. The README shows it
+  as the project logo.
+
 ## 2026-10-28 — Project README with architecture and screenshots
 
 - The README (and a Chinese version, README.zh-CN.md) now explains what Hyadex
