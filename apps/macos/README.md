@@ -243,6 +243,10 @@ directly from a shell may not receive windows.
   to PNG and quits (`HYADEX_SNAPSHOT_ONLY=<name>` selects scenes). System glass
   materials do not render in these images. Only this explicit development path
   loads sample fixtures; ordinary startup and connection failures never do.
+  `HYADEX_SNAPSHOT_SIDEBAR=1` draws an opaque copy of the sidebar over its glass
+  column and shows the footer as connected; the README screenshots
+  (`docs/images/`) are made this way, with a separate `APP_BUNDLE_ID` so a
+  running copy of the app is not disturbed.
 - **Local startup acceptance:** use a separate `APP_BUNDLE_ID` when building,
   then launch with `HYADEX_LOCAL_SERVER_HOME` set to a temporary directory and
   `HYADEX_LOCAL_SERVER_INSTANCE` set to a unique test name. `HYADEX_LOCAL_SERVER_SOURCE`

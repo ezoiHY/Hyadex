@@ -9,17 +9,20 @@ public struct SidebarSnapshotView: View {
     public init(model: AppModel) { self.model = model }
 
     public var body: some View {
-        SidebarView(model: model)
+        SidebarView(model: model, drawsOwnSelection: true)
             .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
 struct SidebarView: View {
     @Bindable var model: AppModel
+    /// Snapshots only: the native selection highlight is composited by the
+    /// window server and renders black in process, so draw a plain one.
+    var drawsOwnSelection = false
     @AppStorage("showArchived") private var showArchived = false
 
     var body: some View {
-        List(selection: Binding(get: { model.selection }, set: { model.selectFromSidebar($0) })) {
+        List(selection: Binding(get: { drawsOwnSelection ? nil : model.selection }, set: { model.selectFromSidebar($0) })) {
             switch model.sidebarMode {
             case .work: workSections
             case .group: groupSections
@@ -72,14 +75,14 @@ struct SidebarView: View {
         if !model.visiblePinned.isEmpty {
             Section("置顶") {
                 ForEach(model.visiblePinned) { chat in
-                    ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id))
+                    ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id)).modifier(OwnSelection(item: SidebarItem.chat(chat.id), on: drawsOwnSelection, model: model))
                         .contextMenu { chatMenu(chat) }
                 }
             }
         }
         Section(model.visiblePinned.isEmpty ? "" : "最近") {
             ForEach(model.visibleChats) { chat in
-                ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id))
+                ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id)).modifier(OwnSelection(item: SidebarItem.chat(chat.id), on: drawsOwnSelection, model: model))
                     .contextMenu { chatMenu(chat) }
             }
             if model.visibleChats.isEmpty && model.visiblePinned.isEmpty {
@@ -89,7 +92,7 @@ struct SidebarView: View {
         if !model.archivedChats.isEmpty {
             Section(isExpanded: $showArchived) {
                 ForEach(model.archivedChats) { chat in
-                    ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id))
+                    ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id)).modifier(OwnSelection(item: SidebarItem.chat(chat.id), on: drawsOwnSelection, model: model))
                         .contextMenu { chatMenu(chat) }
                 }
             } header: {
@@ -108,14 +111,14 @@ struct SidebarView: View {
             } icon: {
                 Image(systemName: "calendar.badge.clock")
             }
-            .tag(SidebarItem.jobs)
+            .tag(SidebarItem.jobs).modifier(OwnSelection(item: SidebarItem.jobs, on: drawsOwnSelection, model: model))
         }
     }
 
     @ViewBuilder private var groupSections: some View {
         Section {
             ForEach(model.visibleGroups) { group in
-                GroupRow(group: group).tag(SidebarItem.group(group.id))
+                GroupRow(group: group).tag(SidebarItem.group(group.id)).modifier(OwnSelection(item: SidebarItem.group(group.id), on: drawsOwnSelection, model: model))
                     .contextMenu { groupMenu(group) }
             }
             if model.visibleGroups.isEmpty {
@@ -125,7 +128,7 @@ struct SidebarView: View {
         if !model.archivedGroups.isEmpty {
             Section(isExpanded: $showArchived) {
                 ForEach(model.archivedGroups) { group in
-                    GroupRow(group: group).tag(SidebarItem.group(group.id))
+                    GroupRow(group: group).tag(SidebarItem.group(group.id)).modifier(OwnSelection(item: SidebarItem.group(group.id), on: drawsOwnSelection, model: model))
                         .contextMenu { groupMenu(group) }
                 }
             } header: {
@@ -139,12 +142,12 @@ struct SidebarView: View {
         let finished = model.visibleRuns.filter { $0.status == .done || $0.status == .aborted }
         if !active.isEmpty {
             Section("进行中") {
-                ForEach(active) { run in RunRow(run: run).tag(SidebarItem.autopilot(run.id)) }
+                ForEach(active) { run in RunRow(run: run).tag(SidebarItem.autopilot(run.id)).modifier(OwnSelection(item: SidebarItem.autopilot(run.id), on: drawsOwnSelection, model: model)) }
             }
         }
         if !finished.isEmpty {
             Section("已结束") {
-                ForEach(finished) { run in RunRow(run: run).tag(SidebarItem.autopilot(run.id)) }
+                ForEach(finished) { run in RunRow(run: run).tag(SidebarItem.autopilot(run.id)).modifier(OwnSelection(item: SidebarItem.autopilot(run.id), on: drawsOwnSelection, model: model)) }
             }
         }
         if model.visibleRuns.isEmpty {
@@ -661,5 +664,23 @@ private struct SearchHitRow: View {
             }
         }
         return text
+    }
+}
+
+/// A plain selection background for in-process snapshots (see `drawsOwnSelection`).
+private struct OwnSelection: ViewModifier {
+    let item: SidebarItem
+    let on: Bool
+    let model: AppModel
+
+    func body(content: Content) -> some View {
+        if on && model.selection == item {
+            content.listRowBackground(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.1))
+                    .padding(.horizontal, 10))
+        } else {
+            content
+        }
     }
 }

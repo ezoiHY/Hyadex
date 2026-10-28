@@ -126,6 +126,11 @@ enum Snapshotter {
         }
         NSApp.activate(ignoringOtherApps: true)
         try? await Task.sleep(for: .seconds(1.5))
+        if ProcessInfo.processInfo.environment["HYADEX_SNAPSHOT_SIDEBAR"] != nil {
+            // README shots show the server footer as a connected app would.
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+            model.connection = .connected(version: version)
+        }
         // HYADEX_SNAPSHOT_ONLY: comma-separated parts of scene names.
         let wanted = only?.split(separator: ",").map(String.init)
         for scene in scenes where wanted == nil || wanted!.contains(where: scene.name.contains) {
@@ -176,9 +181,44 @@ enum Snapshotter {
                 continue
             }
             let target = window.attachedSheet ?? window
-            write(capture(target), to: output.appending(path: scene.name + ".png"))
+            var image = capture(target)
+            // HYADEX_SNAPSHOT_SIDEBAR=1: the sidebar's glass does not render in
+            // process, so draw an opaque copy of it over its column (README shots).
+            if target === window, ProcessInfo.processInfo.environment["HYADEX_SNAPSHOT_SIDEBAR"] != nil {
+                image = await withSidebar(image, of: window, model: model)
+            }
+            write(image, to: output.appending(path: scene.name + ".png"))
         }
         exit(0)
+    }
+
+    /// The window's capture with the sidebar column replaced by an opaque rendering of it.
+    private static func withSidebar(_ base: NSBitmapImageRep?, of window: NSWindow, model: AppModel) async -> NSBitmapImageRep? {
+        guard let base, let root = window.contentView?.superview ?? window.contentView,
+              let split = firstSplitView(in: root), let column = split.arrangedSubviews.first else { return base }
+        let top = window.frame.height - window.contentLayoutRect.maxY  // title bar and toolbar
+        let size = NSSize(width: column.frame.width, height: window.frame.height - top)
+        let panel = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless],
+                             backing: .buffered, defer: false)
+        panel.appearance = NSApp.appearance
+        panel.contentView = NSHostingView(rootView: SidebarSnapshotView(model: model).frame(width: size.width, height: size.height))
+        panel.setFrameOrigin(NSPoint(x: -30000, y: 0))
+        panel.orderFront(nil)
+        try? await Task.sleep(for: .seconds(1))
+        defer { panel.orderOut(nil) }
+        guard let sidebar = capture(panel) else { return base }
+        let canvas = base.copy() as! NSBitmapImageRep
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: canvas)
+        sidebar.draw(in: NSRect(x: 0, y: 0, width: size.width, height: size.height))
+        NSGraphicsContext.restoreGraphicsState()
+        return canvas
+    }
+
+    private static func firstSplitView(in view: NSView) -> NSSplitView? {
+        if let split = view as? NSSplitView, split.arrangedSubviews.count >= 2 { return split }
+        for child in view.subviews { if let found = firstSplitView(in: child) { return found } }
+        return nil
     }
 
     /// Writes one window (for live checks); the file goes next to the live-check log.

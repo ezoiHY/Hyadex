@@ -3,6 +3,15 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-28 — Project README with architecture and screenshots
+
+- The README (and a Chinese version, README.zh-CN.md) now explains what Hyadex
+  is, its server and Mac app architecture with a diagram, the UI design, and
+  shows eight screenshots in `docs/images/`.
+- The snapshot mode can render the sidebar for these screenshots
+  (`HYADEX_SNAPSHOT_SIDEBAR=1`); the sample jobs show their results as the app
+  does for real ones.
+
 ## 2026-10-28 — Mac app: a calmer composer
 
 - The message box is two lines tall with rounder corners, like Claude's and

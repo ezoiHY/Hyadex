@@ -1,177 +1,308 @@
+<div align="center">
+
 # Hyadex
 
-**A cluster of coding agents.** Hyadex is a self-hosted server that runs
-Claude Code and Codex on a machine you control and lets them work together
-with you in **group discussions**, alongside ordinary chats, scheduled jobs,
-goals, terminals and file previews. Clients connect over your LAN or Tailscale.
+**A cluster of coding agents, on a machine you control.**
 
-> **Status:** first backend version and a first native macOS client
-> ([`apps/macos`](apps/macos/README.md)). The Android client is still to be
-> rewritten; other clients can use the HTTP/WebSocket API (see [API](#api)).
-> Current scope, verification and deferred work: [backend checkpoint](docs/BACKEND_STATUS.md).
-> Hyadex is derived from the AgentsDock server; see
-> [History and license](#history-and-license).
+Run Claude Code and Codex on your own server, chat with them from a native Mac app,
+and let them work together in group discussions and autopilot runs.
 
-## What it does
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+![Server](https://img.shields.io/badge/server-Python%203.13%20·%20FastAPI-3776AB)
+![Mac app](https://img.shields.io/badge/Mac%20app-SwiftUI%20·%20macOS%2015%2B-black)
+![Agents](https://img.shields.io/badge/agents-Claude%20Code%20·%20Codex-D97757)
 
-- **Native agents.** Each chat runs the real Claude Code (Agent SDK) or Codex
-  (app-server) on your server, with that agent's own login, MCP servers,
-  skills and project configuration.
-- **Group discussions.** You, `@claude` and `@codex` share one timeline. Only
-  mentioned agents run, each receives just the messages it has not seen, and
-  only final replies reach the group, each with a zero-token receipt of the
-  files it changed. Agents hand work to each other by mention, within a
-  per-message hop budget. See [Group discussions](docs/GROUP_DISCUSSIONS.md).
-- **Autopilot.** Give a goal: Claude plans, Codex implements task by task, and
-  a reviewer checks each step against acceptance criteria. Your test command
-  verifies every step inside the Codex sandbox, and only verified, reviewed
-  trees are committed. Choose per run whether you approve the plan, every step
-  or nothing, whether it works in an isolated worktree branch (one commit per
-  step) or in place, and who reviews. See [Autopilot](docs/AUTOPILOT.md).
-- **Scheduled jobs and goals** for chats and groups.
-- **Persistent chats**: durable queues, restart recovery, resuming an existing
-  Claude/Codex conversation with its history, forks and side questions.
-- **Workspace tools**: per-turn code diffs, chat file previews and persistent
-  terminals (tmux).
-- **Several servers per machine**: named instances with separate state.
+[中文说明](README.zh-CN.md) · [Architecture](#architecture) · [Quick start](#quick-start) · [Docs](#documentation)
 
-Public snapshot links and interactive browser sharing are no longer supported.
-Existing chat history and sharing data are retained.
+<img src="docs/images/group-discussion.png" alt="A group discussion: Claude reviews a design, hands the fix to Codex, and Codex reports the files it changed" width="900">
 
-Messaging between ordinary chats (handoffs, `@Chat` routes and the chat
-mailbox) has been removed; group discussions and Autopilot cover multi-agent
-work. Team Hub, Team Network mail and secure-peer pairing were removed earlier;
-existing network state is preserved.
+</div>
 
-Chats always use the server user's own Claude Code and Codex logins. Custom API
-endpoints and in-app Codex sign-in were removed; sign in with the native CLI on
-the server (`codex login` is picked up automatically). Chats saved against a
-custom endpoint remain readable but no longer run.
+## Why Hyadex
 
-Claude Code and Codex are the supported runtimes. Cursor, Gemini and OpenCode
-support have been removed; their saved chats
-remain readable and can be organized. Execution and forks reject retired
-providers, and their saved jobs remain paused.
+Coding agents are at their best when they run where your code, credentials and
+tools already live, and when you can reach them from anywhere. Hyadex is a
+small self-hosted server that does exactly that, plus a client that feels like
+a native Mac app rather than a terminal.
 
-## Requirements
+- **Native agents, not wrappers.** Each chat drives the real Claude Code (through
+  the Agent SDK) or Codex (through its app-server) on your server, with that
+  agent's own sign-in, MCP servers, skills, slash commands and project settings.
+  Model names, permission modes and approvals use each provider's own terms.
+- **Agents that work together.** In a **group discussion**, you, `@claude` and
+  `@codex` share one timeline. Only mentioned agents run, each receives only the
+  messages it has not seen yet, and agents hand work to each other by mention.
+- **Autopilot.** Give a goal: Claude plans, Codex implements task by task, a
+  reviewer checks each step, and your test command verifies it in the Codex
+  sandbox before anything is committed.
+- **Yours.** Everything runs on your Mac or Linux box and is reached over your
+  LAN or Tailscale. History is plain JSONL on disk.
 
-- Apple silicon macOS with a desktop login, or Linux with `systemctl --user`.
-- [`uv`](https://docs.astral.sh/uv/) (it installs Python 3.13) and `git`.
-- `tmux` for persistent terminals (`brew install tmux`).
-- Claude Code and/or Codex installed **and signed in** on the server machine.
+## Features
 
-## Run a development server
+| | |
+| --- | --- |
+| **Chats** | Live thinking, tool calls and replies; inline approvals; a durable message queue with Force Send; resuming an existing Claude/Codex conversation; forks; side questions (`/btw`) that never enter the transcript |
+| **Group discussions** | Mention-based routing, per-member cursors, agent hand-offs with a hop limit, a shared brief, sequential or parallel rounds, and zero-token receipts of the files each reply changed |
+| **Autopilot** | Plan → approve → execute → verify → review → commit, with per-run choices for approval (plan, every step, none), isolation (worktree branch or in place) and reviewer |
+| **Goals** | Claude Code's `/goal` completion condition and Codex's persistent objective with token and time budgets, for chats and group members |
+| **Scheduled jobs** | Daily, weekly, interval, one-off or cron jobs for chats and groups, with the real outcome of every run |
+| **Workspace** | Per-turn code diffs, attachments and pasted screenshots, persistent tmux terminals, full-text search across chats |
+| **Operations** | Restart recovery, context usage and compaction, provider plan usage, emergency alerts from agents, several isolated server instances per machine |
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/chat-running-dark.png" alt="A Claude Code chat running a command, with its goal and a queued message"></td>
+    <td width="50%"><img src="docs/images/chat-changes.png" alt="A finished turn with its changed files and the diff panel"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Live turn.</b> The running command, the chat's goal, a queued follow-up and a calm composer.</sub></td>
+    <td align="center"><sub><b>Changes.</b> Every turn's diff, file by file, beside the conversation.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/chat-approval.png" alt="Codex asking for approval to run a command"></td>
+    <td><img src="docs/images/side-chat.png" alt="A side question answered without interrupting the agent"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Approvals.</b> Native approval requests, answered in place.</sub></td>
+    <td align="center"><sub><b>Side questions.</b> Ask while the agent works; nothing enters its transcript.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/autopilot-running.png" alt="An autopilot run verifying its second task"></td>
+    <td><img src="docs/images/autopilot-plan-dark.png" alt="An autopilot plan waiting for approval"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Autopilot.</b> Each task is verified and reviewed before it is committed.</sub></td>
+    <td align="center"><sub><b>Plan approval.</b> Read the plan and its acceptance criteria, then start.</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/images/scheduled-jobs.png" alt="Scheduled jobs with their next run and last result"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub><b>Scheduled jobs</b> for chats and groups, with how each last run actually ended.</sub></td>
+  </tr>
+</table>
+
+<sub>Screenshots are rendered by the app's snapshot mode from its built-in sample data.</sub>
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Clients
+        Mac["Hyadex for macOS<br/>SwiftUI"]
+        Other["Any HTTP / WebSocket client"]
+    end
+
+    subgraph Server["Hyadex server (Python 3.13, FastAPI)"]
+        API["api/<br/>REST + WebSocket routes"]
+        Features["features/<br/>group engine · Autopilot · jobs<br/>terminals · search · files"]
+        Core["core/<br/>chat store · event log · queue<br/>turn engine · Stop · recovery"]
+        Providers["providers/<br/>Claude Agent SDK · Codex app-server"]
+        Bus(("event bus"))
+    end
+
+    subgraph Machine["Your machine"]
+        Claude["Claude Code<br/>own login, MCP, skills"]
+        Codex["Codex<br/>own login, MCP, skills"]
+        Disk[("state on disk<br/>JSONL event logs")]
+        Repo[("your repositories<br/>git · tmux")]
+    end
+
+    Mac -- "Bearer token · LAN / Tailscale" --> API
+    Other --> API
+    API --> Features --> Core --> Providers
+    API --> Core
+    Providers --> Claude & Codex
+    Core --> Disk
+    Core -. "committed events" .-> Bus
+    Bus -. "live sockets, groups, jobs" .-> API
+    Claude & Codex --> Repo
+```
+
+### Server
+
+The server is the `hyadex` Python package, layered so that lower modules never
+import higher ones (enforced by `tests/test_architecture_boundaries.py`):
+
+| Layer | Package | Owns |
+| --- | --- | --- |
+| Routes | `hyadex/api/` | One module per area; request admission declared per route |
+| Features | `hyadex/features/` | Group engine and its runtime, Autopilot, scheduled jobs, terminals, files, search, titles, side questions |
+| Turn runners | `hyadex/providers/claude/`, `hyadex/providers/codex/` | The Claude Agent SDK client, the Codex app-server client, goals, interactions, history, subagents |
+| Turn engine | `hyadex/core/` | Admission, the durable queue, Stop, restart recovery |
+| Storage | `hyadex/core/` | The chat store, the append-only event log with per-chat sequence numbers, the timeline index |
+| Base | `hyadex/core/`, `hyadex/providers/` | Settings, paths, provider registry and authority |
+
+A few design decisions carry most of the weight:
+
+- **Every chat is an append-only event log.** Each event gets a per-chat `seq`.
+  Clients resume from the last `seq` they applied, so reconnecting neither
+  duplicates nor loses anything. A small event bus fans committed events out to
+  live sockets, group discussions and job bookkeeping without the log knowing
+  its consumers.
+- **Agents stay native.** Hyadex starts the providers' own runtimes. Claude
+  sessions resume natively, Codex threads persist, and approvals, goals, slash
+  commands and compaction use each provider's own mechanism.
+- **Groups are built from ordinary chats.** Every group member is a hidden
+  member chat, so it gets the same queue, recovery and native continuity as any
+  chat. The group engine only decides who runs and what they see: unseen
+  messages only, never repeated history, and the brief once per version. See
+  [Group discussions](docs/GROUP_DISCUSSIONS.md).
+- **Autopilot reuses the group engine** with planner, executor and reviewer
+  roles, a sandboxed verification gate, and commits of exactly the reviewed
+  tree. See [Autopilot](docs/AUTOPILOT.md).
+- **State survives restarts.** Queued turns, scheduled occurrences, group
+  dispatches and in-flight turns are reconciled when the server starts.
+
+More: [Architecture](docs/ARCHITECTURE.md) · [Server reference](docs/SERVER_REFERENCE.md).
+
+### Mac app
+
+The client in [`apps/macos`](apps/macos/README.md) is SwiftUI built with SwiftPM,
+with no third-party packages:
+
+| Target | Role |
+| --- | --- |
+| `HyadexAPI` | REST client, WebSocket event streams, keychain token store |
+| `HyadexCore` | `AppModel` (the single `@Observable` source of truth), the live controller, event projections, the app-owned local server |
+| `HyadexRichText` | Its own Markdown and TeX parsers, CoreText math layout in STIX Two Math, syntax highlighting |
+| `HyadexTerminal` | A terminal emulator for tmux, with a CoreText view and the PTY socket |
+| `HyadexUI` | Views and design tokens |
+| `HyadexApp` | Window, settings, menus, and the development checks |
+
+Raw server events are projected into timeline items on the client. Lists are
+polled; the open chat or group streams live over its WebSocket.
+
+### UI design
+
+- **Three kinds of work, one window.** The sidebar switches between Work
+  (chats and scheduled jobs), Group and Autopilot. Each tab remembers its
+  selection, and a dot marks a tab that needs you.
+- **The conversation comes first.** Each turn's thinking and tool calls fold
+  into one line ("已处理 12 秒 · 运行 2 条命令"), so answers, changed files and
+  pending approvals stay in view. Diffs slide in over the conversation instead
+  of taking a permanent column.
+- **A calm composer.** Two lines tall, with only the permission mode, the
+  context ring, the model and effort, and send. Side questions, goals and files
+  live behind "+".
+- **Provider-native wording.** Claude Code's Manual, Accept edits and Plan,
+  Codex's Read Only and Full Access, and each model's own effort names. Modes
+  that skip safety checks are shown in orange.
+- **Readable type.** One type scale (14 pt messages, nothing at 10 pt) with a
+  larger setting, in light and dark appearance.
+
+## Quick start
+
+### Requirements
+
+- macOS on Apple silicon, or Linux with `systemctl --user`
+- [`uv`](https://docs.astral.sh/uv/) (it installs Python 3.13), `git`, and `tmux` for terminals
+- Claude Code and/or Codex installed **and signed in** on the server machine
+- For the Mac app: macOS 15 or later and a Swift 6 toolchain (Xcode or the Command Line Tools)
+
+### Run the server
 
 ```bash
 git clone https://github.com/ezoiHY/Hyadex.git
 cd Hyadex
 uv sync --locked --python 3.13
 .venv/bin/python scripts/dev_server.py                  # http://127.0.0.1:7871
-.venv/bin/python scripts/dev_server.py --bind 0.0.0.0   # reachable on LAN/Tailscale
+.venv/bin/python scripts/dev_server.py --bind 0.0.0.0   # reachable on LAN / Tailscale
 ```
 
-The development server is a named instance (`dev`) with its own state in
-`~/.hyadex-instances/dev`, so it never touches an installed server. It
-prints the path of its access token file.
+The development server is an isolated named instance (`dev`) with its own state
+in `~/.hyadex-instances/dev`; it prints where its access token is stored.
 
-## Install as a service
+To install it as user services instead (port **7870**):
 
 ```bash
 ./install.sh
+./install.sh --show-token
 ```
 
-The installer creates separate worker and gateway user services on port
-**7870**. `./install.sh --show-token` displays the saved access token.
-Both default and named instances keep their own service names, state and ports; see
-[named instances](docs/NAMED_INSTANCES_TESTING.md).
-
-In-app updates have been removed.
-For an existing installation, stop the selected service and rerun the source
-installer; see [manual updates](docs/SERVER_REFERENCE.md#updating-hyadexserver).
-
-## Connect
-
-| Client location | Server URL |
-| --- | --- |
-| Same computer | `http://127.0.0.1:7870` |
-| Same Wi-Fi/LAN | `http://<server LAN address>:7870` |
-| Anywhere else | `http://<server Tailscale address>:7870`, with both devices on your tailnet |
-
-A server bound to `127.0.0.1` cannot accept other devices. Keep the token
-private and never expose the port directly to the public internet.
-
-## Mac app
-
-[`apps/macos`](apps/macos/README.md) is a native SwiftUI client for macOS 15 or
-later. Its sidebar switches between **Work** (chats and scheduled jobs),
-**Group** (group discussions) and **Autopilot**; conversations update live,
-and approvals, diffs, queued messages and run controls are handled in place.
+### Run the Mac app
 
 ```bash
 cd apps/macos
-scripts/build-app.sh       # builds dist/Hyadex.app with SwiftPM
+scripts/build-app.sh     # dist/Hyadex.app, signed ad hoc
 open dist/Hyadex.app
 ```
 
-In the app, open Settings → 服务器, enter the server URL from the table above and
-the access token, and choose 连接. It is a first version, built from source and
-signed ad hoc; see its README for what has been verified and the known gaps.
+Click **启动本地服务** to start an app-owned server from this checkout and
+connect automatically, or open Settings → 服务器 and enter a server address and
+its token.
+
+| Where the client is | Server URL |
+| --- | --- |
+| Same computer | `http://127.0.0.1:7870` |
+| Same Wi-Fi or LAN | `http://<LAN address>:7870` |
+| Anywhere else | `http://<Tailscale address>:7870`, with both devices on your tailnet |
+
+Keep the token private and never expose the port directly to the internet.
+
+## API
+
+REST under `/api` with `Authorization: Bearer <token>`; the full schema is at
+`/openapi.json`. Chat timelines stream over
+`WS /api/sessions/{id}/events?after=<seq>`, group timelines over
+`WS /api/groups/{id}/events/stream?after=<seq>`.
+
+```bash
+TOKEN=...; API=http://127.0.0.1:7871
+# A group with a reviewer and an implementer
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"title":"Auth refactor","cwd":"/path/to/repo","participants":[{"backend":"claude","role":"reviewer"},{"backend":"codex","role":"implementer"}]}' \
+  $API/api/groups
+# Ask Codex to implement and Claude to review
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"text":"@codex add input validation, then ask @claude to review"}' \
+  $API/api/groups/<group_id>/messages
+```
 
 ## Configuration
 
-Settings are environment variables. The installed service also reads
+Settings are environment variables; an installed service also reads
 `~/.config/hyadex-server/env`.
 
 | Variable | Meaning |
 | --- | --- |
-| `HYADEX_AGENT_TOKEN` | Access token; required for any non-local use |
-| `HYADEX_AGENT_PORT`, `HYADEX_AGENT_BIND` | Listening port (default 7870) and address (default `0.0.0.0`) |
+| `HYADEX_AGENT_TOKEN` | Access token, required for any non-local use |
+| `HYADEX_AGENT_PORT`, `HYADEX_AGENT_BIND` | Port (default 7870) and address |
 | `HYADEX_AGENT_CWD` | Default working directory for new chats |
 | `HYADEX_ENABLED_BACKENDS` | Backends new chats may use (default `claude,codex`) |
 
-See the [server reference](docs/SERVER_REFERENCE.md) for the full list and
-[memory admission](docs/MEMORY_ADMISSION.md) for launch thresholds.
+## Documentation
 
-## API
+| Topic | |
+| --- | --- |
+| [Architecture](docs/ARCHITECTURE.md) | Package layout, dependency rules, boundaries |
+| [Server reference](docs/SERVER_REFERENCE.md) | Every setting, route and behaviour |
+| [Group discussions](docs/GROUP_DISCUSSIONS.md) | Routing, token budget rules, API |
+| [Autopilot](docs/AUTOPILOT.md) | Roles, options and the verification gate |
+| [Mac app](apps/macos/README.md) | Using the app, how it talks to the server, development checks |
+| [Named instances](docs/NAMED_INSTANCES_TESTING.md) | Several isolated servers on one machine |
+| [Development log](docs/DEV_LOG.md) | User-facing changes, newest first |
 
-- REST under `/api/...` with `Authorization: Bearer <token>`. FastAPI serves the
-  schema at `/openapi.json`.
-- A non-loopback listener requires a nonempty `HYADEX_AGENT_TOKEN`. HTTP
-  credentials belong in `Authorization` or `x-hyadex-token`, never `?token=`.
-  WebSockets also accept the `hyadex-token.<base64url-token>` subprotocol.
-  Cross-origin browser access to the server API is disabled; native clients
-  and same-origin requests do not need CORS.
-- Chat timelines stream over `WS /api/sessions/{id}/events?after=<seq>`;
-  group timelines over `WS /api/groups/{id}/events/stream?after=<seq>`.
-- Groups: [docs/GROUP_DISCUSSIONS.md](docs/GROUP_DISCUSSIONS.md). Autopilot:
-  [docs/AUTOPILOT.md](docs/AUTOPILOT.md).
-  Everything else: [docs/SERVER_REFERENCE.md](docs/SERVER_REFERENCE.md).
+## Development
 
-```bash
-TOKEN=...; API=http://127.0.0.1:7871
-curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"title":"Auth refactor","cwd":"/path/to/repo","participants":[{"backend":"claude","role":"reviewer"},{"backend":"codex","role":"implementer"}]}' \
-  $API/api/groups
-curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"text":"@codex add input validation, then ask @claude to review"}' \
-  $API/api/groups/<group_id>/messages
-curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"goal":"Add input validation to the signup form","cwd":"/path/to/repo","verify_command":"npm test"}' \
-  $API/api/autopilot/runs     # then POST /api/autopilot/runs/<run_id>/approve once the plan is ready
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). The server
+has over 3,000 tests that run with an isolated `HOME`; the Mac app has Swift
+Testing suites and live checks that drive its real controls against a real,
+isolated server.
 
-## Development and tests
+## Status
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and the rules in [AGENTS.md](AGENTS.md).
-The Mac app has its own tests and development checks; see
-[apps/macos](apps/macos/README.md#development-checks).
+Hyadex is in early development. The server and the macOS app have been
+exercised end to end against real Claude Code and Codex; the app is built from
+source and signed ad hoc. An Android client is planned.
 
 ## History and license
 
 Hyadex began from the server in
 [ZhengyiLuo/AgentsDock](https://github.com/ZhengyiLuo/AgentsDock) (Apache
-License 2.0) and is developed independently, with its own history.
-
-Hyadex is licensed under the [Apache License 2.0](LICENSE). See
-[NOTICE](NOTICE) for attribution of the original work and third-party
-components.
+License 2.0) and is developed independently. It is licensed under the
+[Apache License 2.0](LICENSE); see [NOTICE](NOTICE) for attribution of the
+original work and third-party components.
