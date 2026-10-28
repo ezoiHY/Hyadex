@@ -75,7 +75,7 @@ struct StatePill: View {
             }
             Text(text ?? state.label)
         }
-        .font(.caption.weight(.medium))
+        .font(.uiMeta.weight(.medium))
         .foregroundStyle(state == .idle ? Color.secondary : state.tint)
         .padding(.horizontal, 7)
         .padding(.vertical, 2.5)
@@ -93,7 +93,7 @@ struct Tag: View {
             if let symbol { Image(systemName: symbol).imageScale(.small) }
             Text(text).lineLimit(1).truncationMode(.middle)
         }
-        .font(.caption)
+        .font(.uiMeta)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
@@ -115,7 +115,7 @@ struct DiffStat: View {
             Text("+\(added)").foregroundStyle(.green)
             Text("−\(removed)").foregroundStyle(.red)
         }
-        .font(.caption.monospacedDigit())
+        .font(.uiMeta.monospacedDigit())
         .accessibilityLabel("新增 \(added) 行，删除 \(removed) 行")
     }
 }
@@ -131,7 +131,7 @@ struct CodeBlock: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(language ?? "")
-                    .font(.caption2)
+                    .font(.uiSmall)
                     .foregroundStyle(.tertiary)
                 Spacer()
                 Button {
@@ -188,7 +188,7 @@ struct DiffView: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(diff.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
                     Text(line.isEmpty ? " " : line)
-                        .font(.system(size: 11.5, design: .monospaced))
+                        .font(.system(size: 12.5 * Theme.scale, design: .monospaced))
                         .foregroundStyle(foreground(line))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 1)

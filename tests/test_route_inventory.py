@@ -33,6 +33,7 @@ MAC_CLIENT = {
     ("GET", "/api/sessions/{session_id}/diffs/{run_id}"),
     ("GET", "/api/sessions/{session_id}/files/{file_id}"),
     ("GET", "/api/sessions/{session_id}/links/file"),
+    ("GET", "/api/sessions/{session_id}/workspace/file"),
     ("GET", "/api/groups"),
     ("POST", "/api/groups"),
     ("GET", "/api/groups/{group_id}"),

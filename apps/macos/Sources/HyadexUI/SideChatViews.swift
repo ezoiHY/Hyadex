@@ -17,9 +17,9 @@ struct SideChatPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Text("侧问").font(.headline)
+                Text("侧问").font(.uiHeadline)
                 Text("不打断代理，也不写进对话")
-                    .font(.caption)
+                    .font(.uiMeta)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("清空") { model.clearSide(chatID) }
@@ -45,7 +45,7 @@ struct SideChatPanel: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if side?.exchanges.isEmpty ?? true {
                         Text(intro)
-                            .font(.callout)
+                            .font(.uiSecondary)
                             .foregroundStyle(.secondary)
                             .padding(.top, 4)
                     }
@@ -53,7 +53,7 @@ struct SideChatPanel: View {
                         ExchangeView(exchange: exchange) { model.cancelSide(exchange.requestID, inChat: chatID) }
                     }
                     if let note = side?.contextNote, !(side?.exchanges.isEmpty ?? true) {
-                        Text(note).font(.caption).foregroundStyle(.tertiary)
+                        Text(note).font(.uiMeta).foregroundStyle(.tertiary)
                     }
                 }
                 .padding(14)
@@ -65,7 +65,7 @@ struct SideChatPanel: View {
             .defaultScrollAnchor(.top, for: .alignment)
             if let error = model.sideChatErrors[chatID] {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
+                    .font(.uiMeta)
                     .foregroundStyle(.orange)
                     .padding(.horizontal, 14)
                     .padding(.bottom, 6)
@@ -126,27 +126,27 @@ private struct ExchangeView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(exchange.question)
-                .font(.callout.weight(.medium))
+                .font(.uiSecondary.weight(.medium))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             switch exchange.status {
             case .running:
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text("正在回答…").font(.caption).foregroundStyle(.secondary)
+                    Text("正在回答…").font(.uiMeta).foregroundStyle(.secondary)
                     Spacer()
-                    Button("取消", action: onCancel).buttonStyle(.borderless).font(.caption)
+                    Button("取消", action: onCancel).buttonStyle(.borderless).font(.uiMeta)
                 }
             case .completed:
                 RichMarkdown(exchange.answer ?? "")
                     .textSelection(.enabled)
             case .cancelled:
-                Text("已取消").font(.caption).foregroundStyle(.secondary)
+                Text("已取消").font(.uiMeta).foregroundStyle(.secondary)
             case .interrupted:
-                Text("服务器重启时中断了，请重新提问。").font(.caption).foregroundStyle(.secondary)
+                Text("服务器重启时中断了，请重新提问。").font(.uiMeta).foregroundStyle(.secondary)
             case .failed:
                 Text("没有得到回答" + (exchange.error.map { "（\($0)）" } ?? ""))
-                    .font(.caption)
+                    .font(.uiMeta)
                     .foregroundStyle(.orange)
             }
         }

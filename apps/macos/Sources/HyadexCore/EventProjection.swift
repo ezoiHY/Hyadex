@@ -143,7 +143,8 @@ public struct SessionProjection: Sendable {
         case "code_diff":
             let files = event["diff_files"].array.compactMap { file -> FileChange? in
                 guard let path = file["path"].string else { return nil }
-                return FileChange(path: path, added: file["additions"].int ?? 0, removed: file["deletions"].int ?? 0, diff: "")
+                return FileChange(path: path, added: file["additions"].int ?? 0, removed: file["deletions"].int ?? 0, diff: "",
+                                  root: event["repository_root"].string ?? cwd)
             }
             guard !files.isEmpty else { return }
             append(.changes(id: id, set: FileChangeSet(files: files)))
@@ -300,7 +301,8 @@ public struct SessionProjection: Sendable {
         guard let position = index[itemID], case .changes(let id, let set) = items[position] else { return }
         let byPath = Self.splitDiff(unified)
         let files = set.files.map { file in
-            FileChange(path: file.path, added: file.added, removed: file.removed, diff: byPath[file.path] ?? file.diff)
+            FileChange(path: file.path, added: file.added, removed: file.removed, diff: byPath[file.path] ?? file.diff,
+                       root: file.root)
         }
         items[position] = .changes(id: id, set: FileChangeSet(files: files))
     }

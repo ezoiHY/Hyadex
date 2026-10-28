@@ -49,7 +49,7 @@ struct SidebarView: View {
                 if model.searchHits.isEmpty {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
-                        Text("正在搜索消息…").font(.caption).foregroundStyle(.secondary)
+                        Text("正在搜索消息…").font(.uiMeta).foregroundStyle(.secondary)
                     }
                 }
                 ForEach(model.searchHits) { hit in
@@ -102,7 +102,7 @@ struct SidebarView: View {
                     Text("定时任务")
                     Spacer()
                     Text("\(model.jobs.filter(\.enabled).count)")
-                        .font(.caption.monospacedDigit())
+                        .font(.uiMeta.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
             } icon: {
@@ -164,6 +164,8 @@ struct SidebarView: View {
             .disabled(chat.archived)
         Divider()
         Button("重命名…") { model.renaming = RenameTarget(item: item, title: chat.title) }
+        Button("高级设置…") { model.settingsEditor = .chat(chat.id) }
+            .disabled(chat.archived)
         if !chat.archived {
             Button(chat.pinned ? "取消置顶" : "置顶") { model.togglePinned(chat.id) }
         }
@@ -177,6 +179,7 @@ struct SidebarView: View {
         let item = SidebarItem.group(group.id)
         if !group.archived {
             Button("重命名…") { model.renaming = RenameTarget(item: item, title: group.title) }
+            Button("讨论组设置…") { model.settingsEditor = .group(group.id) }
             Divider()
         }
         Button(group.archived ? "取消归档" : "归档") { model.setArchived(item, !group.archived) }
@@ -189,7 +192,7 @@ private struct EmptyRow: View {
 
     var body: some View {
         Text(text)
-            .font(.callout)
+            .font(.uiSecondary)
             .foregroundStyle(.secondary)
             .padding(.vertical, 6)
             .selectionDisabled()
@@ -240,7 +243,7 @@ private struct ModeSwitcher: View {
                     withAnimation(.snappy(duration: 0.22)) { model.switchSidebar(to: mode) }
                 } label: {
                     tabLabel(mode, waiting: waiting > 0)
-                    .font(.callout.weight(.medium))
+                    .font(.system(size: 12.5, weight: .medium))  // three tabs must fit the narrowest sidebar
                     .foregroundStyle(selected ? Color.primary : Color.secondary)
                     .frame(maxWidth: .infinity)
                     .frame(height: 28)
@@ -267,8 +270,13 @@ private struct ModeSwitcher: View {
     private func tabLabel(_ mode: SidebarMode, waiting: Bool) -> some View {
         HStack(spacing: 4) {
             Image(systemName: mode.symbol).imageScale(.small)
+                // The waiting dot sits on the icon so it takes no width from the title.
+                .overlay(alignment: .topTrailing) {
+                    if waiting {
+                        Circle().fill(.orange).frame(width: 6, height: 6).offset(x: 3, y: -2)
+                    }
+                }
             Text(mode.title).lineLimit(1).minimumScaleFactor(0.8)
-            if waiting { Circle().fill(.orange).frame(width: 6, height: 6) }
         }
         .padding(.horizontal, 4)
     }
@@ -318,7 +326,7 @@ private struct ChatRow: View {
                     trailing
                 }
                 Text(chat.preview)
-                    .font(.caption)
+                    .font(.uiMeta)
                     .foregroundStyle(chat.state == .needsAction ? Color.orange : Color.secondary)
                     .lineLimit(1)
             }
@@ -341,7 +349,7 @@ private struct ChatRow: View {
             Circle().fill(Color.accentColor).frame(width: 7, height: 7).accessibilityLabel("未读")
         } else {
             Text(chat.lastActivity.relativeShort)
-                .font(.caption2)
+                .font(.uiSmall)
                 .foregroundStyle(.tertiary)
         }
     }
@@ -361,11 +369,11 @@ private struct GroupRow: View {
                     if group.state != .idle {
                         StateIndicator(state: group.state, size: 11)
                     } else {
-                        Text(group.lastActivity.relativeShort).font(.caption2).foregroundStyle(.tertiary)
+                        Text(group.lastActivity.relativeShort).font(.uiSmall).foregroundStyle(.tertiary)
                     }
                 }
                 Text(group.participants.map { "@\($0.handle)" }.joined(separator: " ") + " · " + group.preview)
-                    .font(.caption)
+                    .font(.uiMeta)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -406,7 +414,7 @@ private struct RunRow: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .font(.caption)
+                .font(.uiMeta)
             }
         }
         .padding(.vertical, 3)
@@ -457,14 +465,14 @@ private struct ServerFooter: View {
                         .frame(width: 8, height: 8)
                     VStack(alignment: .leading, spacing: 0) {
                         Text(model.currentServer?.name ?? "未连接")
-                            .font(.callout.weight(.medium))
+                            .font(.uiSecondary.weight(.medium))
                         Text(model.connection.label)
-                            .font(.caption2)
+                            .font(.uiSmall)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2)
+                        .font(.uiSmall)
                         .foregroundStyle(.secondary)
                 }
                 .contentShape(Rectangle())
@@ -519,14 +527,14 @@ private struct UsageMeter: View {
             if let window = usage.tightest {
                 UsageBar(percent: window.usedPercent)
                 Text("\(Int(window.usedPercent.rounded()))%")
-                    .font(.caption2.monospacedDigit())
+                    .font(.uiSmall.monospacedDigit())
                     .frame(width: 30, alignment: .trailing)
                 Text(window.shortLabel)
-                    .font(.caption2)
+                    .font(.uiSmall)
                     .foregroundStyle(.tertiary)
                     .frame(width: 18, alignment: .leading)
             } else {
-                Text("—").font(.caption2).foregroundStyle(.tertiary)
+                Text("—").font(.uiSmall).foregroundStyle(.tertiary)
                 Spacer()
             }
         }
@@ -561,37 +569,37 @@ private struct UsageDetails: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         AgentAvatar(backend: backend, size: 14)
-                        Text(backend.displayName).font(.headline)
+                        Text(backend.displayName).font(.uiHeadline)
                         if let plan = model.usage[backend]?.plan {
-                            Text(plan.capitalized).font(.caption).foregroundStyle(.secondary)
+                            Text(plan.capitalized).font(.uiMeta).foregroundStyle(.secondary)
                         }
                     }
                     if let usage = model.usage[backend], usage.available {
                         ForEach(usage.windows) { window in
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack {
-                                    Text(window.label).font(.callout)
+                                    Text(window.label).font(.uiSecondary)
                                     Spacer()
-                                    Text("\(Int(window.usedPercent.rounded()))% used").font(.callout.monospacedDigit())
+                                    Text("\(Int(window.usedPercent.rounded()))% used").font(.uiSecondary.monospacedDigit())
                                 }
                                 UsageBar(percent: window.usedPercent)
                                 if let reset = window.resetsAt {
                                     Text("\(reset.formatted(.relative(presentation: .named))) 重置 · \(reset.formatted(date: .abbreviated, time: .shortened))")
-                                        .font(.caption)
+                                        .font(.uiMeta)
                                         .foregroundStyle(.secondary)
                                 }
                             }
                         }
                     } else {
                         Text(model.usage[backend]?.unavailableText ?? "暂时读不到用量")
-                            .font(.callout)
+                            .font(.uiSecondary)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
             Divider()
             HStack {
-                Text("数据来自各自 CLI 的原生用量接口").font(.caption).foregroundStyle(.tertiary)
+                Text("数据来自各自 CLI 的原生用量接口").font(.uiMeta).foregroundStyle(.tertiary)
                 Spacer()
                 Button("刷新") { model.refreshUsage() }
                     .controlSize(.small)
@@ -622,11 +630,11 @@ private struct SearchHitRow: View {
                     Text(title).lineLimit(1)
                     Spacer(minLength: 4)
                     if hit.matches > 1 {
-                        Text("\(hit.matches) 处").font(.caption2).foregroundStyle(.tertiary)
+                        Text("\(hit.matches) 处").font(.uiSmall).foregroundStyle(.tertiary)
                     }
                 }
                 Text(highlighted)
-                    .font(.caption)
+                    .font(.uiMeta)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }

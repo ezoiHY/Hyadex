@@ -128,6 +128,8 @@ public final class AppModel {
     public var loadingOlder: Set<String> = []
     public var jobEditor: JobEditorTarget?
     public var renaming: RenameTarget?
+    /// The chat's advanced settings or the group's settings, open in a sheet.
+    public var settingsEditor: SettingsEditorTarget?
     /// A chat or group waiting for the user to confirm its deletion.
     public var pendingDeletion: SidebarItem?
     /// Full-text hits for the sidebar search, and whether a search is running.
@@ -765,6 +767,31 @@ public final class AppModel {
         }
     }
 
+    // MARK: Chat and group settings
+
+    /// The chat's advanced settings from its full server record.
+    public func chatSettings(_ id: String) async throws -> ChatSettings {
+        guard let live = requireLive() else { throw HyadexClientError.unreachable(errorMessage ?? "") }
+        return try await live.chatSettings(id)
+    }
+
+    /// Saves changed advanced settings and returns what the server stored.
+    public func saveChatSettings(_ id: String, from old: ChatSettings, to new: ChatSettings) async throws -> ChatSettings {
+        let fields = old.changes(to: new)
+        guard !fields.isEmpty else { return old }
+        guard let live = requireLive() else { throw HyadexClientError.unreachable(errorMessage ?? "") }
+        return try await live.saveChatSettings(id, fields: .object(fields))
+    }
+
+    /// Saves a group's changed responder, hand-off limit or brief.
+    public func saveGroupSettings(_ id: String, to new: GroupSettings) async throws {
+        guard let old = group(id)?.settings else { return }
+        let fields = old.changes(to: new)
+        guard !fields.isEmpty else { return }
+        guard let live = requireLive() else { throw HyadexClientError.unreachable(errorMessage ?? "") }
+        try await live.saveGroupSettings(id, fields: .object(fields))
+    }
+
     /// Archiving pauses a chat's jobs and closes its terminal; a group stops its rounds.
     public func setArchived(_ item: SidebarItem, _ archived: Bool) {
         guard let live = requireLive() else { return }
@@ -875,6 +902,25 @@ public final class AppModel {
     public func directorySuggestions(_ path: String) async -> (folders: [DirectorySuggestion], message: String?) {
         guard let live = requireLive() else { return ([], errorMessage) }
         return await live.completeDirectory(path)
+    }
+
+    /// Where a changed file of the current selection lives on the server, and
+    /// the chat whose folder contains it (nil for Autopilot worktrees).
+    public func location(of file: FileChange) -> (path: String, chatID: String?) {
+        switch selection {
+        case .chat(let id): (file.absolutePath(fallbackRoot: chat(id)?.cwd), id)
+        case .group(let id): (file.absolutePath(fallbackRoot: group(id)?.cwd), group(id)?.participants.first?.sessionID)
+        case .autopilot(let id): (file.absolutePath(fallbackRoot: run(id)?.cwd), nil)
+        default: (file.path, nil)
+        }
+    }
+
+    /// The server's copy of a changed file, for opening it from a remote server.
+    public func serverCopy(of file: FileChange) async throws -> Data {
+        let (path, chatID) = location(of: file)
+        guard let chatID else { throw HyadexClientError.http(404, "Autopilot 工作区的文件只能在服务器本机打开") }
+        guard let live = requireLive() else { throw HyadexClientError.unreachable(errorMessage ?? "") }
+        return try await live.client.workspaceFile(chatID, path: path)
     }
 
     /// Whether the connected server runs on this Mac, so a local folder picker applies.
@@ -1303,7 +1349,7 @@ public final class AppModel {
         timelineFocus = [:]; sideChats = [:]; sideChatErrors = [:]; subagents = [:]
         markedUnread = []; drafts = [:]; terminalOpen = []; mediaCache = [:]
         selection = nil; lastSelection = [:]; selectedFilePath = nil; showChanges = false
-        goalEditor = nil; jobEditor = nil; renaming = nil; pendingDeletion = nil
+        goalEditor = nil; jobEditor = nil; renaming = nil; settingsEditor = nil; pendingDeletion = nil
         sideChatOpen = nil; sheet = nil
     }
 

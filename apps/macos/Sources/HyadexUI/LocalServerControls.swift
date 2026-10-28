@@ -15,7 +15,7 @@ struct ServerWelcomeView: View {
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             VStack(spacing: 8) {
-                Text("开始使用 Hyadex").font(.title2.bold())
+                Text("开始使用 Hyadex").font(.uiTitle2.bold())
                 Text("在这台 Mac 上启动服务，或连接已有服务器。")
                     .foregroundStyle(.secondary)
             }
@@ -27,7 +27,7 @@ struct ServerWelcomeView: View {
             .buttonStyle(.link)
             if case .offline(let reason) = model.connection {
                 Label(reason, systemImage: "exclamationmark.triangle")
-                    .font(.callout)
+                    .font(.uiSecondary)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
@@ -50,7 +50,7 @@ struct LocalServerControls: View {
         VStack(alignment: welcome ? .center : .leading, spacing: 10) {
             if !welcome {
                 HStack {
-                    Label("这台 Mac 的本地服务", systemImage: "desktopcomputer").font(.headline)
+                    Label("这台 Mac 的本地服务", systemImage: "desktopcomputer").font(.uiHeadline)
                     Spacer()
                     startButton
                 }
@@ -63,19 +63,19 @@ struct LocalServerControls: View {
                     ProgressView().controlSize(.small)
                     Text(model.localServer.isStarting || model.localServer.state == .stopping
                          ? model.localServer.statusText : "正在连接服务器…")
-                        .font(.callout)
+                        .font(.uiSecondary)
                 }
                 .accessibilityElement(children: .combine)
             } else if let error = model.localServer.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.callout)
+                    .font(.uiSecondary)
                     .foregroundStyle(.orange)
                     .textSelection(.enabled)
             } else if !welcome {
-                Text(model.localServer.statusText).font(.callout).foregroundStyle(.secondary)
+                Text(model.localServer.statusText).font(.uiSecondary).foregroundStyle(.secondary)
             }
-            Text("本地服务随 Hyadex 运行；退出应用时停止，聊天记录会保留。")
-                .font(.caption)
+            Text("退出 Hyadex 时停止，聊天记录会保留")
+                .font(.uiMeta)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(welcome ? .center : .leading)
         }

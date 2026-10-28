@@ -63,12 +63,12 @@ private struct RunHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(run.goal)
-                .font(.title3)
+                .font(.uiTitle3)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
                 RoleTag(role: "规划", backend: run.planner)
-                Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.tertiary)
+                Image(systemName: "arrow.right").font(.uiSmall).foregroundStyle(.tertiary)
                 RoleTag(role: "执行", backend: run.executor)
                 Divider().frame(height: 14)
                 Tag(text: run.approval.label, symbol: "checkmark.seal")
@@ -101,7 +101,7 @@ private struct RoleTag: View {
         HStack(spacing: 4) {
             AgentAvatar(backend: backend, size: 16)
             Text("\(role) · \(backend.displayName)")
-                .font(.caption.weight(.medium))
+                .font(.uiMeta.weight(.medium))
         }
     }
 }
@@ -137,18 +137,18 @@ private struct PhaseStepper: View {
                         } else if index == current && run.status.isActive {
                             ProgressView().controlSize(.mini).tint(.white)
                         } else {
-                            Text("\(index + 1)").font(.caption2.weight(.semibold))
+                            Text("\(index + 1)").font(.uiSmall.weight(.semibold))
                                 .foregroundStyle(index == current ? Color.white : Color.secondary)
                         }
                     }
                     VStack(alignment: .leading, spacing: 0) {
                         Text(phase)
                             .lineLimit(1)
-                            .font(.callout.weight(index == current ? .semibold : .regular))
+                            .font(.uiSecondary.weight(index == current ? .semibold : .regular))
                             .foregroundStyle(index <= current ? Color.primary : Color.secondary)
                         if (2...4).contains(index), index == current, !run.tasks.isEmpty, run.status != .done {
                             Text("任务 \(min(run.completedTasks + 1, run.tasks.count))/\(run.tasks.count)")
-                                .font(.caption2)
+                                .font(.uiSmall)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -235,11 +235,11 @@ private struct ActionBanner: View {
                                        @ViewBuilder actions: () -> Actions) -> some View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: symbol)
-                .font(.title2)
+                .font(.uiTitle2)
                 .foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline)
-                Text(detail).font(.callout).foregroundStyle(.secondary)
+                Text(title).font(.uiHeadline)
+                Text(detail).font(.uiSecondary).foregroundStyle(.secondary)
             }
             Spacer(minLength: 12)
             actions()
@@ -256,11 +256,11 @@ private struct PlanSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("计划").font(.headline)
+                Text("计划").font(.uiHeadline)
                 Spacer()
                 if !run.tasks.isEmpty {
                     Text("\(run.completedTasks)/\(run.tasks.count) 已完成")
-                        .font(.caption)
+                        .font(.uiMeta)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -319,12 +319,12 @@ private struct TaskRow: View {
                             .help("审查要求修改过 \(task.revisions) 次")
                     }
                     Spacer()
-                    Text(stateLabel).font(.caption).foregroundStyle(stateColor)
+                    Text(stateLabel).font(.uiMeta).foregroundStyle(stateColor)
                     if let commit = task.commit {
-                        Text(commit).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        Text(commit).font(.uiMeta.monospaced()).foregroundStyle(.secondary)
                     }
                     Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
+                        .font(.uiSmall.weight(.semibold))
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
@@ -378,7 +378,7 @@ private struct TaskRow: View {
                         .buttonStyle(.link)
                     }
                 }
-                .font(.callout)
+                .font(.uiSecondary)
                 .padding(.leading, 32)
                 .transition(.opacity)
             }
@@ -390,13 +390,13 @@ private struct TaskRow: View {
     @ViewBuilder private var statusIcon: some View {
         switch task.state {
         case .approved:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.title3)
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.uiTitle3)
         case .executing, .verifying, .reviewing, .revising:
             ProgressView().controlSize(.small)
         case .blocked:
-            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange).font(.title3)
+            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange).font(.uiTitle3)
         case .pending:
-            Image(systemName: "circle").foregroundStyle(.tertiary).font(.title3)
+            Image(systemName: "circle").foregroundStyle(.tertiary).font(.uiTitle3)
         }
     }
 
@@ -428,19 +428,19 @@ private struct ActivitySection: View {
     var body: some View {
         if !notes.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("动态").font(.headline)
+                Text("动态").font(.uiHeadline)
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(notes.reversed()) { note in
                         if case .message(_, let author, let text, let time, _, _, _) = note {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text(time.formatted(date: .omitted, time: .shortened))
-                                    .font(.caption.monospacedDigit())
+                                    .font(.uiMeta.monospacedDigit())
                                     .foregroundStyle(.tertiary)
                                     .frame(width: 44, alignment: .leading)
                                 Image(systemName: author.kind == .user ? "person.fill" : "gearshape.2")
-                                    .font(.caption)
+                                    .font(.uiMeta)
                                     .foregroundStyle(.secondary)
-                                Text(text).font(.callout)
+                                Text(text).font(.uiSecondary)
                             }
                         }
                     }
@@ -458,13 +458,13 @@ private struct FeedbackSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("提出修改").font(.title3.weight(.semibold))
+            Text("提出修改").font(.uiTitle3.weight(.semibold))
             Text(run.completedTasks == 0
                  ? "你的意见会交给 \(run.planner.displayName) 修改计划。"
                  : "你的意见会交给 \(run.executor.displayName) 修改当前任务；已完成的任务会保留。")
                 .foregroundStyle(.secondary)
             TextEditor(text: $text)
-                .font(.body)
+                .font(.uiBody)
                 .frame(minHeight: 120)
                 .scrollContentBackground(.hidden)
                 .padding(6)

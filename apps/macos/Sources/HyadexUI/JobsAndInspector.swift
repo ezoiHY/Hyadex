@@ -1,3 +1,4 @@
+import AppKit
 import HyadexCore
 import SwiftUI
 
@@ -20,7 +21,7 @@ struct JobsView: View {
             TableColumn("名称") { job in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(job.title).fontWeight(.medium)
-                    Text(job.prompt).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(job.prompt).font(.uiMeta).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .padding(.vertical, 3)
             }
@@ -43,7 +44,9 @@ struct JobsView: View {
             .width(min: 80, ideal: 100)
             TableColumn("上次结果") { job in
                 if let result = job.lastResult {
-                    StatePill(state: result, text: result == .done ? "成功" : result.label)
+                    StatePill(state: result, text: job.lastResultText ?? result.label)
+                        .help(job.lastError.map { "失败原因：\($0)" }
+                              ?? job.lastRun.map { "\($0.formatted(date: .abbreviated, time: .shortened))" } ?? "")
                 } else {
                     Text("从未运行").foregroundStyle(.tertiary)
                 }
@@ -67,7 +70,7 @@ struct JobsView: View {
                 ContentUnavailableView {
                     Label("还没有定时任务", systemImage: "calendar.badge.clock")
                 } description: {
-                    Text("定时任务会按计划把一条消息发给聊天或讨论组，比如每天早上检查依赖更新。")
+                    Text("按计划给聊天或讨论组发一条消息")
                 } actions: {
                     Button("新建定时任务") { model.jobEditor = .new }
                 }
@@ -99,7 +102,7 @@ struct ChangesPanel: View {
         let changes = model.selectedChanges
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Text("改动").font(.headline)
+                Text("改动").font(.uiHeadline)
                 if !changes.files.isEmpty {
                     Text("\(changes.files.count) 个文件").foregroundStyle(.secondary)
                     DiffStat(added: changes.added, removed: changes.removed)
@@ -148,11 +151,11 @@ private struct InspectorEmptyNote: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: symbol)
-                .font(.title3)
+                .font(.uiTitle3)
                 .foregroundStyle(.tertiary)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.callout.weight(.medium)).foregroundStyle(.secondary)
-                Text(detail).font(.caption).foregroundStyle(.tertiary)
+                Text(title).font(.uiSecondary.weight(.medium)).foregroundStyle(.secondary)
+                Text(detail).font(.uiMeta).foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -169,7 +172,7 @@ struct ChangesInspector: View {
         let changes = model.selectedChanges
         if changes.files.isEmpty {
             InspectorEmptyNote(symbol: "doc.text.magnifyingglass", title: "还没有改动",
-                               detail: "代理修改的文件和 diff 会出现在这里。")
+                               detail: "代理改动的文件会出现在这里")
         } else {
             let selectedPath = model.selectedFilePath ?? changes.files[0].path
             VStack(spacing: 0) {
@@ -181,7 +184,7 @@ struct ChangesInspector: View {
                                 VStack(alignment: .leading, spacing: 0) {
                                     Text((file.path as NSString).lastPathComponent).lineLimit(1)
                                     Text((file.path as NSString).deletingLastPathComponent)
-                                        .font(.caption2)
+                                        .font(.uiSmall)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
                                         .truncationMode(.head)
@@ -199,21 +202,23 @@ struct ChangesInspector: View {
                 Divider()
                 if let file = changes.files.first(where: { $0.path == selectedPath }) {
                     HStack {
-                        Text(file.path).font(.caption.monospaced()).lineLimit(1).truncationMode(.head)
+                        Text(file.path).font(.uiMeta.monospaced()).lineLimit(1).truncationMode(.head)
                         Spacer()
                         Button {
+                            ChangedFileOpener.open(file, model: model)
                         } label: {
                             Image(systemName: "arrow.up.forward.app")
                         }
                         .buttonStyle(.borderless)
-                        .help("在编辑器中打开")
+                        .help(model.serverIsLocal ? "在编辑器中打开" : "在编辑器中打开服务器上这个文件的只读副本")
+                        .accessibilityLabel("在编辑器中打开")
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     Divider()
                     if file.diff.isEmpty {
                         InspectorEmptyNote(symbol: "doc.text", title: "没有 diff 内容",
-                                           detail: "讨论组的回执只记录改了哪些文件；在成员聊天里可以看到完整改动。")
+                                           detail: "完整改动在成员聊天里")
                     } else {
                         DiffView(diff: file.diff)
                             .background(Color(nsColor: .textBackgroundColor))
@@ -224,8 +229,46 @@ struct ChangesInspector: View {
     }
 }
 
+/// Opens a changed file in the app the system uses for its type. A file on
+/// this Mac opens in place; from a remote server the app downloads a read-only
+/// copy of the server's file first.
+@MainActor
+public enum ChangedFileOpener {
+    /// Replaced by the live check, which must not open apps on the user's screen.
+    public static var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
+
+    static func open(_ file: FileChange, model: AppModel) {
+        let (path, _) = model.location(of: file)
+        if model.serverIsLocal {
+            guard FileManager.default.fileExists(atPath: path) else {
+                model.errorMessage = "文件已不在磁盘上：\(path)"
+                return
+            }
+            openURL(URL(fileURLWithPath: path))
+            return
+        }
+        Task {
+            do {
+                let data = try await model.serverCopy(of: file)
+                let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                    .appending(path: "Hyadex/server-files/\(UUID().uuidString)", directoryHint: .isDirectory)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                let url = folder.appending(path: (path as NSString).lastPathComponent)
+                try data.write(to: url, options: .atomic)
+                // A copy: edits would not reach the server.
+                try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: url.path)
+                openURL(url)
+            } catch {
+                model.errorMessage = "无法打开 \((path as NSString).lastPathComponent)：\(error.localizedDescription)"
+            }
+        }
+    }
+}
+
 private struct DetailsInspector: View {
     @Bindable var model: AppModel
+    /// Closes the details popover before a settings sheet opens.
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack {
@@ -242,7 +285,7 @@ private struct DetailsInspector: View {
                         LabeledContent("状态") { StatePill(state: chat.state) }
                     }
                     InfoSection("工作区") {
-                        LabeledContent("目录") { Text(chat.cwd).font(.callout.monospaced()).textSelection(.enabled) }
+                        LabeledContent("目录") { Text(chat.cwd).font(.uiSecondary.monospaced()).textSelection(.enabled) }
                         LabeledContent("命令与技能") {
                             if let inventory = model.commands[chat.id], inventory.available {
                                 Text("\(inventory.commands.count) 个 · 输入 / 使用")
@@ -254,7 +297,19 @@ private struct DetailsInspector: View {
                     MCPSection(model: model, chat: chat)
                     SubagentSection(model: model, chat: chat)
                     InfoSection("用量") {
-                        LabeledContent("本会话 token", value: chat.tokensUsed.formatted())
+                        LabeledContent("token") {
+                            if let totals = chat.tokenTotals {
+                                Text("\(totals.total.wan) · 缓存 \(totals.cachedInput.wan)")
+                                    .help("输入 \(totals.input.formatted())（缓存 \(totals.cachedInput.formatted())）· 输出 \(totals.output.formatted())")
+                            } else {
+                                Text("—").foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    InfoSection("高级") {
+                        Button("高级设置…") { dismiss(); model.settingsEditor = .chat(chat.id) }
+                            .disabled(chat.archived)
+                            .help("系统提示词、子代理上限、自动标题、代理对定时任务的权限")
                     }
                 }
             case .group(let id):
@@ -272,8 +327,15 @@ private struct DetailsInspector: View {
                     }
                     InfoSection("设置") {
                         LabeledContent("默认回答者", value: "@\(group.defaultResponder)")
-                        LabeledContent("每轮最多接力", value: "4 次")
-                        LabeledContent("目录") { Text(group.cwd).font(.callout.monospaced()) }
+                        LabeledContent("每轮最多接力", value: "\(group.settings.maxAgentHops) 次")
+                        LabeledContent("共享摘要") {
+                            Text(group.settings.brief.isEmpty ? "无" : group.settings.brief)
+                                .lineLimit(3)
+                                .foregroundStyle(group.settings.brief.isEmpty ? .secondary : .primary)
+                        }
+                        LabeledContent("目录") { Text(group.cwd).font(.uiSecondary.monospaced()) }
+                        Button("编辑设置…") { dismiss(); model.settingsEditor = .group(group.id) }
+                            .disabled(group.archived)
                     }
                     InfoSection("用量") {
                         LabeledContent("派发次数", value: "\(group.dispatches)")
@@ -286,7 +348,7 @@ private struct DetailsInspector: View {
                         LabeledContent("审批", value: run.approval.label)
                         LabeledContent("隔离", value: run.isolation.label)
                         LabeledContent("审查", value: run.reviewer.label)
-                        LabeledContent("验证命令") { Text(run.verifyCommand).font(.callout.monospaced()) }
+                        LabeledContent("验证命令") { Text(run.verifyCommand).font(.uiSecondary.monospaced()) }
                     }
                     InfoSection("角色") {
                         LabeledContent("规划", value: run.planner.displayName)
@@ -320,14 +382,14 @@ private struct MCPSection: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 6) {
                 Text("MCP 服务器")
-                    .font(.caption.weight(.semibold))
+                    .font(.uiMeta.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 if busy { ProgressView().controlSize(.mini) }
                 if status?.controllable == true,
                    let failed = status?.servers.filter({ $0.status == .failed }).count, failed > 0 {
                     Button("重连失败的（\(failed)）") { model.reconnectFailedMCP(forChat: chat.id) }
-                        .font(.caption)
+                        .font(.uiMeta)
                         .disabled(busy)
                 }
                 Button {
@@ -342,11 +404,11 @@ private struct MCPSection: View {
             if let status {
                 if !status.available {
                     Text(status.reason ?? "MCP 状态暂不可用。")
-                        .font(.callout)
+                        .font(.uiSecondary)
                         .foregroundStyle(.secondary)
                 } else if status.servers.isEmpty {
                     Text("\(chat.backend.displayName) 在这个目录没有加载 MCP 服务器。")
-                        .font(.callout)
+                        .font(.uiSecondary)
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(status.servers) { server in
@@ -355,11 +417,11 @@ private struct MCPSection: View {
                         }
                     }
                     if status.truncated {
-                        Text("只显示了部分服务器。").font(.caption).foregroundStyle(.tertiary)
+                        Text("只显示了部分服务器。").font(.uiMeta).foregroundStyle(.tertiary)
                     }
                 }
             } else if !busy {
-                Text("正在读取…").font(.callout).foregroundStyle(.secondary)
+                Text("正在读取…").font(.uiSecondary).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -379,25 +441,25 @@ private struct SubagentSection: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Text("子代理")
-                    .font(.caption.weight(.semibold))
+                    .font(.uiMeta.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 if agents.contains(where: { $0.state == .running }) {
                     Text("\(agents.filter { $0.state == .running }.count) 个在运行")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.uiMeta).foregroundStyle(.secondary)
                 }
             }
             if agents.isEmpty {
-                Text("这个聊天还没有启动子代理。").font(.callout).foregroundStyle(.secondary)
+                Text("这个聊天还没有启动子代理。").font(.uiSecondary).foregroundStyle(.secondary)
             }
             ForEach(agents.prefix(12)) { agent in
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 3) {
                         if let summary = agent.summary {
-                            Text(summary).font(.caption).textSelection(.enabled)
+                            Text(summary).font(.uiMeta).textSelection(.enabled)
                         }
                         ForEach(Array(agent.log.suffix(8).enumerated()), id: \.offset) { _, line in
-                            Text(line).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(2)
+                            Text(line).font(.uiMeta.monospaced()).foregroundStyle(.secondary).lineLimit(2)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -405,9 +467,9 @@ private struct SubagentSection: View {
                     HStack(spacing: 6) {
                         StateIndicator(state: agent.state, size: 10)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(agent.name).font(.callout).lineLimit(1)
+                            Text(agent.name).font(.uiSecondary).lineLimit(1)
                             Text(agent.activity ?? agent.statusLabel)
-                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                .font(.uiMeta).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
                 }
@@ -436,12 +498,12 @@ private struct MCPServerRow: View {
                 .frame(width: 7, height: 7)
             VStack(alignment: .leading, spacing: 2) {
                 Text(server.name)
-                    .font(.callout)
+                    .font(.uiSecondary)
                     .foregroundStyle(server.enabled ? .primary : .secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(subtitle)
-                    .font(.caption)
+                    .font(.uiMeta)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -498,7 +560,7 @@ private struct InfoSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(.uiMeta.weight(.semibold))
                 .foregroundStyle(.secondary)
             content()
         }
@@ -518,6 +580,6 @@ private struct InfoRowStyle: LabeledContentStyle {
                 .lineLimit(2)
                 .truncationMode(.middle)
         }
-        .font(.callout)
+        .font(.uiSecondary)
     }
 }

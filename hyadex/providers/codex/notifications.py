@@ -41,6 +41,7 @@ from hyadex.core.session_codex import (
     session_codex_thread_id,
 )
 from hyadex.core.util import clean_assistant_text
+from hyadex.providers.token_totals import add_codex_thread_total_locked
 from hyadex.features.usage import (
     bounded_codex_interaction_value,
     broadcast_provider_runtime_changed,
@@ -238,6 +239,8 @@ async def record_codex_token_usage(
         if model:
             stored_snapshot["model"] = model
         session["codex_token_usage"] = dict(snapshot.get("token_usage") or {})
+        add_codex_thread_total_locked(session, snapshot_thread_id,
+                                      session["codex_token_usage"].get("total"))
         session["codex_token_usage_snapshot"] = stored_snapshot
         session["context_usage_state"] = "available"
         session["context_usage_snapshot"] = stored_snapshot

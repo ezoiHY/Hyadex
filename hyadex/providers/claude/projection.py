@@ -31,6 +31,7 @@ from hyadex.core.sessions import (
 from hyadex.core.util import _patch_changed_paths, clean_assistant_text, normalized_tool_name
 from hyadex.features.files import run_event_metadata
 from hyadex.providers.claude.native_goals import claude_local_command_output
+from hyadex.providers.token_totals import add_claude_turn_usage
 from hyadex.providers.claude.subagents import (
     claude_sdk_field,
     claude_sdk_subagent_lifecycle_raw,
@@ -441,6 +442,7 @@ async def project_claude_sdk_message(
 
     if message_type in {"ResultMessage", "result"}:
         details = claude_sdk_result_details(message)
+        await add_claude_turn_usage(session_id, claude_sdk_field(message, "usage"))
         if await publish_claude_local_command_outputs(
             session_id,
             run_id,

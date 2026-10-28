@@ -87,6 +87,22 @@ public enum SidebarMode: String, CaseIterable, Hashable, Sendable {
 
 // MARK: - Chats
 
+/// Tokens a chat has used across all its turns, as the provider reported them.
+/// Input includes cached input.
+public struct TokenTotals: Hashable, Sendable {
+    public var total: Int
+    public var input: Int
+    public var cachedInput: Int
+    public var output: Int
+
+    public init(total: Int, input: Int, cachedInput: Int, output: Int) {
+        self.total = total
+        self.input = input
+        self.cachedInput = cachedInput
+        self.output = output
+    }
+}
+
 public struct ChatSummary: Identifiable, Hashable, Sendable {
     public var id: String
     public var title: String
@@ -101,12 +117,15 @@ public struct ChatSummary: Identifiable, Hashable, Sendable {
     public var pinned: Bool
     public var unread: Bool
     public var tokensUsed: Int
+    /// The provider's token counts across all turns; nil until the server has recorded one.
+    public var tokenTotals: TokenTotals?
     public var archived: Bool
 
     public init(id: String, title: String, backend: AgentBackend, model: String, effort: String = "",
                 permission: String, cwd: String, preview: String, lastActivity: Date,
                 state: ActivityState = .idle, pinned: Bool = false, unread: Bool = false, tokensUsed: Int = 0,
-                archived: Bool = false) {
+                tokenTotals: TokenTotals? = nil, archived: Bool = false) {
+        self.tokenTotals = tokenTotals
         self.id = id
         self.title = title
         self.backend = backend
@@ -171,6 +190,8 @@ public struct GroupSummary: Identifiable, Hashable, Sendable {
     /// A native goal set on one member, announced to the group.
     public var goal: GroupGoal?
     public var archived = false
+    /// Responder, hand-off limit and brief, as the server stores them.
+    public var settings = GroupSettings()
 
     public init(id: String, title: String, cwd: String, participants: [Participant], defaultResponder: String,
                 preview: String, lastActivity: Date, unread: Bool = false, promptChars: Int = 0, dispatches: Int = 0,
@@ -386,6 +407,10 @@ public struct ScheduledJob: Identifiable, Hashable, Sendable {
     public var schedule: String
     public var nextRun: Date?
     public var lastResult: ActivityState?
+    /// How the last run ended in words (成功, 失败, 已停止, 已派发 …); nil uses the state's label.
+    public var lastResultText: String?
+    /// Why the last run failed, from the server.
+    public var lastError: String?
     public var lastRun: Date?
     public var enabled: Bool
     /// The chat it posts to (a group job: the group's anchor member chat).
@@ -396,8 +421,11 @@ public struct ScheduledJob: Identifiable, Hashable, Sendable {
 
     public init(id: String, title: String, prompt: String, target: String, schedule: String, nextRun: Date?,
                 lastResult: ActivityState?, lastRun: Date?, enabled: Bool, sessionID: String? = nil,
-                groupID: String? = nil, spec: JobSchedule? = nil) {
+                groupID: String? = nil, spec: JobSchedule? = nil, lastResultText: String? = nil,
+                lastError: String? = nil) {
         self.id = id
+        self.lastResultText = lastResultText
+        self.lastError = lastError
         self.title = title
         self.prompt = prompt
         self.target = target

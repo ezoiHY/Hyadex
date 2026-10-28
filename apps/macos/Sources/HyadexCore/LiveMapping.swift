@@ -10,6 +10,8 @@ public struct PermissionPreset: Hashable, Sendable {
     public let detail: String
     public let symbol: String
     public let fields: [String: String]
+    /// Skips the provider's safety checks (shown in orange, as Codex shows 完全访问).
+    public var risky: Bool { symbol == "exclamationmark.shield" }
 
     public static func presets(for backend: AgentBackend) -> [PermissionPreset] {
         switch backend {
@@ -91,6 +93,7 @@ enum LiveMapping {
         if json["claude_needs_user_action"].bool == true || json["codex_needs_user_action"].bool == true {
             state = .needsAction
         }
+        let totals = tokenTotals(json["token_totals"])
         let readSeq = json["last_read_agent_event_seq"].int ?? 0
         let agentSeq = json["latest_agent_event_seq"].int ?? 0
         return ChatSummary(
@@ -106,9 +109,16 @@ enum LiveMapping {
             state: state,
             pinned: json["pinned"].bool == true,
             unread: json["manual_unread"].bool == true || agentSeq > readSeq,
-            tokensUsed: previous?.tokensUsed ?? 0,
+            tokensUsed: totals?.total ?? previous?.tokensUsed ?? 0,
+            tokenTotals: totals ?? previous?.tokenTotals,
             archived: json["archived"].bool == true
         )
+    }
+
+    static func tokenTotals(_ json: JSON) -> TokenTotals? {
+        guard let total = json["total_tokens"].int else { return nil }
+        return TokenTotals(total: total, input: json["input_tokens"].int ?? 0,
+                           cachedInput: json["cached_input_tokens"].int ?? 0, output: json["output_tokens"].int ?? 0)
     }
 
     /// `members` holds member-chat records by session id. Turns run with the member
@@ -145,6 +155,7 @@ enum LiveMapping {
             goal: GroupGoal.parse(json["goal"])
         )
         group.archived = json["archived"].bool == true
+        group.settings = GroupSettings.parse(json)
         return group
     }
 
@@ -265,8 +276,7 @@ enum LiveMapping {
         } else {
             target = "独立运行"
         }
-        let failed = json["last_manual_run_error"].text != nil
-        let lastRun = json["last_run_at"].date
+        let outcome = jobOutcome(json)
         return ScheduledJob(
             id: id,
             title: json["title"].text ?? "定时任务",
@@ -274,12 +284,39 @@ enum LiveMapping {
             target: target,
             schedule: schedule(json),
             nextRun: json["next_run_at"].date,
-            lastResult: lastRun == nil ? nil : (failed ? .failed : .done),
-            lastRun: lastRun,
+            lastResult: outcome?.state,
+            lastRun: outcome?.at,
             enabled: json["enabled"].bool != false,
             sessionID: json["session_id"].string,
             groupID: json["group_id"].string,
-            spec: scheduleSpec(json)
+            spec: scheduleSpec(json),
+            lastResultText: outcome?.text,
+            lastError: outcome?.error
         )
+    }
+
+    /// How the job's last run ended. The server records `last_run_status` when the
+    /// run's turn ends (or fails to start); a server without it only reports
+    /// that a run started, which is not shown as success.
+    static func jobOutcome(_ json: JSON) -> (state: ActivityState, text: String, error: String?, at: Date?)? {
+        let started = json["last_run_at"].date
+        let finished = json["last_run_finished_at"].date
+        let at = [started, finished].compactMap { $0 }.max()
+        switch json["last_run_status"].string {
+        case "running": return (.running, "运行中", nil, started ?? at)
+        case "completed": return (.done, "成功", nil, at)
+        case "failed": return (.failed, "失败", json["last_run_error"].text, at)
+        case "stopped": return (.paused, "已停止", nil, at)
+        case "dispatched": return (.done, "已派发", nil, at)
+        default: break
+        }
+        if let error = json["last_manual_run_error"].text {
+            let failedAt = json["last_manual_run_error_at"].date
+            if started == nil || (failedAt ?? .distantPast) >= started! {
+                return (.failed, "失败", error, failedAt ?? started)
+            }
+        }
+        guard let started else { return nil }
+        return (.idle, "已运行", nil, started)
     }
 }

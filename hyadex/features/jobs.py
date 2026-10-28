@@ -67,6 +67,7 @@ from hyadex.core.sessions import (
 from hyadex.core.state import (
     DELETED_SESSION_TOMBSTONES,
     DELETING_SESSIONS,
+    EVENTS,
     TIMELINE_INDEX_CACHE_LOCK,
 )
 from hyadex.core.turn_receipts import start_turn
@@ -80,6 +81,7 @@ from hyadex.features.job_admission import (
     scheduled_job_lifecycle_admission_defer_reason,
 )
 from hyadex.features.job_history import read_scheduled_job_runs
+from hyadex.features.job_outcomes import apply_outcome, JobRunTracker, OBSERVED_EVENT_TYPES, RunOutcome
 from hyadex.features.side_questions import CODEX_GOALS_RECONFIGURING
 from hyadex.features.terminal import terminal_windows_snapshot
 from hyadex.features.usage import join_task_despite_caller_cancellation
@@ -170,6 +172,9 @@ class JobStore:
         # short admission window so an HTTP retry and the scheduler cannot
         # launch the same pending manual run twice in one process.
         self._manual_runs_in_flight: set[str] = set()
+        # Which scheduled-job turns are running and how recent ones ended.
+        self.runs = JobRunTracker()
+        self._outcome_tasks: set[asyncio.Task] = set()
 
     def _retired_provider(self, job: dict[str, Any]) -> bool:
         parent = STORE.sessions.get(str(job.get("session_id") or "")) or {}
@@ -937,6 +942,8 @@ class JobStore:
         expected_revision: str | None = None,
         scheduled_run_at: float | None = None,
         require_exact_match: bool = False,
+        run_id: str | None = None,
+        group_dispatch: bool = False,
     ) -> dict[str, Any] | None:
         """Record an admitted run without advancing a replacement schedule.
 
@@ -989,6 +996,14 @@ class JobStore:
                 job.pop("last_manual_run_error_at", None)
             else:
                 job["last_scheduled_run_at"] = admitted_scheduled_at
+            if group_dispatch:
+                apply_outcome(job, "dispatched", run_id=None, error=None, at=job["last_run_at"])
+            elif run_id:
+                # A fast turn can end before this bookkeeping runs.
+                self.runs.track(run_id, jid)
+                ended = self.runs.finished(run_id)
+                apply_outcome(job, ended.status if ended else "running", run_id=run_id,
+                              error=ended.error if ended else None, at=now_iso())
             job["run_count"] = int(job.get("run_count") or 0) + 1
             run_count = int(job.get("run_count") or 0)
             max_runs = job.get("max_runs")
@@ -1308,6 +1323,7 @@ class JobStore:
             job.pop("_last_manual_defer_event_at", None)
             job["last_manual_run_error"] = error_message
             job["last_manual_run_error_at"] = now_iso()
+            apply_outcome(job, "failed", run_id=None, error=error_message, at=job["last_manual_run_error_at"])
             job["updated_at"] = now_iso()
             job["_revision"] = new_job_revision()
             failed_job = event_job(job)
@@ -1382,6 +1398,7 @@ class JobStore:
                 manual=manual,
                 expected_revision=job_revision,
                 scheduled_run_at=scheduled_run_at,
+                group_dispatch=True,
             )
             ran_job = public_job(marked_job if isinstance(marked_job, dict) else job)
             await append_event(session_id, "job_ran", {
@@ -1422,6 +1439,7 @@ class JobStore:
             manual=manual,
             expected_revision=job_revision,
             scheduled_run_at=scheduled_run_at,
+            run_id=str(result.get("run_id") or "") or None,
         )
         # Deleting a job after its turn was admitted prevents recurrence but
         # cannot undo that run.  Keep its timeline marker without indexing the
@@ -1590,6 +1608,23 @@ class JobStore:
                 )
 
         return await self._dispatch_pending_manual_run(jid)
+
+    async def record_run_outcome(self, outcome: RunOutcome) -> None:
+        """Store how a scheduled-job turn ended, unless a newer run replaced it."""
+        async with self._lock:
+            job = self.jobs.get(outcome.job_id)
+            if not job or job.get("last_run_id") not in (None, outcome.run_id):
+                return
+            apply_outcome(job, outcome.status, run_id=outcome.run_id, error=outcome.error, at=now_iso())
+            await self.save()
+
+    def observe_run_event(self, session_id: str, event: dict[str, Any]) -> None:
+        outcome = self.runs.observe(event)
+        if outcome is None:
+            return
+        task = asyncio.get_running_loop().create_task(self.record_run_outcome(outcome))
+        self._outcome_tasks.add(task)
+        task.add_done_callback(self._outcome_tasks.discard)
 
     def start_scheduler(self) -> None:
         if (
@@ -1890,6 +1925,7 @@ class JobStore:
                             job["scheduled_run_at"] = None
                         clear_job_runtime_unavailable_deferral(job)
                         clear_job_update_park(job)
+                        apply_outcome(job, "failed", run_id=None, error=concise_error_message(e), at=now_iso())
                         await self.save()
                         failed_job = dict(job)
                     if failed_job.get("session_id"):
@@ -1921,6 +1957,7 @@ class JobStore:
 
 
 JOBS = JobStore()
+EVENTS.on_observe(JOBS.observe_run_event, types=OBSERVED_EVENT_TYPES)
 # The turn engine reaches the job store through WIRING (it sits below jobs).
 WIRING.jobs = JOBS
 

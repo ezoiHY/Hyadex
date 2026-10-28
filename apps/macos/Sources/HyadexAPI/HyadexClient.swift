@@ -162,6 +162,29 @@ public struct HyadexClient: Sendable {
         return data
     }
 
+    /// A read-only copy of a file in the chat's folder or its repository.
+    public func workspaceFile(_ id: String, path: String) async throws -> Data {
+        var components = URLComponents(url: endpoint.baseURL.appending(path: "api/sessions/\(id)/workspace/file"),
+                                       resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "path", value: path)]
+        var request = URLRequest(url: components.url!)
+        request.timeoutInterval = 60
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        let data: Data, response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw HyadexClientError.unreachable(error.localizedDescription)
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 401 { throw HyadexClientError.unauthorized }
+        guard status == 200 else {
+            let detail = (try? JSONDecoder().decode(JSON.self, from: data))?["detail"].string
+            throw HyadexClientError.http(status, detail)
+        }
+        return data
+    }
+
     public func sessions() async throws -> [JSON] {
         try await get("api/sessions")["sessions"].array
     }
@@ -172,6 +195,11 @@ public struct HyadexClient: Sendable {
 
     public func updateSession(_ id: String, _ body: JSON) async throws -> JSON {
         try await request("PATCH", "api/sessions/\(id)", body: body)["session"]
+    }
+
+    /// The full session record (settings included), without its events.
+    public func sessionRecord(_ id: String) async throws -> JSON {
+        try await get("api/sessions/\(id)", query: ["limit": "1"])["session"]
     }
 
     /// Session record, queued turns and a page of events after `after`.

@@ -716,7 +716,13 @@ class GroupEngine:
         changes = settings.model_dump(exclude_unset=True)
         if changes.get("default_responder") is not None and changes["default_responder"] not in self.handles(group):
             raise GroupError(status_code=400, detail="default_responder must be a participant handle")
-        current.update({key: value for key, value in changes.items()})
+        for key, value in changes.items():
+            if value is None and key != "default_responder":
+                # null restores the default rather than storing a missing limit.
+                current.pop(key, None)
+            else:
+                current[key] = value
+        self.settings(group)
         return changes
 
     async def update(self, group_id: str, req: UpdateGroupRequest) -> dict[str, Any]:

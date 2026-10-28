@@ -14,17 +14,17 @@ struct EmergencyBanners: View {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "exclamationmark.octagon.fill")
                         .foregroundStyle(.red)
-                        .font(.title3)
+                        .font(.uiTitle3)
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             Text("紧急提醒").fontWeight(.semibold)
                             Text(alert.chatTitle).foregroundStyle(.secondary)
                             if alert.count > 1 {
-                                Text("共 \(alert.count) 条").font(.caption).foregroundStyle(.secondary)
+                                Text("共 \(alert.count) 条").font(.uiMeta).foregroundStyle(.secondary)
                             }
                             if let raised = alert.raisedAt {
                                 Text(raised, format: .relative(presentation: .named))
-                                    .font(.caption).foregroundStyle(.tertiary)
+                                    .font(.uiMeta).foregroundStyle(.tertiary)
                             }
                         }
                         Text(alert.message)
@@ -38,7 +38,7 @@ struct EmergencyBanners: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.red)
                 }
-                .font(.callout)
+                .font(.uiSecondary)
                 .padding(12)
                 // Opaque: an emergency must stay legible over any conversation.
                 .card(tint: .red)
@@ -63,7 +63,7 @@ struct RenameSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(isGroup ? "重命名讨论组" : "重命名聊天").font(.headline)
+            Text(isGroup ? "重命名讨论组" : "重命名聊天").font(.uiHeadline)
             TextField("名称", text: $title)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(save)
@@ -144,7 +144,7 @@ struct JobSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             Text(editing == nil ? "新建定时任务" : "编辑定时任务")
-                .font(.headline)
+                .font(.uiHeadline)
                 .padding(.top, 16)
             Form {
                 TextField("名称", text: $title, prompt: Text("例如：每日依赖更新检查"))
@@ -198,14 +198,12 @@ struct JobSheet: View {
                     case .once:
                         DatePicker("运行时间", selection: $date, in: Date.now..., displayedComponents: [.date, .hourAndMinute])
                     case .cron:
-                        TextField("cron", text: $cron)
-                            .font(.callout.monospaced())
-                        Text("六段，秒在最前：秒 分 时 日 月 星期。例如 0 30 8 * * 1-5 是工作日 8:30。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        TextField("cron", text: $cron, prompt: Text("0 30 8 * * 1-5"))
+                            .font(.uiSecondary.monospaced())
+                            .help("六段：秒 分 时 日 月 星期。0 30 8 * * 1-5 是工作日 8:30")
                     }
                     Text(nextRunText)
-                        .font(.caption)
+                        .font(.uiMeta)
                         .foregroundStyle(.secondary)
                 }
                 Toggle("启用", isOn: $enabled)
@@ -360,7 +358,7 @@ struct ServerFolderField: View {
                 HStack {
                     TextField("", text: $path, prompt: Text("~/Code/project"))
                         .labelsHidden()
-                        .font(.callout.monospaced())
+                        .font(.uiSecondary.monospaced())
                         .focused($focused)
                     if model.serverIsLocal {
                         Button("选择…") { picking = true }
@@ -390,11 +388,7 @@ struct ServerFolderField: View {
                 .card()
             }
             if let message {
-                Text(message).font(.caption).foregroundStyle(.secondary)
-            } else if !model.serverIsLocal {
-                Text("目录在服务器上：点下面的文件夹逐级进入，或直接输入路径。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(message).font(.uiMeta).foregroundStyle(.secondary)
             }
         }
         .task(id: path) {
@@ -439,10 +433,10 @@ private struct FolderRow: View {
                     .truncationMode(.middle)
                 Spacer()
                 if !secondary {
-                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                    Image(systemName: "chevron.right").font(.uiSmall).foregroundStyle(.tertiary)
                 }
             }
-            .font(.callout)
+            .font(.uiSecondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .contentShape(Rectangle())
@@ -486,7 +480,7 @@ struct AttachmentStrip: View {
                         .buttonStyle(.plain)
                         .help("移除")
                     }
-                    .font(.caption)
+                    .font(.uiMeta)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Capsule().fill(Color.primary.opacity(0.06)))

@@ -551,6 +551,26 @@ class GroupEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.engine.read_events(group["id"], types={"round_finished"})[-1]["reason"], "archived")
         self.assertEqual(self.runtime.stopped, [self.member(group, "claude")])
 
+    async def test_settings_and_brief_can_be_changed_and_reset(self) -> None:
+        group = await self.create()
+        updated = await self.engine.update(group["id"], UpdateGroupRequest.model_validate({
+            "brief": "Keep the public API stable.",
+            "settings": {"default_responder": "codex", "max_agent_hops": 2}}))
+        self.assertEqual(updated["settings"]["default_responder"], "codex")
+        self.assertEqual(updated["settings"]["max_agent_hops"], 2)
+        self.assertEqual(updated["brief"]["version"], 1)
+        result = await self.post(group["id"], "Who answers now?")
+        self.assertEqual(result["targets"], ["codex"])
+        self.assertIn("Keep the public API stable.", self.runtime.turns[0]["prompt"])
+        # null restores the defaults: first member answers, four hand-offs.
+        reset = await self.engine.update(group["id"], UpdateGroupRequest.model_validate({
+            "settings": {"default_responder": None, "max_agent_hops": None}}))
+        self.assertIsNone(reset["settings"]["default_responder"])
+        self.assertEqual(reset["settings"]["max_agent_hops"], group_chat.DEFAULT_MAX_AGENT_HOPS)
+        with self.assertRaises(HTTPException):
+            await self.engine.update(group["id"], UpdateGroupRequest.model_validate(
+                {"settings": {"default_responder": "ghost"}}))
+
     async def test_removing_the_anchor_member_moves_group_jobs(self) -> None:
         group = await self.create()
         await self.engine.remove_participant(group["id"], "claude")

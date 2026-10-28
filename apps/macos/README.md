@@ -73,8 +73,13 @@ replies. The production app has no demo mode.
   running turn when it can, otherwise the turn stops and it runs next). After a
   Stop, queued messages are held until 继续发送. Approvals are inline (Allow,
   Always allow for this chat, Deny). Return sends, Shift-Return adds a line, Esc stops.
-  Files go with the next message: the paperclip, or drop them anywhere on the
-  conversation; each uploads at once and shows its progress.
+  The composer's "+" holds 添加文件…, 侧问 and 设定目标… (in a group also the answer
+  mode, 只分析 and 添加成员); its bottom row shows the permission mode, the context
+  ring, and the model and effort.
+  Files go with the next message: "+" › 添加文件…, drop them anywhere on the
+  conversation, or ⌘V a screenshot or files copied in Finder; each uploads at
+  once and shows its progress. Text, including text that carries a picture of
+  itself (Numbers, Word), still pastes as text.
   "加载更早的消息" at the top pages back through long chats.
   Model, effort and permissions are set per chat from the composer, with the
   providers' own names (Claude Code's Manual / Accept edits / Plan / Auto /
@@ -109,7 +114,7 @@ replies. The production app has no demo mode.
   windows, new windows, splits, and closing a pane or the whole session. Hiding
   the panel only detaches; commands keep running, and reopening it repaints the
   current screen. Drag its top edge to change the height.
-- **Goals.** 目标 in the composer (or typing `/goal …`, `/goal clear`) sets the
+- **Goals.** + › 设定目标… in the composer (or typing `/goal …`, `/goal clear`) sets the
   provider's native goal: Claude Code's `/goal` completion condition, checked
   after every reply until it holds, or Codex's persistent objective with an
   optional token and time budget. While a goal is set, a bar above the composer
@@ -126,7 +131,7 @@ replies. The production app has no demo mode.
   be reconnected, disabled or enabled again, and failed servers retried; servers
   that need a sign-in are signed in with `/mcp` in Claude Code itself. Codex
   servers show their state once the chat's thread is running.
-- **Side questions.** 侧问 in the composer (⇧⌘B, or typing `/btw …`) opens a
+- **Side questions.** + › 侧问 in the composer (⇧⌘B, or typing `/btw …`) opens a
   panel beside the conversation for quick questions that neither interrupt the
   agent nor enter its transcript: Claude Code's native `/btw`, or for Codex an
   answer from a fork of its thread.
@@ -140,7 +145,16 @@ replies. The production app has no demo mode.
 - **Scheduled jobs.** + in 定时任务 creates a job for a chat or a group: daily,
   weekdays, weekly, every N minutes/hours/days, once, or a cron expression, in
   this Mac's time zone, with a preview of the next run. Double-click to edit;
-  right-click to run now or delete.
+  right-click to run now or delete. 上次结果 shows how the last run actually
+  ended (成功, 失败 with the reason on hover, 已停止, 运行中, or 已派发 for a group),
+  whether it ran on schedule or by hand.
+- **Chat settings.** 高级设置… (right-click a chat, or ⓘ) edits the chat's system
+  prompt, its subagent limit (or the agent's own setting), the automatic title,
+  and whether the agent may create and change scheduled jobs itself, may only
+  view them, or may not use them.
+- **Group settings.** 讨论组设置… (right-click a group, or ⓘ › 编辑设置…) sets who
+  answers a message that mentions nobody, how many agent hand-offs a round
+  allows (0–12), and the shared brief every member receives once per version.
 - **Folders.** New chats and groups pick their working directory on the server:
   type a path or step through the folders it lists. A Finder picker is offered
   only when the server runs on this Mac.
@@ -151,7 +165,7 @@ replies. The production app has no demo mode.
   state and recent activity.
 - **Context.** Click the context ring to compact the conversation now (Codex
   natively; Claude Code with `/compact`).
-- **Settings.** ⌘↩ to send (↩ then adds a line), opening each turn's work by
+- **Settings.** 字号 (标准 or 大) scales all text. ⌘↩ to send (↩ then adds a line), opening each turn's work by
   default, and the plan-usage footer apply at once. 通知 shows whether macOS lets
   Hyadex notify (with a shortcut to System Settings when it does not) and
   chooses notifications for approvals and finished replies, only while Hyadex is
@@ -160,7 +174,11 @@ replies. The production app has no demo mode.
 - **Changes and details.** There is no permanent side column. A change card, a
   group receipt or a task's "查看 diff" slides a changes panel over the
   conversation (Esc closes it); the toolbar button shows the file count and is
-  disabled when nothing changed. ⓘ shows the selection's settings and usage.
+  disabled when nothing changed. ⓘ shows the selection's settings and usage,
+  including the tokens a chat has used across its turns (input with its cached
+  part, and output). In the changes panel, 在编辑器中打开 opens the file in its
+  default app: in place when the server runs on this Mac, otherwise a read-only
+  copy downloaded from the server.
 
 ## How the client uses the server
 
@@ -196,6 +214,11 @@ replies. The production app has no demo mode.
   message starting with one carries its opaque `skill_selection`, and a 409 for a
   changed list reloads it and resends once. MCP state comes from `/claude/mcp`
   (also POST for control) and `/codex/mcp`.
+- Chat settings are read from the full chat record and saved with
+  `PATCH /api/sessions/{id}`; group settings and the brief with
+  `PATCH /api/groups/{id}` (`null` restores a default). A changed file opens
+  through `GET .../workspace/file` when the server is remote. Token totals and
+  job outcomes come with the polled lists.
 
 ## Code layout
 
@@ -253,7 +276,11 @@ directly from a shell may not receive windows.
   never moves the pointer or takes the keyboard; the window is placed off
   screen. Menus are chosen while they track (as a click would), and a file drop
   goes through the drop region's own drag callbacks. `=cmdreturn`, `=settings`,
-  `=menus`/`=drop` and `=picker` run single steps.
+  `=menus`/`=drop` and `=picker` run single steps. `=gaps` covers job outcomes,
+  token totals, chat and group settings, 在编辑器中打开 and ⌘V attachments. It
+  expects chats titled "gaps e2e claude" (with a system prompt and a changed
+  `app/main.py`) and "gaps e2e codex", a group "gaps e2e group", and jobs
+  "gaps e2e ok", "gaps e2e fails" and "gaps e2e stopped" that last ran that way.
 
 ## Verified
 
@@ -297,6 +324,21 @@ in older history, side questions on both agents (the main conversation
 unchanged), forks of both agents that remember the original conversation, and
 a Claude subagent listed while it runs. Unit tests cover the event projections
 with event logs recorded from that server.
+
+`HYADEX_E2E_UI=gaps` (44 checks, real Claude Code and Codex, isolated server):
+the jobs table showing 成功, 失败 with Claude's own reason, and 已停止 for jobs
+that completed, failed on an unknown model and were stopped; a chat's token
+totals in ⓘ; 高级设置… loading the stored system prompt, a new prompt and the
+automatic title saved, Claude then answering in the prompt's language, and an
+emptied prompt clearing it; 在编辑器中打开 resolving a changed file through the
+diff's repository root, and the server copy a remote client would download; a
+clipboard image pasted with ⌘V, uploaded and read by Claude (after its Read
+approval), with text still pasting as text; and 讨论组设置… saving responder,
+hand-off limit and brief, kept after a list refresh, then restoring the defaults.
+Not exercised: the remote-server branch of 在编辑器中打开 through the button (the
+test server runs on this Mac; the download itself was checked), and ⌘V through
+the Edit menu with the mouse (the shortcut is intercepted; the menu item pastes
+text only).
 
 ## Known gaps
 

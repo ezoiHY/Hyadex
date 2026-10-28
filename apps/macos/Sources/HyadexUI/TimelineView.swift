@@ -42,7 +42,7 @@ struct TimelineView: View {
                             } else {
                                 Button("加载更早的消息", action: older.load)
                                     .buttonStyle(.borderless)
-                                    .font(.callout)
+                                    .font(.uiSecondary)
                             }
                             Spacer()
                         }
@@ -238,10 +238,10 @@ struct ActivityLine: View {
                 }
                 Elapsed(since: activity.since)
             }
-            .font(.callout)
+            .font(.uiSecondary)
             if activity.kind == .thinking, let detail = activity.detail {
                 Text(detail)
-                    .font(.callout)
+                    .font(.uiSecondary)
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
                     .padding(.leading, 22)
@@ -251,8 +251,8 @@ struct ActivityLine: View {
             if activity.kind != .waiting {
                 SwiftUI.TimelineView(.periodic(from: .now, by: 5)) { context in
                     if context.date.timeIntervalSince(activity.since) > 120 {
-                        Text("已经等了一段时间，还没有新进展。可以继续等，或按 Esc 停止后重试。")
-                            .font(.caption)
+                        Text("很久没有新进展 · Esc 停止")
+                            .font(.uiMeta)
                             .foregroundStyle(.tertiary)
                             .padding(.leading, 22)
                     }
@@ -302,7 +302,7 @@ struct Elapsed: View {
     var body: some View {
         SwiftUI.TimelineView(.periodic(from: .now, by: 1)) { context in
             Text(Self.format(context.date.timeIntervalSince(since)))
-                .font(.caption.monospacedDigit())
+                .font(.uiMeta.monospacedDigit())
                 .foregroundStyle(.tertiary)
         }
     }
@@ -342,12 +342,12 @@ private struct ProcessRow: View {
                         Text(summary).foregroundStyle(.secondary)
                     }
                     Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
+                        .font(.uiSmall.weight(.semibold))
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                     Spacer(minLength: 0)
                 }
-                .font(.callout)
+                .font(.uiSecondary)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -423,7 +423,7 @@ struct TimelineRow: View {
         case .divider(_, let text):
             HStack(spacing: 10) {
                 VStack { Divider() }
-                Text(text).font(.caption).foregroundStyle(.tertiary).fixedSize()
+                Text(text).font(.uiMeta).foregroundStyle(.tertiary).fixedSize()
                 VStack { Divider() }
             }
             .padding(.vertical, 2)
@@ -513,7 +513,7 @@ private struct ReceiptChip: View {
                 Text("改动了 \(set.files.count) 个文件")
                 DiffStat(added: set.added, removed: set.removed)
             }
-            .font(.caption)
+            .font(.uiMeta)
         }
         .menuStyle(.button)
         .buttonStyle(.bordered)
@@ -534,7 +534,7 @@ private struct OrchestratorNote: View {
             Spacer()
             Text(time.formatted(date: .omitted, time: .shortened)).foregroundStyle(.tertiary)
         }
-        .font(.callout)
+        .font(.uiSecondary)
     }
 }
 
@@ -557,10 +557,10 @@ private struct ThinkingRow: View {
                     Image(systemName: "brain")
                     Text(seconds > 0 ? "思考了 \(seconds) 秒" : "思考过程")
                     Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
+                        .font(.uiSmall.weight(.semibold))
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
-                .font(.callout)
+                .font(.uiSecondary)
                 .foregroundStyle(.secondary)
                 .contentShape(Rectangle())
             }
@@ -568,7 +568,7 @@ private struct ThinkingRow: View {
             .accessibilityValue(expanded ? "已展开" : "已收起")
             if expanded {
                 Text(text)
-                    .font(.callout)
+                    .font(.uiSecondary)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .padding(.leading, 10)
@@ -613,12 +613,12 @@ struct ToolRow: View {
                     statusView
                     if !output.isEmpty {
                         Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
+                            .font(.uiSmall.weight(.semibold))
                             .foregroundStyle(.tertiary)
                             .rotationEffect(.degrees(expanded ? 90 : 0))
                     }
                 }
-                .font(.callout)
+                .font(.uiSecondary)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -646,15 +646,15 @@ struct ToolRow: View {
         case .running:
             HStack(spacing: 5) {
                 ProgressView().controlSize(.mini)
-                Text("\(Int(seconds)) 秒").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Text("\(Int(seconds)) 秒").font(.uiMeta.monospacedDigit()).foregroundStyle(.secondary)
             }
         case .succeeded:
             if seconds >= 1 {
-                Text(String(format: "%.1f 秒", seconds)).font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
+                Text(String(format: "%.1f 秒", seconds)).font(.uiMeta.monospacedDigit()).foregroundStyle(.tertiary)
             }
-            Image(systemName: "checkmark").font(.caption.weight(.semibold)).foregroundStyle(.green)
+            Image(systemName: "checkmark").font(.uiMeta.weight(.semibold)).foregroundStyle(.green)
         case .failed:
-            Image(systemName: "xmark").font(.caption.weight(.semibold)).foregroundStyle(.red)
+            Image(systemName: "xmark").font(.uiMeta.weight(.semibold)).foregroundStyle(.red)
         }
     }
 }
@@ -673,7 +673,7 @@ private struct ChangesCard: View {
                 Spacer()
                 Button("查看改动") { onOpenFile(set.files.first?.path ?? "") }
                     .buttonStyle(.link)
-                    .font(.callout)
+                    .font(.uiSecondary)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -732,12 +732,12 @@ struct ApprovalCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 7) {
                     Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
-                    Text(showsAuthor ? "@\(author.name) 请求\(title)" : "请求\(title)").font(.headline)
+                    Text(showsAuthor ? "@\(author.name) 请求\(title)" : "请求\(title)").font(.uiHeadline)
                     Spacer()
-                    Text("等待你的决定").font(.caption).foregroundStyle(.orange)
+                    Text("等待你的决定").font(.uiMeta).foregroundStyle(.orange)
                 }
                 if !reason.isEmpty {
-                    Text(reason).font(.callout).foregroundStyle(.secondary)
+                    Text(reason).font(.uiSecondary).foregroundStyle(.secondary)
                 }
                 CodeBlock(code: command, language: title == "运行命令" ? "shell" : nil, wraps: true)
                 HStack(spacing: 8) {
@@ -771,7 +771,7 @@ struct ApprovalCard: View {
                     .truncationMode(.middle)
                     .foregroundStyle(.secondary)
             }
-            .font(.callout)
+            .font(.uiSecondary)
         }
     }
 }
@@ -834,7 +834,7 @@ private struct MediaThumbnail: View {
                         .frame(width: 160, height: 110)
                         .overlay {
                             if failed {
-                                Label(file.name, systemImage: "photo").font(.caption).foregroundStyle(.secondary).padding(6)
+                                Label(file.name, systemImage: "photo").font(.uiMeta).foregroundStyle(.secondary).padding(6)
                             } else {
                                 ProgressView().controlSize(.small)
                             }
@@ -991,11 +991,11 @@ struct AuthorHeader: View {
         HStack(spacing: 6) {
             AgentAvatar(backend: author.backend, size: 16)
             Text("@" + author.name)
-                .font(.callout.weight(.semibold))
+                .font(.uiSecondary.weight(.semibold))
                 .foregroundStyle(Theme.color(for: author.backend))
             if let time {
                 Text(time.formatted(date: .omitted, time: .shortened))
-                    .font(.caption)
+                    .font(.uiMeta)
                     .foregroundStyle(.tertiary)
             }
         }

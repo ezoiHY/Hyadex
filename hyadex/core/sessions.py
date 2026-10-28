@@ -2500,6 +2500,9 @@ def public_session(sess: dict[str, Any], *, summary: bool = False) -> dict[str, 
     }
     if isinstance(sess.get("group_member"), dict):
         public["group_member"] = dict(sess["group_member"])
+    if isinstance(sess.get("token_totals"), dict):
+        # Provider-reported tokens across every turn; see providers/token_totals.py.
+        public["token_totals"] = dict(sess["token_totals"])
     notification_fields = (
         "unread_notification_level", "unread_notification_seq",
         "latest_notification_level", "latest_notification_message",

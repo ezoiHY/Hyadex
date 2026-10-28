@@ -1,10 +1,46 @@
 import HyadexCore
+import HyadexRichText
 import SwiftUI
+
+/// 设置 › 通用 › 字号.
+enum TextSize: String, CaseIterable, Identifiable {
+    case standard, large
+
+    var id: String { rawValue }
+    var label: String { self == .standard ? "标准" : "大" }
+    var scale: CGFloat { self == .standard ? 1 : 1.15 }
+    static let key = "textSize"
+
+    static var current: TextSize {
+        UserDefaults.standard.string(forKey: key).flatMap(TextSize.init(rawValue:)) ?? .standard
+    }
+}
+
+/// The app's type scale. Use these instead of the system text styles: macOS's
+/// caption styles are 10 pt, too small for anything that has to be read.
+/// Views rebuild when 字号 changes (the root view is keyed by it).
+extension Font {
+    /// Messages and ordinary UI text (14 pt).
+    static var uiBody: Font { .system(size: 14 * Theme.scale) }
+    /// Secondary lines: previews, labels next to values (13 pt).
+    static var uiSecondary: Font { .system(size: 13 * Theme.scale) }
+    /// Metadata: status lines, times, counts (12 pt).
+    static var uiMeta: Font { .system(size: 12 * Theme.scale) }
+    /// Badges and tags only (11 pt).
+    static var uiSmall: Font { .system(size: 11 * Theme.scale) }
+    static var uiHeadline: Font { .system(size: 14 * Theme.scale, weight: .semibold) }
+    static var uiTitle3: Font { .system(size: 16 * Theme.scale) }
+    static var uiTitle2: Font { .system(size: 19 * Theme.scale) }
+}
 
 /// Design tokens. Everything else uses system semantic colours and fonts so
 /// the app follows Light/Dark mode, accent colour and accessibility settings.
 enum Theme {
-    static let readableWidth: CGFloat = 780
+    /// The 字号 setting's factor; RootView sets it before building its views.
+    nonisolated(unsafe) static var scale: CGFloat = TextSize.current.scale {
+        didSet { RichMetrics.scale = scale }
+    }
+    static let readableWidth: CGFloat = 800
     static let cornerRadius: CGFloat = 10
     static let smallRadius: CGFloat = 6
     static let timelineSpacing: CGFloat = 14
@@ -82,6 +118,13 @@ extension Date {
 }
 
 extension Int {
+    /// 8,420 · 2.2 万 · 1,234 万: counts the way Chinese UI reads them.
+    var wan: String {
+        guard self >= 10_000 else { return formatted() }
+        let value = Double(self) / 10_000
+        return value >= 100 ? "\(Int(value.rounded()).formatted()) 万" : String(format: "%.1f 万", value)
+    }
+
     var compact: String {
         self >= 1000 ? String(format: "%.1fk", Double(self) / 1000) : String(self)
     }

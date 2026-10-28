@@ -13,7 +13,7 @@ private struct SheetScaffold<Content: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             Text(title)
-                .font(.headline)
+                .font(.uiHeadline)
                 .padding(.top, 16)
             Form { content() }
                 .formStyle(.grouped)
@@ -63,12 +63,10 @@ struct NewChatSheet: View {
                 ForEach(models) { Text($0.label).tag($0.value) }
             }
             ServerFolderField(model: model, path: $cwd)
+                .help("代理会加载这个目录下自己的 MCP 服务器、技能和项目配置")
             Picker("权限", selection: $permission) {
                 ForEach(permissions, id: \.self) { Text($0).tag($0) }
             }
-            Text("代理会加载自己在该目录下的 MCP 服务器、技能和项目配置。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
         .onAppear { if cwd.isEmpty { cwd = model.isLive ? model.defaultCwd : "~/Code/Hyadex" } }
     }
@@ -103,9 +101,7 @@ struct NewGroupSheet: View {
                     Text("@claude").tag("claude")
                     Text("@codex").tag("codex")
                 }
-                Text("消息里没有 @ 任何人时由默认回答者回答。成员只在被 @ 时才会被唤醒，只收到自己没看过的新消息。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .help("消息里没有 @ 任何人时由它回答")
             }
         }
         .onAppear { if cwd.isEmpty { cwd = model.isLive ? model.defaultCwd : "~/Code/Hyadex" } }
@@ -134,10 +130,10 @@ struct NewAutopilotSheet: View {
                 ServerFolderField(model: model, path: $cwd)
                 HStack(spacing: 6) {
                     AgentAvatar(backend: .claude, size: 16); Text("Claude 规划")
-                    Image(systemName: "arrow.right").font(.caption).foregroundStyle(.tertiary)
+                    Image(systemName: "arrow.right").font(.uiMeta).foregroundStyle(.tertiary)
                     AgentAvatar(backend: .codex, size: 16); Text("Codex 执行")
                 }
-                .font(.callout)
+                .font(.uiSecondary)
                 .foregroundStyle(.secondary)
             }
             Section("运行方式") {
@@ -151,17 +147,15 @@ struct NewAutopilotSheet: View {
             Section("验证") {
                 TextField("验证命令", text: $verifyCommand, prompt: Text("每一步完成后运行，例如 npm test"))
                     .labelsHidden()
-                    .font(.callout.monospaced())
-                Text("验证失败的步骤一定不会通过。命令在 Codex 沙箱里运行：只能写工作目录，不能联网。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.uiSecondary.monospaced())
+                    .help("验证失败的步骤不会通过。命令在 Codex 沙箱里运行：只能写工作目录，不能联网。")
             }
         }
         .onAppear { if cwd.isEmpty { cwd = model.isLive ? model.defaultCwd : "~/Code/Hyadex" } }
     }
 }
 
-/// Segmented choice with a one-line explanation of the consequence.
+/// Segmented choice; what the selected option means is in its tooltip.
 private struct OptionPicker<Option: Hashable>: View {
     let title: String
     @Binding var selection: Option
@@ -170,14 +164,10 @@ private struct OptionPicker<Option: Hashable>: View {
     let explanation: KeyPath<Option, String>
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Picker(title, selection: $selection) {
-                ForEach(options, id: \.self) { Text($0[keyPath: label]).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            Text(selection[keyPath: explanation])
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        Picker(title, selection: $selection) {
+            ForEach(options, id: \.self) { Text($0[keyPath: label]).tag($0) }
         }
+        .pickerStyle(.segmented)
+        .help(selection[keyPath: explanation])
     }
 }

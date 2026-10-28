@@ -679,6 +679,32 @@ failed, so an external login can take effect without a server restart. Missing
 or broken executables still block admission. Other providers keep their own
 existing readiness checks.
 
+## Scheduled job outcomes
+
+`last_run_at` records when a run was admitted. How the latest run ended is kept
+on the job record as `last_run_status`:
+
+- `running` while its turn is in progress;
+- `completed`, `failed` or `stopped` once the turn ends;
+- `dispatched` for a group job, whose run is a message handed to the members.
+
+`failed` also covers a run that could not start, from the scheduler or
+**Run now**. Alongside the status the record has `last_run_error` (the turn's
+first error, or why it could not start), `last_run_id` and
+`last_run_finished_at`. Jobs that have not run since this was added have no
+`last_run_status`. The full history per run stays available from the timeline
+(`GET .../jobs/{job_id}/runs` for agents).
+
+## Chat token totals
+
+Each chat record (list and detail) carries `token_totals` once a turn has
+reported usage: `total_tokens`, `input_tokens` (including cached input),
+`cached_input_tokens`, `output_tokens` and `updated_at`. These are the
+providers' own counts summed over every turn: Claude's per-turn result usage
+(input, cache creation and cache reads) and the growth of each Codex thread's
+cumulative usage. Turns from before this field existed are not counted. Context
+usage (`context_usage_snapshot`) is separate: it is how full the window is now.
+
 ## Agent-managed scheduled jobs
 
 Every Claude and Codex turn receives a compact snapshot of up to 25 jobs
@@ -798,6 +824,13 @@ the chat's `cwd`. Clients show their results through
 `GET /api/sessions/{session_id}/links/file?target=...`, which resolves a file
 link in a message to exactly one of that chat's registered files.
 
+`GET /api/sessions/{session_id}/workspace/file?path=...` returns a read-only
+copy of one file the chat works on, so a client on another machine can open a
+changed file. `path` is absolute, or relative to the Git work tree containing
+the chat's folder (as a turn's diff names it). Only regular files inside the
+chat's folder or that work tree are served, after resolving symlinks (403
+otherwise), up to 50 MB. There is still no listing, editing or Git control.
+
 ## Resuming and importing provider history
 
 There is no server-side list of local Claude or Codex sessions and no bulk or
@@ -898,7 +931,7 @@ schema at `/openapi.json`. Paths below that begin with `.../` are relative to
 - Queue: `PATCH`/`DELETE .../queue/{queued_id}`, `POST .../queue/{queued_id}/move`,
   `POST .../queue/{queued_id}/run-now`, `POST .../queue/resume`
 - Files and diffs: `GET`/`POST .../files`, `GET .../files/{file_id}`,
-  `GET .../links/file`, `GET .../diffs/{run_id}`
+  `GET .../links/file`, `GET .../workspace/file?path=…`, `GET .../diffs/{run_id}`
 - Claude controls: `GET .../claude/runtime`, `PUT`/`DELETE .../claude/goal`,
   `POST .../claude/context-usage/refresh`,
   `POST .../claude/interactions/{interaction_id}/resolve`

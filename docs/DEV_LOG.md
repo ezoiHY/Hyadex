@@ -3,6 +3,60 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-28 — Mac app: a calmer composer
+
+- The message box is two lines tall with rounder corners, like Claude's and
+  Codex's apps. Its bottom row holds only "+", the permission mode (orange when
+  it skips safety checks), the context ring (its number shows from 70 %), the
+  model and effort with a chevron, and send.
+- "+" holds 添加文件…, 侧问 (⇧⌘B) and 设定目标…; in a group also the answer mode,
+  只分析, the goal and 添加成员. A non-default answer mode or 只分析 shows as a
+  small label beside the members.
+- Verification: `HYADEX_E2E_UI=gaps` passed 44 checks, including the side chat
+  and goal opened from "+".
+
+## 2026-10-28 — Mac app: larger text and less explanatory copy
+
+- One type scale for the whole app: messages 14 pt, secondary lines 13 pt,
+  metadata 12 pt, badges 11 pt (macOS caption styles are 10 pt). Settings ›
+  通用 › 字号 adds 大 (about 15 %).
+- Explanations moved from the screen into tooltips, or were removed: form
+  footers, the slash-menu key hints, the composer placeholder's command hint,
+  the queue note beside the send button, folder and cron help, the group
+  answer-mode note. Character counts appear only near a limit.
+- 高级设置 and 讨论组设置 are one compact form each; the subagent limit is a
+  single menu. Chat token usage is one line in ⓘ (in 万), with the breakdown on
+  hover. Sidebar tab badges no longer push 「Autopilot」 out of its tab.
+- Verification: 88 Swift tests; `HYADEX_E2E_UI=gaps` passed 40 checks against a
+  real isolated server; before/after snapshots at 标准 and 大.
+
+## 2026-10-28 — Mac app: real job outcomes, token totals, settings and pasting
+
+- 定时任务 › 上次结果 shows how the last run ended. Before, a scheduled run that
+  failed still showed 成功 because only manual-run errors were recorded. The
+  server now keeps `last_run_status` (running, completed, failed, stopped, or
+  dispatched for group jobs) with the error and finish time, including runs that
+  could not start.
+- ⓘ shows the tokens a chat has used across its turns. The server sums the
+  providers' own counts into `token_totals` (Claude's per-turn usage, the growth
+  of each Codex thread's total); earlier turns are not counted.
+- 高级设置… edits a chat's system prompt, subagent limit, automatic title and the
+  agent's access to scheduled jobs. 讨论组设置… edits the default responder, the
+  hand-off limit and the shared brief; ⓘ shows the real values instead of a fixed
+  "4 次". In a group `PATCH`, `null` now restores a setting's default instead of
+  storing an empty limit.
+- 在编辑器中打开 in the changes panel works: the file opens in place when the
+  server is on this Mac, or as a read-only copy from
+  `GET /api/sessions/{id}/workspace/file` (limited to the chat's folder and its
+  Git work tree) when it is remote.
+- ⌘V in the composer attaches screenshots and files copied in Finder; text
+  pastes as before.
+- Form controls in the new sheets carry accessibility labels.
+- Verification: the backend suite (3,053 tests) passes; a real
+  API pass with Claude Code and Codex checked each new field and route. In the
+  app, `HYADEX_E2E_UI=gaps` passed 41 checks through the real controls against
+  an isolated server (see the Mac README). 88 Swift tests pass.
+
 ## 2026-10-28 — Mac app: start a local backend and remove demo mode
 
 - The welcome screen, server settings and server menu can start a real,

@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 /// Message input shared by chats and groups.
 /// Return sends, Shift-Return adds a line, Esc stops a running turn.
 /// While an agent is busy, new messages are queued and stay editable.
-struct ComposerView<Accessory: View>: View {
+struct ComposerView<MenuItems: View, Leading: View, Trailing: View>: View {
     @Binding var draft: String
     let placeholder: String
     let isRunning: Bool
@@ -29,7 +29,12 @@ struct ComposerView<Accessory: View>: View {
     let onStop: () -> Void
     let onEditQueued: (String) -> Void
     let onWithdrawQueued: (String) -> Void
-    @ViewBuilder let accessory: () -> Accessory
+    /// Less frequent actions, in the "+" menu after 添加文件… (side chat, goal…).
+    @ViewBuilder let menuItems: () -> MenuItems
+    /// Shown right of "+": the permission mode, or a group's members.
+    @ViewBuilder let leading: () -> Leading
+    /// Shown left of the send button: model, effort and context.
+    @ViewBuilder let trailing: () -> Trailing
 
     @FocusState private var focused: Bool
     @State private var highlighted = 0
@@ -78,8 +83,10 @@ struct ComposerView<Accessory: View>: View {
                 }
                 TextField(placeholder, text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.body)
-                    .lineLimit(1...10)
+                    .font(.uiBody)
+                    // Two lines tall when empty, like Claude's and Codex's apps.
+                    .lineLimit(2...12)
+                    .lineSpacing(2)
                     .focused($focused)
                     .onSubmit(send)
                     .onKeyPress(.return, phases: .down) { press in
@@ -134,61 +141,71 @@ struct ComposerView<Accessory: View>: View {
                         onStop()
                         return .handled
                     }
+                    .padding(.horizontal, 4)
                     .padding(.top, 2)
-                HStack(spacing: 6) {
-                    if attachments != nil {
-                        Button {
-                            picking = true
-                        } label: {
-                            Image(systemName: "paperclip")
+                HStack(spacing: 10) {
+                    Menu {
+                        if attachments != nil {
+                            Button("添加文件…", systemImage: "paperclip") { picking = true }
+                            Divider()
                         }
-                        .buttonStyle(.borderless)
-                        .help("添加附件（也可以直接拖入文件）")
-                        .fileImporter(isPresented: $picking, allowedContentTypes: [.item],
-                                      allowsMultipleSelection: true) { result in
-                            if case .success(let urls) = result { onAttach(urls) }
-                        }
+                        menuItems()
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 15, weight: .medium))
+                            .frame(width: 26, height: 26)
+                            .contentShape(Circle())
                     }
-                    accessory()
+                    .menuStyle(.button)
+                    .buttonStyle(.borderless)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .foregroundStyle(.secondary)
+                    .help("添加文件和更多操作（也可以拖入文件或 ⌘V 粘贴）")
+                    .accessibilityLabel("添加")
+                    leading()
                         .menuStyle(.button)
                         .buttonStyle(.borderless)
                         .menuIndicator(.hidden)
                         .fixedSize()
                         .foregroundStyle(.secondary)
-                    Spacer()
+                    Spacer(minLength: 8)
+                    trailing()
+                        .buttonStyle(.borderless)
+                        .fixedSize()
+                        .foregroundStyle(.secondary)
                     if uploading {
                         Text("正在上传…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if isRunning && !trimmed.isEmpty {
-                        Text("将在当前回复后发送")
-                            .font(.caption)
+                            .font(.uiMeta)
                             .foregroundStyle(.secondary)
                     }
                     sendOrStopButton
                 }
-                .controlSize(.small)
             }
             .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(Color(nsColor: .textBackgroundColor))
-                    .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+                    .shadow(color: .black.opacity(0.08), radius: 10, y: 3)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .strokeBorder(dropTargeted ? Color.accentColor
-                                  : focused ? Color.accentColor.opacity(0.5) : Color(nsColor: .separatorColor),
-                                  lineWidth: focused || dropTargeted ? 1.5 : 0.5)
+                                  : Color(nsColor: .separatorColor).opacity(focused ? 1 : 0.7),
+                                  lineWidth: dropTargeted ? 1.5 : 0.5)
             )
+            .fileImporter(isPresented: $picking, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+                if case .success(let urls) = result { onAttach(urls) }
+            }
             .dropDestination(for: URL.self) { urls, _ in
                 guard attachments != nil else { return false }
                 let files = urls.filter(\.isFileURL)
                 onAttach(files)
                 return !files.isEmpty
             } isTargeted: { dropTargeted = attachments != nil && $0 }
+            .background(PasteInterceptor(enabled: focused && attachments != nil, onFiles: onAttach))
             .onTapGesture { focused = true }
         }
         .frame(maxWidth: Theme.readableWidth)
@@ -203,8 +220,8 @@ struct ComposerView<Accessory: View>: View {
         if isRunning && trimmed.isEmpty && !hasFiles {
             Button(action: onStop) {
                 Image(systemName: "stop.fill")
-                    .font(.system(size: 10, weight: .bold))
-                    .frame(width: 24, height: 24)
+                    .font(.system(size: 11, weight: .bold))
+                    .frame(width: 30, height: 30)
                     .background(Circle().fill(Color.primary.opacity(0.85)))
                     .foregroundStyle(Color(nsColor: .textBackgroundColor))
             }
@@ -214,8 +231,8 @@ struct ComposerView<Accessory: View>: View {
         } else {
             Button(action: send) {
                 Image(systemName: isRunning ? "text.line.last.and.arrowtriangle.forward" : "arrow.up")
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 24, height: 24)
+                    .font(.system(size: 14, weight: .bold))
+                    .frame(width: 30, height: 30)
                     .background(Circle().fill(canSend ? Color.accentColor : Color.secondary.opacity(0.25)))
                     .foregroundStyle(.white)
             }
@@ -266,7 +283,7 @@ private struct QueueStrip: View {
                 HStack(spacing: 8) {
                     Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
                     Text("停止后保留的 \(stoppedCount) 条消息不会自动发送")
-                        .font(.caption)
+                        .font(.uiMeta)
                         .foregroundStyle(.secondary)
                     Spacer()
                     if let onResume {
@@ -291,7 +308,7 @@ private struct QueueStrip: View {
             Image(systemName: symbol(message))
                 .foregroundStyle(message.hold == .deliveryUncertain ? Color.orange : .secondary)
             Text(label(message))
-                .font(.caption.weight(.medium))
+                .font(.uiMeta.weight(.medium))
                 .foregroundStyle(.secondary)
             Text(message.text)
                 .lineLimit(1)
@@ -327,7 +344,7 @@ private struct QueueStrip: View {
             .help("撤回")
             .accessibilityLabel("撤回")
         }
-        .font(.callout)
+        .font(.uiSecondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .help(message.hold == .deliveryUncertain ? "代理可能已经收到这条消息。先看看对话里有没有，再决定是否重新发送。" : "")
@@ -379,7 +396,7 @@ private struct MentionSuggestions: View {
                         if let participant {
                             AgentAvatar(backend: participant.backend, size: 16)
                         } else {
-                            Image(systemName: "person.2.fill").font(.caption)
+                            Image(systemName: "person.2.fill").font(.uiMeta)
                         }
                         Text("@\(handle)")
                         if let participant {
@@ -388,13 +405,13 @@ private struct MentionSuggestions: View {
                             Text("所有成员").foregroundStyle(.secondary)
                         }
                     }
-                    .font(.callout)
+                    .font(.uiSecondary)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
             Spacer()
-            Text("⇥ 补全").font(.caption).foregroundStyle(.tertiary)
+            Text("⇥ 补全").font(.uiMeta).foregroundStyle(.tertiary)
         }
     }
 }
@@ -418,12 +435,12 @@ private struct CommandSuggestions: View {
                             .foregroundStyle(.secondary)
                             .frame(width: 16)
                         Text(command.invocation)
-                            .font(.callout.monospaced())
+                            .font(.uiSecondary.monospaced())
                         if command.label != command.name {
-                            Text(command.label).font(.callout).foregroundStyle(.secondary)
+                            Text(command.label).font(.uiSecondary).foregroundStyle(.secondary)
                         }
                         Text(command.detail)
-                            .font(.caption)
+                            .font(.uiMeta)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -449,11 +466,8 @@ private struct CommandSuggestions: View {
                     Text(note)
                 }
                 Spacer()
-                if !commands.isEmpty {
-                    Text("↑↓ 选择 · ↩ 或 ⇥ 补全 · Esc 取消")
-                }
             }
-            .font(.caption)
+            .font(.uiMeta)
             .foregroundStyle(.tertiary)
             .padding(.horizontal, 10)
             .padding(.top, commands.isEmpty ? 6 : 4)

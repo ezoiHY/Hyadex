@@ -4,12 +4,21 @@ import SwiftUI
 /// Main window: sidebar · conversation · inspector.
 public struct RootView: View {
     @Bindable var model: AppModel
+    @AppStorage(TextSize.key) private var textSize = TextSize.standard
 
     public init(model: AppModel) {
         self.model = model
     }
 
     public var body: some View {
+        let _ = Theme.scale = textSize.scale
+        content
+            .font(.uiBody)
+            // A new 字号 rebuilds every view with the new sizes.
+            .id(textSize)
+    }
+
+    private var content: some View {
         NavigationSplitView {
             SidebarView(model: model)
         } detail: {
@@ -55,6 +64,9 @@ public struct RootView: View {
         }
         .sheet(item: $model.renaming) { target in
             RenameSheet(model: model, target: target)
+        }
+        .sheet(item: $model.settingsEditor) { target in
+            SettingsSheet(model: model, target: target)
         }
         .confirmationDialog(deletionTitle,
                             isPresented: Binding(get: { model.pendingDeletion != nil },
@@ -184,7 +196,7 @@ private struct ErrorBanner: View {
                 .buttonStyle(.borderless)
                 .help("关闭")
             }
-            .font(.callout)
+            .font(.uiSecondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -266,7 +278,7 @@ struct CommandPalette: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("跳转到会话或执行命令", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.title3)
+                    .font(.uiTitle3)
                     .focused($focused)
                     .onSubmit { run(results) }
                     .onKeyPress(.downArrow) { highlighted = min(highlighted + 1, max(results.count - 1, 0)); return .handled }
@@ -286,7 +298,7 @@ struct CommandPalette: View {
                                 Image(systemName: entry.symbol).frame(width: 18).foregroundStyle(.secondary)
                                 Text(entry.title)
                                 Spacer()
-                                Text(entry.subtitle).font(.caption).foregroundStyle(.secondary)
+                                Text(entry.subtitle).font(.uiMeta).foregroundStyle(.secondary)
                             }
                             .padding(.horizontal, 10)
                             .padding(.vertical, 7)

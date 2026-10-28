@@ -128,6 +128,7 @@ from hyadex.providers.claude.subagents import (
     evict_claude_sdk_chat,
 )
 from hyadex.providers.commands import ProviderCommandRecord
+from hyadex.providers.token_totals import add_claude_turn_usage
 
 logger = logging.getLogger("hyadex-server")
 
@@ -353,6 +354,7 @@ async def run_claude_print(
                         })
             elif etype == "result":
                 terminal_result_received = True
+                await add_claude_turn_usage(session_id, event.get("usage"))
                 if run_id in RUNS.stopped_runs and is_expected_claude_interruption_result(event):
                     continue
                 result_error = claude_result_error(event)

@@ -164,7 +164,10 @@ All HTTP routes require the server token (`Authorization: Bearer <token>`).
 Participant fields: `backend` (`claude` or `codex` unless more are enabled),
 `handle`, `label`, `role`, `model`, `effort`, `claude_permission_mode`,
 `codex_approval_policy`, `codex_sandbox_mode`. Settings: `default_responder`,
-`max_agent_hops` (0–12), `delta_char_limit` (500–50,000).
+`max_agent_hops` (0–12), `delta_char_limit` (500–50,000). In a `PATCH`, `null`
+restores a setting's default: the first member answers, four hand-offs per
+round, 6,000 characters. A changed `brief` gets a new version and reaches each
+member once, with its next dispatch.
 
 Timeline event types: `group_created`, `message` (`author`, `author_kind`
 `user|agent|system|orchestrator`, `text`, `mentions`, `round_id`, optional

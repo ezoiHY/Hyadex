@@ -893,6 +893,35 @@ final class LiveController {
         }
     }
 
+    func chatSettings(_ id: String) async throws -> ChatSettings {
+        let json = try await client.sessionRecord(id)
+        try checkCurrent()
+        return ChatSettings.parse(json)
+    }
+
+    func saveChatSettings(_ id: String, fields: JSON) async throws -> ChatSettings {
+        let session = try await client.updateSession(id, fields)
+        try checkCurrent()
+        if let index = model.chats.firstIndex(where: { $0.id == id }),
+           let mapped = LiveMapping.chat(session, previous: model.chats[index]) {
+            model.chats[index] = mapped
+        }
+        return ChatSettings.parse(session)
+    }
+
+    func saveGroupSettings(_ id: String, fields: JSON) async throws {
+        let json = try await client.updateGroup(id, fields)
+        try checkCurrent()
+        if let group = LiveMapping.group(json, previous: model.group(id), members: memberSessions),
+           let index = model.groups.firstIndex(where: { $0.id == id }) {
+            model.groups[index] = group
+        }
+    }
+
+    private func checkCurrent() throws {
+        guard isCurrent else { throw CancellationError() }
+    }
+
     func createChat(backend: AgentBackend, model modelName: String?, cwd: String, permission: PermissionPreset?) async {
         guard isCurrent else { return }
         var body: [String: JSON] = ["backend": .string(backend.rawValue), "cwd": .string(LiveMapping.expand(cwd))]

@@ -23,6 +23,7 @@ from hyadex.features.files import (
     require_session_file_meta,
     run_upload_worker,
     session_file_for_link,
+    session_workspace_file,
     stage_upload_file_sync,
     write_upload_metadata_sync,
 )
@@ -146,6 +147,21 @@ async def get_session_linked_file(session_id: str, target: str) -> FileResponse:
         meta["path"],
         media_type=file_response_media_type(meta),
         filename=meta.get("filename"),
+        content_disposition_type="inline",
+    )
+
+
+@router.get("/api/sessions/{session_id}/workspace/file")
+async def get_session_workspace_file(
+    session_id: str,
+    path: str = Query(min_length=1, max_length=4096),
+) -> FileResponse:
+    """A read-only copy of a file in the chat's folder or its repository."""
+    resolved = await asyncio.to_thread(session_workspace_file, session_id, path)
+    return FileResponse(
+        resolved,
+        media_type=effective_content_type(resolved.name, ""),
+        filename=resolved.name,
         content_disposition_type="inline",
     )
 

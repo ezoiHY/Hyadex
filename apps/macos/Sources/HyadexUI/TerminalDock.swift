@@ -107,7 +107,7 @@ struct TerminalDock: View {
             .help("隐藏终端（⌃`）")
         }
         .buttonStyle(.borderless)
-        .font(.callout)
+        .font(.uiSecondary)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(.bar)
@@ -165,13 +165,13 @@ private struct WindowTab: View {
                 .lineLimit(1)
             if window.panes > 1 {
                 Text("\(window.panes)")
-                    .font(.caption2.monospacedDigit())
+                    .font(.uiSmall.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .help("\(window.panes) 个窗格")
             }
             if canClose && hovering {
                 Button(action: close) {
-                    Image(systemName: "xmark").font(.caption2)
+                    Image(systemName: "xmark").font(.uiSmall)
                 }
                 .buttonStyle(.borderless)
                 .help("关闭窗口")

@@ -43,7 +43,7 @@ struct ChatDetailView: View {
                         .padding(.top, 6)
                 }
                 ComposerView(draft: model.draftBinding(chatID),
-                             placeholder: "给 \(chat.backend.displayName) 发消息，输入 / 使用命令和技能",
+                             placeholder: "给 \(chat.backend.displayName) 发消息",
                              isRunning: chat.state == .running || chat.state == .needsAction,
                              queued: model.queues[chatID] ?? [],
                              slashSuggestions: { model.slashSuggestions(forChat: chatID, partial: $0) },
@@ -58,9 +58,10 @@ struct ChatDetailView: View {
                              onSend: { model.send($0, toChat: chatID) },
                              onStop: { model.stop(chatID) },
                              onEditQueued: { model.editQueued($0, in: chatID) },
-                             onWithdrawQueued: { model.withdrawQueued($0, in: chatID) }) {
-                    ChatControls(model: model, chat: chat)
-                }
+                             onWithdrawQueued: { model.withdrawQueued($0, in: chatID) },
+                             menuItems: { ChatMenuItems(model: model, chat: chat) },
+                             leading: { PermissionMenu(model: model, chat: chat) },
+                             trailing: { ChatControls(model: model, chat: chat) })
                 if model.terminalOpen.contains(chatID) {
                     Divider()
                     TerminalDock(model: model, chatID: chatID)
@@ -73,15 +74,18 @@ struct ChatDetailView: View {
     }
 }
 
-/// Per-chat run settings, shown as quiet menus in the composer. Model,
-/// effort and permission modes use the provider's own names; changes apply
-/// to the chat's next turn.
+/// The chat's model and effort, as quiet text with the provider's own names,
+/// and how full its context is. Changes apply to the chat's next turn.
 private struct ChatControls: View {
     let model: AppModel
     let chat: ChatSummary
 
     var body: some View {
         let catalog = model.catalog(for: chat.backend)
+        if let usage = model.contextUsage[chat.id] {
+            ContextMeter(usage: usage, compact: model.canCompact(chat.id) ? { model.compact(chat.id) } : nil)
+                .onAppear { if chat.backend == .claude { model.loadCommandsIfNeeded(forChat: chat.id) } }
+        }
         Menu {
             Picker("模型", selection: Binding(get: { chat.model }, set: { model.setModel($0, forChat: chat.id) })) {
                 ForEach(catalog.modelOptions(current: chat.model)) { option in
@@ -96,33 +100,32 @@ private struct ChatControls: View {
             }
             .pickerStyle(.inline)
         } label: {
-            Label {
-                Text("\(catalog.modelName(chat.model)) · \(catalog.effortName(chat.effort, model: chat.model))")
-            } icon: {
-                Image(nsImage: ProviderMark.image(chat.backend, size: 14))
-            }
+            Text("\(catalog.modelName(chat.model))  \(catalog.effortName(chat.effort, model: chat.model))")
+                .font(.uiSecondary)
         }
+        // The system's own trailing chevron, as Codex shows next to its model.
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.visible)
         .help("模型和推理强度")
-        PermissionMenu(model: model, chat: chat)
-        Button {
+        .accessibilityLabel("模型 \(catalog.modelName(chat.model))，推理强度 \(catalog.effortName(chat.effort, model: chat.model))")
+    }
+}
+
+/// The chat's less frequent actions, in the composer's "+" menu.
+private struct ChatMenuItems: View {
+    let model: AppModel
+    let chat: ChatSummary
+
+    var body: some View {
+        Button(model.sideChatOpen == chat.id ? "关闭侧问" : "侧问", systemImage: "text.bubble") {
             model.toggleSideChat(chat.id)
-        } label: {
-            Label("侧问", systemImage: model.sideChatOpen == chat.id ? "text.bubble.fill" : "text.bubble")
         }
-        .help("侧问：问个问题，不打断代理，也不写进对话（也可以输入 /btw）")
+        .keyboardShortcut("b", modifiers: [.command, .shift])
         let support = model.goalSupport(forChat: chat.id)
-        Button {
+        Button(model.goals[chat.id]?.isOpen == true ? "编辑目标…" : "设定目标…", systemImage: "target") {
             model.goalEditor = .chat(chat.id)
-        } label: {
-            Label("目标", systemImage: model.goals[chat.id]?.isOpen == true ? "scope" : "target")
         }
         .disabled(!support.available)
-        .help(support.available ? (chat.backend == .claude ? "设定完成条件（Claude Code /goal）" : "设定 Codex 持久目标")
-                                : support.reason ?? "目标不可用")
-        if let usage = model.contextUsage[chat.id] {
-            ContextMeter(usage: usage, compact: model.canCompact(chat.id) ? { model.compact(chat.id) } : nil)
-                .onAppear { if chat.backend == .claude { model.loadCommandsIfNeeded(forChat: chat.id) } }
-        }
     }
 }
 
@@ -152,8 +155,11 @@ private struct PermissionMenu: View {
             }
         } label: {
             Label(chat.permission, systemImage: current?.symbol ?? "lock.shield")
+                .font(.uiSecondary)
+                .foregroundStyle(current?.risky == true ? Color.orange : Color.secondary)
         }
         .help(current?.detail ?? "权限：代理在什么情况下需要你批准")
+        .accessibilityLabel("权限 \(chat.permission)")
     }
 }
 
@@ -176,10 +182,13 @@ struct ContextMeter: View {
                         .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
-                .frame(width: 12, height: 12)
-                Text("\(Int(usage.percent.rounded()))%")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                .frame(width: 14, height: 14)
+                // The number appears only once the window is getting full.
+                if usage.percent >= 70 {
+                    Text("\(Int(usage.percent.rounded()))%")
+                        .font(.uiMeta.monospacedDigit())
+                        .foregroundStyle(tint)
+                }
             }
             .contentShape(Rectangle())
         }
@@ -188,12 +197,12 @@ struct ContextMeter: View {
         .accessibilityLabel("上下文已用 \(Int(usage.percent.rounded()))%")
         .popover(isPresented: $showing, arrowEdge: .top) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("上下文窗口").font(.headline)
+                Text("上下文窗口").font(.uiHeadline)
                 ProgressView(value: usage.percent, total: 100).tint(tint)
                 Text("已用 \(Self.tokens(usage.tokens)) / \(Self.tokens(usage.window)) tokens（\(String(format: "%.1f", usage.percent))%）")
-                    .font(.callout.monospacedDigit())
+                    .font(.uiSecondary.monospacedDigit())
                 Text(usage.percent >= 80 ? "快满了：代理会自动压缩较早的内容，也可以开一个新聊天。" : "包括系统提示、工具定义和整段对话。")
-                    .font(.caption)
+                    .font(.uiMeta)
                     .foregroundStyle(.secondary)
                 if let compact {
                     Button("立即压缩上下文") {
@@ -278,59 +287,57 @@ private struct MemberMenu: View {
     }
 }
 
-/// The group's composer controls: members, how they answer, and whether
-/// they may change code.
+/// The group's members in the composer, and its answer mode and
+/// analysis-only switch while they differ from the default.
 private struct GroupControls: View {
     let model: AppModel
     let group: GroupSummary
-    @Binding var mode: GroupMode
+    let mode: GroupMode
     @Binding var analysisOnly: Bool
 
     var body: some View {
         ForEach(group.participants) { member in
             MemberMenu(model: model, groupID: group.id, member: member)
         }
-        Menu {
-            Section("添加成员") {
-                ForEach(AgentBackend.allCases, id: \.self) { backend in
-                    Button {
-                        model.addMember(backend, toGroup: group.id)
-                    } label: {
-                        Image(nsImage: ProviderMark.image(backend, size: 14))
-                        Text(backend.displayName)
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: "plus")
+        if mode != .sequential {
+            Label(mode.label, systemImage: "rectangle.split.2x1").font(.uiSecondary)
+                .help("同时：各自独立回答（在 + 里切换）")
         }
-        .disabled(group.participants.count >= 6 || !model.isLive)
-        .help("添加成员（最多 6 位）")
-        Divider().frame(height: 14)
-        Menu {
-            Picker("回答方式", selection: $mode) {
-                ForEach(GroupMode.allCases, id: \.self) { option in
-                    Text(option.label).tag(option)
-                }
+        if analysisOnly {
+            Button {
+                analysisOnly = false
+            } label: {
+                Label("只分析", systemImage: "eye").font(.uiSecondary).foregroundStyle(Color.accentColor)
             }
-            .pickerStyle(.inline)
-            Text("依次：后回答的成员能看到前面的回答。同时：各自独立回答。")
-        } label: {
-            Label(mode.label, systemImage: mode == .sequential ? "list.number" : "rectangle.split.2x1")
+            .help("只分析，不改代码（点一下关闭）")
         }
-        .help("回答方式")
-        Button {
+    }
+}
+
+/// The group's less frequent actions, in the composer's "+" menu.
+private struct GroupMenuItems: View {
+    let model: AppModel
+    let group: GroupSummary
+    @Binding var mode: GroupMode
+    @Binding var analysisOnly: Bool
+
+    var body: some View {
+        Picker("回答方式", selection: $mode) {
+            ForEach(GroupMode.allCases, id: \.self) { Text($0.label).tag($0) }
+        }
+        .pickerStyle(.inline)
+        Toggle("只分析，不改代码", isOn: $analysisOnly)
+        Divider()
+        Button(model.goal(forGroup: group.id)?.state?.isOpen == true ? "编辑目标…" : "设定目标…", systemImage: "target") {
             model.goalEditor = .group(group.id)
-        } label: {
-            Label("目标", systemImage: model.goal(forGroup: group.id)?.state?.isOpen == true ? "scope" : "target")
         }
         .disabled(group.participants.isEmpty)
-        .help("给一位成员设定原生目标，并告知讨论组")
-        Toggle(isOn: $analysisOnly) {
-            Label("只分析", systemImage: analysisOnly ? "eye.fill" : "eye")
+        Menu("添加成员", systemImage: "person.badge.plus") {
+            ForEach(AgentBackend.allCases, id: \.self) { backend in
+                Button(backend.displayName) { model.addMember(backend, toGroup: group.id) }
+            }
         }
-        .toggleStyle(.button)
-        .help("只分析，不改代码")
+        .disabled(group.participants.count >= 6 || !model.isLive)
     }
 }
 
@@ -363,16 +370,17 @@ struct GroupDetailView: View {
                         .padding(.top, 6)
                 }
                 ComposerView(draft: model.draftBinding(groupID),
-                             placeholder: "发消息，用 @ 指定成员（不指定时由 @\(group.defaultResponder) 回答）",
+                             placeholder: "发消息，@ 指定成员",
                              isRunning: group.state == .running || group.state == .needsAction,
                              queued: model.queues[groupID] ?? [],
                              mentionCandidates: group.participants,
                              onSend: { model.send($0, toGroup: groupID, mode: mode, analysisOnly: analysisOnly) },
                              onStop: { model.stop(groupID) },
                              onEditQueued: { model.editQueued($0, in: groupID) },
-                             onWithdrawQueued: { model.withdrawQueued($0, in: groupID) }) {
-                    GroupControls(model: model, group: group, mode: $mode, analysisOnly: $analysisOnly)
-                }
+                             onWithdrawQueued: { model.withdrawQueued($0, in: groupID) },
+                             menuItems: { GroupMenuItems(model: model, group: group, mode: $mode, analysisOnly: $analysisOnly) },
+                             leading: { GroupControls(model: model, group: group, mode: mode, analysisOnly: $analysisOnly) },
+                             trailing: { EmptyView() })
             }
             .environment(\.messageActions, model.messageActions(chat: nil))
             .navigationTitle(group.title)

@@ -233,7 +233,7 @@ public enum SampleData {
                             FileChange(path: "tests/test_group_chat.py", added: 31, removed: 0,
                                        diff: "@@ -880,0 +881,4 @@\n+    async def test_crash_between_admit_and_save_resends_nothing(self):\n+        engine = self.engine(fail_after=\"admit\")\n+        ...\n"),
                          ])),
-                .divider(id: "g1-4", text: "第 1 轮结束 · 3 次派发 · 2,140 字符"),
+                .divider(id: "g1-4", text: "本轮结束"),
                 .message(id: "g1-5", author: .user, text: "@codex 再把并行模式下的同样情况也覆盖一下。",
                          time: ago(1, from: now), mentions: ["codex"]),
             ],

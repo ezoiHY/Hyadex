@@ -42,7 +42,7 @@ from hyadex.core.event_log import _snapshot_object_dir_is_owned, legacy_session_
 from hyadex.core.publications import ArtifactPublicationError
 from hyadex.core.paths import code_diffs_dir, now_iso, safe_name
 from hyadex.core.runs import RUNS
-from hyadex.core.sessions import append_event
+from hyadex.core.sessions import append_event, STORE
 from hyadex.core.session_files import (
     guess_content_type,
     list_session_file_records,
@@ -1308,6 +1308,56 @@ def path_is_relative_to(path: Path, root: Path) -> bool:
         path.relative_to(root)
         return True
     return False
+
+
+WORKSPACE_FILE_MAX_BYTES = 50 * 1024 * 1024
+
+
+def session_workspace_roots(session: dict[str, Any]) -> list[Path]:
+    """The chat's folder and, when it lies inside a Git work tree, that tree's root.
+
+    A turn's diff names files relative to the repository root, which can be
+    above the chat's folder.
+    """
+    try:
+        cwd = Path(str(session.get("cwd") or "")).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError):
+        return []
+    roots = [cwd]
+    for parent in (cwd, *cwd.parents):
+        if (parent / ".git").exists():
+            if parent != cwd:
+                roots.append(parent)
+            break
+    return roots
+
+
+def session_workspace_file(session_id: str, raw_path: str) -> Path:
+    """Resolve a file the chat's agent works on, for a read-only download.
+
+    Only regular files inside the chat's folder or its repository are served;
+    symlinks are resolved before the check.
+    """
+    session = STORE.sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    roots = session_workspace_roots(session)
+    if not roots:
+        raise HTTPException(status_code=404, detail="the chat's folder does not exist")
+    candidate = Path(raw_path.strip()).expanduser()
+    if not candidate.is_absolute():
+        candidate = roots[-1] / candidate
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise HTTPException(status_code=404, detail="file not found") from None
+    if not any(path_is_relative_to(resolved, root) for root in roots):
+        raise HTTPException(status_code=403, detail="the file is outside the chat's folder")
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    if resolved.stat().st_size > WORKSPACE_FILE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="file is too large to download")
+    return resolved
 
 
 def normalized_link_target(target: str) -> str:

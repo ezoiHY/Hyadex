@@ -29,18 +29,21 @@ struct RichContext {
     let openLink: (URL) -> Void
 }
 
-enum RichMetrics {
-    static let bodySize = NSFont.systemFontSize  // 13 pt
+/// Text sizes of rendered messages. `scale` is the app's 字号 setting
+/// (1 for 标准); set it before the views are built.
+public enum RichMetrics {
+    nonisolated(unsafe) public static var scale: CGFloat = 1
+    static var bodySize: CGFloat { 14 * scale }
     static let blockSpacing: CGFloat = 10
-    static let lineSpacing: CGFloat = 3
-    static let codeSize: CGFloat = 12
+    static var lineSpacing: CGFloat { 3.5 * scale }
+    static var codeSize: CGFloat { 12.5 * scale }
     static let radius: CGFloat = 8
 
     static func headingSize(_ level: Int) -> CGFloat {
         switch level {
-        case 1: 20
-        case 2: 17
-        case 3: 15
+        case 1: 21 * scale
+        case 2: 18 * scale
+        case 3: 16 * scale
         default: bodySize
         }
     }

@@ -21,24 +21,24 @@ struct GoalBar: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(owner.map { "\($0) 的目标" } ?? "目标")
-                        .font(.caption.weight(.semibold))
+                        .font(.uiMeta.weight(.semibold))
                         .foregroundStyle(.secondary)
                     StatePill(state: goal.activity, text: goal.statusLabel)
                     if !metrics.isEmpty {
                         Text(metrics)
-                            .font(.caption.monospacedDigit())
+                            .font(.uiMeta.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                 }
                 Text(goal.text)
-                    .font(.callout)
+                    .font(.uiSecondary)
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .textSelection(.enabled)
                     .help(goal.text)
                 if let reason = goal.reason, goal.isOpen {
                     Text(reason)
-                        .font(.caption)
+                        .font(.uiMeta)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .help(reason)
@@ -139,7 +139,7 @@ struct GoalSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             Text(current?.isOpen == true ? "修改目标" : "设定目标")
-                .font(.headline)
+                .font(.uiHeadline)
                 .padding(.top, 16)
             Form {
                 if case .group(let id) = target, let group = model.group(id) {
@@ -155,10 +155,7 @@ struct GoalSheet: View {
                         .lineLimit(4...10)
                 } header: {
                     Text(backend == .codex ? "目标" : "完成条件")
-                } footer: {
-                    Text(explanation)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .help(explanation)
                 }
                 if backend == .codex, case .chat = target {
                     Section("预算（可选）") {
@@ -200,7 +197,7 @@ struct GoalSheet: View {
     }
 
     private var prompt: String {
-        backend == .codex ? "Codex 要持续完成什么？" : "满足什么条件时 Claude 才算完成？例如：所有测试通过，且没有新的 lint 警告。"
+        backend == .codex ? "Codex 要持续完成什么？" : "例如：所有测试通过，且没有新的 lint 警告"
     }
 
     private var explanation: String {

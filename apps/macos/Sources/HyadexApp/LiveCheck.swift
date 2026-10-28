@@ -1,5 +1,6 @@
 import AppKit
 import HyadexCore
+import HyadexUI
 import UserNotifications
 
 /// Development aid: an end-to-end pass through the app against a real server.
@@ -76,6 +77,12 @@ enum LiveCheck {
                 : usage?.unavailableText ?? "-"))
         }
         // HYADEX_E2E_UI=only: the same features through the real controls (see UIDriver).
+        if ProcessInfo.processInfo.environment["HYADEX_E2E_UI"] == "gaps" {
+            UIDriver.enable()
+            await uiGaps(model: model, check: check, shot: shot)
+            log("RESULT " + (failures == 0 ? "OK" : "\(failures) FAILED"))
+            exit(failures == 0 ? 0 : 1)
+        }
         if ProcessInfo.processInfo.environment["HYADEX_E2E_UI"] != nil {
             await uiDrive(model: model, check: check, shot: shot)
             log("RESULT " + (failures == 0 ? "OK" : "\(failures) FAILED"))
@@ -438,7 +445,7 @@ enum LiveCheck {
             await pause(2)
             let file = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "picked-\(stamp).txt")
             try? "The picked word is pick-\(stamp).\n".write(to: file, atomically: true, encoding: .utf8)
-            check(UIDriver.press("附件"), "ui: paperclip pressed")
+            check(await UIDriver.choose("添加文件…") { UIDriver.press("添加", role: NSAccessibility.Role(rawValue: "AXMenuButton")) }, "ui: + → 添加文件…")
             check(await wait(5) { UIDriver.openPanel != nil }, "ui: the open panel appeared")
             check(await UIDriver.pick(file, log: { print("[e2e] picker: \($0)") }), "ui: a file chosen in the panel")
             check(await wait(30) { model.attachments[codex.id]?.contains { $0.name == file.lastPathComponent && $0.fileID != nil } == true },
@@ -500,7 +507,7 @@ enum LiveCheck {
         model.drafts[claude.id] = ""
 
         // Side chat panel.
-        check(UIDriver.press("侧问"), "ui: 侧问 pressed")
+        check(await UIDriver.choose("侧问") { UIDriver.press("添加", role: NSAccessibility.Role(rawValue: "AXMenuButton")) }, "ui: + → 侧问")
         check(await wait(10) { UIDriver.find("不打断代理") != nil }, "ui: side panel opened")
         _ = await wait(15) { model.sideChats[claude.id] != nil }
         let before = model.sideChats[claude.id]?.exchanges.count ?? 0
@@ -516,9 +523,9 @@ enum LiveCheck {
         check(await wait(5) { model.sideChatOpen == nil }, "ui: side panel gone")
 
         // Goal sheet and goal bar.
-        check(UIDriver.press("目标"), "ui: 目标 pressed")
+        check(await UIDriver.choose("设定目标…") { UIDriver.press("添加", role: NSAccessibility.Role(rawValue: "AXMenuButton")) }, "ui: + → 设定目标…")
         check(await wait(5) { UIDriver.sheetShown }, "ui: goal sheet shown")
-        check(UIDriver.type("The user has typed the word kiwi in this chat.", into: "满足什么条件"), "ui: typed the condition")
+        check(UIDriver.type("The user has typed the word kiwi in this chat.", into: "例如"), "ui: typed the condition")
         await pause(0.4)
         check(UIDriver.press("开始"), "ui: 开始 pressed")
         check(await wait(90) { model.goals[claude.id]?.status == .active }, "ui: goal bar shows the active goal")
@@ -694,7 +701,7 @@ enum LiveCheck {
         await uiMenusAndDrop(model: model, claude: claude, codex: codex, stamp: stamp, check: check, shot: shot)
         model.select(.chat(codex.id))
         await pause()
-        check(UIDriver.press("附件"), "ui: paperclip pressed")
+        check(await UIDriver.choose("添加文件…") { UIDriver.press("添加", role: NSAccessibility.Role(rawValue: "AXMenuButton")) }, "ui: + → 添加文件…")
         check(await wait(5) { UIDriver.openPanel != nil }, "ui: the system file panel opened")
         UIDriver.openPanel?.cancel(nil)
         check(await wait(5) { UIDriver.openPanel == nil }, "ui: the panel closed again")
@@ -702,6 +709,210 @@ enum LiveCheck {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         print("[e2e] notifications: authorization status \(settings.authorizationStatus.rawValue) (0 not asked, 1 denied, 2 allowed, 3 provisional)")
         noError("ui: emergency")
+    }
+
+    /// HYADEX_E2E_UI=gaps: job outcomes, token totals, the chat's advanced
+    /// settings, the group's settings, "在编辑器中打开" and ⌘V attachments, on the
+    /// fixtures `e2e_gaps.py` creates ("gaps e2e claude/codex/group").
+    private static func uiGaps(model: AppModel, check: (Bool, String) -> Void,
+                               shot: (String) async -> Void) async {
+        func wait(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
+            let end = Date.now.addingTimeInterval(seconds)
+            while Date.now < end {
+                if condition() { return true }
+                try? await Task.sleep(for: .milliseconds(400))
+            }
+            return condition()
+        }
+        func pause(_ seconds: Double = 0.8) async { try? await Task.sleep(for: .seconds(seconds)) }
+        func agentText(_ id: String, _ test: (String) -> Bool) -> Bool {
+            model.timeline(id).contains { item in
+                if case .message(_, let author, let text, _, _, _, _) = item, author.kind == .agent, test(text) { return true }
+                return false
+            }
+        }
+        guard let claude = model.chats.first(where: { $0.title == "gaps e2e claude" }),
+              let codex = model.chats.first(where: { $0.title == "gaps e2e codex" }),
+              let group = model.groups.first(where: { $0.title == "gaps e2e group" }) else {
+            check(false, "gaps: fixtures exist (run e2e_gaps.py first)")
+            return
+        }
+        let stamp = Int(Date.now.timeIntervalSince1970) % 100000
+
+        // 4. Job outcomes in the jobs table.
+        model.select(.jobs)
+        await pause(2)
+        for (title, text) in [("gaps e2e ok", "成功"), ("gaps e2e fails", "失败"), ("gaps e2e stopped", "已停止")] {
+            let job = model.jobs.first { $0.title == title }
+            check(job?.lastResultText == text, "gaps: job \(title) shows \(text) (\(job?.lastResultText ?? "-"))")
+        }
+        check(model.jobs.first { $0.title == "gaps e2e fails" }?.lastError?.contains("unrecognized_model") == true,
+              "gaps: the failed job carries the server's reason")
+        check(UIDriver.find("失败原因") != nil, "gaps: the table shows the failure reason on hover")
+        await shot("gaps-01-jobs")
+
+        // 2. Token totals in the chat's details.
+        model.select(.chat(claude.id))
+        await pause(2)
+        let totals = model.chat(claude.id)?.tokenTotals
+        check((totals?.total ?? 0) > 0, "gaps: the chat has server token totals (\(totals?.total ?? 0))")
+        check(UIDriver.press("详情"), "gaps: details opened")
+        check(await wait(5) { UIDriver.find("缓存", role: nil) != nil }, "gaps: details show the token totals with the cached part")
+        await shot("gaps-01b-details")
+
+        // 7. Advanced settings: change the system prompt and the automatic title, then use them.
+        check(UIDriver.press("高级设置"), "gaps: 高级设置… pressed")
+        check(await wait(8) { UIDriver.find("Always answer in French.", role: nil) != nil },
+              "gaps: the sheet loaded the server's system prompt")
+        await shot("gaps-02-advanced-sheet")
+        await shot("gaps-02-advanced")
+        check(UIDriver.type("Always answer in German.", into: "系统提示词"), "gaps: typed a new system prompt")
+        check(UIDriver.press("自动起标题", role: .checkBox), "gaps: automatic title toggled")
+        await pause()
+        check(UIDriver.press("保存"), "gaps: 保存 pressed")
+        check(await wait(8) { model.settingsEditor == nil }, "gaps: the sheet closed after saving")
+        var stored = try? await model.chatSettings(claude.id)
+        check(stored?.systemPrompt == "Always answer in German." && stored?.autoTitle == true,
+              "gaps: the server stored the prompt and automatic title (\(stored?.systemPrompt ?? "-"), \(stored?.autoTitle == true))")
+        model.drafts[claude.id] = ""
+        UIDriver.type("Say hello in one word.", into: "给 Claude Code 发消息")
+        await pause(0.6)
+        UIDriver.key("\r", keyCode: 36)
+        check(await wait(180) { agentText(claude.id) { $0.localizedCaseInsensitiveContains("hallo") } && model.chat(claude.id)?.state == .idle },
+              "gaps: Claude answered in German, following the new system prompt")
+        // Clear the prompt again through the sheet.
+        model.settingsEditor = .chat(claude.id)
+        check(await wait(8) { UIDriver.find("Always answer in German.", role: nil) != nil }, "gaps: sheet reopened")
+        UIDriver.type("", into: "系统提示词")
+        await pause()
+        UIDriver.press("保存")
+        _ = await wait(8) { model.settingsEditor == nil }
+        stored = try? await model.chatSettings(claude.id)
+        check(stored?.systemPrompt == "", "gaps: an empty prompt clears it on the server")
+
+        // The composer's + menu holds the side chat and the goal.
+        check(await UIDriver.choose("侧问") { UIDriver.press("添加", role: NSAccessibility.Role(rawValue: "AXMenuButton")) }, "gaps: + → 侧问")
+        check(await wait(8) { model.sideChatOpen == claude.id }, "gaps: the side chat opened from the + menu")
+        model.toggleSideChat(claude.id)
+        check(await UIDriver.choose("设定目标…") { UIDriver.press("添加", role: NSAccessibility.Role(rawValue: "AXMenuButton")) }, "gaps: + → 设定目标…")
+        check(await wait(5) { model.goalEditor != nil }, "gaps: the goal sheet opened from the + menu")
+        await shot("gaps-02c-goal-from-plus")
+        model.goalEditor = nil
+        await pause()
+
+        // 1. 在编辑器中打开: the changed file of the first turn, resolved through the diff's repository root.
+        var opened: URL?
+        ChangedFileOpener.openURL = { opened = $0 }
+        model.showChanges = true
+        let changed = model.selectedChanges.files.first { $0.path.hasSuffix("main.py") }
+        model.selectedFilePath = changed?.path
+        await pause(1.5)
+        check(UIDriver.press("在编辑器中打开"), "gaps: 在编辑器中打开 pressed")
+        check(await wait(5) { opened != nil }, "gaps: a file was opened")
+        let openedPath = opened?.resolvingSymlinksInPath().path ?? "-"
+        check(openedPath.hasSuffix("/hyadex-gaps-e2e/app/main.py") && FileManager.default.fileExists(atPath: openedPath),
+              "gaps: it is the changed file on disk (\(openedPath))")
+        if let changed {
+            let copy = try? await model.serverCopy(of: changed)
+            check(copy.flatMap { String(data: $0, encoding: .utf8) }?.contains("# edited") == true,
+                  "gaps: a remote client gets the server's copy of the same file")
+        }
+        await shot("gaps-03-changes")
+        model.showChanges = false
+
+        // 5. ⌘V: a screenshot on the clipboard becomes an attachment; text still pastes as text.
+        let pasteboard = NSPasteboard.general
+        let saved = (pasteboard.pasteboardItems ?? []).map { item -> NSPasteboardItem in
+            let copy = NSPasteboardItem()
+            for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
+            return copy
+        }
+        defer {
+            pasteboard.clearContents()
+            pasteboard.writeObjects(saved)
+        }
+        let marker = "PASTE\(stamp)"
+        let image = NSImage(size: NSSize(width: 640, height: 180), flipped: false) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            (marker as NSString).draw(at: NSPoint(x: 30, y: 50), withAttributes: [
+                .font: NSFont.boldSystemFont(ofSize: 72), .foregroundColor: NSColor.black])
+            return true
+        }
+        let png = image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))?.representation(using: .png, properties: [:])
+        pasteboard.clearContents()
+        pasteboard.setData(png, forType: .png)
+        func commandV() {
+            guard let window = UIDriver.mainWindow(),
+                  let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                                               timestamp: ProcessInfo.processInfo.systemUptime,
+                                               windowNumber: window.windowNumber, context: nil, characters: "v",
+                                               charactersIgnoringModifiers: "v", isARepeat: false, keyCode: 9) else { return }
+            NSApp.postEvent(event, atStart: false)
+        }
+        model.attachments[claude.id] = nil
+        UIDriver.type("", into: "给 Claude Code 发消息")
+        await pause(0.6)
+        commandV()
+        check(await wait(30) { model.attachments[claude.id]?.contains { $0.name.hasPrefix("粘贴的图片") && $0.fileID != nil } == true },
+              "gaps: ⌘V attached the clipboard image and it uploaded")
+        check((model.drafts[claude.id] ?? "").isEmpty, "gaps: the image did not paste as text")
+        await shot("gaps-04-pasted")
+        pasteboard.clearContents()
+        pasteboard.setString("What text is in the attached image? Reply with just that text.", forType: .string)
+        // The posted ⌘V must pass the interceptor untouched.
+        commandV()
+        await pause(1)
+        check(model.attachments[claude.id]?.count == 1, "gaps: ⌘V with text added no attachment")
+        // In the background the window is not key, so the menu's Paste has no
+        // target; send it where the menu would: the composer's field editor.
+        UIDriver.type("", into: "给 Claude Code 发消息")
+        await pause(0.4)
+        (UIDriver.mainWindow()?.firstResponder as? NSTextView)?.paste(nil)
+        check(await wait(5) { (model.drafts[claude.id] ?? "").contains("attached image") }, "gaps: ⌘V with text pastes text")
+        await pause(0.6)
+        UIDriver.key("\r", keyCode: 36)
+        // Claude reads the uploaded image with its Read tool, which asks first.
+        let answered = await wait(180) {
+            if model.timeline(claude.id).pendingApproval != nil { _ = UIDriver.press("本会话内始终允许") }
+            return agentText(claude.id) { $0.uppercased().contains(marker) } && model.chat(claude.id)?.state == .idle
+        }
+        check(answered, "gaps: Claude read the pasted image (\(marker))")
+
+        // 6. Group settings: responder, hand-off limit and brief through the sheet.
+        model.select(.group(group.id))
+        await pause(2)
+        check(UIDriver.press("详情"), "gaps: group details opened")
+        check(await wait(5) { UIDriver.find("4 次", role: nil) != nil }, "gaps: details show the real hand-off limit (4 次)")
+        check(UIDriver.press("编辑设置"), "gaps: 编辑设置… pressed")
+        check(await wait(8) { UIDriver.find("讨论组设置", role: nil) != nil }, "gaps: group settings sheet open")
+        if let stepper = UIDriver.find("接力上限", role: .incrementor) {
+            _ = UIDriver.call(stepper, "accessibilityPerformIncrement")
+        }
+        check(await UIDriver.choose("@codex") { UIDriver.press("默认回答者", role: .popUpButton) }, "gaps: default responder → @codex")
+        UIDriver.type("Codename: AMARANTH-\(stamp).", into: "共享摘要")
+        await pause()
+        await shot("gaps-05-group-settings")
+        check(UIDriver.press("保存"), "gaps: group 保存 pressed")
+        check(await wait(8) { model.settingsEditor == nil }, "gaps: group sheet closed")
+        let saved2 = model.group(group.id)?.settings
+        check(saved2?.maxAgentHops == 5 && saved2?.defaultResponder == "codex" && saved2?.brief.contains("AMARANTH") == true,
+              "gaps: the server stored hops 5, @codex and the brief (\(String(describing: saved2)))")
+        await pause(5)
+        check(model.group(group.id)?.settings.maxAgentHops == 5, "gaps: still 5 after a list refresh")
+        // Restore the defaults through the same sheet: first member, 4 hand-offs.
+        model.settingsEditor = .group(group.id)
+        _ = await wait(8) { UIDriver.find("讨论组设置", role: nil) != nil }
+        if let stepper = UIDriver.find("接力上限", role: .incrementor) {
+            _ = UIDriver.call(stepper, "accessibilityPerformDecrement")
+        }
+        _ = await UIDriver.choose("@claude（第一位）") { UIDriver.press("默认回答者", role: .popUpButton) }
+        UIDriver.press("保存")
+        _ = await wait(8) { model.settingsEditor == nil }
+        check(model.group(group.id)?.settings.maxAgentHops == 4 && model.group(group.id)?.settings.defaultResponder == nil,
+              "gaps: defaults restored")
+        _ = codex
+        check(model.errorMessage == nil, "gaps: no error banner (\(model.errorMessage ?? "-"))")
     }
 
     /// Right-click and menu-button menus, and dropping a file on the conversation.

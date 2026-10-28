@@ -27,9 +27,13 @@ public struct FileChange: Identifiable, Hashable, Sendable {
     public var added: Int
     public var removed: Int
     public var diff: String
+    /// The server-side folder `path` is relative to (the repository root of a
+    /// chat's diff, the group's folder for a receipt); nil when unknown.
+    public var root: String?
 
-    public init(path: String, added: Int, removed: Int, diff: String) {
+    public init(path: String, added: Int, removed: Int, diff: String, root: String? = nil) {
         self.path = path
+        self.root = root
         self.added = added
         self.removed = removed
         self.diff = diff
@@ -43,6 +47,16 @@ public struct FileChangeSet: Hashable, Sendable {
 
     public var added: Int { files.reduce(0) { $0 + $1.added } }
     public var removed: Int { files.reduce(0) { $0 + $1.removed } }
+}
+
+extension FileChange {
+    /// The file's absolute path on the server; `fallbackRoot` stands in for an unknown root.
+    public func absolutePath(fallbackRoot: String?) -> String {
+        if path.hasPrefix("/") { return path }
+        if path.hasPrefix("~") { return LiveMapping.expand(path) }
+        guard let base = (root ?? fallbackRoot).map(LiveMapping.expand), !base.isEmpty else { return path }
+        return (base as NSString).appendingPathComponent(path)
+    }
 }
 
 public enum ToolKind: String, Hashable, Sendable {

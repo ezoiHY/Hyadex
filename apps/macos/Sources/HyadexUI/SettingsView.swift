@@ -23,11 +23,19 @@ public struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @AppStorage("sendWithCommandReturn") private var sendWithCommandReturn = false
+    @AppStorage(TextSize.key) private var textSize = TextSize.standard
     @AppStorage("expandThinking") private var expandThinking = false
     @AppStorage("showUsage") private var showUsage = true
 
     var body: some View {
         Form {
+            Section("显示") {
+                Picker("字号", selection: $textSize) {
+                    ForEach(TextSize.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+            }
             Section("输入") {
                 Picker("发送消息", selection: $sendWithCommandReturn) {
                     Text("↩ 发送，⇧↩ 换行").tag(false)
@@ -78,8 +86,8 @@ private struct NotificationSettings: View {
                     }
                 }
             } footer: {
-                Text("代理的紧急提醒总会以红色横幅显示在窗口里；允许系统通知后，Hyadex 在后台时也会弹出通知。")
-                    .font(.caption)
+                Text("紧急提醒总会在窗口里显示红色横幅")
+                    .font(.uiMeta)
                     .foregroundStyle(.secondary)
             }
             Section {
@@ -138,7 +146,7 @@ private struct ServerSettings: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(server.name)
-                            Text(server.baseURL.absoluteString).font(.caption).foregroundStyle(.secondary)
+                            Text(server.baseURL.absoluteString).font(.uiMeta).foregroundStyle(.secondary)
                         }
                         Spacer()
                         if model.isLive && server.id == model.currentServerID {
@@ -178,15 +186,15 @@ private struct ServerSettings: View {
                     if model.servers[index].id == model.managedLocalServerID {
                         LabeledContent("名称", value: "这台 Mac")
                         LabeledContent("地址", value: model.servers[index].baseURL.absoluteString)
-                            .font(.callout.monospaced())
-                        Text("连接信息由 Hyadex 自动管理，无需填写令牌。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.uiSecondary.monospaced())
+                        Text("由 Hyadex 自动管理")
+                            .font(.uiMeta).foregroundStyle(.secondary)
                     } else {
                         TextField("名称", text: $model.servers[index].name)
                         TextField("地址", text: Binding(
                             get: { model.servers[index].baseURL.absoluteString },
                             set: { if let url = URL(string: $0), url.scheme != nil { model.servers[index].baseURL = url } }))
-                            .font(.callout.monospaced())
+                            .font(.uiSecondary.monospaced())
                         SecureField("访问令牌", text: $token, prompt: Text("粘贴服务器的访问令牌"))
                     }
                     HStack {
@@ -200,14 +208,14 @@ private struct ServerSettings: View {
                     }
                     .disabled(busy)
                     if let status {
-                        Text(status).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                        Text(status).font(.uiSecondary).foregroundStyle(.secondary).textSelection(.enabled)
                     }
                     if model.servers[index].id != model.managedLocalServerID {
                       Text("""
                     支持局域网和 Tailscale 地址。令牌只通过 Authorization 头发送，并保存在钥匙串中。\
                     用 `install.sh --show-token` 查看已安装服务器的令牌。
                     """)
-                        .font(.caption)
+                        .font(.uiMeta)
                         .foregroundStyle(.secondary)
                     }
                 }
