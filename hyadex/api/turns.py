@@ -1,4 +1,4 @@
-"""Sending turns and managing the queue: post, edit, move, Run now and Stop."""
+"""Sending turns and managing the queue: post, edit, move, Run now, resume and Stop."""
 from __future__ import annotations
 
 from typing import Any
@@ -14,6 +14,7 @@ from hyadex.core.queue import (
     update_queued_turn,
     UpdateQueuedTurnRequest,
 )
+from hyadex.core.queue_resume import resume_queued_turns_after_stop
 from hyadex.core.steering import deferred_force_send_outcome
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.stop import request_explicit_stop
@@ -55,6 +56,12 @@ async def post_turn(session_id: str, req: TurnRequest) -> Any:
     if req.client_request_id is not None:
         return await post_turn_with_receipt(session_id, req)
     return await post_turn_without_receipt(session_id, req)
+
+
+@router.post("/api/sessions/{session_id}/queue/resume")
+async def post_resume_queue(session_id: str) -> dict[str, Any]:
+    """Release every hold an explicit Stop placed on the queue."""
+    return await resume_queued_turns_after_stop(session_id)
 
 
 @router.delete("/api/sessions/{session_id}/queue/{queued_id}")

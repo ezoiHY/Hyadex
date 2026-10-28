@@ -1,20 +1,192 @@
-"""Projecting Claude SDK messages into chat events."""
+"""Projecting Claude SDK messages into chat events.
+
+Two Claude-native outputs are not assistant messages:
+
+* ``compact_boundary`` (from ``/compact`` or automatic compaction) becomes a
+  durable ``claude_compaction_completed`` event: ``run_id``, ``backend``,
+  ``status`` ("completed"), ``trigger`` ("manual" or "auto"), ``pre_tokens``,
+  ``post_tokens`` when Claude reports them, ``provider_message_id`` and
+  ``message``.
+* A local slash command's output (``/compact`` prints "Compacted") becomes an
+  ``assistant_text`` event carrying ``local_command`` (the command name) and
+  ``local_command_stream`` ("stdout" or "stderr"), so every client shows it
+  where native Claude Code prints it under the command. Output that Claude
+  replays as a user message is held until the terminal result confirms the
+  turn was a local command, so a pasted look-alike is never shown as output.
+"""
 from __future__ import annotations
 
+from contextlib import suppress
 import json
 from typing import Any
 import uuid
 
 from hyadex.core.config import BACKEND_CLAUDE, CLAUDE_TRANSPORT_AGENT_SDK
 from hyadex.core.runs import RUNS
-from hyadex.core.sessions import append_event, event_output_text
+from hyadex.core.sessions import (
+    append_event,
+    event_output_text,
+    mark_provider_context_usage_unavailable,
+)
 from hyadex.core.util import _patch_changed_paths, clean_assistant_text, normalized_tool_name
 from hyadex.features.files import run_event_metadata
+from hyadex.providers.claude.native_goals import claude_local_command_output
 from hyadex.providers.claude.subagents import (
     claude_sdk_field,
     claude_sdk_subagent_lifecycle_raw,
     claude_sdk_type,
 )
+
+
+CLAUDE_COMPACTION_COMPLETED_MESSAGE = "Context compaction completed."
+CLAUDE_LOCAL_COMMAND_OUTPUT_LIMIT = 16
+
+
+def claude_compaction_completed_payload(run_id: str, data: Any) -> dict[str, Any]:
+    """Project one ``compact_boundary`` record into a timeline landmark."""
+
+    record = data if isinstance(data, dict) else {}
+    metadata = record.get("compact_metadata")
+    if not isinstance(metadata, dict):
+        metadata = record.get("compactMetadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    def tokens(*names: str) -> int | None:
+        for name in names:
+            value = metadata.get(name)
+            if type(value) is int and value >= 0:
+                return value
+        return None
+
+    trigger = str(metadata.get("trigger") or "").strip().lower()
+    boundary_id = record.get("uuid")
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "backend": BACKEND_CLAUDE,
+        "status": "completed",
+        "trigger": trigger if trigger in {"manual", "auto"} else None,
+        "pre_tokens": tokens("pre_tokens", "preTokens"),
+        "post_tokens": tokens("post_tokens", "postTokens"),
+        "provider_message_id": (
+            boundary_id
+            if isinstance(boundary_id, str) and 0 < len(boundary_id) <= 256
+            else None
+        ),
+        "message": CLAUDE_COMPACTION_COMPLETED_MESSAGE,
+    }
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def claude_local_command_name(value: Any) -> str:
+    name = str(value or "").strip()
+    return name if 0 < len(name) <= 128 else ""
+
+
+def claude_local_command_fields_for_turn(message: Any, session_id: str, run_id: str) -> dict[str, Any]:
+    """Local-command fields, marking output that belongs to an earlier priority command."""
+
+    fields = claude_local_command_fields(message)
+    if fields and not claude_turn_ran_command(session_id, run_id, fields["local_command"]):
+        fields["local_command_detached"] = True
+    return fields
+
+
+def claude_local_command_fields(message: Any) -> dict[str, Any]:
+    """Identify an assistant message that is a local command's output."""
+
+    run = claude_sdk_field(message, "local_command_run")
+    name = claude_local_command_name(run.get("command")) if isinstance(run, dict) else ""
+    if not name:
+        return {}
+    fields: dict[str, Any] = {"local_command": name}
+    source = claude_local_command_output(
+        claude_sdk_field(message, "local_command_source")
+    )
+    if source is not None:
+        fields["local_command_stream"] = source[0]
+    return fields
+
+
+def remember_claude_local_command_output(
+    outputs: list[dict[str, Any]] | None,
+    content: Any,
+    message_id: Any,
+) -> None:
+    """Hold replayed ``<local-command-stdout>`` text until the result arrives."""
+
+    if outputs is None or len(outputs) >= CLAUDE_LOCAL_COMMAND_OUTPUT_LIMIT:
+        return
+    output = claude_local_command_output(content)
+    if output is None:
+        return
+    stream, text = output
+    outputs.append({
+        "stream": stream,
+        "text": text,
+        "provider_message_id": (
+            message_id
+            if isinstance(message_id, str) and 0 < len(message_id) <= 256
+            else None
+        ),
+    })
+
+
+async def publish_claude_local_command_outputs(
+    session_id: str,
+    run_id: str,
+    local_command: Any,
+    outputs: list[dict[str, Any]] | None,
+    text_parts: list[str] | None = None,
+) -> bool:
+    """Show held local-command output once the provider confirms the command.
+
+    Returns whether the provider reported a local command for this turn.
+    """
+
+    command = claude_local_command_name(local_command)
+    held = list(outputs or ())
+    if outputs is not None:
+        outputs.clear()
+    if not command:
+        return False
+    # A priority command sent during an earlier turn (for example clearing a
+    # goal) can deliver its result in a later turn's stream. Record it, so
+    # history sync does not import it again, but mark it as not this turn's.
+    detached = not claude_turn_ran_command(session_id, run_id, command)
+    for output in held:
+        text = str(output.get("text") or "")
+        if not text:
+            continue
+        if text_parts is not None:
+            text_parts.append(text)
+        await append_event(session_id, "assistant_text", {
+            "run_id": run_id,
+            "text": text,
+            "backend": BACKEND_CLAUDE,
+            **({"provider_message_id": output["provider_message_id"]}
+               if output.get("provider_message_id") else {}),
+            "local_command": command,
+            "local_command_stream": str(output.get("stream") or "stdout"),
+            **({"local_command_detached": True} if detached else {}),
+            **run_event_metadata(run_id),
+        })
+    return not detached
+
+
+def claude_turn_ran_command(session_id: str, run_id: str, command: str) -> bool:
+    """Whether this turn's own prompt invoked ``command`` (``/compact …``)."""
+
+    turn = RUNS.current_turns.get(session_id) or {}
+    if turn.get("run_id") not in {None, run_id}:
+        return True  # Not the turn we are projecting: do not second-guess it.
+    prompt = str(turn.get("prompt") or "").strip()
+    if not prompt:
+        return True  # A turn Claude started itself (a goal continuation): its output is its own.
+    if not prompt.startswith("/"):
+        return False
+    invoked = prompt[1:].split(None, 1)[0] if len(prompt) > 1 else ""
+    return invoked.lstrip("/").casefold() == command.lstrip("/").casefold()
 
 
 def tool_changed_paths(tool: dict[str, Any]) -> set[str]:
@@ -87,6 +259,10 @@ def claude_sdk_result_details(message: Any) -> dict[str, Any]:
         "subtype": subtype,
         "terminal_reason": terminal_reason,
         "aborted": terminal_reason in {"aborted_streaming", "aborted_tools"},
+        # Claude names the local slash command (``compact``) this result ended.
+        "local_command": claude_local_command_name(
+            claude_sdk_field(message, "local_command")
+        ),
     }
 
 
@@ -100,8 +276,14 @@ async def project_claude_sdk_message(
     changed_paths: set[str],
     tool_activity_run_ids: set[str] | None = None,
     error_run_ids: set[str] | None = None,
+    local_command_outputs: list[dict[str, Any]] | None = None,
+    native_output_run_ids: set[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Project one typed SDK message into the existing durable timeline."""
+    """Project one typed SDK message into the existing durable timeline.
+
+    ``native_output_run_ids`` collects runs that showed Claude-native output
+    other than model text: a compaction or a local command's result.
+    """
 
     message_type = claude_sdk_type(message)
     provider_id = str(claude_sdk_field(message, "session_id") or "")
@@ -111,6 +293,29 @@ async def project_claude_sdk_message(
             provider_id = str(data.get("session_id") or provider_id)
     if provider_id:
         await mark_provider_turn_ready(session_id, run_id, provider_id)
+
+    if (
+        message_type == "SystemMessage"
+        and claude_sdk_field(message, "subtype") == "compact_boundary"
+    ):
+        await append_event(
+            session_id,
+            "claude_compaction_completed",
+            claude_compaction_completed_payload(
+                run_id,
+                claude_sdk_field(message, "data", {}),
+            ),
+        )
+        if native_output_run_ids is not None:
+            native_output_run_ids.add(run_id)
+        # The last sample measured the context before compaction. Clear it;
+        # the terminal sample after this turn's result measures it again.
+        with suppress(Exception):
+            await mark_provider_context_usage_unavailable(
+                session_id,
+                BACKEND_CLAUDE,
+            )
+        return None
 
     async def project_tool_result(block: Any) -> None:
         if tool_activity_run_ids is not None:
@@ -149,6 +354,10 @@ async def project_claude_sdk_message(
                 **run_event_metadata(run_id),
             })
         content = claude_sdk_field(message, "content", [])
+        local_command = claude_local_command_fields_for_turn(message, session_id, run_id)
+        detached = bool(local_command.get("local_command_detached"))
+        if local_command and not detached and native_output_run_ids is not None:
+            native_output_run_ids.add(run_id)
         for block in content if isinstance(content, list) else []:
             block_type = claude_sdk_type(block)
             if block_type in {"TextBlock", "text"}:
@@ -156,13 +365,15 @@ async def project_claude_sdk_message(
                     str(claude_sdk_field(block, "text") or "")
                 )
                 if text:
-                    text_parts.append(text)
+                    if not detached:
+                        text_parts.append(text)
                     await append_event(session_id, "assistant_text", {
                         "run_id": run_id,
                         "text": text,
                         "backend": BACKEND_CLAUDE,
                         **({"provider_message_id": message_uuid}
                            if (message_uuid := claude_sdk_field(message, "uuid")) else {}),
+                        **local_command,
                         **run_event_metadata(run_id),
                     })
             elif block_type in {"ThinkingBlock", "thinking"}:
@@ -209,6 +420,12 @@ async def project_claude_sdk_message(
 
     if message_type == "UserMessage":
         content = claude_sdk_field(message, "content", [])
+        if isinstance(content, str):
+            remember_claude_local_command_output(
+                local_command_outputs,
+                content,
+                claude_sdk_field(message, "uuid"),
+            )
         for block in content if isinstance(content, list) else []:
             if claude_sdk_type(block) not in {
                 "ToolResultBlock",
@@ -223,6 +440,15 @@ async def project_claude_sdk_message(
         return None
 
     if message_type in {"ResultMessage", "result"}:
-        return claude_sdk_result_details(message)
+        details = claude_sdk_result_details(message)
+        if await publish_claude_local_command_outputs(
+            session_id,
+            run_id,
+            details["local_command"],
+            local_command_outputs,
+            text_parts,
+        ) and native_output_run_ids is not None:
+            native_output_run_ids.add(run_id)
+        return details
     await project_subagent_lifecycle()
     return None

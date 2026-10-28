@@ -24,6 +24,7 @@ from typing import Callable
 
 from hyadex.providers.claude.history_provenance import ClaudeInterruptionTracker
 from hyadex.providers.claude.native_goals import (
+    CLAUDE_LOCAL_COMMAND_HISTORY_FIELD,
     ClaudeGoalHistoryNormalizer,
     is_claude_synthetic_no_response,
 )
@@ -309,6 +310,9 @@ class _AssistantReplays:
                              and self.local_command_prompts[identity] == matches[0])
             if len(inputs) == 1 and (inputs[0][1] in expected_inputs or command_match):
                 users.add((source_input, inputs[0][1], inputs[0][0]))
+                if command_match:
+                    # Imports now show the wrapper as the typed command.
+                    users.add((source_input, _text_key(matches[0].strip()), inputs[0][0]))
         return assistants, users
 
     def prove(self, eligible: dict) -> frozenset:
@@ -674,18 +678,23 @@ class _Proof:
     companions: frozenset[tuple[str, int, str]] = frozenset()
     assistant_replays: frozenset[tuple] = frozenset()
     goal_commands: tuple = ()
+    # Imported user rows that were a local command's output, with that output.
+    local_outputs: tuple = ()
     interruption_index: MappingProxyType = field(init=False, repr=False)
     goal_command_index: MappingProxyType = field(init=False, repr=False)
+    local_output_index: MappingProxyType = field(init=False, repr=False)
     cache_signature: frozenset = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "interruption_index", MappingProxyType(dict(self.interruptions)))
         object.__setattr__(self, "goal_command_index", MappingProxyType(dict(self.goal_commands)))
+        object.__setattr__(self, "local_output_index", MappingProxyType(dict(self.local_outputs)))
         object.__setattr__(self, "cache_signature", self.targets | frozenset(
             ("interruption", key, origin) for key, origin in self.interruptions)
             | frozenset(("companion", *key) for key in self.companions)
             | frozenset(("assistant_replay", *key) for key in self.assistant_replays)
-            | frozenset(("goal_command", key, text) for key, text in self.goal_commands))
+            | frozenset(("goal_command", key, text) for key, text in self.goal_commands)
+            | frozenset(("local_output", key, text) for key, text in self.local_outputs))
 
     def signature(self) -> frozenset:
         return self.cache_signature
@@ -948,6 +957,7 @@ def _prove(session_id: str, provider_id: str, events: Path, root: Path,
     tracker = ClaudeInterruptionTracker()
     goal_history = ClaudeGoalHistoryNormalizer()
     goal_sources = {}
+    output_sources = {}
     synthetic_sources = {}
     steer_intervals = _steer_intervals(native_events, provider_id)
     scheduled_ranges = {}
@@ -974,10 +984,16 @@ def _prove(session_id: str, provider_id: str, events: Path, root: Path,
             synthetic_sources.setdefault(identity, []).append(offset)
         if normalized_goal is not event and identity[1] == provider_id:
             raw_goal = normalize_user(event)
-            if isinstance(raw_goal, str):
+            local_output = normalized_goal.get(CLAUDE_LOCAL_COMMAND_HISTORY_FIELD)
+            if isinstance(raw_goal, str) and isinstance(local_output, dict):
+                # A local command's output recorded as a user row. Older
+                # imports showed it as a user message.
+                output_sources.setdefault((identity, _text_key(raw_goal)), []).append(
+                    (offset, normalized_goal["message"]["content"][0]["text"], local_output["prompt"]))
+            elif isinstance(raw_goal, str) and normalized_goal.get("type") == "user":
                 goal_sources.setdefault((identity, _text_key(raw_goal)), []).append(
                     (offset, normalized_goal["message"]["content"]))
-        if len(goal_sources) + len(synthetic_sources) > MAX_TARGETS:
+        if len(goal_sources) + len(output_sources) + len(synthetic_sources) > MAX_TARGETS:
             raise _Unproven()
         if event.get("type") != "user":
             continue
@@ -1017,7 +1033,26 @@ def _prove(session_id: str, provider_id: str, events: Path, root: Path,
     targets = set()
     corrected = []
     goal_commands = []
+    local_outputs = []
     _owned_assistants, owned_inputs = assistant_replays.exact_owned_sources()
+
+    def live_command_owners(canonical: str, native_time: float | None) -> list[str]:
+        """Live runs of this provider session that sent ``canonical`` then."""
+        owners = []
+        for native_run, starts in assistant_replays.starts.items():
+            ends = assistant_replays.ends.get(native_run, ())
+            if len(starts) != 1 or len(ends) != 1 or starts[0].get("prompt") != canonical:
+                continue
+            records = [starts[0], ends[0], *assistant_replays.owners.get(native_run, ())]
+            provider_ids = {row.get("provider_session_id") for row in records if row.get("provider_session_id")}
+            first, last = _timestamp(starts[0].get("ts")), _timestamp(ends[0].get("ts"))
+            if last is not None and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", str(ends[0].get("ts"))):
+                # Server events keep whole seconds; native records keep
+                # milliseconds, so a fast command ends within that second.
+                last += 1
+            if provider_ids == {provider_id} and first is not None and last is not None and native_time is not None and first <= native_time <= last:
+                owners.append(native_run)
+        return owners
     candidate_counts = {}
     candidate_origin_counts = {}
     run_candidate_counts = {}
@@ -1047,20 +1082,20 @@ def _prove(session_id: str, provider_id: str, events: Path, root: Path,
         if len(commands) == 1 and start < commands[0][0] <= end:
             canonical = commands[0][1]
             native_time = _timestamp(candidate_origins[target][2])
-            owners = []
-            for native_run, starts in assistant_replays.starts.items():
-                ends = assistant_replays.ends.get(native_run, ())
-                if len(starts) != 1 or len(ends) != 1 or starts[0].get("prompt") != canonical:
-                    continue
-                records = [starts[0], ends[0], *assistant_replays.owners.get(native_run, ())]
-                provider_ids = {row.get("provider_session_id") for row in records if row.get("provider_session_id")}
-                first, last = _timestamp(starts[0].get("ts")), _timestamp(ends[0].get("ts"))
-                if provider_ids == {provider_id} and first is not None and last is not None and native_time is not None and first <= native_time <= last:
-                    owners.append(native_run)
-            if len(owners) == 1:
+            if len(live_command_owners(canonical, native_time)) == 1:
                 targets.add(target)
             else:
                 goal_commands.append((target, canonical))
+            continue
+        outputs = output_sources.get((candidate_origins.get(target), key), ())
+        if len(outputs) == 1 and start < outputs[0][0] <= end:
+            _offset, output_text, canonical = outputs[0]
+            native_time = _timestamp(candidate_origins[target][2])
+            if len(live_command_owners(canonical, native_time)) == 1:
+                # The live turn already showed this command; hide the copy.
+                targets.add(target)
+            else:
+                local_outputs.append((target, output_text))
             continue
         # A scheduled wake is ordinary provider user input, not isMeta. Prove
         # its complete text, native occurrence interval, exact source identity
@@ -1119,7 +1154,8 @@ def _prove(session_id: str, provider_id: str, events: Path, root: Path,
             companions.add(("history_imported", eligible_batches[run][0], run))
             companions.add(("turn_finished", eligible_batches[run][1], run))
     return _Proof(provider_id, events_stamp, source, source_stamp, frozenset(targets),
-                  tuple(corrected), frozenset(companions), proven_assistants, tuple(goal_commands))
+                  tuple(corrected), frozenset(companions), proven_assistants, tuple(goal_commands),
+                  tuple(local_outputs))
 
 
 def _bounded_records(path: Path, expected, start: int, end: int):
@@ -1373,6 +1409,17 @@ def _project_proof_event(session_id: str, event: dict, proof: _Proof | None) -> 
     canonical = proof.goal_command_index.get(_target(event))
     if canonical is not None:
         return {**event, "prompt": canonical, "provider_history_repair": "source_proven_goal_command"}
+    output = proof.local_output_index.get(_target(event))
+    if output is not None:
+        # A local command's output imported as a user message: show it as
+        # the command's output, as native Claude Code does.
+        projected = {key: value for key, value in event.items()
+                     if key not in ("prompt", "_hyadex_imported_prompt_hidden")}
+        projected.update(type="assistant_text", text=output,
+                         provider_history_repair="source_proven_local_command_output")
+        if not output.strip():
+            projected["metadata_only"] = True
+        return projected
     if proof.assistant_replays and _assistant_target(event) in proof.assistant_replays:
         return {**event, "text": "", "metadata_only": True,
                 "provider_history_repair": "source_proven_assistant_replay"}
@@ -1539,10 +1586,12 @@ class ClaudeMetadataRepairCache:
                 interruptions = {**dict(previous.interruptions), **dict(proof.interruptions)}
                 assistants = previous.assistant_replays | proof.assistant_replays
                 commands = {**dict(previous.goal_commands), **dict(proof.goal_commands)}
+                outputs = {**dict(previous.local_outputs), **dict(proof.local_outputs)}
                 entries = ([(key[0], key[1], "input", key) for key in inputs]
                            + [(key[0], key[1], "interruption", key) for key in interruptions]
                            + [(key[1], key[2], "assistant", key) for key in assistants]
-                           + [(key[0], key[1], "goal_command", key) for key in commands])
+                           + [(key[0], key[1], "goal_command", key) for key in commands]
+                           + [(key[0], key[1], "local_output", key) for key in outputs])
                 entries.sort(key=lambda entry: entry[0], reverse=True)
                 evicted_runs = {entry[1] for entry in entries[MAX_TARGETS:]}
                 retained = entries[:MAX_TARGETS]
@@ -1556,7 +1605,8 @@ class ClaudeMetadataRepairCache:
                                tuple((key, interruptions[key]) for _, _, kind, key in retained if kind == "interruption"),
                                frozenset(companions),
                                frozenset(key for _, _, kind, key in retained if kind == "assistant"),
-                               tuple((key, commands[key]) for _, _, kind, key in retained if kind == "goal_command"))
+                               tuple((key, commands[key]) for _, _, kind, key in retained if kind == "goal_command"),
+                               tuple((key, outputs[key]) for _, _, kind, key in retained if kind == "local_output"))
             with self._lock:
                 cancelled = self._preparation_cancelled
                 self._preparing_session = None

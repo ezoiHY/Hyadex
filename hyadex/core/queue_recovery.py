@@ -187,7 +187,11 @@ def queued_event_lines(path: Path, *, scan: dict[str, Any] | None = None) -> Ite
                 if not raw_line.endswith(b"\n"):
                     break
                 scan["offset"] = source.tell()
-            if b'"queued_id"' in raw_line or b'"turn_queue_paused"' in raw_line:
+            if (
+                b'"queued_id"' in raw_line
+                or b'"turn_queue_paused"' in raw_line
+                or b'"turn_queue_resumed"' in raw_line
+            ):
                 yield raw_line
 
 
@@ -278,6 +282,17 @@ def scan_queued_turns_from_events(
                     paused_id = str(paused_id or "")
                     if paused_id in pending:
                         pending[paused_id]["_paused_after_stop"] = True
+                continue
+            if event_type == "turn_queue_resumed":
+                # An explicit queue resume releases Stop holds, never a fence
+                # for uncertain native delivery.
+                for resumed_id in event.get("queued_ids") or []:
+                    resumed_id = str(resumed_id or "")
+                    if (
+                        resumed_id in pending
+                        and pending[resumed_id].get("_native_delivery_fenced") is not True
+                    ):
+                        pending[resumed_id]["_paused_after_stop"] = False
                 continue
             if event_type == "turn_queue_delivery_fenced" and queued_id:
                 if queued_id not in pending:

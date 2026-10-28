@@ -19,15 +19,26 @@ public struct RootView: View {
             // not a column, so it never changes the layout underneath.
             detail
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                .overlay(alignment: .top) { ErrorBanner(model: model) }
+                .overlay(alignment: .top) {
+                    VStack(spacing: 0) {
+                        if !model.emergencies.isEmpty { EmergencyBanners(model: model) }
+                        ErrorBanner(model: model)
+                    }
+                }
                 .overlay(alignment: .trailing) {
                     if model.showChanges {
                         ChangesPanel(model: model)
                             .containerRelativeFrame(.horizontal) { width, _ in min(max(width * 0.55, 380), 760) }
                             .transition(.move(edge: .trailing).combined(with: .opacity))
+                    } else if case .chat(let id)? = model.selection, model.sideChatOpen == id {
+                        SideChatPanel(model: model, chatID: id)
+                            .id(id)
+                            .containerRelativeFrame(.horizontal) { width, _ in min(max(width * 0.4, 340), 520) }
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
                 .animation(.snappy(duration: 0.25), value: model.showChanges)
+                .animation(.snappy(duration: 0.25), value: model.sideChatOpen)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -35,6 +46,27 @@ public struct RootView: View {
                 DetailsButton(model: model)
                 ChangesButton(model: model)
             }
+        }
+        .sheet(item: $model.goalEditor) { target in
+            GoalSheet(model: model, target: target)
+        }
+        .sheet(item: $model.jobEditor) { target in
+            JobSheet(model: model, target: target)
+        }
+        .sheet(item: $model.renaming) { target in
+            RenameSheet(model: model, target: target)
+        }
+        .confirmationDialog(deletionTitle,
+                            isPresented: Binding(get: { model.pendingDeletion != nil },
+                                                 set: { if !$0 { model.pendingDeletion = nil } }),
+                            titleVisibility: .visible) {
+            Button("删除", role: .destructive) {
+                if let item = model.pendingDeletion { model.delete(item) }
+                model.pendingDeletion = nil
+            }
+            Button("取消", role: .cancel) { model.pendingDeletion = nil }
+        } message: {
+            Text(deletionDetail)
         }
         .sheet(item: $model.sheet) { sheet in
             switch sheet {
@@ -46,6 +78,19 @@ public struct RootView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 560)
+    }
+
+    private var deletionTitle: String {
+        guard let item = model.pendingDeletion else { return "" }
+        if case .group = item { return "删除讨论组“\(model.title(of: item))”？" }
+        return "删除聊天“\(model.title(of: item))”？"
+    }
+
+    private var deletionDetail: String {
+        if case .group? = model.pendingDeletion {
+            return "讨论组和它的定时任务会被删除，成员聊天会被归档。不能撤销。"
+        }
+        return "正在运行的回复会停止，排队的消息、终端会话和这个聊天的定时任务都会删除。不能撤销。"
     }
 
     @ViewBuilder private var detail: some View {

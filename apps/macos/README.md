@@ -49,8 +49,14 @@ the app shows built-in demo data.
   one, running a command or editing a file, with elapsed time). Each turn's work
   (thinking, tool calls, answered approvals) folds into one "已处理 12 秒 · 运行 2
   条命令" row that expands to the steps, so answers, changed files and pending
-  approvals stay in view. Queued messages are editable and withdrawable;
-  approvals are inline (Allow, Always allow for this chat, Deny). Return sends, Shift-Return adds a line, Esc stops.
+  approvals stay in view. Messages sent while the agent works queue up: each can
+  be edited, withdrawn, moved (⋯) or sent now (立即发送: Codex takes it into the
+  running turn when it can, otherwise the turn stops and it runs next). After a
+  Stop, queued messages are held until 继续发送. Approvals are inline (Allow,
+  Always allow for this chat, Deny). Return sends, Shift-Return adds a line, Esc stops.
+  Files go with the next message: the paperclip, or drop them anywhere on the
+  conversation; each uploads at once and shows its progress.
+  "加载更早的消息" at the top pages back through long chats.
   Model, effort and permissions are set per chat from the composer, with the
   providers' own names (Claude Code's Manual / Accept edits / Plan / Auto /
   Don't Ask / Bypass Permissions; Codex's Read Only / Default / Full Access).
@@ -84,6 +90,54 @@ the app shows built-in demo data.
   windows, new windows, splits, and closing a pane or the whole session. Hiding
   the panel only detaches; commands keep running, and reopening it repaints the
   current screen. Drag its top edge to change the height.
+- **Goals.** 目标 in the composer (or typing `/goal …`, `/goal clear`) sets the
+  provider's native goal: Claude Code's `/goal` completion condition, checked
+  after every reply until it holds, or Codex's persistent objective with an
+  optional token and time budget. While a goal is set, a bar above the composer
+  shows its state (in progress, achieved, paused, budget used up), Claude's check
+  count and last reason or Codex's tokens and minutes, with pause/resume (Codex),
+  edit and clear. In a group, 目标 sets the goal on one member and announces it;
+  the bar follows that member's goal.
+- **Commands and skills.** Typing `/` in a chat lists the commands and skills the
+  chat's agent found for its folder (Claude Code's commands and skills, Codex's
+  skills), filtered as you type; ↑↓ choose, ↩ or ⇥ complete. A message that
+  starts with one is sent as that native command or skill.
+- **MCP servers.** ⓘ lists the MCP servers the chat's agent loaded from its own
+  configuration, with their state and tool count. In Claude chats a server can
+  be reconnected, disabled or enabled again, and failed servers retried; servers
+  that need a sign-in are signed in with `/mcp` in Claude Code itself. Codex
+  servers show their state once the chat's thread is running.
+- **Side questions.** 侧问 in the composer (⇧⌘B, or typing `/btw …`) opens a
+  panel beside the conversation for quick questions that neither interrupt the
+  agent nor enter its transcript: Claude Code's native `/btw`, or for Codex an
+  answer from a fork of its thread.
+- **Search.** The sidebar search filters chat titles as you type and, after a
+  pause, searches every chat's messages; a hit opens the chat at that message
+  (loading older history if needed) and highlights it.
+- **Managing chats.** Right-click a chat or group (or the 会话 menu) to mark it
+  unread, fork it (a copy with its history that the agent continues natively,
+  ⇧⌘D), rename it (⇧⌘R), archive it (⇧⌘E; archived items collect under 已归档)
+  or delete it (⌘⌫, after a confirmation).
+- **Scheduled jobs.** + in 定时任务 creates a job for a chat or a group: daily,
+  weekdays, weekly, every N minutes/hours/days, once, or a cron expression, in
+  this Mac's time zone, with a preview of the next run. Double-click to edit;
+  right-click to run now or delete.
+- **Folders.** New chats and groups pick their working directory on the server:
+  type a path or step through the folders it lists. A Finder picker is offered
+  only when the server runs on this Mac.
+- **Emergency alerts.** An agent's emergency alert appears as a red banner over
+  every conversation and as a macOS notification, with a red mark on its chat,
+  until you acknowledge it.
+- **Subagents.** ⓘ lists the helper agents a chat's agent started, with their
+  state and recent activity.
+- **Context.** Click the context ring to compact the conversation now (Codex
+  natively; Claude Code with `/compact`).
+- **Settings.** ⌘↩ to send (↩ then adds a line), opening each turn's work by
+  default, and the plan-usage footer apply at once. 通知 shows whether macOS lets
+  Hyadex notify (with a shortcut to System Settings when it does not) and
+  chooses notifications for approvals and finished replies, only while Hyadex is
+  in the background, and the Dock badge (chats waiting for you plus emergencies).
+  会话 › 为此聊天新建定时任务… (⇧⌘J) opens a job for the open chat.
 - **Changes and details.** There is no permanent side column. A change card, a
   group receipt or a task's "查看 diff" slides a changes panel over the
   conversation (Esc closes it); the toolbar button shows the file count and is
@@ -103,6 +157,26 @@ the app shows built-in demo data.
   raw PTY output in binary frames, keystrokes back as binary frames, and JSON
   frames for resize and tmux history scrolling. tmux windows come from
   `/terminal/windows` and change through `/terminal/action`.
+- Emergency alerts come from `/api/emergency-alerts/events` (`hyadex-emergency-v1`:
+  a snapshot, then changes) and are acknowledged with
+  `POST /api/sessions/{id}/emergency/acknowledge {through_alert_id}`.
+- Uploads are `POST /api/sessions/{id}/files` (multipart, streamed from disk) and
+  go with the turn as `file_ids`. Older history is `GET /api/sessions/{id}?before=`.
+- The queue uses `queue/{id}/run-now`, `queue/{id}/move` and `queue/resume`; sends
+  to one chat go out one at a time so the server queues them in typed order.
+- Side chats use `/side-chat` with the `X-Hyadex-Token` header only (the server
+  rejects a bearer there) and refresh on the `side_chat_updated` frame.
+- Search is `/api/search`; fork is `POST /fork`; unread is `POST /unread`;
+  subagents are `GET /subagents` (polled while the chat works: Claude reports them
+  only there); jobs are `POST/PATCH/DELETE /api/jobs` and `/api/groups/{id}/jobs`;
+  folders come from `/api/working-directories/complete`.
+- Goals use `/claude/goal` and `/codex/goal` (PUT/DELETE) and
+  `PUT /api/groups/{id}/goal`; their state is read from `/claude/runtime` and
+  `/codex/runtime` and reread after `claude_goal_changed`, `codex_goal_updated`
+  and `codex_goal_cleared` events. Commands come from `/provider-commands`; a
+  message starting with one carries its opaque `skill_selection`, and a 409 for a
+  changed list reloads it and resends once. MCP state comes from `/claude/mcp`
+  (also POST for control) and `/codex/mcp`.
 
 ## Code layout
 
@@ -136,18 +210,57 @@ directly from a shell may not receive windows.
   Codex test chat's terminal and checks output, colours, CJK text, resizing, tmux
   windows and reattaching. It expects chats titled "mac e2e …", a group titled
   "mac e2e group" and a job titled "mac e2e …". Agents run for real and use tokens.
+  `HYADEX_E2E_CAPABILITIES`, `HYADEX_E2E_MANAGE` and `HYADEX_E2E_EXTRAS` (each `=only`
+  to run alone) use chats titled "features e2e claude" / "features e2e codex":
+  goals, commands and MCP; attachments, queue, history, compaction, emergency
+  alerts, jobs, folders, rename/archive/delete; unread, search, side chat, fork
+  and subagents. `HYADEX_HISTORY_PAGE=10` shortens the first page so paging is
+  exercised. A live check shows its window without taking keyboard focus; launch
+  it with `open -g` so typing in another app cannot reach the composer.
+- **Real controls:** `HYADEX_E2E_UI=only` drives the same features through the
+  app's own controls (`HyadexApp/UIDriver.swift`): buttons, rows and popover
+  items are pressed through the app's accessibility tree, text is typed into the
+  AppKit text view behind each field (`insertText`, where key presses end),
+  menu shortcuts go through the main menu's key-equivalent handling, and Return,
+  arrows and Esc go to the focused field. It needs no system permission and
+  never moves the pointer or takes the keyboard; the window is placed off
+  screen. Menus are chosen while they track (as a click would), and a file drop
+  goes through the drop region's own drag callbacks. `=cmdreturn`, `=settings`,
+  `=menus`/`=drop` and `=picker` run single steps.
 
 ## Verified
 
 Against an isolated development server (API contract 29) with real Claude Code
 and Codex: sending turns, live updates, approvals for both providers, replies
 and diffs, an `@codex` group round, toggling a job, and a one-task Autopilot run
-from plan approval to commit. Unit tests cover the event projections with event
-logs recorded from that server.
+from plan approval to commit. `HYADEX_E2E_CAPABILITIES=only` covers goals, commands
+and MCP the same way: MCP lists for both agents and disable/enable/reconnect in
+Claude, the command lists and `/` suggestions, a Codex skill turn, a Claude
+`/goal` reaching 已达成 and a second one cleared while active, a Codex goal with
+budgets completing and another paused and cleared, and a group goal set on and
+cleared from its member. `HYADEX_E2E_MANAGE=only` covers an attachment the agent
+reads, sends kept in typed order, reordering and Force Send, Stop holding the
+queue while a new message still runs and 继续发送 releasing it, paging back to a
+chat's first event, Codex and Claude compaction (Claude's context dropped from
+33 k to 9 k tokens in the same session), an agent's emergency alert arriving and
+being acknowledged, chat and group jobs created, edited and deleted, server
+folder completion, and rename/archive/unarchive/delete of a chat and a group.
+`HYADEX_E2E_UI=only` repeats the main paths through the real controls (98
+checks): a right-click menu and a menu button chosen from, a file dropped on the
+conversation that the agent then reads, the paperclip opening the system file
+panel, typing and Return/⌘↩ in the composer, slash completion with the
+keyboard, the side panel, the goal sheet and bar, compaction from the context
+ring, ⇧⌘U/⇧⌘D/⇧⌘J/⇧⌘R/⇧⌘E/⌘⌫/⌘, through the menu, the delete confirmation,
+the new-chat sheet's server folders, Esc holding the queue and 继续发送 / 立即发送,
+the search field and its hit, the details popover, approving on the card and
+acknowledging the emergency banner. `HYADEX_E2E_EXTRAS=only` covers marking unread, content search including a hit
+in older history, side questions on both agents (the main conversation
+unchanged), forks of both agents that remember the original conversation, and
+a Claude subagent listed while it runs. Unit tests cover the event projections
+with event logs recorded from that server.
 
 ## Known gaps
 
-- Opening a chat loads its latest 400 events; older history is not paged yet.
 - Autopilot receipts list changed files without diffs in the inspector.
 - Assistant text arrives as whole messages (the server does not stream tokens).
 - Math covers the LaTeX agents usually write (fractions, roots, scripts, big
@@ -157,3 +270,14 @@ logs recorded from that server.
   creating chats or groups from their sheets, Stop and queued-message editing
   on a live server, and reconnection after a server restart.
 - Ad-hoc signing only; the keychain may ask again after each rebuild.
+- Slash suggestions, attachments and side questions are offered in chats, not in
+  group messages (the server's group message has no attachments).
+- Search opens a chat at its newest matching message; the server reports one
+  hit per chat.
+- A subagent's own transcript cannot be opened (the server has no route for it);
+  its recent activity lines are shown.
+- Not driven by the automated checks: choosing a file inside the system file
+  panel (macOS draws it in a separate service that only takes real input) and
+  answering the system's notification permission prompt (Settings › 通知 shows
+  the current permission and opens System Settings when it is off). A drop is
+  delivered through the destination's own drag callbacks, not a pointer drag.

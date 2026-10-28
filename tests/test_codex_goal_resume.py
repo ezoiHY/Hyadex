@@ -476,6 +476,38 @@ class CodexGoalResumeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(hyadex_server.RUNS.current_turns, {})
                 self.assertEqual(hyadex_server.RUNS.maintenance, set())
 
+    async def test_rows_held_after_stop_do_not_refuse_goal_resume(self) -> None:
+        held = {"queued_id": "held", "prompt": "Held", "_paused_after_stop": True}
+        fenced = {
+            "queued_id": "fenced",
+            "prompt": "Fenced",
+            "_paused_after_stop": True,
+            "_native_delivery_fenced": True,
+        }
+        with patch_server(hyadex_server, "QUEUED_TURNS", {"chat": deque([held, fenced])}):
+            result = await self.resume()
+
+            self.assertEqual(result["goal"]["status"], "active")
+            self.assertEqual(self.manager.set_thread_goal.await_count, 1)
+            self.assertIn("chat", hyadex_server.RUNS.busy)
+            # The held rows stay held, in place.
+            self.assertEqual(
+                [item["queued_id"] for item in hyadex_server.RUNS.queued["chat"]],
+                ["held", "fenced"],
+            )
+
+    async def test_runnable_row_behind_held_rows_still_refuses_goal_resume(self) -> None:
+        held = {"queued_id": "held", "prompt": "Held", "_paused_after_stop": True}
+        runnable = {"queued_id": "runnable", "prompt": "Runnable"}
+        with patch_server(hyadex_server, "QUEUED_TURNS", {"chat": deque([held, runnable])}):
+            with self.assertRaises(HTTPException) as raised:
+                await self.resume()
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("queued work", str(raised.exception.detail))
+        self.manager.set_thread_goal.assert_not_awaited()
+        self.assertEqual(hyadex_server.RUNS.busy, set())
+
     async def test_launch_blocker_releases_reservation_before_native_activation(
         self,
     ) -> None:

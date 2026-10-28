@@ -896,7 +896,7 @@ schema at `/openapi.json`. Paths below that begin with `.../` are relative to
   `GET .../subagents`, `GET .../provider-commands`, `GET .../runs/{run_id}/trace`
 - Live events: `WS .../events?after=<seq>`, `WS /api/emergency-alerts/events`
 - Queue: `PATCH`/`DELETE .../queue/{queued_id}`, `POST .../queue/{queued_id}/move`,
-  `POST .../queue/{queued_id}/run-now`
+  `POST .../queue/{queued_id}/run-now`, `POST .../queue/resume`
 - Files and diffs: `GET`/`POST .../files`, `GET .../files/{file_id}`,
   `GET .../links/file`, `GET .../diffs/{run_id}`
 - Claude controls: `GET .../claude/runtime`, `PUT`/`DELETE .../claude/goal`,

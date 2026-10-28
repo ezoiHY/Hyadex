@@ -118,8 +118,10 @@ async def _put_codex_goal_locked(
         if reservation_id:
             async with RUNS.queue_lock:
                 promotion = RUNS.queue_start_tasks.get(session_id)
+                # Messages Stop held are the user's to resume or remove;
+                # only runnable queued work keeps its turn ahead of the goal.
                 prior_queue = (
-                    RUNS.has_waiting_work(session_id)
+                    RUNS.has_runnable_waiting_work(session_id)
                     or (promotion is not None and not promotion.done())
                 )
             if prior_queue:

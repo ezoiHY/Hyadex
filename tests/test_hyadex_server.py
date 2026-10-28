@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import json
 import os
 import tempfile
@@ -14,6 +15,13 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from tests import hyadex_server
+from tests.runtime_state import patch_server_multiple
+
+
+def held_row(queued_id: str, **extra: object) -> dict[str, object]:
+    return {"queued_id": queued_id, "prompt": queued_id, "_durable": True, "_paused_after_stop": True, **extra}
+
+
 class HyadexDefaultsTests(unittest.IsolatedAsyncioTestCase):
     async def test_new_chats_are_limited_to_enabled_backends(self) -> None:
         with patch.dict(os.environ, {"HYADEX_ENABLED_BACKENDS": ""}):
@@ -81,8 +89,87 @@ class GroupWiringTests(unittest.IsolatedAsyncioTestCase):
             await hyadex_server.append_durable_event("sess_member", "turn_started", {"run_id": "run_2", "queued_id": "q7"})
             await hyadex_server.append_durable_event("sess_member", "turn_unqueued", {"queued_id": "q8"})
             await hyadex_server.append_durable_event("sess_member", "turn_queue_paused", {})
+            await hyadex_server.append_durable_event("sess_member", "turn_queue_resumed", {})
         forwarded = [call.args[1]["type"] for call in engine.observe_member_event.call_args_list]
-        self.assertEqual(forwarded, ["turn_started", "turn_unqueued"])
+        # A Stop in the member chat may hold a group message, so the hold is forwarded too.
+        self.assertEqual(forwarded, ["turn_started", "turn_unqueued", "turn_queue_paused"])
+
+    async def test_rows_held_after_stop_do_not_make_a_member_busy_or_queued(self) -> None:
+        runtime = hyadex_server.HyadexGroupRuntime()
+        engine = hyadex_server.GroupEngine(self.root / "groups", runtime)
+        participant = {"handle": "codex", "session_id": "sess_member"}
+        held = [held_row("held"), held_row("fenced", _native_delivery_fenced=True)]
+        self.store.sessions["sess_member"]["codex_needs_user_action"] = False
+        with patch_server_multiple(hyadex_server, QUEUED_TURNS={"sess_member": deque(held)}, BUSY_SESSIONS=set()):
+            self.assertEqual(runtime.member_status("sess_member")["queued"], 0)
+            self.assertEqual(engine.participant_status(participant, {"dispatches": {}}),
+                             {"state": "idle", "queued": 0, "needs_action": False})
+            hyadex_server.RUNS.queued["sess_member"].append({"queued_id": "runnable", "prompt": "runnable"})
+            self.assertEqual(runtime.member_status("sess_member")["queued"], 1)
+            self.assertEqual(engine.participant_status(participant, {"dispatches": {}})["state"], "queued")
+
+    async def test_held_rows_do_not_keep_a_group_dispatch_open(self) -> None:
+        runtime = hyadex_server.HyadexGroupRuntime()
+        engine = hyadex_server.GroupEngine(self.root / "groups", runtime)
+        group = {"id": "grp_0123456789abcdef", "dispatches": {"gd_1": {
+            "id": "gd_1", "handle": "codex", "session_id": "sess_member", "status": "running",
+            "run_id": "run_gone", "round_id": None}}}
+        with (
+            patch_server_multiple(hyadex_server, QUEUED_TURNS={"sess_member": deque([held_row("held")])},
+                                  BUSY_SESSIONS=set()),
+            patch.object(hyadex_server, "HUB", MagicMock(broadcast=AsyncMock())),
+        ):
+            # The member's run is gone and only a held row remains, so the
+            # dispatch can no longer report an end of its own.
+            await engine._settle_orphaned_dispatches(group)
+        self.assertEqual(group["dispatches"]["gd_1"]["status"], "stopped")
+
+    async def test_group_dispatch_to_a_member_with_held_rows_starts_at_once(self) -> None:
+        runtime = hyadex_server.HyadexGroupRuntime()
+        launch: dict[str, object] = {}
+
+        async def launch_gate(*, ignore_session_id: str | None = None) -> str:
+            launch["reserved"] = ignore_session_id in hyadex_server.RUNS.busy
+            return "fixture stops before provider launch"
+
+        with (
+            patch_server_multiple(
+                hyadex_server,
+                QUEUED_TURNS={"sess_member": deque([held_row("held")])},
+                BUSY_SESSIONS=set(), ACTIVE={}, CURRENT_TURNS={}, RUN_NOW_TURNS={},
+                STEERING_SESSIONS=set(), QUEUE_START_TASKS={}, EXPLICIT_STOP_OPERATIONS={},
+                SESSION_TURN_TASKS={}, SESSION_LIFECYCLE_LOCKS={},
+            ),
+            patch.object(hyadex_server, "turn_start_blocker", launch_gate),
+            patch.object(hyadex_server, "prepare_codex_login_turn", AsyncMock()),
+            patch.object(hyadex_server, "interactive_client_capabilities", return_value=[]),
+            patch.object(hyadex_server, "server_lifecycle_admission_blocker", lambda: None),
+            patch.object(hyadex_server, "enqueue_turn", AsyncMock()) as enqueue,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await runtime.start_member_turn("sess_member", prompt="@codex review", request_id="gd_0123456789abcdef")
+            self.assertEqual([item["queued_id"] for item in hyadex_server.RUNS.queued["sess_member"]], ["held"])
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertEqual(launch, {"reserved": True})
+        enqueue.assert_not_awaited()
+
+    async def test_member_progress_reports_a_queued_turn_that_stop_holds(self) -> None:
+        runtime = hyadex_server.HyadexGroupRuntime()
+        path = hyadex_server.events_path("sess_member")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"seq": 1, "type": "turn_queued", "queued_id": "q1",
+                                    "client_request_id": "gd_0123456789abcdef"}) + "\n")
+        for queue, expected in (
+            (deque([held_row("q1")]), True),
+            (deque([held_row("q1", _paused_after_stop=False, _native_delivery_fenced=True)]), True),
+            (deque([{"queued_id": "q1", "prompt": "q1"}]), False),
+            (deque(), False),
+        ):
+            with self.subTest(queue=list(queue)), patch_server_multiple(
+                    hyadex_server, QUEUED_TURNS={"sess_member": queue}):
+                progress = await runtime.find_member_progress(
+                    "sess_member", run_id=None, queued_id=None, request_id="gd_0123456789abcdef")
+                self.assertEqual((progress["queued_id"], progress["held"]), ("q1", expected))
 
     async def test_group_jobs_are_not_deferred_by_a_busy_anchor_chat(self) -> None:
         with (

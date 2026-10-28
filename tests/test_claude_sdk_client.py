@@ -10,6 +10,7 @@ from hyadex.providers.claude.sdk import (
     CLAUDE_NON_DURABLE_SCHEDULER_TOOLS,
     CLAUDE_PROVIDER_MCP_SERVER_NAME,
     CLAUDE_PROVIDER_MCP_TOOL_NAME,
+    CLAUDE_SDK_MCP_RECONNECT_ALL_MAX_TIMEOUT_SECONDS,
     CLAUDE_SDK_MCP_STATUS_SCAN_LIMIT,
     CLAUDE_SDK_MCP_STATUS_TRUNCATED_KEY,
     ClaudeSDKConfigurationConflict,
@@ -23,6 +24,7 @@ from hyadex.providers.claude.sdk import (
     ClaudeSDKSupervisorClosed,
     ClaudeSDKUnavailable,
     claude_background_tracking_hooks,
+    claude_mcp_reconnect_all_timeout,
     claude_nondurable_scheduler_reason,
     claude_untracked_background_reason,
     reject_nondurable_scheduler_hook,
@@ -484,6 +486,29 @@ class HostileToggleThenBlockingFactory:
             client = BlockingMCPStatusClient(options)
         else:
             client = CancellationHostileMCPToggleClient(options)
+        self.clients.append(client)
+        return client
+
+
+class SlowReconnectMCPClient(FakeClaudeClient):
+    """Each native reconnect takes ``reconnect_delay`` seconds."""
+
+    def __init__(self, options: Any, reconnect_delay: float) -> None:
+        super().__init__(options)
+        self.reconnect_delay = reconnect_delay
+
+    async def reconnect_mcp_server(self, server_name: str) -> None:
+        await asyncio.sleep(self.reconnect_delay)
+        await super().reconnect_mcp_server(server_name)
+
+
+class SlowReconnectMCPFactory:
+    def __init__(self, reconnect_delay: float) -> None:
+        self.reconnect_delay = reconnect_delay
+        self.clients: list[SlowReconnectMCPClient] = []
+
+    def __call__(self, options: Any) -> SlowReconnectMCPClient:
+        client = SlowReconnectMCPClient(options, self.reconnect_delay)
         self.clients.append(client)
         return client
 
@@ -2599,7 +2624,7 @@ class ClaudeSDKMCPControlTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await manager.close_all()
 
-    async def test_reconnect_all_is_serial_and_respects_disabled_servers(self) -> None:
+    async def test_reconnect_all_retries_only_failed_servers_serially(self) -> None:
         factory = FakeFactory()
         manager = ClaudeSDKSupervisorManager(
             client_factory=factory,
@@ -2620,6 +2645,11 @@ class ClaudeSDKMCPControlTests(unittest.IsolatedAsyncioTestCase):
                     "name": "hyadex",
                     "status": "failed",
                 },
+                {
+                    "name": "claude.ai Figma",
+                    "status": "needs-auth",
+                    "scope": "claudeai",
+                },
             ])
             updated, _generation = await manager.mutate_mcp_server(
                 "mcp-chat",
@@ -2632,22 +2662,175 @@ class ClaudeSDKMCPControlTests(unittest.IsolatedAsyncioTestCase):
 
             client = factory.clients[0]
             reconnects = [call for call in client.calls if call[0] == "reconnect_mcp_server"]
+            # needs-auth servers wait for the user to sign in and disabled
+            # servers were turned off on purpose; neither is retried.
             self.assertEqual(reconnects, [
                 ("reconnect_mcp_server", "dayone"),
-                ("reconnect_mcp_server", "login"),
                 ("reconnect_mcp_server", "hyadex"),
             ])
-            self.assertNotIn(
-                ("reconnect_mcp_server", CLAUDE_PROVIDER_MCP_SERVER_NAME),
-                reconnects,
-            )
             statuses = {
                 item["name"]: item["status"]
                 for item in updated["mcpServers"]
             }
             self.assertEqual(statuses["dayone"], "connected")
-            self.assertEqual(statuses["login"], "connected")
+            self.assertEqual(statuses["hyadex"], "connected")
+            self.assertEqual(statuses["login"], "needs-auth")
+            self.assertEqual(statuses["claude.ai Figma"], "needs-auth")
             self.assertEqual(statuses["disabled"], "disabled")
+        finally:
+            await manager.close_all()
+
+    async def test_reconnect_all_without_failed_servers_sends_no_reconnect(self) -> None:
+        factory = FakeFactory()
+        manager = ClaudeSDKSupervisorManager(
+            client_factory=factory,
+            idle_ttl_seconds=None,
+        )
+        try:
+            _status, generation = await manager.get_mcp_status(
+                "mcp-chat",
+                options={},
+                configuration_key="profile-a",
+            )
+            client = factory.clients[0]
+            client.mcp_servers = [
+                {"name": "calendar", "status": "connected"},
+                {"name": "login", "status": "needs-auth"},
+                {"name": "disabled", "status": "disabled"},
+            ]
+            updated, updated_generation = await manager.mutate_mcp_server(
+                "mcp-chat",
+                action="reconnect_all",
+                server_name=None,
+                expected_generation=generation,
+                options={},
+                configuration_key="profile-a",
+            )
+
+            self.assertEqual(updated_generation, generation)
+            self.assertFalse(any(
+                call[0] == "reconnect_mcp_server" for call in client.calls
+            ))
+            self.assertEqual(
+                [item["status"] for item in updated["mcpServers"]],
+                ["connected", "needs-auth", "disabled"],
+            )
+        finally:
+            await manager.close_all()
+
+    def test_reconnect_all_timeout_scales_with_retried_servers_and_is_capped(self) -> None:
+        self.assertEqual(claude_mcp_reconnect_all_timeout(15, 0), 15)
+        self.assertEqual(claude_mcp_reconnect_all_timeout(15, 1), 15)
+        self.assertEqual(claude_mcp_reconnect_all_timeout(15, 3), 45)
+        self.assertEqual(
+            claude_mcp_reconnect_all_timeout(15, 16),
+            CLAUDE_SDK_MCP_RECONNECT_ALL_MAX_TIMEOUT_SECONDS,
+        )
+        # A configured single-control bound above the cap is never reduced.
+        self.assertEqual(claude_mcp_reconnect_all_timeout(200, 4), 200)
+
+    async def test_reconnect_all_bound_counts_retried_servers_only(self) -> None:
+        factory = FakeFactory()
+        manager = ClaudeSDKSupervisorManager(
+            client_factory=factory,
+            idle_ttl_seconds=None,
+            control_timeout_seconds=7,
+        )
+        try:
+            _status, generation = await manager.get_mcp_status(
+                "mcp-chat",
+                options={},
+                configuration_key="profile-a",
+            )
+            supervisor = manager._supervisors["mcp-chat"]
+            factory.clients[0].mcp_servers = [
+                {"name": "a", "status": "failed"},
+                {"name": "b", "status": "failed"},
+                {"name": "c", "status": "failed"},
+            ] + [
+                {"name": f"claude.ai {index}", "status": "needs-auth"}
+                for index in range(16)
+            ]
+            bounds: list[tuple[str, float | None]] = []
+            original = supervisor._mcp_control_bounded
+
+            async def recording_bound(operation: Any, **kwargs: Any) -> Any:
+                bounds.append((kwargs["label"], kwargs.get("timeout_seconds")))
+                return await original(operation, **kwargs)
+
+            supervisor._mcp_control_bounded = recording_bound  # type: ignore[method-assign]
+            await manager.mutate_mcp_server(
+                "mcp-chat",
+                action="reconnect_all",
+                server_name=None,
+                expected_generation=generation,
+                options={},
+                configuration_key="profile-a",
+            )
+            await manager.mutate_mcp_server(
+                "mcp-chat",
+                action="reconnect",
+                server_name="a",
+                expected_generation=generation,
+                options={},
+                configuration_key="profile-a",
+            )
+
+            self.assertEqual(bounds, [
+                ("mcp-reconnect_all-status", None),
+                ("mcp-reconnect_all", 21.0),
+                ("mcp-reconnect", None),
+            ])
+        finally:
+            await manager.close_all()
+
+    async def test_reconnect_all_completes_when_serial_retries_exceed_one_bound(self) -> None:
+        # Three retries take longer than one control timeout but fit the
+        # per-server budget; the single-server action keeps the plain bound.
+        factory = SlowReconnectMCPFactory(reconnect_delay=0.15)
+        manager = ClaudeSDKSupervisorManager(
+            client_factory=factory,
+            idle_ttl_seconds=None,
+            disconnect_timeout_seconds=0.05,
+            control_timeout_seconds=0.25,
+        )
+        try:
+            _status, generation = await manager.get_mcp_status(
+                "mcp-chat",
+                options={},
+                configuration_key="profile-a",
+            )
+            client = factory.clients[0]
+            client.mcp_servers = [
+                {"name": "a", "status": "failed"},
+                {"name": "b", "status": "failed"},
+                {"name": "c", "status": "failed"},
+                {"name": "login", "status": "needs-auth"},
+            ]
+            updated, _generation = await manager.mutate_mcp_server(
+                "mcp-chat",
+                action="reconnect_all",
+                server_name=None,
+                expected_generation=generation,
+                options={},
+                configuration_key="profile-a",
+            )
+            self.assertEqual(
+                {item["name"]: item["status"] for item in updated["mcpServers"]},
+                {"a": "connected", "b": "connected", "c": "connected", "login": "needs-auth"},
+            )
+
+            client.reconnect_delay = 1.0
+            with self.assertRaises(ClaudeSDKControlTimeout):
+                await manager.mutate_mcp_server(
+                    "mcp-chat",
+                    action="reconnect",
+                    server_name="a",
+                    expected_generation=generation,
+                    options={},
+                    configuration_key="profile-a",
+                )
+            self.assertFalse(manager.snapshots())
         finally:
             await manager.close_all()
 

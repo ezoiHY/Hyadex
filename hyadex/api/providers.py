@@ -27,6 +27,7 @@ from hyadex.providers.claude.goals import (
     require_claude_goal_session,
 )
 from hyadex.providers.claude.context_usage import refresh_idle_claude_context_usage
+from hyadex.providers.claude.mcp import ClaudeMCPControlRequest, manage_claude_mcp
 from hyadex.providers.claude.sdk import ClaudeSDKSupervisorError
 from hyadex.providers.codex.runtime import codex_runtime_snapshot
 from hyadex.providers.codex.interactions import (
@@ -34,6 +35,7 @@ from hyadex.providers.codex.interactions import (
     resolve_codex_interaction,
 )
 from hyadex.providers.codex.goals import CodexGoalRequest
+from hyadex.providers.codex.mcp import codex_mcp_snapshot
 
 router = APIRouter()
 
@@ -41,6 +43,11 @@ router = APIRouter()
 @router.get("/api/sessions/{session_id}/codex/runtime")
 async def get_codex_runtime(session_id: str) -> dict[str, Any]:
     return await codex_runtime_snapshot(session_id)
+
+
+@router.get("/api/sessions/{session_id}/codex/mcp")
+async def get_codex_mcp(session_id: str) -> dict[str, Any]:
+    return await codex_mcp_snapshot(session_id)
 
 
 @router.post(
@@ -92,6 +99,19 @@ async def delete_claude_goal(session_id: str) -> dict[str, Any]:
 @router.get("/api/sessions/{session_id}/claude/runtime")
 async def get_claude_runtime(session_id: str) -> dict[str, Any]:
     return await claude_runtime_snapshot(session_id)
+
+
+@router.get("/api/sessions/{session_id}/claude/mcp")
+async def get_claude_mcp(session_id: str) -> dict[str, Any]:
+    return await manage_claude_mcp(session_id)
+
+
+@router.post("/api/sessions/{session_id}/claude/mcp")
+async def post_claude_mcp(
+    session_id: str,
+    req: ClaudeMCPControlRequest,
+) -> dict[str, Any]:
+    return await manage_claude_mcp(session_id, req)
 
 
 @router.post("/api/sessions/{session_id}/claude/context-usage/refresh")

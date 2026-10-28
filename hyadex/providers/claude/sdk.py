@@ -47,6 +47,13 @@ logger = logging.getLogger(__name__)
 CLAUDE_AGENT_SDK_MIN_VERSION = "0.2.130"
 CLAUDE_SDK_MCP_STATUS_SCAN_LIMIT = 500
 CLAUDE_SDK_MCP_STATUS_TRUNCATED_KEY = "_hyadex_mcp_status_truncated"
+# Reconnect-all retries only servers that failed to connect. A needs-auth
+# server waits for the user to sign in, which a reconnect cannot do, and a
+# disabled server was turned off on purpose.
+CLAUDE_SDK_MCP_RECONNECT_ALL_STATUSES = frozenset({"failed"})
+# Upper bound for the reconnect phase of reconnect-all, whose budget is one
+# control timeout per retried server.
+CLAUDE_SDK_MCP_RECONNECT_ALL_MAX_TIMEOUT_SECONDS = 120.0
 CLAUDE_SDK_PROVIDER_COMMAND_SCAN_LIMIT = 512
 CLAUDE_SDK_PROVIDER_COMMAND_NAME_CHARS = 128
 CLAUDE_SDK_PROVIDER_COMMAND_TEXT_CHARS = 800
@@ -147,6 +154,19 @@ def canonical_claude_mcp_identifier(value: Any, max_chars: int) -> str | None:
         if category == "Cf" and character not in {"\u200c", "\u200d"}:
             return None
     return value
+
+
+def claude_mcp_reconnect_all_timeout(base_seconds: float, server_count: int) -> float:
+    """Bound reconnect-all by one control timeout per retried server.
+
+    One native reconnect can take most of a control timeout, so a fixed bound
+    fails whenever several servers are retried. The total is capped, and never
+    drops below the single-control bound.
+    """
+
+    base = float(base_seconds)
+    cap = max(base, CLAUDE_SDK_MCP_RECONNECT_ALL_MAX_TIMEOUT_SECONDS)
+    return min(cap, base * max(1, int(server_count)))
 
 
 class ClaudeSDKSupervisorError(RuntimeError):
@@ -526,7 +546,7 @@ def _parse_claude_sdk_message(data: dict[str, Any]) -> Any:
         return data
     message = parse_message(data)
     if message is not None:
-        for field in ("local_command", "local_command_run"):
+        for field in ("local_command", "local_command_run", "local_command_source"):
             if field in data:
                 setattr(message, field, data[field])
     return message
@@ -2338,8 +2358,12 @@ class ClaudeSDKSupervisor:
         *,
         label: str,
         retire_on_timeout: bool,
+        timeout_seconds: float | None = None,
     ) -> Any:
-        """Bound one native SDK control without leaving it on the actor queue."""
+        """Bound one native SDK control without leaving it on the actor queue.
+
+        ``timeout_seconds`` defaults to the single-control bound.
+        """
 
         task = asyncio.create_task(
             operation,
@@ -2354,7 +2378,11 @@ class ClaudeSDKSupervisor:
         try:
             done, _pending = await asyncio.wait(
                 {task},
-                timeout=self._control_timeout_seconds,
+                timeout=(
+                    self._control_timeout_seconds
+                    if timeout_seconds is None
+                    else float(timeout_seconds)
+                ),
             )
         except BaseException:
             task.cancel()
@@ -2460,6 +2488,23 @@ class ClaudeSDKSupervisor:
         if not command.response.done():
             command.response.set_result((value, generation))
 
+    def _manageable_mcp_servers(self, status: Any) -> dict[str, dict[str, Any]]:
+        """Return user-manageable servers by exact canonical name."""
+
+        _value, servers = self._mcp_servers_from_status(status)
+        by_name: dict[str, dict[str, Any]] = {}
+        for item in servers:
+            name = canonical_claude_mcp_identifier(item.get("name"), 512)
+            if name is not None and name != CLAUDE_PROVIDER_MCP_SERVER_NAME:
+                by_name.setdefault(name, item)
+        return by_name
+
+    def _require_mcp_generation(self, generation: str | None) -> None:
+        if generation is None or self.control_generation != generation:
+            raise ClaudeSDKGenerationChanged(
+                f"Claude SDK MCP generation changed for chat {self.chat_id}"
+            )
+
     async def _apply_mcp_mutation(
         self,
         client: ClaudeSDKClientProtocol,
@@ -2468,48 +2513,28 @@ class ClaudeSDKSupervisor:
         server_name: str | None,
     ) -> dict[str, Any]:
         current = await self._read_mcp_status(client)
-        _value, servers = self._mcp_servers_from_status(current)
-        by_name: dict[str, dict[str, Any]] = {}
-        for item in servers:
-            name = canonical_claude_mcp_identifier(item.get("name"), 512)
-            if name is not None and name != CLAUDE_PROVIDER_MCP_SERVER_NAME:
-                by_name.setdefault(name, item)
-        if action == "reconnect_all":
+        by_name = self._manageable_mcp_servers(current)
+        clean_name = str(server_name or "")
+        if clean_name not in by_name:
+            raise ClaudeSDKMCPServerNotFound(
+                f"MCP server {clean_name!r} is not in the connected Claude profile"
+            )
+        if action == "reconnect":
             reconnect = getattr(client, "reconnect_mcp_server", None)
             if not callable(reconnect):
                 raise ClaudeSDKUnavailable(
                     "installed claude-agent-sdk does not support MCP reconnect"
                 )
-            for name, item in by_name.items():
-                if str(item.get("status") or "") not in {"failed", "needs-auth"}:
-                    continue
-                # Reconnect-all is deliberately best effort. One unavailable
-                # server must not prevent independent failed servers from
-                # receiving their serialized native retry.
-                with suppress(Exception):
-                    await reconnect(name)
-        else:
-            clean_name = str(server_name or "")
-            if clean_name not in by_name:
-                raise ClaudeSDKMCPServerNotFound(
-                    f"MCP server {clean_name!r} is not in the connected Claude profile"
+            await reconnect(clean_name)
+        elif action in {"enable", "disable"}:
+            toggle = getattr(client, "toggle_mcp_server", None)
+            if not callable(toggle):
+                raise ClaudeSDKUnavailable(
+                    "installed claude-agent-sdk does not support MCP enable/disable"
                 )
-            if action == "reconnect":
-                reconnect = getattr(client, "reconnect_mcp_server", None)
-                if not callable(reconnect):
-                    raise ClaudeSDKUnavailable(
-                        "installed claude-agent-sdk does not support MCP reconnect"
-                    )
-                await reconnect(clean_name)
-            elif action in {"enable", "disable"}:
-                toggle = getattr(client, "toggle_mcp_server", None)
-                if not callable(toggle):
-                    raise ClaudeSDKUnavailable(
-                        "installed claude-agent-sdk does not support MCP enable/disable"
-                    )
-                await toggle(clean_name, enabled=action == "enable")
-            else:
-                raise ValueError(f"unsupported MCP action: {action}")
+            await toggle(clean_name, enabled=action == "enable")
+        else:
+            raise ValueError(f"unsupported MCP action: {action}")
         return await self._read_mcp_status(client)
 
     async def _mcp_mutation_operation(
@@ -2530,11 +2555,89 @@ class ClaudeSDKSupervisor:
             action=action,
             server_name=server_name,
         )
-        if self.control_generation != generation:
+        self._require_mcp_generation(generation)
+        return value, str(generation)
+
+    async def _mcp_reconnect_all_plan(
+        self,
+        *,
+        expected_generation: str,
+    ) -> tuple[ClaudeSDKClientProtocol, str, dict[str, Any], tuple[str, ...]]:
+        """Connect, fence the generation and select the servers to retry."""
+
+        client = await self._ensure_client()
+        generation = self.control_generation
+        if generation != expected_generation:
             raise ClaudeSDKGenerationChanged(
                 f"Claude SDK MCP generation changed for chat {self.chat_id}"
             )
+        if not callable(getattr(client, "reconnect_mcp_server", None)):
+            raise ClaudeSDKUnavailable(
+                "installed claude-agent-sdk does not support MCP reconnect"
+            )
+        status = await self._read_mcp_status(client)
+        self._require_mcp_generation(generation)
+        targets = tuple(
+            name
+            for name, item in self._manageable_mcp_servers(status).items()
+            if str(item.get("status") or "") in CLAUDE_SDK_MCP_RECONNECT_ALL_STATUSES
+        )
+        return client, str(generation), status, targets
+
+    async def _mcp_reconnect_all_apply(
+        self,
+        client: ClaudeSDKClientProtocol,
+        *,
+        generation: str,
+        targets: tuple[str, ...],
+    ) -> tuple[dict[str, Any], str]:
+        reconnect = getattr(client, "reconnect_mcp_server")
+        for name in targets:
+            # Reconnect-all is deliberately best effort. One unavailable
+            # server must not prevent independent failed servers from
+            # receiving their serialized native retry.
+            with suppress(Exception):
+                await reconnect(name)
+        value = await self._read_mcp_status(client)
+        self._require_mcp_generation(generation)
         return value, generation
+
+    async def _mcp_reconnect_all(
+        self,
+        command: _MutateMCPServer,
+    ) -> tuple[dict[str, Any], str] | None:
+        """Retry failed servers within a bound that grows with their count.
+
+        The status read runs under the single-control bound. Only then is the
+        number of servers to retry known, so the serialized reconnects get one
+        control timeout per server (capped). Returns ``None`` when the caller
+        left before any reconnect was sent.
+        """
+
+        client, generation, status, targets = await self._mcp_control_bounded(
+            self._mcp_reconnect_all_plan(
+                expected_generation=command.expected_generation,
+            ),
+            label="mcp-reconnect_all-status",
+            retire_on_timeout=True,
+        )
+        if not targets:
+            return status, generation
+        if command.cancelled:
+            return None
+        return await self._mcp_control_bounded(
+            self._mcp_reconnect_all_apply(
+                client,
+                generation=generation,
+                targets=targets,
+            ),
+            label="mcp-reconnect_all",
+            retire_on_timeout=True,
+            timeout_seconds=claude_mcp_reconnect_all_timeout(
+                self._control_timeout_seconds,
+                len(targets),
+            ),
+        )
 
     async def _handle_mutate_mcp_server(self, command: _MutateMCPServer) -> None:
         if command.cancelled:
@@ -2550,15 +2653,23 @@ class ClaudeSDKSupervisor:
                 )
             return
         try:
-            value, generation = await self._mcp_control_bounded(
-                self._mcp_mutation_operation(
-                    action=command.action,
-                    server_name=command.server_name,
-                    expected_generation=command.expected_generation,
-                ),
-                label=f"mcp-{command.action}",
-                retire_on_timeout=True,
-            )
+            if command.action == "reconnect_all":
+                result = await self._mcp_reconnect_all(command)
+                if result is None:
+                    if not command.response.done():
+                        command.response.cancel()
+                    return
+                value, generation = result
+            else:
+                value, generation = await self._mcp_control_bounded(
+                    self._mcp_mutation_operation(
+                        action=command.action,
+                        server_name=command.server_name,
+                        expected_generation=command.expected_generation,
+                    ),
+                    label=f"mcp-{command.action}",
+                    retire_on_timeout=True,
+                )
         except (
             ClaudeSDKControlTimeout,
             ClaudeSDKGenerationChanged,

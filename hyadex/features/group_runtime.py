@@ -20,7 +20,8 @@ from hyadex.core.config import (
 from hyadex.core.event_log import read_events
 from hyadex.core.paths import existing_cwd, now_iso
 from hyadex.core.queue import unqueue_turn
-from hyadex.core.runs import RUNS
+from hyadex.core.queue_admission import wait_for_queue_recovery_admission
+from hyadex.core.runs import queued_turn_is_held, RUNS
 from hyadex.core.session_settings import CreateSessionRequest, UpdateSessionRequest
 from hyadex.core.sessions import ensure_session_not_deleting, session_lifecycle_lock, STORE
 from hyadex.core.state import EVENTS
@@ -117,7 +118,13 @@ class HyadexGroupRuntime:
         return {
             "exists": True,
             "running": session_id in RUNS.busy,
-            "queued": len(RUNS.queued.get(session_id) or ()),
+            # Rows Stop held wait for the user. They neither show the member
+            # as queued nor keep the group's dispatches open.
+            "queued": sum(
+                1
+                for item in RUNS.queued.get(session_id) or ()
+                if not queued_turn_is_held(item)
+            ),
             "needs_action": bool(session.get("claude_needs_user_action") or session.get("codex_needs_user_action")),
         }
 
@@ -151,8 +158,25 @@ class HyadexGroupRuntime:
                              and str(event.get("run_id") or "") == resolved_run), None)
         unqueued = bool(resolved_queue and not resolved_run and any(
             event.get("type") == "turn_unqueued" and event.get("queued_id") == resolved_queue for event in events))
+        held = bool(
+            resolved_queue and not resolved_run and not unqueued
+            and await self.queued_turn_held(session_id, resolved_queue)
+        )
         return {"exists": True, "run_id": resolved_run, "queued_id": resolved_queue,
-                "terminal": terminal, "unqueued": unqueued}
+                "terminal": terminal, "unqueued": unqueued, "held": held}
+
+    async def queued_turn_held(self, session_id: str, queued_id: str) -> bool:
+        """Whether a Stop holds this queued turn, per the recovered queue."""
+        try:
+            await wait_for_queue_recovery_admission(session_id)
+        except HTTPException:
+            # The queue is still being rebuilt; the dispatch stays queued.
+            return False
+        async with RUNS.queue_lock:
+            return any(
+                str(item.get("queued_id") or "") == queued_id and queued_turn_is_held(item)
+                for item in RUNS.queued.get(session_id) or ()
+            )
 
     async def set_member_goal(self, session_id: str, objective: str) -> dict[str, Any]:
         session = STORE.sessions.get(session_id)

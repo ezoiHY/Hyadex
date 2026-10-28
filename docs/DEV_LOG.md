@@ -3,6 +3,89 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-28 — Mac app: files, queue, history, alerts, jobs and chat management
+
+- Attachments: the paperclip, or files dropped anywhere on a conversation,
+  upload at once with their progress and go with the next message.
+- Queued messages can be moved, sent now (Force Send) or, after a Stop, held
+  and continued with 继续发送; sends to one chat keep their typed order.
+- "加载更早的消息" pages back through long chats; a search hit in older history
+  loads back to it.
+- Agents' emergency alerts appear as a red banner, a macOS notification and a
+  mark on the chat until acknowledged.
+- Scheduled jobs for chats and groups can be created, edited and deleted
+  (daily, weekdays, weekly, every N minutes/hours/days, once, or cron), with a
+  preview of the next run.
+- Chats and groups can be renamed, archived (collected under 已归档), restored
+  and deleted after a confirmation; chats can be marked unread and forked.
+- The sidebar search also searches message content; side questions (`/btw`)
+  open in a panel; subagents are listed in the details; the context ring can
+  compact the conversation; new chats pick their folder on the server.
+- Settings now take effect: ⌘↩ to send, opening each turn's work by default,
+  the usage footer, notifications for approvals and finished replies (also
+  only-in-background), and the Dock badge. 通知 shows macOS's permission for
+  Hyadex and links to System Settings when it is off. ⇧⌘J opens a job for the
+  open chat.
+- Claude: output that an earlier priority command delivers in a later turn
+  (for example clearing a goal mid-turn) is marked `local_command_detached` and
+  not shown as that turn's reply; history sync matches Claude output by its
+  message id, so a live local-command turn is never imported a second time.
+
+## 2026-10-28 — Claude: symlinked folders, `/compact` and command history
+
+- Claude chats whose folder is reached through a symlink (such as `/tmp` on
+  macOS) resume their conversation again. Claude files those sessions under
+  the resolved folder, so every turn started a new Claude session and lost
+  the context. A session created in a different folder is still never resumed.
+- Claude's local commands such as `/compact` no longer end as a failed turn
+  ("Claude returned no response"). Their output, "Compacted" or an error such
+  as "No messages to compact", is the turn's reply, as in Claude Code. It is an
+  `assistant_text` event marked with `local_command` and `local_command_stream`.
+- Compaction, from `/compact` or automatic, is recorded as a durable
+  `claude_compaction_completed` event (`trigger`, `pre_tokens`, `post_tokens`),
+  and the context-usage reading is taken again afterwards.
+- Imported Claude history shows a slash command as typed (`/compact`) and its
+  output as a reply, instead of the raw `<command-name>` and
+  `<local-command-stdout>` markup. History imported earlier is shown the same
+  way, and a command that already ran in the chat is not imported again.
+
+## 2026-10-28 — Resume a stopped queue; Claude MCP reconnect-all
+
+- Messages that Stop held no longer block new work, as in the native clients
+  after Esc: a message sent to an idle chat starts at once, and one sent while
+  a turn runs is queued and runs next. The held messages keep their place
+  until the user resumes, force-sends or removes them, and the same holds
+  after a restart. They also no longer stop a Codex goal from resuming, keep
+  a group member shown as queued, or keep a group's dispatch open. A group
+  message that a Stop in the member's own chat holds is withdrawn from that
+  chat and ends as stopped for the group, so the round continues.
+- Server: `POST /api/sessions/{id}/queue/resume` releases every hold that Stop
+  placed on queued messages, so the queue continues in order instead of
+  needing Force Send per message. Messages whose provider delivery is
+  uncertain stay held and are reported. The release is saved as a
+  `turn_queue_resumed` event before it takes effect, so it survives a restart;
+  if it cannot be saved, nothing is released. Health advertises
+  `queue_resume_v1`.
+- Claude MCP "reconnect all" retries only servers that failed to connect.
+  Servers waiting for sign-in (such as claude.ai connectors) and disabled
+  servers are left alone, and the time allowed grows with the number of
+  servers retried, so it no longer times out on profiles with many connectors.
+
+## 2026-10-27 — Goals, commands and MCP servers in the Mac app
+
+- Chats can set the provider's native goal from the composer or with `/goal`:
+  Claude Code's completion condition, or Codex's persistent objective with an
+  optional token and time budget. A bar above the composer shows its progress,
+  with pause/resume (Codex), edit and clear. Groups set a goal on one member.
+- Typing `/` lists the chat agent's own commands and skills; a message starting
+  with one runs it natively.
+- The details panel lists the MCP servers the agent loaded, with their state and
+  tool count. Claude servers can be reconnected, disabled and enabled.
+- Server: `GET`/`POST /api/sessions/{id}/claude/mcp` is back (it had been removed
+  as unused) and `GET /api/sessions/{id}/codex/mcp` is new, reading Codex's
+  native `mcpServerStatus/list`. Both return the same display-safe summary: no
+  commands, environment, URLs or raw errors.
+
 ## 2026-10-27 — Server split into packages
 
 - Internal restructuring with no change to the API, stored data or chat

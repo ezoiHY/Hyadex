@@ -185,11 +185,14 @@ public enum SampleData {
         [
             GroupSummary(id: "g1", title: "讨论组游标设计评审", cwd: "~/Code/Hyadex",
                          participants: [
-                            Participant(handle: "claude", backend: .claude, role: "架构", model: "opus"),
-                            Participant(handle: "codex", backend: .codex, role: "实现", model: "", state: .running),
+                            Participant(handle: "claude", backend: .claude, role: "架构", model: "opus",
+                                        sessionID: "g1-claude"),
+                            Participant(handle: "codex", backend: .codex, role: "实现", model: "", state: .running,
+                                        sessionID: "g1-codex"),
                          ],
                          defaultResponder: "claude", preview: "@codex 正在补测试…", lastActivity: ago(0.5, from: now),
-                         promptChars: 4_812, dispatches: 5),
+                         promptChars: 4_812, dispatches: 5,
+                         goal: GroupGoal(handle: "codex", objective: "游标续传的测试全部通过，并覆盖断线重连和乱序到达。")),
             GroupSummary(id: "g2", title: "周报整理", cwd: "~/Documents/weekly",
                          participants: [
                             Participant(handle: "claude", backend: .claude, role: "写作", model: "sonnet"),
@@ -355,5 +358,56 @@ public enum SampleData {
         ], activity: LiveActivity(kind: .tool, label: ToolKind.command.activeVerb,
                                   detail: "python3 -m unittest tests.test_group_chat -q", since: now.addingTimeInterval(-40)))
         return (["g1": [live]], ["g1": ["g1-2a": 18, "g1-3a": 74]])
+    }
+
+    static func capabilities() -> ([String: ChatGoal], [String: GoalSupport], [String: CommandInventory],
+                                   [String: MCPStatus]) {
+        let goals: [String: ChatGoal] = [
+            "c3": ChatGoal(backend: .claude, text: "完整测试套件全部通过，CHANGELOG 列出本次所有用户可见改动。",
+                           status: .active, iterations: 3, reason: "还有 2 个 UI 测试失败。"),
+            "c5": ChatGoal(backend: .codex, text: "找出 7871 内存峰值的来源并给出可合并的修复。", status: .paused,
+                           tokensUsed: 182_400, tokenBudget: 500_000, secondsUsed: 1_260, timeBudgetSeconds: 3_600),
+            "g1-codex": ChatGoal(backend: .codex, text: "游标续传的测试全部通过，并覆盖断线重连和乱序到达。",
+                                 status: .active, tokensUsed: 61_200, secondsUsed: 540),
+        ]
+        let claude = CommandInventory(revision: "demo-claude", available: true, commands: [
+            ProviderCommand(id: "d1", name: "goal", label: "goal", detail: "设定完成条件，Claude 会一直工作到满足为止",
+                            invocation: "/goal", kind: .command),
+            ProviderCommand(id: "d2", name: "review", label: "review", detail: "审查当前分支的改动", invocation: "/review",
+                            kind: .command),
+            ProviderCommand(id: "d3", name: "compact", label: "compact", detail: "压缩对话，释放上下文",
+                            invocation: "/compact", kind: .command),
+            ProviderCommand(id: "d4", name: "swiftui-expert-skill", label: "swiftui-expert-skill",
+                            detail: "SwiftUI 状态、布局、性能与 API 迁移", invocation: "/swiftui-expert-skill",
+                            kind: .command, scope: "user"),
+            ProviderCommand(id: "d5", name: "release-checklist", label: "release-checklist",
+                            detail: "按项目的发布清单逐项检查", invocation: "/release-checklist", kind: .command,
+                            scope: "project"),
+        ])
+        let codex = CommandInventory(revision: "demo-codex", available: true, commands: [
+            ProviderCommand(id: "d6", name: "gradle-doctor", label: "gradle-doctor", detail: "诊断 Gradle 构建和测试失败",
+                            invocation: "/gradle-doctor", kind: .skill, scope: "repo"),
+            ProviderCommand(id: "d7", name: "api-design-principles", label: "api-design-principles",
+                            detail: "REST 与 GraphQL API 设计原则", invocation: "/api-design-principles", kind: .skill,
+                            scope: "user"),
+        ])
+        let claudeMCP = MCPStatus(available: true, generation: "demo", servers: [
+            MCPServer(name: "filesystem", status: .connected, scope: "user", serverInfo: "secure-filesystem-server 0.2.0",
+                      toolCount: 14),
+            MCPServer(name: "github", status: .connected, scope: "user", serverInfo: "github-mcp-server 1.4.0", toolCount: 46),
+            MCPServer(name: "playwright", status: .failed, error: "Claude could not connect to this MCP server.",
+                      scope: "project"),
+            MCPServer(name: "figma", status: .needsAuth, error: "This MCP server needs authentication.", scope: "claudeai"),
+            MCPServer(name: "sequential-thinking", status: .disabled, enabled: false, scope: "user", toolCount: 1),
+        ], controllable: true)
+        let codexMCP = MCPStatus(available: true, servers: [
+            MCPServer(name: "github", status: .connected, toolCount: 46),
+            MCPServer(name: "xcodebuildmcp", status: .pending),
+        ])
+        var commands: [String: CommandInventory] = [:]
+        var mcp: [String: MCPStatus] = [:]
+        for id in ["c1", "c3", "c4", "c6"] { commands[id] = claude; mcp[id] = claudeMCP }
+        for id in ["c2", "c5"] { commands[id] = codex; mcp[id] = codexMCP }
+        return (goals, [:], commands, mcp)
     }
 }

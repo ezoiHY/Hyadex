@@ -8,7 +8,7 @@ changes a persisted data format, a protocol string or an API contract.
 
 | Package | Owns |
 | --- | --- |
-| `hyadex/core/` | Settings (`config`), paths, the chat store (`sessions`), the event log, sequencing and timeline index, the event bus, turn state (`runs`), the turn engine (`turns`, `turn_start`, `turn_receipts`), the durable queue (`queue`, `queue_recovery`, `queue_admission`, `steering`), Stop and Run now (`stop`, `stop_turn`, `run_now`, `abandoned`), provider history sync and artifacts, HTTP admission (`http`), process inspection and server state (`server`, `wiring`, `state`) |
+| `hyadex/core/` | Settings (`config`), paths, the chat store (`sessions`), the event log, sequencing and timeline index, the event bus, turn state (`runs`), the turn engine (`turns`, `turn_start`, `turn_receipts`), the durable queue (`queue`, `queue_recovery`, `queue_admission`, `steering`), Stop, Run now and queue resume (`stop`, `stop_turn`, `run_now`, `queue_resume`, `abandoned`), provider history sync and artifacts, HTTP admission (`http`), process inspection and server state (`server`, `wiring`, `state`) |
 | `hyadex/providers/` | Provider registry, authority, commands, usage, instructions and shared provider state (`state`) |
 | `hyadex/providers/claude/` | The Agent SDK client (`sdk`, `sdk_manager`), the turn runner (`turns`), runtime, catalog, context usage, interactions, goals, history, subagents and side questions |
 | `hyadex/providers/codex/` | The app-server client (`app_server`, `app_server_manager`), the turn runners (`turns`, `exec_runner`, `native_turns`), managers, threads, goals, notifications, interactions, tools, forks, history, subagents and side questions |

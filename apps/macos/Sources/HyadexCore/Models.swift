@@ -78,7 +78,7 @@ public enum SidebarMode: String, CaseIterable, Hashable, Sendable {
 
     public var searchPrompt: String {
         switch self {
-        case .work: "搜索聊天"
+        case .work: "搜索聊天和消息"
         case .group: "搜索讨论组"
         case .autopilot: "搜索自动接力"
         }
@@ -101,10 +101,12 @@ public struct ChatSummary: Identifiable, Hashable, Sendable {
     public var pinned: Bool
     public var unread: Bool
     public var tokensUsed: Int
+    public var archived: Bool
 
     public init(id: String, title: String, backend: AgentBackend, model: String, effort: String = "",
                 permission: String, cwd: String, preview: String, lastActivity: Date,
-                state: ActivityState = .idle, pinned: Bool = false, unread: Bool = false, tokensUsed: Int = 0) {
+                state: ActivityState = .idle, pinned: Bool = false, unread: Bool = false, tokensUsed: Int = 0,
+                archived: Bool = false) {
         self.id = id
         self.title = title
         self.backend = backend
@@ -118,6 +120,7 @@ public struct ChatSummary: Identifiable, Hashable, Sendable {
         self.pinned = pinned
         self.unread = unread
         self.tokensUsed = tokensUsed
+        self.archived = archived
     }
 }
 
@@ -165,9 +168,13 @@ public struct GroupSummary: Identifiable, Hashable, Sendable {
     public var unread: Bool
     public var promptChars: Int
     public var dispatches: Int
+    /// A native goal set on one member, announced to the group.
+    public var goal: GroupGoal?
+    public var archived = false
 
     public init(id: String, title: String, cwd: String, participants: [Participant], defaultResponder: String,
-                preview: String, lastActivity: Date, unread: Bool = false, promptChars: Int = 0, dispatches: Int = 0) {
+                preview: String, lastActivity: Date, unread: Bool = false, promptChars: Int = 0, dispatches: Int = 0,
+                goal: GroupGoal? = nil) {
         self.id = id
         self.title = title
         self.cwd = cwd
@@ -178,6 +185,7 @@ public struct GroupSummary: Identifiable, Hashable, Sendable {
         self.unread = unread
         self.promptChars = promptChars
         self.dispatches = dispatches
+        self.goal = goal
     }
 
     /// The most urgent member state wins: needs action > running > queued > idle.
@@ -380,9 +388,15 @@ public struct ScheduledJob: Identifiable, Hashable, Sendable {
     public var lastResult: ActivityState?
     public var lastRun: Date?
     public var enabled: Bool
+    /// The chat it posts to (a group job: the group's anchor member chat).
+    public var sessionID: String?
+    public var groupID: String?
+    /// The raw schedule, for editing: interval, cron or rrule.
+    public var spec: JobSchedule?
 
     public init(id: String, title: String, prompt: String, target: String, schedule: String, nextRun: Date?,
-                lastResult: ActivityState?, lastRun: Date?, enabled: Bool) {
+                lastResult: ActivityState?, lastRun: Date?, enabled: Bool, sessionID: String? = nil,
+                groupID: String? = nil, spec: JobSchedule? = nil) {
         self.id = id
         self.title = title
         self.prompt = prompt
@@ -392,18 +406,126 @@ public struct ScheduledJob: Identifiable, Hashable, Sendable {
         self.lastResult = lastResult
         self.lastRun = lastRun
         self.enabled = enabled
+        self.sessionID = sessionID
+        self.groupID = groupID
+        self.spec = spec
+    }
+}
+
+/// When a job runs, in the server's terms. Cron expressions have seconds first.
+public enum JobSchedule: Hashable, Sendable {
+    /// Every `seconds`; `repeats == false` runs once at `firstRun`.
+    case interval(seconds: Int, repeats: Bool, firstRun: Date?)
+    case cron(String)
+    case rrule(String)
+
+    /// The create/update fields for `POST /api/jobs` and `PATCH /api/jobs/{id}`.
+    public var fields: [String: JSON] {
+        let zone: JSON = .string(TimeZone.current.identifier)
+        switch self {
+        case .interval(let seconds, let repeats, let firstRun):
+            var fields: [String: JSON] = ["schedule_kind": "interval", "interval_seconds": .number(Double(seconds)),
+                                          "loop": .bool(repeats), "timezone": zone,
+                                          "cron_expression": .null, "rrule": .null]
+            if !repeats { fields["max_runs"] = 1 }
+            if let firstRun { fields["first_run_at"] = .string(ISO8601DateFormatter().string(from: firstRun)) }
+            return fields
+        case .cron(let expression):
+            return ["schedule_kind": "cron", "cron_expression": .string(expression), "timezone": zone,
+                    "interval_seconds": .null, "rrule": .null]
+        case .rrule(let rule):
+            return ["schedule_kind": "rrule", "rrule": .string(rule), "timezone": zone,
+                    "interval_seconds": .null, "cron_expression": .null]
+        }
+    }
+}
+
+// MARK: - Attachments, alerts and folders
+
+/// A file added to the composer: uploading, uploaded (with the server's id) or failed.
+public struct DraftAttachment: Identifiable, Hashable, Sendable {
+    public enum State: Hashable, Sendable {
+        case uploading
+        case ready(fileID: String)
+        case failed(String)
+    }
+
+    public let id: String
+    public let name: String
+    public let size: Int64
+    public var state: State
+
+    public init(id: String = UUID().uuidString, name: String, size: Int64, state: State = .uploading) {
+        self.id = id
+        self.name = name
+        self.size = size
+        self.state = state
+    }
+
+    public var fileID: String? { if case .ready(let id) = state { id } else { nil } }
+}
+
+/// An agent's unacknowledged emergency alert for one chat.
+public struct EmergencyAlert: Identifiable, Hashable, Sendable {
+    public var id: String { sessionID }
+    public let sessionID: String
+    public let alertID: String
+    public let chatTitle: String
+    public let message: String
+    public let raisedAt: Date?
+    /// Unacknowledged alerts of this chat, this one included.
+    public let count: Int
+
+    public init(sessionID: String, alertID: String, chatTitle: String, message: String, raisedAt: Date?, count: Int) {
+        self.sessionID = sessionID
+        self.alertID = alertID
+        self.chatTitle = chatTitle
+        self.message = message
+        self.raisedAt = raisedAt
+        self.count = count
+    }
+
+    /// One `public_emergency_session` from the emergency stream.
+    public static func parse(_ session: JSON) -> EmergencyAlert? {
+        let alert = session["emergency_alert"]
+        guard let sessionID = session["id"].string, let alertID = alert["id"].string,
+              alert["status"].string.map({ $0 == "active" }) ?? true else { return nil }
+        return EmergencyAlert(sessionID: sessionID, alertID: alertID, chatTitle: session["title"].text ?? "聊天",
+                              message: alert["message"].text ?? "", raisedAt: alert["raised_at"].date,
+                              count: max(1, session["unacknowledged_emergency_count"].int ?? 1))
+    }
+}
+
+/// A folder on the server, offered while picking a working directory.
+public struct DirectorySuggestion: Identifiable, Hashable, Sendable {
+    public var id: String { path }
+    public let name: String
+    public let path: String
+
+    public init(name: String, path: String) {
+        self.name = name
+        self.path = path
     }
 }
 
 // MARK: - Queue
 
 public struct QueuedMessage: Identifiable, Hashable, Sendable {
+    public enum Hold: String, Hashable, Sendable {
+        /// Kept after the user stopped the turn; waits for 继续发送 or 立即发送.
+        case stopped
+        /// The provider may already have it; the user should check before resending.
+        case deliveryUncertain = "delivery_uncertain"
+    }
+
     public var id: String
     public var text: String
+    public var hold: Hold?
 
-    public init(id: String = UUID().uuidString, text: String) {
+    public init(id: String = UUID().uuidString, text: String, hold: Hold? = nil) {
         self.id = id
         self.text = text
+        self.hold = hold
     }
 }
 

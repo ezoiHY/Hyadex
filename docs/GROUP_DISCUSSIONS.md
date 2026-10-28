@@ -88,6 +88,13 @@ prompt characters in total (4,738 and 4,854 in two runs). A follow-up question t
   durable event paths, so queued, force-sent and unqueued turns all settle. A
   dispatch whose message is removed from the queue gives that member its
   messages again next time.
+- **Stop in a member chat.** `turn_queue_paused` is observed too. When a Stop
+  in the member chat holds a group message that has not started, the group
+  withdraws it from that chat's queue (`turn_unqueued`), so it can never run
+  detached from its round. The dispatch ends as `stopped`, the member gets its
+  messages again next time, and the round continues. Recovery does the same
+  for a message held before a restart. If the message cannot be withdrawn, the
+  dispatch stays queued until it starts or leaves the queue.
 - **Stop.** Stop re-reads each dispatch's live state. It removes queued turns,
   interrupts running ones (including a queued turn that started meanwhile), and
   finishes dispatches whose member chat is gone or idle. Archiving a group stops

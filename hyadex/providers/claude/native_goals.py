@@ -30,12 +30,57 @@ def is_claude_synthetic_no_response(event: Any) -> bool:
                 and message["usage"].get("output_tokens") == 0)
 
 
+CLAUDE_LOCAL_COMMAND_OUTPUT_RE = re.compile(
+    r"\A\s*<local-command-(stdout|stderr)>([\s\S]*)</local-command-\1>\s*\Z"
+)
+CLAUDE_LOCAL_COMMAND_WRAPPER_RE = re.compile(
+    r"\A<command-name>/([A-Za-z0-9_][A-Za-z0-9_.:-]{0,127})</command-name>\s*"
+    r"<command-message>\1</command-message>\s*<command-args>([\s\S]*)</command-args>\Z"
+)
+CLAUDE_LOCAL_COMMAND_CAVEAT_PREFIX = "<local-command-caveat>"
+# Set on a transcript record that the normalizer turned into command output.
+CLAUDE_LOCAL_COMMAND_HISTORY_FIELD = "_hyadex_local_command"
+_TERMINAL_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def claude_local_command_output(value: Any) -> tuple[str, str] | None:
+    """Return ``(stream, text)`` for one native local-command output wrapper.
+
+    Claude records a local slash command's output as
+    ``<local-command-stdout>...</local-command-stdout>`` (or ``stderr``).
+    Callers must establish that the record really is command output (its
+    command record, or the provider's terminal ``local_command`` field)
+    before treating text that merely looks like this as output.
+    """
+
+    if not isinstance(value, str) or len(value) > MAX_GOAL_RECORD_BYTES:
+        return None
+    match = CLAUDE_LOCAL_COMMAND_OUTPUT_RE.fullmatch(value)
+    if match is None:
+        return None
+    return match[1], _TERMINAL_ESCAPE_RE.sub("", match[2]).strip()
+
+
 class ClaudeGoalHistoryNormalizer:
-    """Normalize only commands linked to native goal attachments, never quotes."""
+    """Normalize native slash-command records proven by structure, never quotes.
+
+    ``/goal`` commands are proven by their native goal attachment. Other local
+    commands (``/compact``, ``/context`` ...) are proven by the record chain
+    Claude writes for them: an ``isMeta`` ``<local-command-caveat>`` record,
+    the ``<command-name>`` record as its child with the same prompt id, then
+    the output as the command record's child (a ``<local-command-stdout>``
+    user record with the same prompt id, or a ``local_command`` system record
+    whose ``commandRun`` matches). The command record is shown as the typed
+    command (``/compact focus``) and its output becomes assistant output, as
+    native Claude Code displays them. Identical text without that chain,
+    such as a pasted quote, stays unchanged.
+    """
     _command = re.compile(r"\A<command-name>/goal</command-name>\s*<command-message>goal</command-message>\s*<command-args>(.*)</command-args>\Z", re.DOTALL)
 
     def __init__(self):
         self._parents: OrderedDict[str, dict] = OrderedDict()
+        self._caveats: OrderedDict[str, dict] = OrderedDict()
+        self._commands: OrderedDict[str, dict] = OrderedDict()
 
     def seed(self, path: Path, offset: int) -> None:
         if offset <= 0:
@@ -58,6 +103,9 @@ class ClaudeGoalHistoryNormalizer:
     def consume(self, event: Any) -> Any:
         if not isinstance(event, dict) or event.get("isSidechain") is True:
             return event
+        return self._consume_local_command(event, self._consume_goal(event))
+
+    def _consume_goal(self, event: dict) -> dict:
         parent = self._parents.get(event.get("parentUuid"))
         same_session = bool(parent and parent.get("sessionId") == event.get("sessionId"))
         message = event.get("message")
@@ -95,6 +143,73 @@ class ClaudeGoalHistoryNormalizer:
         }
         while len(self._parents) > 32:
             self._parents.popitem(last=False)
+
+    def _consume_local_command(self, event: dict, normalized: dict) -> dict:
+        identity, session = event.get("uuid"), event.get("sessionId")
+        if not isinstance(identity, str) or not isinstance(session, str):
+            return normalized
+        event_type = event.get("type")
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if event_type == "user" and event.get("isMeta") is True:
+            if isinstance(content, str) and content.startswith(CLAUDE_LOCAL_COMMAND_CAVEAT_PREFIX):
+                self._remember_record(self._caveats, identity, {
+                    "sessionId": session, "promptId": event.get("promptId"),
+                })
+            return normalized
+        user_text = (event_type == "user" and isinstance(message, dict)
+                     and message.get("role") == "user" and isinstance(content, str))
+        if user_text:
+            wrapper = CLAUDE_LOCAL_COMMAND_WRAPPER_RE.fullmatch(content.strip())
+            if wrapper is not None:
+                caveat = self._caveats.get(event.get("parentUuid"))
+                proven = normalized is not event or (
+                    caveat is not None and caveat["sessionId"] == session
+                    and caveat["promptId"] == event.get("promptId"))
+                if not proven:
+                    return normalized
+                name, args = wrapper[1], wrapper[2]
+                display = "/" + name + (" " + args.strip() if args.strip() else "")
+                self._remember_record(self._commands, identity, {
+                    "sessionId": session, "promptId": event.get("promptId"),
+                    "command": name, "args": args, "prompt": display,
+                })
+                if normalized is not event:
+                    return normalized
+                return {**event, "message": {**message, "content": display}}
+        command = self._commands.get(event.get("parentUuid"))
+        if command is None or command["sessionId"] != session:
+            return normalized
+        if user_text:
+            if event.get("promptId") != command["promptId"]:
+                return normalized
+            output = claude_local_command_output(content)
+        elif event_type == "system" and event.get("subtype") == "local_command":
+            run = event.get("commandRun")
+            if (not isinstance(run, dict) or run.get("command") != command["command"]
+                    or run.get("args") != command["args"]):
+                return normalized
+            output = claude_local_command_output(event.get("content"))
+        else:
+            return normalized
+        if output is None:
+            return normalized
+        stream, text = output
+        return {
+            **event,
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
+            CLAUDE_LOCAL_COMMAND_HISTORY_FIELD: {
+                "command": command["command"], "prompt": command["prompt"], "stream": stream,
+            },
+        }
+
+    @staticmethod
+    def _remember_record(records: OrderedDict, identity: str, value: dict) -> None:
+        records[identity] = value
+        records.move_to_end(identity)
+        while len(records) > 32:
+            records.popitem(last=False)
 
 
 def _timestamp_ms(value: Any) -> int | None:

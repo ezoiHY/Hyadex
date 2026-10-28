@@ -12,6 +12,10 @@ final class LiveController {
     private(set) var health: HealthResponse?
 
     private var chatProjections: [String: SessionProjection] = [:]
+    /// Raw events of each open chat, oldest first, so older pages can be prepended.
+    private var chatEvents: [String: [JSON]] = [:]
+    private var emergencySocket: EventSocket?
+    private var sendChains: [String: Task<Void, Never>] = [:]
     private var groupProjections: [String: GroupProjection] = [:]
     private var runGroups: [String: String] = [:]  // run id → group id
     /// Member-chat records (model, effort, permissions) by session id.
@@ -29,6 +33,9 @@ final class LiveController {
     private var runningChats: Set<String> = []
     private var loadingDiffs: Set<String> = []
 
+    /// Events after which the chat's native goal changed.
+    static let goalEventTypes: Set<String> = ["claude_goal_changed", "codex_goal_updated", "codex_goal_cleared"]
+
     /// Opt in to native approvals and questions for both providers.
     static let capabilities = ["claude_sdk_interactive_v1", "codex_interactive_v1"]
 
@@ -40,6 +47,7 @@ final class LiveController {
     func start() async throws {
         health = try await client.health()
         try await refreshLists()
+        startEmergencyStream()
         // Probing the native CLIs can take a few seconds; do not hold up the lists.
         Task { await loadCatalogs() }
         // Plan usage changes slowly; native events also prompt a reread.
@@ -64,6 +72,8 @@ final class LiveController {
     }
 
     func stop() {
+        emergencySocket?.stop()
+        emergencySocket = nil
         pollTask?.cancel()
         runPollTask?.cancel()
         usageTask?.cancel()
@@ -112,9 +122,18 @@ final class LiveController {
         await refreshContext(id, backend: chat.backend)
     }
 
+    /// Rereads the chat's provider runtime: context fill and native goal.
     func refreshContext(_ id: String, backend: AgentBackend) async {
         guard let runtime = try? await client.runtime(id, backend: backend.rawValue) else { return }
         applyContext(runtime, to: id)
+        applyGoal(runtime, to: id, backend: backend)
+    }
+
+    private func applyGoal(_ runtime: JSON, to id: String, backend: AgentBackend) {
+        let goal = backend == .claude ? ChatGoal.claude(runtime: runtime) : ChatGoal.codex(runtime)
+        let support = backend == .claude ? GoalSupport.claude(runtime: runtime) : GoalSupport.codex(runtime: runtime)
+        if model.goals[id] != goal { model.goals[id] = goal }
+        if model.goalSupport[id] != support { model.goalSupport[id] = support }
     }
 
     private func applyContext(_ json: JSON, to id: String) {
@@ -130,7 +149,7 @@ final class LiveController {
 
     func refreshLists() async throws {
         async let sessionList = client.sessions()
-        async let groupList = client.groups()
+        async let groupList = client.groups(includeArchived: true)
         async let runList = client.runs()
         async let jobList = client.jobs()
         let (sessions, groups, runs, jobs) = try await (sessionList, groupList, runList, jobList)
@@ -142,7 +161,13 @@ final class LiveController {
                 chats[index].state = projection.needsAction ? .needsAction : projection.running ? .running : .idle
                 if let text = projection.lastAssistantText { chats[index].preview = Self.preview(text) }
             }
-            if model.selection == .chat(chats[index].id) { chats[index].unread = false }
+            if model.selection == .chat(chats[index].id), !model.markedUnread.contains(chats[index].id) {
+                chats[index].unread = false
+            }
+        }
+        // Chats that are not open change state here (the open one in publishChat).
+        for chat in chats where chatProjections[chat.id] == nil {
+            if let old = previousChats[chat.id]?.state { SystemNotifier.chatChanged(chat, from: old, to: chat.state) }
         }
         if chats != model.chats { model.chats = chats }
 
@@ -225,11 +250,13 @@ final class LiveController {
         guard let chat = model.chat(id) else { return }
         if chatProjections[id] == nil {
             do {
-                let page = try await client.sessionTail(id, limit: 400)
+                let page = try await client.sessionTail(id, limit: AppModel.historyPageSize)
                 var projection = SessionProjection(backend: chat.backend, cwd: LiveMapping.expand(chat.cwd))
                 projection.apply(page["events"].array)
                 projection.setQueue(page["queued_turns"].array)
                 chatProjections[id] = projection
+                chatEvents[id] = page["events"].array
+                if (page["events_omitted_before"].int ?? 0) > 0 { model.olderHistory.insert(id) }
             } catch {
                 model.report(error)
                 return
@@ -246,7 +273,14 @@ final class LiveController {
         subscribe(key: id, path: "api/sessions/\(id)/events", after: chatProjections[id]?.lastSeq ?? 0,
                   query: ["reasoning_stream": "true", "reasoning_text": "true"]) { controller, event in
             controller.chatProjections[id]?.apply(event)
+            controller.chatEvents[id, default: []].append(event)
             controller.publishChat(id)
+            if event["type"].string == "subagent_state" || event["type"].string == "turn_finished" {
+                Task { await controller.refreshSubagents(id) }
+            }
+            if Self.goalEventTypes.contains(event["type"].string ?? "") {
+                Task { await controller.refreshContext(id) }
+            }
         } control: { controller, frame in
             switch frame["type"].string {
             case "reasoning_summary_stream":
@@ -257,6 +291,8 @@ final class LiveController {
             case "provider_usage_changed":
                 let backend = frame["backend"].string.flatMap(AgentBackend.named)
                 Task { await controller.refreshUsage(only: backend) }
+            case "side_chat_updated":
+                Task { await controller.refreshSide(id) }
             default:
                 break
             }
@@ -265,6 +301,7 @@ final class LiveController {
 
     private func openGroup(_ id: String) async {
         guard let group = model.group(id) else { return }
+        Task { await refreshMemberGoal(of: id) }
         await loadMemberSessions(of: group)
         await loadGroupEvents(id, backends: Dictionary(group.participants.map { ($0.handle, $0.backend) },
                                                        uniquingKeysWith: { $1 }))
@@ -311,6 +348,8 @@ final class LiveController {
                         self.memberProjections[sessionID]?.apply(event)
                         if wasRunning, self.memberProjections[sessionID]?.running == false {
                             self.memberReasoning[sessionID] = nil
+                            Task { await self.refreshContext(sessionID, backend: backend) }
+                        } else if Self.goalEventTypes.contains(event["type"].string ?? "") {
                             Task { await self.refreshContext(sessionID, backend: backend) }
                         }
                     case .control(let json):
@@ -412,7 +451,10 @@ final class LiveController {
         }
         if let index = model.chats.firstIndex(where: { $0.id == id }) {
             let state: ActivityState = projection.needsAction ? .needsAction : projection.running ? .running : .idle
-            if model.chats[index].state != state { model.chats[index].state = state }
+            if model.chats[index].state != state {
+                SystemNotifier.chatChanged(model.chats[index], from: model.chats[index].state, to: state)
+                model.chats[index].state = state
+            }
             if let text = projection.lastAssistantText { model.chats[index].preview = Self.preview(text) }
             if let time = projection.lastActivity, time > model.chats[index].lastActivity {
                 model.chats[index].lastActivity = time
@@ -528,16 +570,165 @@ final class LiveController {
         }
     }
 
+    // MARK: Goals
+
+    func setGoal(_ text: String, tokenBudget: Int?, timeLimitMinutes: Int?, forChat id: String,
+                 backend: AgentBackend) async {
+        model.goalBusy.insert(id)
+        defer { model.goalBusy.remove(id) }
+        do {
+            switch backend {
+            case .claude:
+                // Claude Code runs `/goal <condition>` as a turn and keeps going until it holds.
+                let runtime = try await client.setClaudeGoal(id, condition: text)
+                applyGoal(runtime, to: id, backend: .claude)
+            case .codex:
+                let result = try await client.setCodexGoal(id, [
+                    "objective": .string(text),
+                    "status": "active",
+                    "token_budget": tokenBudget.map { .number(Double($0)) } ?? .null,
+                    "time_budget_seconds": timeLimitMinutes.map { .number(Double($0 * 60)) } ?? .null,
+                ])
+                model.goals[id] = ChatGoal.codex(result)
+            }
+        } catch {
+            model.report(error)
+        }
+        await refreshContext(id, backend: backend)
+    }
+
+    /// Pauses ("paused") or resumes ("active") Codex's goal.
+    func setCodexGoalStatus(_ status: String, forChat id: String) async {
+        model.goalBusy.insert(id)
+        defer { model.goalBusy.remove(id) }
+        do {
+            model.goals[id] = ChatGoal.codex(try await client.setCodexGoal(id, ["status": .string(status)]))
+        } catch {
+            model.report(error)
+        }
+        await refreshContext(id, backend: .codex)
+    }
+
+    func clearGoal(forChat id: String, backend: AgentBackend) async {
+        model.goalBusy.insert(id)
+        defer { model.goalBusy.remove(id) }
+        do {
+            switch backend {
+            case .claude: applyGoal(try await client.clearClaudeGoal(id), to: id, backend: .claude)
+            case .codex: model.goals[id] = ChatGoal.codex(try await client.clearCodexGoal(id))
+            }
+        } catch {
+            model.report(error)
+        }
+        await refreshContext(id, backend: backend)
+    }
+
+    func setGroupGoal(_ objective: String, handle: String, inGroup id: String) async {
+        let member = model.group(id)?.participants.first { $0.handle == handle }
+        let session = member?.sessionID
+        if let session { model.goalBusy.insert(session) }
+        defer { if let session { model.goalBusy.remove(session) } }
+        do {
+            let json = try await client.setGroupGoal(id, handle: handle, objective: objective)
+            if let group = LiveMapping.group(json["group"], previous: model.group(id), members: memberSessions),
+               let index = model.groups.firstIndex(where: { $0.id == id }) {
+                model.groups[index] = group
+            }
+        } catch {
+            model.report(error)
+        }
+        await refreshMemberGoal(of: id)
+    }
+
+    /// The live goal state of the group member holding the group's goal.
+    func refreshMemberGoal(of groupID: String) async {
+        guard let goal = model.group(groupID)?.goal,
+              let member = model.group(groupID)?.participants.first(where: { $0.handle == goal.handle }),
+              let session = member.sessionID else { return }
+        await refreshContext(session, backend: member.backend)
+    }
+
+    // MARK: Slash commands and skills
+
+    func loadCommands(_ id: String, refresh: Bool = false) async {
+        do {
+            if let inventory = CommandInventory.parse(try await client.providerCommands(id, refresh: refresh)) {
+                model.commands[id] = inventory
+            }
+        } catch {
+            model.commands[id] = CommandInventory(revision: "", available: false,
+                                                  reason: error.localizedDescription, commands: [])
+        }
+    }
+
+    /// The opaque selection for a message that starts with one of the chat's commands.
+    func commandSelection(for text: String, in id: String) -> (id: String, revision: String)? {
+        guard let inventory = model.commands[id], inventory.available,
+              let command = inventory.command(for: text) else { return nil }
+        return (command.id, inventory.revision)
+    }
+
+    // MARK: MCP servers
+
+    func refreshMCP(_ id: String, backend: AgentBackend) async {
+        model.mcpBusy.insert(id)
+        defer { model.mcpBusy.remove(id) }
+        do {
+            let json = try await client.mcpStatus(id, backend: backend.rawValue)
+            model.mcp[id] = MCPStatus.parse(json, backend: backend)
+                ?? MCPStatus(available: false, servers: [], reason: "服务器返回了无法识别的 MCP 状态。")
+        } catch HyadexClientError.http(404, _) where model.chat(id) != nil {
+            model.mcp[id] = MCPStatus(available: false, servers: [], reason: "这台服务器不提供 MCP 状态（版本过旧）。")
+        } catch {
+            model.mcp[id] = MCPStatus(available: false, servers: [], reason: error.localizedDescription)
+        }
+    }
+
+    func controlMCP(_ action: String, server: String?, forChat id: String) async {
+        guard let generation = model.mcp[id]?.generation else { return }
+        model.mcpBusy.insert(id)
+        do {
+            let json = try await client.controlClaudeMCP(id, action: action, server: server, generation: generation)
+            if let status = MCPStatus.parse(json, backend: .claude) { model.mcp[id] = status }
+            model.mcpBusy.remove(id)
+        } catch {
+            model.mcpBusy.remove(id)
+            model.report(error)
+            // A stale generation or a vanished server: show the current state.
+            await refreshMCP(id, backend: .claude)
+        }
+    }
+
     // MARK: Chat actions
 
-    func send(_ text: String, toChat id: String) async {
+    /// Sends in the order the user typed: each message waits for the previous
+    /// one's request, so the server queues them in that order.
+    func enqueueSend(_ text: String, toChat id: String, fileIDs: [String] = []) {
+        let previous = sendChains[id]
+        sendChains[id] = Task { [weak self] in
+            await previous?.value
+            await self?.send(text, toChat: id, fileIDs: fileIDs)
+        }
+    }
+
+    func send(_ text: String, toChat id: String, fileIDs: [String] = []) async {
+        // A command typed before the list arrived must still run as that command, not as text.
+        if text.hasPrefix("/"), model.commands[id]?.available != true { await loadCommands(id) }
         // Show the message and a "starting" status at once; the server's
         // turn_started (matched by client_request_id) replaces it.
         let requestID = "mac-" + UUID().uuidString
         let isBusy = model.chat(id).map { $0.state == .running || $0.state == .needsAction } ?? false
         if !isBusy { model.pendingSends[id, default: []].append(PendingSend(id: requestID, text: text)) }
         do {
-            _ = try await client.sendTurn(id, prompt: text, requestID: requestID, capabilities: Self.capabilities)
+            do {
+                _ = try await client.sendTurn(id, prompt: text, requestID: requestID, capabilities: Self.capabilities,
+                                              command: commandSelection(for: text, in: id), fileIDs: fileIDs)
+            } catch HyadexClientError.http(409, let detail?) where detail.contains("provider command") {
+                // The agent's command list changed since it was loaded: reload and resend once.
+                await loadCommands(id)
+                _ = try await client.sendTurn(id, prompt: text, requestID: requestID, capabilities: Self.capabilities,
+                                              command: commandSelection(for: text, in: id), fileIDs: fileIDs)
+            }
             if let index = model.chats.firstIndex(where: { $0.id == id }) {
                 model.chats[index].preview = Self.preview(text)
                 model.chats[index].lastActivity = .now
@@ -769,6 +960,353 @@ final class LiveController {
     }
 
     // MARK: Jobs
+
+    // MARK: Attachments
+
+    func upload(_ url: URL, attachment: String, toChat id: String) async {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let file = try await client.uploadFile(id, fileURL: url)
+            guard let fileID = file["id"].string else { throw HyadexClientError.invalidResponse }
+            model.setAttachment(attachment, in: id, .ready(fileID: fileID))
+        } catch {
+            model.setAttachment(attachment, in: id, .failed(error.localizedDescription))
+        }
+    }
+
+    // MARK: Rename, archive, delete
+
+    func updateGroup(_ id: String, _ fields: JSON) async {
+        do {
+            let json = try await client.updateGroup(id, fields)
+            if let group = LiveMapping.group(json, previous: model.group(id), members: memberSessions),
+               let index = model.groups.firstIndex(where: { $0.id == id }) {
+                model.groups[index] = group
+            }
+        } catch {
+            model.report(error)
+            try? await refreshLists()
+        }
+    }
+
+    func delete(_ item: SidebarItem) async {
+        do {
+            switch item {
+            case .chat(let id):
+                try await client.deleteSession(id)
+                chatProjections[id] = nil
+                chatEvents[id] = nil
+            case .group(let id):
+                try await client.deleteGroup(id)
+                groupProjections[id] = nil
+            default:
+                return
+            }
+            model.removeLocally(item)
+            try? await refreshLists()
+        } catch {
+            model.report(error)
+        }
+    }
+
+    // MARK: Jobs
+
+    func createJob(_ body: JSON, target: JobTarget) async {
+        var fields = body.object ?? [:]
+        do {
+            switch target {
+            case .chat(let id):
+                fields["session_id"] = .string(id)
+                _ = try await client.createJob(.object(fields))
+            case .group(let id):
+                _ = try await client.createJob(.object(fields), groupID: id)
+            }
+        } catch {
+            model.report(error)
+        }
+        try? await refreshLists()
+    }
+
+    func updateJob(_ id: String, fields: JSON) async {
+        do {
+            _ = try await client.updateJob(id, fields)
+        } catch {
+            model.report(error)
+        }
+        try? await refreshLists()
+    }
+
+    func deleteJob(_ id: String, groupID: String?) async {
+        do {
+            try await client.deleteJob(id, groupID: groupID)
+        } catch {
+            model.report(error)
+        }
+        try? await refreshLists()
+    }
+
+    // MARK: Server folders
+
+    func completeDirectory(_ path: String) async -> (folders: [DirectorySuggestion], message: String?) {
+        do {
+            let json = try await client.completeDirectory(path)
+            let folders = json["suggestions"].array.compactMap { item -> DirectorySuggestion? in
+                guard let path = item["path"].string else { return nil }
+                return DirectorySuggestion(name: item["name"].text ?? path, path: path)
+            }
+            return (folders, json["message"].text)
+        } catch {
+            return ([], error.localizedDescription)
+        }
+    }
+
+    // MARK: Queue
+
+    func runQueuedNow(_ queuedID: String, in id: String) async {
+        do {
+            let result = try await client.runQueuedNow(id, queuedID: queuedID)
+            if result["deferred"].bool == true {
+                model.errorMessage = result["message"].text ?? "代理还在启动或停止中，稍后再试。"
+            }
+        } catch {
+            model.report(error)
+        }
+        await refreshQueue(id)
+    }
+
+    func resumeQueue(_ id: String) async {
+        do {
+            _ = try await client.resumeQueue(id)
+        } catch HyadexClientError.http(404, _) where model.chat(id) != nil {
+            // An older server: Force Send the first held message instead.
+            if let first = chatProjections[id]?.queued.first(where: { $0.hold == .stopped }) {
+                await runQueuedNow(first.id, in: id)
+            }
+        } catch {
+            model.report(error)
+        }
+        await refreshQueue(id)
+    }
+
+    func moveQueued(_ queuedID: String, up: Bool, expectedAdjacent: String, in id: String) async {
+        do {
+            try await client.moveQueued(id, queuedID: queuedID, direction: up ? "up" : "down",
+                                        expectedAdjacent: expectedAdjacent)
+        } catch {
+            model.report(error)
+        }
+        await refreshQueue(id)
+    }
+
+    /// The server's queue order is authoritative after a queue action.
+    private func refreshQueue(_ id: String) async {
+        guard let page = try? await client.session(id, after: chatProjections[id]?.lastSeq ?? 0, limit: 1) else { return }
+        chatProjections[id]?.setQueue(page["queued_turns"].array)
+        publishChat(id)
+    }
+
+    // MARK: Emergency alerts
+
+    private func startEmergencyStream() {
+        emergencySocket?.stop()
+        let stream = EventSocket(client: client, path: "api/emergency-alerts/events", after: 0,
+                                 protocolName: "hyadex-emergency-v1")
+        emergencySocket = stream
+        stream.start { [weak self] frame in
+            guard case .control(let json) = frame else { return }
+            await MainActor.run { self?.applyEmergency(json) }
+        }
+    }
+
+    private func applyEmergency(_ frame: JSON) {
+        var alerts = model.emergencies
+        switch frame["type"].string {
+        case "emergency_snapshot":
+            alerts = frame["sessions"].array.compactMap(EmergencyAlert.parse)
+        case "emergency_changed":
+            let session = frame["session"]
+            alerts.removeAll { $0.sessionID == session["id"].string }
+            if let alert = EmergencyAlert.parse(session) { alerts.append(alert) }
+        case "emergency_removed":
+            alerts.removeAll { $0.sessionID == frame["session_id"].string }
+        default:
+            return
+        }
+        let known = Set(model.emergencies.map(\.alertID))
+        for alert in alerts where !known.contains(alert.alertID) { SystemNotifier.post(alert) }
+        alerts.sort { ($0.raisedAt ?? .distantPast) > ($1.raisedAt ?? .distantPast) }
+        if alerts != model.emergencies { model.emergencies = alerts }
+    }
+
+    func acknowledge(_ alert: EmergencyAlert) async {
+        do {
+            try await client.acknowledgeEmergency(alert.sessionID, throughAlertID: alert.alertID)
+        } catch {
+            model.report(error)
+        }
+    }
+
+    // MARK: History and context
+
+    /// Prepends the page before the oldest loaded event and rebuilds the timeline.
+    func loadOlder(_ id: String) async {
+        defer { model.loadingOlder.remove(id) }
+        guard let chat = model.chat(id), let oldest = chatEvents[id]?.first?["seq"].int else { return }
+        do {
+            let page = try await client.sessionPage(id, before: oldest, limit: AppModel.historyPageSize)
+            let older = page["events"].array.filter { ($0["seq"].int ?? .max) < oldest }
+            let events = older + (chatEvents[id] ?? [])
+            var projection = SessionProjection(backend: chat.backend, cwd: LiveMapping.expand(chat.cwd))
+            projection.apply(events)
+            if let current = chatProjections[id] { projection.replaceQueue(current.queued) }
+            chatProjections[id] = projection
+            chatEvents[id] = events
+            if (page["events_omitted_before"].int ?? 0) == 0 || older.isEmpty { model.olderHistory.remove(id) }
+            publishChat(id)
+        } catch {
+            model.report(error)
+        }
+    }
+
+    func compactCodex(_ id: String) async {
+        do {
+            _ = try await client.compactCodex(id)
+        } catch {
+            model.report(error)
+        }
+    }
+
+    // MARK: Search
+
+    func search(_ query: String) async -> [SearchHit] {
+        guard let json = try? await client.search(query) else { return [] }
+        return SearchHit.parse(json)
+    }
+
+    /// Opens the chat, loads older pages until the hit is in the timeline, then focuses it.
+    func reveal(_ hit: SearchHit) async {
+        let id = hit.sessionID
+        for _ in 0..<40 where chatEvents[id] == nil {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        var pages = 0
+        while let oldest = chatEvents[id]?.first?["seq"].int, oldest > hit.seq, model.olderHistory.contains(id),
+              pages < 30, model.selection == .chat(id) {
+            model.loadingOlder.insert(id)
+            await loadOlder(id)
+            pages += 1
+        }
+        model.timelineFocus[id] = visibleItem(for: hit, in: id) + "|" + UUID().uuidString
+    }
+
+    /// The timeline item showing a hit. Some indexed events (a turn's final
+    /// result) have no row of their own; use the nearest shown event before it.
+    private func visibleItem(for hit: SearchHit, in id: String) -> String {
+        let shown = Set(model.timeline(id).map(\.id))
+        if shown.contains(hit.eventID) { return hit.eventID }
+        let earlier = (chatEvents[id] ?? []).filter { ($0["seq"].int ?? .max) <= hit.seq }
+        for event in earlier.reversed() {
+            if let eventID = event["id"].string, shown.contains(eventID) { return eventID }
+        }
+        return hit.eventID
+    }
+
+    // MARK: Fork, unread
+
+    func fork(_ id: String) async {
+        do {
+            let json = try await client.fork(id)
+            if let chat = LiveMapping.chat(json, previous: nil) {
+                if !model.chats.contains(where: { $0.id == chat.id }) { model.chats.insert(chat, at: 0) }
+                model.select(.chat(chat.id))
+            }
+            try? await refreshLists()
+        } catch {
+            model.report(error)
+        }
+    }
+
+    func markUnread(_ id: String) async {
+        do { try await client.markUnread(id) } catch { model.report(error) }
+    }
+
+    func markRead(_ id: String) async {
+        do { try await client.markRead(id) } catch { model.report(error) }
+    }
+
+    // MARK: Side chat
+
+    func refreshSide(_ id: String) async {
+        do {
+            let json = try await client.sideChat(id)
+            if let side = SideChat.parse(json), model.sideChats[id] != side { model.sideChats[id] = side }
+            model.sideChatErrors[id] = nil
+        } catch {
+            model.sideChatErrors[id] = Self.sideMessage(error)
+        }
+        // Frames can be missed across reconnects: keep checking while an answer is pending.
+        if model.sideChats[id]?.isRunning == true, model.sideChatOpen == id {
+            try? await Task.sleep(for: .seconds(2))
+            if model.sideChats[id]?.isRunning == true { await refreshSide(id) }
+        }
+    }
+
+    func askSide(_ question: String, inChat id: String) async {
+        if model.sideChats[id] == nil { await refreshSide(id) }
+        guard let side = model.sideChats[id] else { return }
+        do {
+            let json = try await client.askSideChat(id, requestID: "mac" + UUID().uuidString.replacingOccurrences(of: "-", with: ""),
+                                                    question: question, sideChatID: side.sideChatID,
+                                                    after: side.lastRequestID)
+            if let updated = SideChat.parse(json) { model.sideChats[id] = updated }
+        } catch HyadexClientError.http(409, let detail?) where detail.contains("refresh") {
+            // Another device asked meanwhile: catch up and let the user ask again.
+            await refreshSide(id)
+            model.sideChatErrors[id] = "侧问刚被更新，请再发一次。"
+        } catch {
+            model.sideChatErrors[id] = Self.sideMessage(error)
+        }
+        await refreshSide(id)
+    }
+
+    func cancelSide(_ requestID: String, inChat id: String) async {
+        do {
+            if let side = SideChat.parse(try await client.cancelSideQuestion(id, requestID: requestID)) {
+                model.sideChats[id] = side
+            }
+        } catch {
+            model.sideChatErrors[id] = Self.sideMessage(error)
+        }
+    }
+
+    func clearSide(_ sideChatID: String, inChat id: String) async {
+        do {
+            if let side = SideChat.parse(try await client.clearSideChat(id, sideChatID: sideChatID)) {
+                model.sideChats[id] = side
+            }
+        } catch {
+            model.sideChatErrors[id] = Self.sideMessage(error)
+        }
+    }
+
+    private static func sideMessage(_ error: Error) -> String {
+        if case HyadexClientError.http(409, let detail?) = error, detail.contains("not started") {
+            return "先和代理说一句话，侧问才有对话内容可以参考。"
+        }
+        if case HyadexClientError.http(410, _) = error {
+            return "主对话已经变了：点“清空”开始新的侧问。"
+        }
+        return error.localizedDescription
+    }
+
+    // MARK: Subagents
+
+    func refreshSubagents(_ id: String) async {
+        guard let json = try? await client.subagents(id) else { return }
+        let agents = Subagent.parse(json)
+        if model.subagents[id] != agents { model.subagents[id] = agents }
+    }
 
     func setJob(_ id: String, enabled: Bool) async {
         do {

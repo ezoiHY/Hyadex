@@ -11,6 +11,9 @@ struct HyadexApp: App {
     var body: some Scene {
         Window("Hyadex", id: "main") {
             RootView(model: model)
+                .onChange(of: model.needsActionCount + model.emergencies.count, initial: true) { _, count in
+                    SystemNotifier.updateBadge(count)
+                }
                 .task {
                     await model.autoConnect()
 
@@ -42,7 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Needed when launched as a bare binary (swift run) rather than a bundle.
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate()
+        // A live check runs in the background so the user's typing stays in their own app.
+        if ProcessInfo.processInfo.environment["HYADEX_E2E_DIR"] == nil { NSApp.activate() }
     }
 }
 
@@ -79,11 +83,44 @@ struct AppCommands: Commands {
             .keyboardShortcut(".")
             .disabled(model.selectedTimelineKey == nil)
             Divider()
+            Button("重命名…") {
+                if let item = model.selectedManageable {
+                    model.renaming = RenameTarget(item: item, title: model.title(of: item))
+                }
+            }
+            .keyboardShortcut("r", modifiers: [.command, .shift])
+            .disabled(model.selectedManageable == nil)
+            Button(model.selectedManageable.map(model.isArchived) == true ? "取消归档" : "归档") {
+                if let item = model.selectedManageable { model.setArchived(item, !model.isArchived(item)) }
+            }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
+            .disabled(model.selectedManageable == nil)
+            Button("删除…") { model.pendingDeletion = model.selectedManageable }
+                .keyboardShortcut(.delete, modifiers: [.command])
+                .disabled(model.selectedManageable == nil)
+            Divider()
+            Button("分叉聊天") { if case .chat(let id)? = model.selection { model.fork(id) } }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .disabled(selectedChat == nil)
+            Button("侧问…") { if case .chat(let id)? = model.selection { model.toggleSideChat(id) } }
+                .keyboardShortcut("b", modifiers: [.command, .shift])
+                .disabled(selectedChat == nil)
+            Button("标为未读") { if case .chat(let id)? = model.selection { model.markUnread(id) } }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
+                .disabled(selectedChat == nil)
+            Button("为此聊天新建定时任务…") { model.jobEditor = .new }
+                .keyboardShortcut("j", modifiers: [.command, .shift])
+                .disabled(selectedChat == nil)
+            Divider()
             ForEach(Array(navigationTargets.prefix(9).enumerated()), id: \.offset) { index, target in
                 Button(target.title) { model.select(target.item) }
                     .keyboardShortcut(KeyEquivalent(Character(String(index + 1))))
             }
         }
+    }
+
+    private var selectedChat: ChatSummary? {
+        if case .chat(let id)? = model.selection { model.chat(id) } else { nil }
     }
 
     private var navigationTargets: [(title: String, item: SidebarItem)] {

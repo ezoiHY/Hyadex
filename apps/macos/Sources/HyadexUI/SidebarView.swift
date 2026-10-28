@@ -16,9 +16,10 @@ public struct SidebarSnapshotView: View {
 
 struct SidebarView: View {
     @Bindable var model: AppModel
+    @AppStorage("showArchived") private var showArchived = false
 
     var body: some View {
-        List(selection: Binding(get: { model.selection }, set: { model.select($0) })) {
+        List(selection: Binding(get: { model.selection }, set: { model.selectFromSidebar($0) })) {
             switch model.sidebarMode {
             case .work: workSections
             case .group: groupSections
@@ -33,24 +34,66 @@ struct SidebarView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ServerFooter(model: model)
         }
+        .task(id: model.searchText) {
+            // Titles filter as you type; message search waits for a pause.
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            await model.runSearch(model.searchText)
+        }
+    }
+
+    @ViewBuilder private var searchSection: some View {
+        let query = model.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.count >= 2, !model.searchHits.isEmpty || (model.isLive && model.searching) {
+            Section {
+                if model.searchHits.isEmpty {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text("正在搜索消息…").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                ForEach(model.searchHits) { hit in
+                    Button {
+                        model.open(hit)
+                    } label: {
+                        SearchHitRow(hit: hit, title: model.chat(hit.sessionID)?.title ?? "聊天",
+                                     backend: model.chat(hit.sessionID)?.backend, terms: SearchHit.terms(in: query))
+                    }
+                    .buttonStyle(.plain)
+                }
+            } header: {
+                Text("消息内容")
+            }
+        }
     }
 
     @ViewBuilder private var workSections: some View {
+        searchSection
         if !model.visiblePinned.isEmpty {
             Section("置顶") {
                 ForEach(model.visiblePinned) { chat in
-                    ChatRow(chat: chat).tag(SidebarItem.chat(chat.id))
+                    ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id))
                         .contextMenu { chatMenu(chat) }
                 }
             }
         }
         Section(model.visiblePinned.isEmpty ? "" : "最近") {
             ForEach(model.visibleChats) { chat in
-                ChatRow(chat: chat).tag(SidebarItem.chat(chat.id))
+                ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id))
                     .contextMenu { chatMenu(chat) }
             }
             if model.visibleChats.isEmpty && model.visiblePinned.isEmpty {
                 EmptyRow(text: model.searchText.isEmpty ? "还没有聊天，点右上角的 + 开始" : "没有匹配的聊天")
+            }
+        }
+        if !model.archivedChats.isEmpty {
+            Section(isExpanded: $showArchived) {
+                ForEach(model.archivedChats) { chat in
+                    ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id))
+                        .contextMenu { chatMenu(chat) }
+                }
+            } header: {
+                Text("已归档 · \(model.archivedChats.count)")
             }
         }
         Section {
@@ -73,9 +116,20 @@ struct SidebarView: View {
         Section {
             ForEach(model.visibleGroups) { group in
                 GroupRow(group: group).tag(SidebarItem.group(group.id))
+                    .contextMenu { groupMenu(group) }
             }
             if model.visibleGroups.isEmpty {
                 EmptyRow(text: model.searchText.isEmpty ? "还没有讨论组，点右上角的 + 开始" : "没有匹配的讨论组")
+            }
+        }
+        if !model.archivedGroups.isEmpty {
+            Section(isExpanded: $showArchived) {
+                ForEach(model.archivedGroups) { group in
+                    GroupRow(group: group).tag(SidebarItem.group(group.id))
+                        .contextMenu { groupMenu(group) }
+                }
+            } header: {
+                Text("已归档 · \(model.archivedGroups.count)")
             }
         }
     }
@@ -102,12 +156,31 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func chatMenu(_ chat: ChatSummary) -> some View {
-        Button(chat.pinned ? "取消置顶" : "置顶") { model.togglePinned(chat.id) }
-        Button("在新窗口中打开") {}
-            .disabled(true)
+        let item = SidebarItem.chat(chat.id)
+        Button(chat.unread ? "标为已读" : "标为未读") {
+            if chat.unread { model.markRead(chat.id) } else { model.markUnread(chat.id) }
+        }
+        Button("分叉") { model.fork(chat.id) }
+            .disabled(chat.archived)
         Divider()
-        Button("归档", role: .destructive) {}
-            .disabled(true)
+        Button("重命名…") { model.renaming = RenameTarget(item: item, title: chat.title) }
+        if !chat.archived {
+            Button(chat.pinned ? "取消置顶" : "置顶") { model.togglePinned(chat.id) }
+        }
+        Divider()
+        Button(chat.archived ? "取消归档" : "归档") { model.setArchived(item, !chat.archived) }
+        Button("删除…", role: .destructive) { model.pendingDeletion = item }
+    }
+
+    @ViewBuilder
+    private func groupMenu(_ group: GroupSummary) -> some View {
+        let item = SidebarItem.group(group.id)
+        if !group.archived {
+            Button("重命名…") { model.renaming = RenameTarget(item: item, title: group.title) }
+            Divider()
+        }
+        Button(group.archived ? "取消归档" : "归档") { model.setArchived(item, !group.archived) }
+        Button("删除…", role: .destructive) { model.pendingDeletion = item }
     }
 }
 
@@ -228,6 +301,8 @@ private struct SearchField: View {
 
 private struct ChatRow: View {
     let chat: ChatSummary
+    /// An agent's unacknowledged emergency alert.
+    var alert = false
 
     var body: some View {
         HStack(spacing: 9) {
@@ -253,7 +328,13 @@ private struct ChatRow: View {
     }
 
     @ViewBuilder private var trailing: some View {
-        if chat.state != .idle {
+        if alert {
+            Image(systemName: "exclamationmark.octagon.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.red)
+                .help("紧急提醒")
+                .accessibilityLabel("紧急提醒")
+        } else if chat.state != .idle {
             StateIndicator(state: chat.state, size: 11)
         } else if chat.unread {
             Circle().fill(Color.accentColor).frame(width: 7, height: 7).accessibilityLabel("未读")
@@ -336,11 +417,12 @@ private struct RunRow: View {
 private struct ServerFooter: View {
     @Bindable var model: AppModel
     @Environment(\.openSettings) private var openSettings
+    @AppStorage("showUsage") private var showUsage = true
 
     var body: some View {
         VStack(spacing: 0) {
             Divider()
-            if !model.usage.isEmpty {
+            if showUsage, !model.usage.isEmpty {
                 UsageMeter(model: model)
                     .padding(.horizontal, 14)
                     .padding(.top, 9)
@@ -514,3 +596,55 @@ private struct UsageDetails: View {
     }
 }
 
+
+/// A chat whose messages match the search, with the newest matching line.
+private struct SearchHitRow: View {
+    let hit: SearchHit
+    let title: String
+    let backend: AgentBackend?
+    let terms: [String]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Group {
+                if let backend { AgentAvatar(backend: backend, size: 18) } else { Image(systemName: "text.magnifyingglass") }
+            }
+            .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(title).lineLimit(1)
+                    Spacer(minLength: 4)
+                    if hit.matches > 1 {
+                        Text("\(hit.matches) 处").font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+                Text(highlighted)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .help("打开到这条消息")
+    }
+
+    /// "你：…snippet…" with the searched words in bold.
+    private var highlighted: AttributedString {
+        var text = AttributedString(hit.roleLabel + "：" + hit.snippet)
+        let plain = String(text.characters)
+        for term in terms {
+            var searchStart = plain.startIndex
+            while let range = plain.range(of: term, options: [.caseInsensitive, .diacriticInsensitive],
+                                          range: searchStart..<plain.endIndex) {
+                if let lower = AttributedString.Index(range.lowerBound, within: text),
+                   let upper = AttributedString.Index(range.upperBound, within: text) {
+                    text[lower..<upper].inlinePresentationIntent = .stronglyEmphasized
+                    text[lower..<upper].foregroundColor = .primary
+                }
+                searchStart = range.upperBound
+            }
+        }
+        return text
+    }
+}

@@ -176,6 +176,7 @@ CROSS_CHAT_CLIENT_INTERNAL_EVENT_TYPES = {
     "turn_queue_reordered",
     "turn_queue_run_now",
     "turn_queue_paused",
+    "turn_queue_resumed",
     "turn_queue_delivery_fenced",
 }
 
@@ -203,6 +204,7 @@ TIMELINE_INDEX_HIDDEN_TYPES = {
     "turn_queue_reordered",
     "turn_queue_run_now",
     "turn_queue_paused",
+    "turn_queue_resumed",
     "turn_queue_delivery_fenced",
     "queue_snapshot",
     "subagent_state",

@@ -360,10 +360,38 @@ def bounded_claude_transcript_regions(path: Path) -> Iterator[bytes]:
     yield from regions
 
 
+def canonical_claude_cwd(cwd: str) -> str:
+    """Return the real directory Claude records for a working directory.
+
+    Claude resolves symlinks before it records ``cwd`` and before it names a
+    project directory, so ``/tmp/work`` is stored as ``/private/tmp/work`` on
+    macOS. Comparing real paths keeps one folder reached through a symlink
+    resumable while two genuinely different folders still never match.
+    """
+
+    expanded = os.path.expanduser(str(cwd or ""))
+    try:
+        return os.path.realpath(expanded)
+    except (OSError, ValueError):
+        return os.path.normpath(expanded)
+
+
+def claude_cwds_match(left: str, right: str) -> bool:
+    """Whether two working directories name the same folder for Claude."""
+
+    if not str(left or "").strip() or not str(right or "").strip():
+        return False
+    if str(Path(left).expanduser()) == str(Path(right).expanduser()):
+        return True
+    return canonical_claude_cwd(left) == canonical_claude_cwd(right)
+
+
 def claude_transcript_matches_cwd(path: Path, cwd: str) -> bool:
     """Validate a provider transcript using Claude's recorded cwd metadata."""
 
     expected_cwd = str(Path(cwd).expanduser())
+    expected_canonical = canonical_claude_cwd(cwd)
+    canonical_by_recorded: dict[str, str] = {}
     for region in bounded_claude_transcript_regions(path):
         for raw_line in region.splitlines():
             if not raw_line or len(raw_line) > CLAUDE_TRANSCRIPT_CWD_LINE_BYTES:
@@ -373,7 +401,19 @@ def claude_transcript_matches_cwd(path: Path, cwd: str) -> bool:
             except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
             recorded_cwd = event.get("cwd") if isinstance(event, dict) else None
-            if recorded_cwd and str(Path(str(recorded_cwd)).expanduser()) == expected_cwd:
+            if not recorded_cwd or not isinstance(recorded_cwd, str):
+                continue
+            if str(Path(recorded_cwd).expanduser()) == expected_cwd:
+                return True
+            # A transcript repeats its cwd on nearly every row; resolve each
+            # distinct value once.
+            canonical = canonical_by_recorded.get(recorded_cwd)
+            if canonical is None:
+                if len(canonical_by_recorded) >= 64:
+                    continue
+                canonical = canonical_claude_cwd(recorded_cwd)
+                canonical_by_recorded[recorded_cwd] = canonical
+            if canonical == expected_canonical:
                 return True
     return False
 

@@ -19,16 +19,42 @@ struct ChatDetailView: View {
             VStack(spacing: 0) {
                 TimelineView(items: model.timeline(chatID),
                              showsAuthors: false,
+                             older: model.olderHistory.contains(chatID)
+                                 ? (loading: model.loadingOlder.contains(chatID), load: { model.loadOlder(chatID) }) : nil,
                              pending: model.pendingSends[chatID] ?? [],
                              activity: model.activity(forChat: chatID),
                              turnSeconds: model.turnSeconds[chatID] ?? [:],
                              onOpenFile: model.openFile,
                              onDecide: { model.decide($0, $1, in: chatID) },
-                             loadMedia: { [model] file in await model.media(chat: chatID, fileID: file.id) })
+                             loadMedia: { [model] file in await model.media(chat: chatID, fileID: file.id) },
+                             focusID: model.timelineFocus[chatID])
+                    // Files dropped anywhere on the conversation are attached to the next message.
+                    .dropDestination(for: URL.self) { urls, _ in
+                        let files = urls.filter(\.isFileURL)
+                        model.attach(files, toChat: chatID)
+                        return !files.isEmpty
+                    }
+                if let goal = model.goals[chatID], goal.status != .cleared {
+                    GoalBar(goal: goal, busy: model.goalBusy.contains(chatID),
+                            onEdit: { model.goalEditor = .chat(chatID) },
+                            onPause: { model.pauseGoal(forChat: chatID) },
+                            onResume: { model.resumeGoal(forChat: chatID) },
+                            onClear: { model.clearGoal(forChat: chatID) })
+                        .padding(.top, 6)
+                }
                 ComposerView(draft: model.draftBinding(chatID),
-                             placeholder: "给 \(chat.backend.displayName) 发消息",
+                             placeholder: "给 \(chat.backend.displayName) 发消息，输入 / 使用命令和技能",
                              isRunning: chat.state == .running || chat.state == .needsAction,
                              queued: model.queues[chatID] ?? [],
+                             slashSuggestions: { model.slashSuggestions(forChat: chatID, partial: $0) },
+                             slashNote: model.slashNote(forChat: chatID),
+                             onBeginSlash: { model.loadCommandsIfNeeded(forChat: chatID) },
+                             attachments: model.attachments[chatID] ?? [],
+                             onAttach: { model.attach($0, toChat: chatID) },
+                             onRemoveAttachment: { model.removeAttachment($0, fromChat: chatID) },
+                             onRunQueuedNow: { model.runQueuedNow($0, in: chatID) },
+                             onMoveQueued: { model.moveQueued($0, up: $1, in: chatID) },
+                             onResumeQueue: { model.resumeQueue(in: chatID) },
                              onSend: { model.send($0, toChat: chatID) },
                              onStop: { model.stop(chatID) },
                              onEditQueued: { model.editQueued($0, in: chatID) },
@@ -78,8 +104,24 @@ private struct ChatControls: View {
         }
         .help("模型和推理强度")
         PermissionMenu(model: model, chat: chat)
+        Button {
+            model.toggleSideChat(chat.id)
+        } label: {
+            Label("侧问", systemImage: model.sideChatOpen == chat.id ? "text.bubble.fill" : "text.bubble")
+        }
+        .help("侧问：问个问题，不打断代理，也不写进对话（也可以输入 /btw）")
+        let support = model.goalSupport(forChat: chat.id)
+        Button {
+            model.goalEditor = .chat(chat.id)
+        } label: {
+            Label("目标", systemImage: model.goals[chat.id]?.isOpen == true ? "scope" : "target")
+        }
+        .disabled(!support.available)
+        .help(support.available ? (chat.backend == .claude ? "设定完成条件（Claude Code /goal）" : "设定 Codex 持久目标")
+                                : support.reason ?? "目标不可用")
         if let usage = model.contextUsage[chat.id] {
-            ContextMeter(usage: usage)
+            ContextMeter(usage: usage, compact: model.canCompact(chat.id) ? { model.compact(chat.id) } : nil)
+                .onAppear { if chat.backend == .claude { model.loadCommandsIfNeeded(forChat: chat.id) } }
         }
     }
 }
@@ -118,6 +160,8 @@ private struct PermissionMenu: View {
 /// How full the chat's context window is: a small ring, details on hover.
 struct ContextMeter: View {
     let usage: ContextUsage
+    /// Compacts the context now; nil when the chat cannot (busy, or no native command).
+    var compact: (() -> Void)? = nil
     @State private var showing = false
 
     var body: some View {
@@ -151,6 +195,13 @@ struct ContextMeter: View {
                 Text(usage.percent >= 80 ? "快满了：代理会自动压缩较早的内容，也可以开一个新聊天。" : "包括系统提示、工具定义和整段对话。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let compact {
+                    Button("立即压缩上下文") {
+                        showing = false
+                        compact()
+                    }
+                    .help("让代理把较早的对话总结成摘要，腾出上下文空间")
+                }
             }
             .padding(14)
             .frame(width: 260)
@@ -268,6 +319,13 @@ private struct GroupControls: View {
             Label(mode.label, systemImage: mode == .sequential ? "list.number" : "rectangle.split.2x1")
         }
         .help("回答方式")
+        Button {
+            model.goalEditor = .group(group.id)
+        } label: {
+            Label("目标", systemImage: model.goal(forGroup: group.id)?.state?.isOpen == true ? "scope" : "target")
+        }
+        .disabled(group.participants.isEmpty)
+        .help("给一位成员设定原生目标，并告知讨论组")
         Toggle(isOn: $analysisOnly) {
             Label("只分析", systemImage: analysisOnly ? "eye.fill" : "eye")
         }
@@ -293,6 +351,17 @@ struct GroupDetailView: View {
                              liveTurns: model.groupLive[groupID] ?? [],
                              processSeconds: model.processSeconds[groupID] ?? [:],
                              onDecideMember: { model.decide($0, $1, inGroup: groupID) })
+                if let current = model.goal(forGroup: groupID), current.state?.status != .cleared {
+                    let goal = current.state ?? ChatGoal(backend: current.member?.backend ?? .claude,
+                                                         text: current.goal.objective, status: .starting)
+                    let session = current.member?.sessionID ?? ""
+                    GoalBar(goal: goal, owner: "@\(current.goal.handle)", busy: model.goalBusy.contains(session),
+                            onEdit: { model.goalEditor = .group(groupID) },
+                            onPause: { model.pauseGoal(forChat: session) },
+                            onResume: { model.resumeGoal(forChat: session) },
+                            onClear: { model.clearGroupGoal(inGroup: groupID) })
+                        .padding(.top, 6)
+                }
                 ComposerView(draft: model.draftBinding(groupID),
                              placeholder: "发消息，用 @ 指定成员（不指定时由 @\(group.defaultResponder) 回答）",
                              isRunning: group.state == .running || group.state == .needsAction,

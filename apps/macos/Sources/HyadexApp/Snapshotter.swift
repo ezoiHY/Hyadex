@@ -53,6 +53,52 @@ enum Snapshotter {
         Scene(name: "13-sidebar-group", dark: true, sidebar: true) { model in model.switchSidebar(to: .group) },
         Scene(name: "14-sidebar-autopilot", dark: false, sidebar: true) { model in model.switchSidebar(to: .autopilot) },
         Scene(name: "15-tab-stress", dark: true, stress: true) { _ in },
+        Scene(name: "16-new-job", dark: false) { model in
+            model.select(.jobs); model.jobEditor = .new
+        },
+        Scene(name: "17-new-chat", dark: true) { model in
+            model.sheet = .newChat
+        },
+        Scene(name: "18-queue-held", dark: false) { model in
+            model.select(.chat("c3"))
+            model.queues["c3"] = [
+                QueuedMessage(id: "q1", text: "测试跑完后把 CHANGELOG 也检查一下。", hold: .stopped),
+                QueuedMessage(id: "q2", text: "然后更新版本号到 1.4.0。", hold: .stopped),
+                QueuedMessage(id: "q3", text: "最后发一个总结。"),
+            ]
+            model.attachments["c3"] = [
+                DraftAttachment(name: "crash-report.ips", size: 48_213, state: .ready(fileID: "f1")),
+                DraftAttachment(name: "screen-recording.mov", size: 18_400_000),
+            ]
+        },
+        Scene(name: "19-emergency", dark: true) { model in
+            model.select(.chat("c1"))
+            model.emergencies = [EmergencyAlert(sessionID: "c2", alertID: "emergency_demo", chatTitle: "Android 推送偶发丢失",
+                                                message: "生产数据库磁盘只剩 2%，迁移脚本已暂停。需要你确认是否继续。",
+                                                raisedAt: .now.addingTimeInterval(-90), count: 2)]
+        },
+        Scene(name: "20-side-chat", dark: false) { model in
+            model.select(.chat("c1"))
+            model.sideChatOpen = "c1"
+            model.sideChats["c1"] = SideChat(sideChatID: "demo", exchanges: [
+                .init(requestID: "r1", question: "为什么退避要加随机抖动？",
+                      answer: "多个客户端同时断线时，**固定间隔**会让它们同时重连，形成重连风暴。加上抖动后重连时间被打散。", status: .completed),
+                .init(requestID: "r2", question: "最大间隔 30 秒合适吗？", answer: nil, status: .running),
+            ], lastRequestID: "r2", contextNote: "Claude 能看到对话内容，但不会调用工具。")
+        },
+        Scene(name: "21-sidebar-archived", dark: true, sidebar: true) { model in
+            UserDefaults.standard.set(true, forKey: "showArchived")
+            model.switchSidebar(to: .work)
+            model.setArchived(.chat("c6"), true)
+            model.setArchived(.chat("c5"), true)
+        },
+        Scene(name: "22-sidebar-search", dark: false, sidebar: true) { model in
+            model.switchSidebar(to: .work)
+            model.searchText = "退避"
+        },
+        Scene(name: "23-jobs-empty", dark: true) { model in
+            model.jobs = []; model.select(.jobs)
+        },
         // Last: entering full screen moves the window to its own Space.
         Scene(name: "10-fullscreen-dark", dark: true, fullscreen: true) { model in
             model.select(.chat("c1"))
@@ -78,8 +124,15 @@ enum Snapshotter {
         }
         NSApp.activate(ignoringOtherApps: true)
         try? await Task.sleep(for: .seconds(1.5))
-        for scene in scenes where only == nil || scene.name.contains(only!) {
+        // HYADEX_SNAPSHOT_ONLY: comma-separated parts of scene names.
+        let wanted = only?.split(separator: ",").map(String.init)
+        for scene in scenes where wanted == nil || wanted!.contains(where: scene.name.contains) {
             model.sheet = nil
+            model.jobEditor = nil
+            model.goalEditor = nil
+            model.renaming = nil
+            model.sideChatOpen = nil
+            model.emergencies = []
             NSApp.appearance = NSAppearance(named: scene.dark ? .darkAqua : .aqua)
             try? await Task.sleep(for: .milliseconds(400))
             scene.setup(model)
@@ -124,6 +177,12 @@ enum Snapshotter {
             write(capture(target), to: output.appending(path: scene.name + ".png"))
         }
         exit(0)
+    }
+
+    /// Writes one window (for live checks); the file goes next to the live-check log.
+    static func captureWindow(_ window: NSWindow, to name: String) {
+        guard let directory = ProcessInfo.processInfo.environment["HYADEX_E2E_DIR"] else { return }
+        write(capture(window), to: URL(fileURLWithPath: directory).appending(path: name + ".png"))
     }
 
     static func captureMain(to url: URL) {

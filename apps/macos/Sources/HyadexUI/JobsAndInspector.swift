@@ -50,8 +50,29 @@ struct JobsView: View {
             }
             .width(min: 80, ideal: 90)
         }
+        .contextMenu(forSelectionType: ScheduledJob.ID.self) { ids in
+            if let id = ids.first {
+                Button("编辑…") { model.jobEditor = .edit(id) }
+                Button("立即运行") { model.runJobNow(id) }
+                Divider()
+                Button("删除", role: .destructive) { model.deleteJob(id) }
+            }
+        } primaryAction: { ids in
+            if let id = ids.first { model.jobEditor = .edit(id) }
+        }
         .tableStyle(.inset)
         .alternatingRowBackgrounds()
+        .overlay {
+            if model.jobs.isEmpty {
+                ContentUnavailableView {
+                    Label("还没有定时任务", systemImage: "calendar.badge.clock")
+                } description: {
+                    Text("定时任务会按计划把一条消息发给聊天或讨论组，比如每天早上检查依赖更新。")
+                } actions: {
+                    Button("新建定时任务") { model.jobEditor = .new }
+                }
+            }
+        }
         .navigationTitle("定时任务")
         .navigationSubtitle("\(model.jobs.filter(\.enabled).count) 个已启用")
         .toolbar {
@@ -59,7 +80,7 @@ struct JobsView: View {
                 Button { selection.map(model.runJobNow) } label: { Label("立即运行", systemImage: "play") }
                     .disabled(selection == nil)
                     .help("立即运行选中的任务")
-                Button {} label: { Label("新建定时任务", systemImage: "plus") }
+                Button { model.jobEditor = .new } label: { Label("新建定时任务", systemImage: "plus") }
                     .help("新建定时任务")
             }
         }
@@ -222,8 +243,16 @@ private struct DetailsInspector: View {
                     }
                     InfoSection("工作区") {
                         LabeledContent("目录") { Text(chat.cwd).font(.callout.monospaced()).textSelection(.enabled) }
-                        LabeledContent("MCP 与技能", value: "沿用代理自己的配置")
+                        LabeledContent("命令与技能") {
+                            if let inventory = model.commands[chat.id], inventory.available {
+                                Text("\(inventory.commands.count) 个 · 输入 / 使用")
+                            } else {
+                                Text("输入 / 查看")
+                            }
+                        }
                     }
+                    MCPSection(model: model, chat: chat)
+                    SubagentSection(model: model, chat: chat)
                     InfoSection("用量") {
                         LabeledContent("本会话 token", value: chat.tokensUsed.formatted())
                     }
@@ -276,6 +305,183 @@ private struct DetailsInspector: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .labeledContentStyle(InfoRowStyle())
+    }
+}
+
+/// The MCP servers the chat's agent loaded from its own configuration, with
+/// their connection state. Claude chats can reconnect, enable and disable them.
+private struct MCPSection: View {
+    @Bindable var model: AppModel
+    let chat: ChatSummary
+
+    var body: some View {
+        let status = model.mcp[chat.id]
+        let busy = model.mcpBusy.contains(chat.id)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 6) {
+                Text("MCP 服务器")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if busy { ProgressView().controlSize(.mini) }
+                if status?.controllable == true,
+                   let failed = status?.servers.filter({ $0.status == .failed }).count, failed > 0 {
+                    Button("重连失败的（\(failed)）") { model.reconnectFailedMCP(forChat: chat.id) }
+                        .font(.caption)
+                        .disabled(busy)
+                }
+                Button {
+                    model.refreshMCP(forChat: chat.id)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .help("刷新")
+                .disabled(busy)
+            }
+            .buttonStyle(.borderless)
+            if let status {
+                if !status.available {
+                    Text(status.reason ?? "MCP 状态暂不可用。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else if status.servers.isEmpty {
+                    Text("\(chat.backend.displayName) 在这个目录没有加载 MCP 服务器。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(status.servers) { server in
+                        MCPServerRow(server: server, controllable: status.controllable && !busy) { action in
+                            model.controlMCP(action, server: server.name, forChat: chat.id)
+                        }
+                    }
+                    if status.truncated {
+                        Text("只显示了部分服务器。").font(.caption).foregroundStyle(.tertiary)
+                    }
+                }
+            } else if !busy {
+                Text("正在读取…").font(.callout).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: chat.id) {
+            if model.mcp[chat.id] == nil { model.refreshMCP(forChat: chat.id) }
+        }
+    }
+}
+
+/// Helper agents the chat's agent started (Claude's Task agents, Codex's collaborators).
+private struct SubagentSection: View {
+    @Bindable var model: AppModel
+    let chat: ChatSummary
+
+    var body: some View {
+        let agents = model.subagents[chat.id] ?? []
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text("子代理")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if agents.contains(where: { $0.state == .running }) {
+                    Text("\(agents.filter { $0.state == .running }.count) 个在运行")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if agents.isEmpty {
+                Text("这个聊天还没有启动子代理。").font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(agents.prefix(12)) { agent in
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let summary = agent.summary {
+                            Text(summary).font(.caption).textSelection(.enabled)
+                        }
+                        ForEach(Array(agent.log.suffix(8).enumerated()), id: \.offset) { _, line in
+                            Text(line).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    HStack(spacing: 6) {
+                        StateIndicator(state: agent.state, size: 10)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(agent.name).font(.callout).lineLimit(1)
+                            Text(agent.activity ?? agent.statusLabel)
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: chat.id) {
+            // Claude reports subagents only through this list; follow it while the chat works.
+            while !Task.isCancelled {
+                model.refreshSubagents(chat.id)
+                try? await Task.sleep(for: .seconds(model.chat(chat.id)?.state == .running ? 4 : 30))
+            }
+        }
+    }
+}
+
+private struct MCPServerRow: View {
+    let server: MCPServer
+    let controllable: Bool
+    let onAction: (String) -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Circle()
+                .fill(server.activity == .idle ? Color.secondary.opacity(0.5) : server.activity.tint)
+                .frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(server.name)
+                    .font(.callout)
+                    .foregroundStyle(server.enabled ? .primary : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            if controllable {
+                Menu { actions } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
+                .menuIndicator(.hidden)
+                .fixedSize()
+            }
+        }
+        .help(help)
+        .contextMenu { if controllable { actions } }
+    }
+
+    @ViewBuilder private var actions: some View {
+        if server.enabled {
+            // A sign-in happens in Claude Code itself; reconnecting cannot do it.
+            if server.status != .needsAuth {
+                Button("重新连接") { onAction("reconnect") }
+            }
+            Button("停用") { onAction("disable") }
+        } else {
+            Button("启用") { onAction("enable") }
+        }
+    }
+
+    private var help: String {
+        if server.status == .needsAuth { return "需要登录：在终端运行 claude，用 /mcp 完成登录。" }
+        return server.error ?? server.serverInfo ?? server.name
+    }
+
+    private var subtitle: String {
+        var parts = [server.statusLabel]
+        if let count = server.toolCount, server.status == .connected || count > 0 { parts.append("\(count) 个工具") }
+        if let scope = server.scopeLabel { parts.append(scope) }
+        return parts.joined(separator: " · ")
     }
 }
 

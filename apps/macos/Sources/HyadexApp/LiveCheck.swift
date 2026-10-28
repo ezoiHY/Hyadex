@@ -1,5 +1,6 @@
 import AppKit
 import HyadexCore
+import UserNotifications
 
 /// Development aid: an end-to-end pass through the app against a real server.
 ///
@@ -11,13 +12,35 @@ import HyadexCore
 @MainActor
 enum LiveCheck {
     static func runIfRequested(model: AppModel) async {
+        // HYADEX_UI_PROBE=1: print the window's accessibility tree (demo data is enough) and quit.
+        if ProcessInfo.processInfo.environment["HYADEX_UI_PROBE"] != nil {
+            setvbuf(stdout, nil, _IONBF, 0)
+            // In the background, App Nap would stretch every sleep.
+            _ = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "UI probe")
+            for window in NSApp.windows where window.canBecomeMain { window.orderFrontRegardless() }
+            try? await Task.sleep(for: .seconds(2))
+            if let chat = model.chats.first(where: { $0.title.contains("features e2e claude") }) ?? model.chats.first {
+                model.select(.chat(chat.id))
+            }
+            try? await Task.sleep(for: .seconds(2))
+            UIDriver.probeSystemAX()
+            try? await Task.sleep(for: .seconds(1))
+            UIDriver.dump()
+            exit(0)
+        }
         guard let directory = ProcessInfo.processInfo.environment["HYADEX_E2E_DIR"] else { return }
         setvbuf(stdout, nil, _IONBF, 0)
         let output = URL(fileURLWithPath: directory, isDirectory: true)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let activity = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Live check")
         defer { ProcessInfo.processInfo.endActivity(activity) }
-        for window in NSApp.windows where window.canBecomeMain { window.makeKeyAndOrderFront(nil) }
+        // Placed off every screen and shown without taking keyboard focus: the
+        // check never covers the user's work, and their keystrokes stay theirs.
+        for window in NSApp.windows where window.styleMask.contains(.titled) && !(window is NSPanel) && window.frame.width > 600 {
+            window.setFrameOrigin(NSPoint(x: -20000, y: 200))
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.orderFrontRegardless()
+        }
         var failures = 0
         func log(_ text: String) { print("[e2e] " + text) }
         func check(_ ok: Bool, _ label: String) {
@@ -51,6 +74,38 @@ enum LiveCheck {
             log("usage \(backend.rawValue): " + (usage?.available == true
                 ? usage!.windows.map { "\($0.label) \(Int($0.usedPercent))%" }.joined(separator: ", ")
                 : usage?.unavailableText ?? "-"))
+        }
+        // HYADEX_E2E_UI=only: the same features through the real controls (see UIDriver).
+        if ProcessInfo.processInfo.environment["HYADEX_E2E_UI"] != nil {
+            await uiDrive(model: model, check: check, shot: shot)
+            log("RESULT " + (failures == 0 ? "OK" : "\(failures) FAILED"))
+            exit(failures == 0 ? 0 : 1)
+        }
+        // HYADEX_E2E_EXTRAS=1|only: unread, full-text search, fork, side chat and subagents.
+        if let mode = ProcessInfo.processInfo.environment["HYADEX_E2E_EXTRAS"] {
+            await extras(model: model, check: check, shot: shot)
+            if mode == "only" {
+                log("RESULT " + (failures == 0 ? "OK" : "\(failures) FAILED"))
+                exit(failures == 0 ? 0 : 1)
+            }
+        }
+        // HYADEX_E2E_MANAGE=1|only: attachments, rename/archive/delete, jobs, server folders,
+        // queue order and Force Send, emergency alerts, older history and compaction.
+        if let mode = ProcessInfo.processInfo.environment["HYADEX_E2E_MANAGE"] {
+            await manage(model: model, check: check, shot: shot)
+            if mode == "only" {
+                log("RESULT " + (failures == 0 ? "OK" : "\(failures) FAILED"))
+                exit(failures == 0 ? 0 : 1)
+            }
+        }
+        // HYADEX_E2E_CAPABILITIES=1|only: native goals, slash commands and skills, MCP servers
+        // and a group goal, on chats titled "features e2e claude" / "features e2e codex".
+        if let mode = ProcessInfo.processInfo.environment["HYADEX_E2E_CAPABILITIES"] {
+            await capabilities(model: model, check: check, shot: shot)
+            if mode == "only" {
+                log("RESULT " + (failures == 0 ? "OK" : "\(failures) FAILED"))
+                exit(failures == 0 ? 0 : 1)
+            }
         }
         // HYADEX_E2E_TERMINAL=1|only: drive the chat's tmux terminal through the real PTY socket.
         if let mode = ProcessInfo.processInfo.environment["HYADEX_E2E_TERMINAL"],
@@ -339,5 +394,876 @@ enum LiveCheck {
 
         log(failures == 0 ? "RESULT OK" : "RESULT \(failures) failure(s)")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    private static func uiDrive(model: AppModel, check: (Bool, String) -> Void,
+                                shot: (String) async -> Void) async {
+        func wait(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
+            let end = Date.now.addingTimeInterval(seconds)
+            while Date.now < end {
+                if condition() { return true }
+                try? await Task.sleep(for: .milliseconds(400))
+            }
+            return condition()
+        }
+        func pause(_ seconds: Double = 0.8) async { try? await Task.sleep(for: .seconds(seconds)) }
+        guard let claude = model.chats.first(where: { $0.backend == .claude && $0.title.contains("features e2e") }),
+              let codex = model.chats.first(where: { $0.backend == .codex && $0.title.contains("features e2e") }) else {
+            check(false, "ui: fixture chats exist")
+            return
+        }
+        let stamp = Int(Date.now.timeIntervalSince1970) % 100000
+        func idle(_ id: String) -> Bool { model.chat(id)?.state == .idle }
+        func agentText(_ id: String, _ marker: String) -> Bool {
+            model.timeline(id).contains { item in
+                if case .message(_, let author, let text, _, _, _, _) = item, author.kind == .agent, text.contains(marker) {
+                    return true
+                }
+                return false
+            }
+        }
+        func noError(_ label: String) {
+            check(model.errorMessage == nil, "\(label): no error (\(model.errorMessage ?? "-"))")
+            model.errorMessage = nil
+        }
+        UIDriver.enable()
+        await pause(1)
+        let claudeField = "给 Claude Code 发消息", codexField = "给 Codex 发消息"
+        if ["menus", "drop"].contains(ProcessInfo.processInfo.environment["HYADEX_E2E_UI"] ?? "") {
+            await uiMenusAndDrop(model: model, claude: claude, codex: codex, stamp: stamp, check: check, shot: shot)
+            return
+        }
+        if ProcessInfo.processInfo.environment["HYADEX_E2E_UI"] == "picker" {
+            model.select(.chat(codex.id))
+            await pause(2)
+            let file = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "picked-\(stamp).txt")
+            try? "The picked word is pick-\(stamp).\n".write(to: file, atomically: true, encoding: .utf8)
+            check(UIDriver.press("附件"), "ui: paperclip pressed")
+            check(await wait(5) { UIDriver.openPanel != nil }, "ui: the open panel appeared")
+            check(await UIDriver.pick(file, log: { print("[e2e] picker: \($0)") }), "ui: a file chosen in the panel")
+            check(await wait(30) { model.attachments[codex.id]?.contains { $0.name == file.lastPathComponent && $0.fileID != nil } == true },
+                  "ui: the chosen file uploaded and shows in the composer")
+            await shot("ui-12-picked")
+            model.attachments[codex.id] = nil
+            return
+        }
+        if ProcessInfo.processInfo.environment["HYADEX_E2E_UI"] == "settings" {
+            let windowsBefore = Set(NSApp.windows.filter(\.isVisible).map(\.windowNumber))
+            check(UIDriver.shortcut(",", [.command]), "ui: ⌘, handled by the menu")
+            _ = await wait(5) { NSApp.windows.contains { $0.isVisible && !windowsBefore.contains($0.windowNumber) } }
+            _ = UIDriver.press("通知")
+            let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+            let expected = status == .denied ? "已关闭" : status == .notDetermined ? "尚未询问" : "已允许"
+            check(await wait(8) { UIDriver.find(expected, role: nil) != nil }, "ui: settings show the system notification status (\(expected))")
+            check(status != .denied || UIDriver.find("打开系统设置") != nil, "ui: with notifications off, settings offer 打开系统设置")
+            if let window = NSApp.windows.first(where: { $0.isVisible && !windowsBefore.contains($0.windowNumber) }) {
+                Snapshotter.captureWindow(window, to: "ui-11-settings")
+            }
+            return
+        }
+        if ProcessInfo.processInfo.environment["HYADEX_E2E_UI"] == "cmdreturn" {
+            UserDefaults.standard.set(true, forKey: "sendWithCommandReturn")
+            model.select(.chat(claude.id))
+            await pause(2)
+            UIDriver.type("Reply with exactly cr-\(stamp).", into: claudeField)
+            await pause(0.6)
+            UIDriver.key("\r", keyCode: 36)
+            await pause(1.5)
+            print("[e2e] draft after Return: \(String(reflecting: model.drafts[claude.id] ?? ""))")
+            UIDriver.key("\r", keyCode: 36, modifiers: .command)
+            check(await wait(120) { agentText(claude.id, "cr-\(stamp)") && idle(claude.id) }, "ui: ⌘↩ sent it")
+            UserDefaults.standard.set(false, forKey: "sendWithCommandReturn")
+            return
+        }
+
+        // Older history: the real button at the top of a chat opened on a short page.
+        model.select(.chat(claude.id))
+        _ = await wait(20) { !model.timeline(claude.id).isEmpty }
+        await pause()
+        let shown = model.timeline(claude.id).count
+        check(UIDriver.press("加载更早的消息"), "ui: 加载更早的消息 pressed")
+        check(await wait(20) { model.timeline(claude.id).count > shown }, "ui: older messages appeared (\(shown) → \(model.timeline(claude.id).count))")
+
+        // Composer: type, Return sends.
+        check(UIDriver.type("Reply with exactly ui-send-\(stamp) and nothing else.", into: claudeField), "ui: typed into the composer")
+        await pause(0.4)
+        UIDriver.key("\r", keyCode: 36)
+        check(await wait(180) { agentText(claude.id, "ui-send-\(stamp)") && idle(claude.id) }, "ui: Return sent the message and Claude answered")
+
+        // Slash suggestions with the keyboard.
+        UIDriver.type("/comp", into: claudeField)
+        check(await wait(30) { UIDriver.find("/compact") != nil }, "ui: typing /comp shows /compact in the suggestions")
+        await shot("ui-1-slash")
+        UIDriver.key("\r", keyCode: 36)
+        check(await wait(5) { (model.drafts[claude.id] ?? "") == "/compact " }, "ui: Return completed it to “/compact ” (\(model.drafts[claude.id] ?? "-"))")
+        UIDriver.type("", into: claudeField)
+        model.drafts[claude.id] = ""
+
+        // Side chat panel.
+        check(UIDriver.press("侧问"), "ui: 侧问 pressed")
+        check(await wait(10) { UIDriver.find("不打断代理") != nil }, "ui: side panel opened")
+        _ = await wait(15) { model.sideChats[claude.id] != nil }
+        let before = model.sideChats[claude.id]?.exchanges.count ?? 0
+        check(UIDriver.type("Answer in five words: what did I just ask you to reply?", into: "问点什么"), "ui: typed a side question")
+        await pause(0.4)
+        check(UIDriver.press("发送侧问"), "ui: side question sent with its button")
+        check(await wait(180) {
+            guard let side = model.sideChats[claude.id], side.exchanges.count > before else { return false }
+            return side.exchanges.last?.status == .completed
+        }, "ui: side answer shown (\(model.sideChats[claude.id]?.exchanges.last?.answer?.prefix(60) ?? "-"))")
+        await shot("ui-2-side")
+        check(UIDriver.press("关闭"), "ui: side panel closed with its button")
+        check(await wait(5) { model.sideChatOpen == nil }, "ui: side panel gone")
+
+        // Goal sheet and goal bar.
+        check(UIDriver.press("目标"), "ui: 目标 pressed")
+        check(await wait(5) { UIDriver.sheetShown }, "ui: goal sheet shown")
+        check(UIDriver.type("The user has typed the word kiwi in this chat.", into: "满足什么条件"), "ui: typed the condition")
+        await pause(0.4)
+        check(UIDriver.press("开始"), "ui: 开始 pressed")
+        check(await wait(90) { model.goals[claude.id]?.status == .active }, "ui: goal bar shows the active goal")
+        await shot("ui-3-goal")
+        check(UIDriver.press("清除目标"), "ui: goal bar 清除 pressed")
+        check(await wait(120) { model.goals[claude.id].map { !$0.isOpen } ?? true }, "ui: goal cleared")
+        _ = await wait(120) { idle(claude.id) }
+        noError("ui: goal")
+
+        // Context ring → compact now.
+        check(UIDriver.press("上下文已用"), "ui: context ring pressed")
+        check(await wait(5) { UIDriver.find("立即压缩上下文") != nil }, "ui: popover offers 立即压缩上下文")
+        check(UIDriver.press("立即压缩上下文"), "ui: 立即压缩上下文 pressed")
+        check(await wait(180) {
+            model.timeline(claude.id).last { if case .divider(_, "上下文已压缩") = $0 { true } else { false } } != nil && idle(claude.id)
+        }, "ui: Claude compacted the conversation")
+        noError("ui: compact")
+
+        // Menu shortcuts: unread, fork, new job for this chat.
+        check(UIDriver.shortcut("u", [.command, .shift]), "ui: ⇧⌘U handled by the menu")
+        check(await wait(5) { model.chat(claude.id)?.unread == true }, "ui: chat marked unread")
+        model.select(.chat(codex.id)); model.select(.chat(claude.id))
+        let knownChats = Set(model.chats.map(\.id))
+        check(UIDriver.shortcut("d", [.command, .shift]), "ui: ⇧⌘D handled by the menu")
+        check(await wait(60) { model.chats.contains { !knownChats.contains($0.id) } }, "ui: fork created and opened")
+        if let fork = model.chats.first(where: { !knownChats.contains($0.id) }) { model.delete(.chat(fork.id)) }
+        _ = await wait(15) { model.chats.allSatisfy { knownChats.contains($0.id) } }
+        model.select(.chat(claude.id))
+        await pause()
+        check(UIDriver.shortcut("j", [.command, .shift]), "ui: ⇧⌘J opens a job for this chat")
+        check(await wait(5) { UIDriver.sheetShown }, "ui: job sheet shown")
+        UIDriver.type("ui job \(stamp)", into: "例如：每日依赖更新检查")
+        UIDriver.type("Reply ok.", into: "到时间时发给代理的内容")
+        await pause(0.4)
+        check(UIDriver.find("下次运行") != nil, "ui: the sheet previews the next run")
+        await shot("ui-4-job")
+        check(UIDriver.press("创建"), "ui: 创建 pressed")
+        check(await wait(15) { model.jobs.contains { $0.title == "ui job \(stamp)" && $0.sessionID == claude.id } },
+              "ui: job created for this chat")
+        if let job = model.jobs.first(where: { $0.title == "ui job \(stamp)" }) { model.deleteJob(job.id) }
+
+        // New chat sheet: server folders, create; then rename, archive, delete with confirmation.
+        check(UIDriver.press("新建聊天"), "ui: + pressed")
+        check(await wait(5) { UIDriver.sheetShown }, "ui: new chat sheet shown")
+        UIDriver.type("/tmp/hyadex-f", into: "~/Code/project")
+        check(await wait(10) { UIDriver.find("hyadex-features-e2e", role: .button) != nil }, "ui: the sheet lists the server's folders")
+        await shot("ui-5-new-chat")
+        check(UIDriver.press("hyadex-features-e2e"), "ui: a folder row pressed")
+        check(await wait(5) { UIDriver.text(inField: "~/Code/project")?.contains("hyadex-features-e2e") == true },
+              "ui: the folder filled the path (\(UIDriver.text(inField: "~/Code/project") ?? "-"))")
+        let known = Set(model.chats.map(\.id))
+        check(UIDriver.press("创建"), "ui: 创建 pressed")
+        check(await wait(20) { model.chats.contains { !known.contains($0.id) } }, "ui: chat created on the server")
+        guard let scratch = model.chats.first(where: { !known.contains($0.id) }) else { return }
+        model.select(.chat(scratch.id))
+        await pause()
+        check(UIDriver.shortcut("r", [.command, .shift]), "ui: ⇧⌘R handled by the menu")
+        check(await wait(5) { UIDriver.sheetShown }, "ui: rename sheet shown")
+        UIDriver.type("ui scratch \(stamp)", into: "名称")
+        await pause(0.4)
+        check(UIDriver.press("保存"), "ui: 保存 pressed")
+        try? await Task.sleep(for: .seconds(6))
+        check(model.chat(scratch.id)?.title == "ui scratch \(stamp)", "ui: renamed (server list)")
+        check(UIDriver.shortcut("e", [.command, .shift]), "ui: ⇧⌘E handled by the menu")
+        try? await Task.sleep(for: .seconds(6))
+        check(model.chat(scratch.id)?.archived == true, "ui: archived (server list)")
+        model.select(.chat(scratch.id))
+        await pause()
+        check(UIDriver.shortcut("e", [.command, .shift]), "ui: ⇧⌘E again (取消归档)")
+        try? await Task.sleep(for: .seconds(6))
+        check(model.chat(scratch.id)?.archived == false, "ui: unarchived")
+        model.select(.chat(scratch.id))
+        await pause()
+        let deleteHandled = UIDriver.shortcut("\u{8}", [.command], keyCode: 51) || UIDriver.shortcut("\u{7F}", [.command], keyCode: 51)
+        check(deleteHandled, "ui: ⌘⌫ handled by the menu")
+        check(await wait(5) { UIDriver.find("删除聊天") != nil }, "ui: deletion asks for confirmation")
+        await shot("ui-6-confirm")
+        check(UIDriver.press("取消"), "ui: 取消 pressed")
+        try? await Task.sleep(for: .seconds(3))
+        check(model.chat(scratch.id) != nil, "ui: cancelling kept the chat")
+        _ = UIDriver.shortcut("\u{8}", [.command], keyCode: 51) || UIDriver.shortcut("\u{7F}", [.command], keyCode: 51)
+        _ = await wait(5) { UIDriver.find("删除聊天") != nil }
+        check(UIDriver.press("删除"), "ui: 删除 pressed")
+        check(await wait(15) { model.chat(scratch.id) == nil }, "ui: chat deleted")
+        noError("ui: manage")
+
+        // Queue through the composer and the queue strip.
+        model.select(.chat(codex.id))
+        _ = await wait(15) { !model.timeline(codex.id).isEmpty }
+        for message in model.queues[codex.id] ?? [] { model.withdrawQueued(message.id, in: codex.id) }
+        await pause()
+        UIDriver.type("Write the integers from 1 to 3000, one per line, then the word uq0-\(stamp).", into: codexField)
+        UIDriver.key("\r", keyCode: 36)
+        check(await wait(60) { model.chat(codex.id)?.state == .running }, "ui: long answer running")
+        UIDriver.type("Reply with exactly uq1-\(stamp).", into: codexField)
+        UIDriver.key("\r", keyCode: 36)
+        check(await wait(30) { (model.queues[codex.id]?.count ?? 0) == 1 }, "ui: Return while busy queued the message")
+        UIDriver.key("\u{1B}", keyCode: 53)
+        check(await wait(60) { model.queues[codex.id]?.first?.hold == .stopped && idle(codex.id) }, "ui: Esc stopped the turn and held the queue")
+        check(await wait(5) { UIDriver.find("继续发送") != nil }, "ui: the queue strip offers 继续发送")
+        await shot("ui-7-held")
+        check(UIDriver.press("继续发送"), "ui: 继续发送 pressed")
+        check(await wait(180) { agentText(codex.id, "uq1-\(stamp)") && idle(codex.id) }, "ui: the held message was sent")
+        UIDriver.type("Write the integers from 1 to 3000, one per line, then the word uq2-\(stamp).", into: codexField)
+        UIDriver.key("\r", keyCode: 36)
+        _ = await wait(60) { model.chat(codex.id)?.state == .running }
+        UIDriver.type("Reply with exactly uq3-\(stamp).", into: codexField)
+        UIDriver.key("\r", keyCode: 36)
+        _ = await wait(30) { (model.queues[codex.id]?.count ?? 0) == 1 }
+        check(UIDriver.press("立即发送"), "ui: 立即发送 pressed")
+        check(await wait(180) { agentText(codex.id, "uq3-\(stamp)") && idle(codex.id) }, "ui: Force Send answered")
+        noError("ui: queue")
+
+        // Search field → hit row.
+        model.switchSidebar(to: .work)
+        check(UIDriver.type("ui-send-\(stamp)", into: "搜索聊天和消息"), "ui: typed into the sidebar search")
+        check(await wait(30) { UIDriver.find("打开到这条消息") != nil }, "ui: a message hit is listed")
+        await shot("ui-8-search")
+        check(UIDriver.press("打开到这条消息"), "ui: hit pressed")
+        check(await wait(20) { model.selection == .chat(claude.id) && model.timelineFocus[claude.id] != nil }, "ui: the chat opened at the hit")
+        UIDriver.type("", into: "搜索聊天和消息")
+
+        // Details popover: MCP and subagents.
+        check(UIDriver.press("详情"), "ui: 详情 pressed")
+        check(await wait(30) { UIDriver.find("MCP 服务器") != nil && UIDriver.find("子代理") != nil }, "ui: details show MCP servers and subagents")
+        await shot("ui-9-details")
+        _ = UIDriver.press("详情")
+
+        // Emergency: approve with the card's button, acknowledge with the banner's.
+        UIDriver.type("This is a test drill requested by the user. Use your Hyadex emergency alert helper to raise one "
+                         + "emergency alert with exactly this message: ui drill \(stamp). Then reply done.", into: claudeField)
+        UIDriver.key("\r", keyCode: 36)
+        let raised = await wait(240) {
+            if UIDriver.find("允许") != nil { _ = UIDriver.press("允许") }
+            return model.emergencies.contains { $0.message.contains("ui drill \(stamp)") }
+        }
+        check(raised, "ui: emergency banner shown")
+        await shot("ui-10-emergency")
+        check(UIDriver.press("确认"), "ui: 确认 pressed on the banner")
+        check(await wait(10) { !model.emergencies.contains { $0.message.contains("ui drill \(stamp)") } }, "ui: banner gone")
+        _ = await wait(120) { if UIDriver.find("允许") != nil { _ = UIDriver.press("允许") }; return idle(claude.id) }
+
+        // Settings: ⌘↩ to send, then the notification status page.
+        UserDefaults.standard.set(true, forKey: "sendWithCommandReturn")
+        model.select(.chat(claude.id))
+        await pause()
+        UIDriver.type("Reply with exactly cr-\(stamp).", into: claudeField)
+        await pause(0.6)
+        UIDriver.key("\r", keyCode: 36)
+        await pause(1.5)
+        check((model.drafts[claude.id] ?? "").hasPrefix("Reply with exactly cr-") && (model.drafts[claude.id] ?? "").hasSuffix("\n")
+              && !agentText(claude.id, "cr-\(stamp)"),
+              "ui: with ⌘↩ to send, Return adds a line")
+        UIDriver.key("\r", keyCode: 36, modifiers: .command)
+        check(await wait(180) { agentText(claude.id, "cr-\(stamp)") && idle(claude.id) }, "ui: ⌘↩ sent it")
+        UserDefaults.standard.set(false, forKey: "sendWithCommandReturn")
+        let windowsBefore = Set(NSApp.windows.filter(\.isVisible).map(\.windowNumber))
+        check(UIDriver.shortcut(",", [.command]), "ui: ⌘, handled by the menu")
+        check(await wait(5) { NSApp.windows.contains { $0.isVisible && !windowsBefore.contains($0.windowNumber) } },
+              "ui: settings window opened")
+        _ = UIDriver.press("通知")
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        let expected = status == .denied ? "已关闭" : status == .notDetermined ? "尚未询问" : "已允许"
+        check(await wait(8) { UIDriver.find(expected, role: nil) != nil }, "ui: settings show the system notification status (\(expected))")
+        if status == .denied {
+            check(UIDriver.find("打开系统设置") != nil, "ui: with notifications off, settings offer 打开系统设置")
+        }
+        let settingsWindow = NSApp.windows.first { $0.isVisible && !windowsBefore.contains($0.windowNumber) }
+        if let settingsWindow { Snapshotter.captureWindow(settingsWindow, to: "ui-11-settings") }
+        settingsWindow?.close()
+
+        // Menus (right-click and a menu button), dropping a file, and the paperclip's panel.
+        await uiMenusAndDrop(model: model, claude: claude, codex: codex, stamp: stamp, check: check, shot: shot)
+        model.select(.chat(codex.id))
+        await pause()
+        check(UIDriver.press("附件"), "ui: paperclip pressed")
+        check(await wait(5) { UIDriver.openPanel != nil }, "ui: the system file panel opened")
+        UIDriver.openPanel?.cancel(nil)
+        check(await wait(5) { UIDriver.openPanel == nil }, "ui: the panel closed again")
+
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        print("[e2e] notifications: authorization status \(settings.authorizationStatus.rawValue) (0 not asked, 1 denied, 2 allowed, 3 provisional)")
+        noError("ui: emergency")
+    }
+
+    /// Right-click and menu-button menus, and dropping a file on the conversation.
+    private static func uiMenusAndDrop(model: AppModel, claude: ChatSummary, codex: ChatSummary, stamp: Int,
+                                       check: (Bool, String) -> Void, shot: (String) async -> Void) async {
+        func wait(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
+            let end = Date.now.addingTimeInterval(seconds)
+            while Date.now < end {
+                if condition() { return true }
+                try? await Task.sleep(for: .milliseconds(400))
+            }
+            return condition()
+        }
+        func agentText(_ id: String, _ marker: String) -> Bool {
+            model.timeline(id).contains { item in
+                if case .message(_, let author, let text, _, _, _, _) = item, author.kind == .agent, text.contains(marker) {
+                    return true
+                }
+                return false
+            }
+        }
+        // Right-click a chat in the sidebar → 标为未读.
+        model.select(.chat(claude.id))
+        try? await Task.sleep(for: .seconds(2))
+        model.markRead(claude.id)
+        try? await Task.sleep(for: .seconds(1))
+        check(await UIDriver.choose("标为未读") { UIDriver.showMenu(claude.title) }, "ui: right-click menu → 标为未读 chosen")
+        check(await wait(5) { model.chat(claude.id)?.unread == true }, "ui: the chat shows unread")
+        try? await Task.sleep(for: .seconds(5))
+        check(model.chat(claude.id)?.unread == true, "ui: still unread after a list refresh (server)")
+        model.markRead(claude.id)
+
+        // The permission menu button in the composer → Accept edits, then back to Manual.
+        let menuButton = NSAccessibility.Role(rawValue: "AXMenuButton")
+        let original = model.chat(claude.id)?.permission ?? "Manual"
+        check(await UIDriver.choose("Accept edits") { UIDriver.press(original, role: menuButton) },
+              "ui: permission menu → Accept edits chosen")
+        check(await wait(10) { model.chat(claude.id)?.permission == "Accept edits" }, "ui: the chat's permission changed")
+        try? await Task.sleep(for: .seconds(5))
+        check(model.chat(claude.id)?.permission == "Accept edits", "ui: the server kept it (list refresh)")
+        check(await UIDriver.choose(original) { UIDriver.press("Accept edits", role: menuButton) }, "ui: permission menu → back to \(original)")
+        check(await wait(10) { model.chat(claude.id)?.permission == original }, "ui: permission restored")
+
+        // Drop a file on the conversation, then ask about it.
+        model.select(.chat(codex.id))
+        try? await Task.sleep(for: .seconds(2))
+        let file = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "dropped-\(stamp).txt")
+        try? "The dropped word is drop-\(stamp).\n".write(to: file, atomically: true, encoding: .utf8)
+        guard let window = UIDriver.mainWindow(), let frame = window.contentView?.frame else { return }
+        let point = NSPoint(x: frame.maxX - 360, y: frame.midY)
+        check(UIDriver.drop([file], at: point), "ui: the conversation accepted the dropped file")
+        check(await wait(30) { model.attachments[codex.id]?.contains { $0.name == file.lastPathComponent && $0.fileID != nil } == true },
+              "ui: the dropped file uploaded and shows in the composer")
+        await shot("ui-13-dropped")
+        UIDriver.type("What is the dropped word in the attached file? Reply with just the word.", into: "给 Codex 发消息")
+        try? await Task.sleep(for: .milliseconds(600))
+        UIDriver.key("\r", keyCode: 36)
+        check(await wait(240) { agentText(codex.id, "drop-\(stamp)") && model.chat(codex.id)?.state == .idle },
+              "ui: Codex read the dropped file")
+    }
+
+    private static func extras(model: AppModel, check: (Bool, String) -> Void,
+                               shot: (String) async -> Void) async {
+        func wait(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
+            let end = Date.now.addingTimeInterval(seconds)
+            while Date.now < end {
+                if condition() { return true }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            return condition()
+        }
+        guard let claude = model.chats.first(where: { $0.backend == .claude && $0.title.contains("features e2e") }),
+              let codex = model.chats.first(where: { $0.backend == .codex && $0.title.contains("features e2e") }) else {
+            check(false, "extras: fixture chats exist")
+            return
+        }
+        let stamp = Int(Date.now.timeIntervalSince1970) % 100000
+        func idle(_ id: String) -> Bool { model.chat(id)?.state == .idle }
+        func noError(_ label: String) {
+            check(model.errorMessage == nil, "\(label): no error (\(model.errorMessage ?? "-"))")
+            model.errorMessage = nil
+        }
+        func agentText(_ id: String, _ marker: String) -> Bool {
+            model.timeline(id).contains { item in
+                if case .message(_, let author, let text, _, _, _, _) = item, author.kind == .agent, text.contains(marker) {
+                    return true
+                }
+                return false
+            }
+        }
+        func approvePending(_ id: String) {
+            if let approval = model.timeline(id).pendingApproval { model.decide(approval.id, .allowed, in: id) }
+        }
+
+        // Unread: stays unread while open, clears on the next visit.
+        model.select(.chat(claude.id))
+        _ = await wait(15) { !model.timeline(claude.id).isEmpty }
+        model.markUnread(claude.id)
+        try? await Task.sleep(for: .seconds(6))  // one list refresh
+        check(model.chat(claude.id)?.unread == true, "unread: marked, and kept while the chat is open")
+        model.select(.chat(codex.id))
+        model.select(.chat(claude.id))
+        try? await Task.sleep(for: .seconds(6))
+        check(model.chat(claude.id)?.unread == false, "unread: reading it again clears it")
+        noError("unread")
+
+        // Full-text search: a fresh message, then one far back in history.
+        let marker = "srch\(stamp)"
+        model.send("Reply with exactly \(marker) and nothing else.", toChat: claude.id)
+        check(await wait(180) { agentText(claude.id, marker) && idle(claude.id) }, "search: marker message answered")
+        model.switchSidebar(to: .work)
+        model.searchText = marker
+        check(await wait(30) { model.searchHits.contains { $0.sessionID == claude.id } }, "search: hit found by content")
+        await shot("extras-1-search")
+        if let hit = model.searchHits.first(where: { $0.sessionID == claude.id }) {
+            model.open(hit)
+            check(await wait(20) {
+                guard let focus = model.timelineFocus[claude.id]?.split(separator: "|").first else { return false }
+                return model.timeline(claude.id).contains { $0.id == String(focus) }
+            }, "search: chat opened at the hit, on a shown message")
+        }
+        model.searchText = "cskill"
+        let oldHit = await wait(30) { model.searchHits.contains { $0.sessionID == claude.id } }
+        check(oldHit, "search: an old message is found")
+        if let hit = model.searchHits.first(where: { $0.sessionID == claude.id }) {
+            model.open(hit)
+            check(await wait(60) {
+                guard let focus = model.timelineFocus[claude.id]?.split(separator: "|").first else { return false }
+                return model.timeline(claude.id).contains { $0.id == String(focus) }
+            }, "search: older history loaded back to the hit (seq \(hit.seq))")
+            await shot("extras-2-search-old")
+        }
+        model.searchText = ""
+        noError("search")
+
+        // Side chat on both providers.
+        for chat in [claude, codex] {
+            model.select(.chat(chat.id))
+            model.toggleSideChat(chat.id)
+            check(await wait(30) { model.sideChats[chat.id] != nil || model.sideChatErrors[chat.id] != nil },
+                  "side chat \(chat.backend.rawValue): opened (\(model.sideChatErrors[chat.id] ?? "ok"))")
+            let before = model.sideChats[chat.id]?.exchanges.count ?? 0
+            model.askSide("In one short sentence: what is this conversation mostly about?", inChat: chat.id)
+            check(await wait(180) {
+                guard let side = model.sideChats[chat.id], side.exchanges.count > before, let last = side.exchanges.last
+                else { return false }
+                return last.status != .running
+            }, "side chat \(chat.backend.rawValue): answered")
+            let last = model.sideChats[chat.id]?.exchanges.last
+            check(last?.status == .completed && !(last?.answer ?? "").isEmpty,
+                  "side chat \(chat.backend.rawValue): \(last?.status.rawValue ?? "-") \(String((last?.answer ?? model.sideChatErrors[chat.id] ?? "").prefix(80)))")
+            await shot("extras-3-side-\(chat.backend.rawValue)")
+            check(!model.timeline(chat.id).contains { item in
+                if case .message(_, _, let text, _, _, _, _) = item { text.contains("mostly about") } else { false }
+            }, "side chat \(chat.backend.rawValue): the main conversation is untouched")
+            model.sideChatOpen = nil
+        }
+
+        // Fork: the copy continues with the original's context.
+        for chat in [codex, claude] {
+            let known = Set(model.chats.map(\.id))
+            model.select(.chat(chat.id))
+            _ = await wait(60) { idle(chat.id) }
+            model.fork(chat.id)
+            check(await wait(60) { model.chats.contains { !known.contains($0.id) } }, "fork \(chat.backend.rawValue): created")
+            guard let copy = model.chats.first(where: { !known.contains($0.id) }) else { continue }
+            check(await wait(20) { model.selection == .chat(copy.id) && !model.timeline(copy.id).isEmpty },
+                  "fork \(chat.backend.rawValue): opened with the copied conversation")
+            let recall = chat.backend == .claude ? marker : "attach-"
+            model.send("Earlier in this conversation there was a word starting with \"\(recall.prefix(6))\". "
+                       + "Reply with that exact word only.", toChat: copy.id)
+            check(await wait(240) { approvePending(copy.id); return agentText(copy.id, recall) && idle(copy.id) },
+                  "fork \(chat.backend.rawValue): remembers the original conversation")
+            await shot("extras-4-fork-\(chat.backend.rawValue)")
+            model.delete(.chat(copy.id))
+            _ = await wait(15) { model.chat(copy.id) == nil }
+        }
+        noError("fork")
+
+        // Subagents: Claude starts one through its Task tool.
+        model.select(.chat(claude.id))
+        model.send("Use your Task tool to start exactly one subagent that lists the files in the working folder "
+                   + "and reports how many there are. Then reply with the count.", toChat: claude.id)
+        let started = await wait(240) {
+            approvePending(claude.id)
+            model.refreshSubagents(claude.id)
+            return !(model.subagents[claude.id] ?? []).isEmpty
+        }
+        check(started, "subagents claude: listed (\(model.subagents[claude.id]?.map { "\($0.name)=\($0.statusLabel)" }.joined(separator: " ") ?? "-"))")
+        _ = await wait(240) { approvePending(claude.id); return idle(claude.id) }
+        model.refreshSubagents(claude.id)
+        try? await Task.sleep(for: .seconds(2))
+        check(model.subagents[claude.id]?.contains { $0.state == .done } == true, "subagents claude: finished")
+        noError("subagents")
+    }
+
+    private static func manage(model: AppModel, check: (Bool, String) -> Void,
+                               shot: (String) async -> Void) async {
+        func wait(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
+            let end = Date.now.addingTimeInterval(seconds)
+            while Date.now < end {
+                if condition() { return true }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            return condition()
+        }
+        guard let claude = model.chats.first(where: { $0.backend == .claude && $0.title.contains("features e2e") }),
+              let codex = model.chats.first(where: { $0.backend == .codex && $0.title.contains("features e2e") }) else {
+            check(false, "manage: fixture chats exist")
+            return
+        }
+        let stamp = Int(Date.now.timeIntervalSince1970) % 100000
+        func idle(_ id: String) -> Bool { model.chat(id)?.state == .idle }
+        func noError(_ label: String) {
+            check(model.errorMessage == nil, "\(label): no error (\(model.errorMessage ?? "-"))")
+            model.errorMessage = nil
+        }
+        func agentText(_ id: String, _ marker: String) -> Bool {
+            model.timeline(id).contains { item in
+                if case .message(_, let author, let text, _, _, _, _) = item, author.kind == .agent, text.contains(marker) {
+                    return true
+                }
+                return false
+            }
+        }
+        func approvePending(_ id: String) {
+            if let approval = model.timeline(id).pendingApproval { model.decide(approval.id, .allowed, in: id) }
+        }
+
+        // Older history: with HYADEX_HISTORY_PAGE=10 the chat opens on a short page; page back to its start.
+        model.select(.chat(claude.id))
+        check(await wait(20) { !model.timeline(claude.id).isEmpty }, "history: chat opened with a short page")
+        check(model.olderHistory.contains(claude.id), "history: older events offered")
+        let shown = model.timeline(claude.id).count
+        model.loadOlder(claude.id)
+        check(await wait(20) { model.timeline(claude.id).count > shown && !model.loadingOlder.contains(claude.id) },
+              "history: older page prepended (\(shown) → \(model.timeline(claude.id).count) items)")
+        await shot("manage-1-history")
+        var pages = 0
+        while model.olderHistory.contains(claude.id), pages < 300 {
+            model.loadOlder(claude.id)
+            _ = await wait(20) { !model.loadingOlder.contains(claude.id) }
+            pages += 1
+        }
+        check(!model.olderHistory.contains(claude.id), "history: reached the first event after \(pages + 1) page(s)")
+        noError("history")
+
+        // Server folders.
+        let folders = await model.directorySuggestions("/tmp/hyadex-features-e2e/")
+        check(folders.message == nil, "folders: the server lists a folder's subfolders (\(folders.folders.count))")
+        let home = await model.directorySuggestions("~")
+        check(!home.folders.isEmpty && home.folders.allSatisfy { $0.path.hasPrefix("/") },
+              "folders: ~ expands on the server (\(home.folders.count) folders)")
+        let prefix = await model.directorySuggestions("/tmp/hyadex-feat")
+        check(prefix.folders.first?.name == "hyadex-features-e2e", "folders: a prefix completes")
+
+        // Attachments: upload a file and ask about it.
+        let marker = "attach-\(stamp)"
+        let file = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "note-\(stamp).txt")
+        try? "The secret word is \(marker).\n".write(to: file, atomically: true, encoding: .utf8)
+        model.select(.chat(codex.id))
+        model.attach([file], toChat: codex.id)
+        check(await wait(30) { model.attachments[codex.id]?.first?.fileID != nil }, "attachments: uploaded")
+        model.send("What is the secret word in the attached file? Reply with just the word.", toChat: codex.id)
+        check(model.attachments[codex.id] == nil, "attachments: composer cleared after send")
+        check(await wait(240) { agentText(codex.id, marker) && idle(codex.id) }, "attachments: agent read the file")
+        check(model.timeline(codex.id).contains { if case .media(_, let author, _) = $0 { author.kind == .user } else { false } },
+              "attachments: shown in the conversation")
+        await shot("manage-2-attachment")
+        noError("attachments")
+
+        // Start from an empty queue (earlier runs may have left held messages).
+        for message in model.queues[codex.id] ?? [] { model.withdrawQueued(message.id, in: codex.id) }
+        _ = await wait(20) { (model.queues[codex.id] ?? []).isEmpty }
+        // Queue: two messages wait behind a long answer; reorder, then Force Send.
+        model.send("Write the integers from 1 to 3000, one per line, then the word q0-\(stamp).", toChat: codex.id)
+        check(await wait(60) { model.chat(codex.id)?.state == .running }, "queue: long answer running")
+        model.send("Reply with exactly q1-\(stamp).", toChat: codex.id)
+        model.send("Reply with exactly q2-\(stamp).", toChat: codex.id)
+        check(await wait(30) { (model.queues[codex.id]?.count ?? 0) == 2 }, "queue: two messages queued")
+        check(model.queues[codex.id]?.first?.text.contains("q1-") == true, "queue: kept the order they were sent in")
+        if let second = model.queues[codex.id]?.last {
+            model.moveQueued(second.id, up: true, in: codex.id)
+            check(await wait(20) { model.queues[codex.id]?.first?.text.contains("q2-") == true },
+                  "queue: moved q2 to the front (server order)")
+        }
+        await shot("manage-3-queue")
+        if let first = model.queues[codex.id]?.first {
+            check(model.chat(codex.id)?.state == .running, "queue: long answer still running at Force Send")
+            model.runQueuedNow(first.id, in: codex.id)
+            check(await wait(60) { !(model.queues[codex.id]?.contains { $0.id == first.id } ?? false) },
+                  "queue: Force Send took q2")
+        }
+        check(await wait(300) { agentText(codex.id, "q2-\(stamp)") && agentText(codex.id, "q1-\(stamp)") && idle(codex.id) },
+              "queue: q2 and then q1 answered")
+        noError("queue")
+
+        // Stop holds the queue; a new message still runs at once; 继续发送 sends the held one.
+        model.send("Write the integers from 1 to 3000, one per line, then the word h0-\(stamp).", toChat: codex.id)
+        check(await wait(60) { model.chat(codex.id)?.state == .running }, "hold: long answer running")
+        model.send("Reply with exactly h1-\(stamp).", toChat: codex.id)
+        check(await wait(30) { (model.queues[codex.id]?.count ?? 0) == 1 }, "hold: one message queued")
+        model.stop(codex.id)
+        check(await wait(60) { model.queues[codex.id]?.first?.hold == .stopped && idle(codex.id) },
+              "hold: Stop kept the queued message, held")
+        await shot("manage-3b-held")
+        model.send("Reply with exactly h2-\(stamp).", toChat: codex.id)
+        check(await wait(180) { agentText(codex.id, "h2-\(stamp)") && idle(codex.id) },
+              "hold: a new message runs at once past the held one")
+        check(model.queues[codex.id]?.first?.hold == .stopped && !agentText(codex.id, "h1-\(stamp)"),
+              "hold: the held message stayed held")
+        model.resumeQueue(in: codex.id)
+        check(await wait(180) { agentText(codex.id, "h1-\(stamp)") && (model.queues[codex.id] ?? []).isEmpty && idle(codex.id) },
+              "hold: 继续发送 sent the held message")
+        noError("hold")
+
+        // Compaction: Codex natively, Claude with /compact.
+        _ = await wait(30) { idle(codex.id) }
+        check(model.canCompact(codex.id), "compact codex: offered")
+        model.compact(codex.id)
+        check(await wait(240) {
+            model.timeline(codex.id).contains { if case .divider(_, "上下文已压缩") = $0 { true } else { false } }
+        }, "compact codex: compaction completed")
+        noError("compact codex")
+        model.select(.chat(claude.id))
+        model.loadCommandsIfNeeded(forChat: claude.id)
+        _ = await wait(60) { model.commands[claude.id]?.available == true }
+        _ = await wait(30) { idle(claude.id) }
+        let before = model.contextUsage[claude.id]?.tokens ?? 0
+        check(model.canCompact(claude.id), "compact claude: /compact offered")
+        model.compact(claude.id)
+        _ = await wait(20) { model.chat(claude.id)?.state == .running }
+        check(await wait(240) { idle(claude.id) }, "compact claude: /compact finished")
+        _ = await wait(20) { (model.contextUsage[claude.id]?.tokens ?? before) != before }
+        print("[e2e] compact claude: context \(before) → \(model.contextUsage[claude.id]?.tokens ?? -1) tokens")
+        await shot("manage-4-compact")
+        noError("compact claude")
+
+        // Emergency alert raised by the agent through its own helper.
+        let drill = "e2e drill \(stamp)"
+        model.send("This is a test drill requested by the user. Use your Hyadex emergency alert helper to raise one "
+                   + "emergency alert with exactly this message: \(drill). Then reply done.", toChat: claude.id)
+        let raised = await wait(240) {
+            approvePending(claude.id)
+            return model.emergencies.contains { $0.message.contains(drill) }
+        }
+        check(raised, "emergency: alert arrived over the emergency stream")
+        await shot("manage-5-emergency")
+        if let alert = model.emergencies.first(where: { $0.message.contains(drill) }) {
+            model.acknowledge(alert)
+            try? await Task.sleep(for: .seconds(3))
+            check(!model.emergencies.contains { $0.alertID == alert.alertID }, "emergency: acknowledged and cleared")
+        }
+        _ = await wait(120) { approvePending(claude.id); return idle(claude.id) }
+        noError("emergency")
+
+        // Jobs: a chat job and a group job, edited then deleted.
+        model.createJob(title: "e2e job \(stamp)", prompt: "Reply ok.", target: .chat(claude.id),
+                        schedule: .cron("0 0 9 * * 1-5"), enabled: false)
+        check(await wait(20) { model.jobs.contains { $0.title == "e2e job \(stamp)" } }, "jobs: chat job created")
+        if let job = model.jobs.first(where: { $0.title == "e2e job \(stamp)" }) {
+            check(job.spec == .cron("0 0 9 * * 1-5") && !job.enabled, "jobs: schedule and disabled state kept")
+            model.updateJob(job.id, title: "e2e job \(stamp) edited", prompt: "Reply ok.",
+                            schedule: .interval(seconds: 7200, repeats: true, firstRun: nil), enabled: false)
+            check(await wait(20) { model.job(job.id)?.title.hasSuffix("edited") == true && model.job(job.id)?.schedule == "每 2 小时" },
+                  "jobs: edited to every 2 hours")
+            model.select(.jobs)
+            await shot("manage-6-jobs")
+            model.deleteJob(job.id)
+            try? await Task.sleep(for: .seconds(5))
+            check(model.job(job.id) == nil, "jobs: chat job deleted")
+        }
+        noError("jobs")
+
+        // Rename, archive and delete: a fresh chat and a fresh group (no turns run).
+        let knownChats = Set(model.chats.map(\.id))
+        _ = model.createChat(backend: .claude, model: "", cwd: "/tmp/hyadex-features-e2e", permission: "Manual")
+        check(await wait(20) { model.chats.contains { !knownChats.contains($0.id) } }, "chats: scratch chat created")
+        if let scratch = model.chats.first(where: { !knownChats.contains($0.id) }) {
+            model.rename(.chat(scratch.id), to: "e2e scratch \(stamp)")
+            try? await Task.sleep(for: .seconds(5))
+            check(model.chat(scratch.id)?.title == "e2e scratch \(stamp)", "chats: renamed (server list)")
+            model.setArchived(.chat(scratch.id), true)
+            try? await Task.sleep(for: .seconds(5))
+            check(model.archivedChats.contains { $0.id == scratch.id }, "chats: archived (server list)")
+            model.select(.chat(claude.id))
+            await shot("manage-7-archived")
+            model.setArchived(.chat(scratch.id), false)
+            try? await Task.sleep(for: .seconds(5))
+            check(model.chat(scratch.id)?.archived == false, "chats: unarchived")
+            model.delete(.chat(scratch.id))
+            try? await Task.sleep(for: .seconds(6))
+            check(model.chat(scratch.id) == nil, "chats: deleted (gone from the server list)")
+        }
+        let knownGroups = Set(model.groups.map(\.id))
+        model.createGroup(title: "e2e scratch group \(stamp)", cwd: "/tmp/hyadex-features-e2e",
+                          participants: [Participant(handle: "claude", backend: .claude, role: "", model: "")])
+        check(await wait(20) { model.groups.contains { !knownGroups.contains($0.id) } }, "groups: scratch group created")
+        if let group = model.groups.first(where: { !knownGroups.contains($0.id) }) {
+            model.createJob(title: "e2e group job \(stamp)", prompt: "Reply ok.", target: .group(group.id),
+                            schedule: .cron("0 0 9 * * *"), enabled: false)
+            check(await wait(20) { model.jobs.contains { $0.groupID == group.id } }, "jobs: group job created")
+            if let job = model.jobs.first(where: { $0.groupID == group.id }) {
+                model.deleteJob(job.id)
+                try? await Task.sleep(for: .seconds(5))
+                check(model.job(job.id) == nil, "jobs: group job deleted through the group route")
+            }
+            model.rename(.group(group.id), to: "e2e group renamed \(stamp)")
+            try? await Task.sleep(for: .seconds(5))
+            check(model.group(group.id)?.title == "e2e group renamed \(stamp)", "groups: renamed")
+            model.setArchived(.group(group.id), true)
+            try? await Task.sleep(for: .seconds(5))
+            check(model.archivedGroups.contains { $0.id == group.id }, "groups: archived")
+            model.delete(.group(group.id))
+            try? await Task.sleep(for: .seconds(6))
+            check(model.group(group.id) == nil, "groups: deleted")
+        }
+        noError("rename/archive/delete")
+    }
+
+    private static func capabilities(model: AppModel, check: (Bool, String) -> Void,
+                                     shot: (String) async -> Void) async {
+        func wait(_ seconds: Double, _ condition: () -> Bool) async -> Bool {
+            let end = Date.now.addingTimeInterval(seconds)
+            while Date.now < end {
+                if condition() { return true }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            return condition()
+        }
+        guard let claude = model.chats.first(where: { $0.backend == .claude && $0.title.contains("features e2e") }),
+              let codex = model.chats.first(where: { $0.backend == .codex && $0.title.contains("features e2e") }) else {
+            check(false, "capabilities: fixture chats exist")
+            return
+        }
+        func idle(_ id: String) -> Bool { model.chat(id)?.state == .idle || model.chat(id) == nil }
+        func noError(_ label: String) {
+            check(model.errorMessage == nil, "\(label): no error (\(model.errorMessage ?? "-"))")
+            model.errorMessage = nil
+        }
+        func agentText(_ id: String, containing marker: String) -> Bool {
+            model.timeline(id).contains { item in
+                if case .message(_, let author, let text, _, _, _, _) = item, author.kind == .agent, text.contains(marker) {
+                    return true
+                }
+                return false
+            }
+        }
+
+        // MCP servers, as each agent loaded them.
+        for chat in [claude, codex] {
+            model.select(.chat(chat.id))
+            model.refreshMCP(forChat: chat.id)
+            check(await wait(90) { model.mcp[chat.id] != nil && !model.mcpBusy.contains(chat.id) },
+                  "mcp \(chat.backend.rawValue): status loaded")
+            let status = model.mcp[chat.id]
+            check(status?.available == true && !(status?.servers.isEmpty ?? true),
+                  "mcp \(chat.backend.rawValue): \(status?.servers.count ?? 0) server(s): "
+                  + (status?.servers.map { "\($0.name)=\($0.status.rawValue)" }.joined(separator: " ") ?? "-"))
+        }
+        model.select(.chat(claude.id))
+        if let server = model.mcp[claude.id]?.servers.first(where: { $0.enabled && $0.status != .needsAuth }) {
+            model.controlMCP("disable", server: server.name, forChat: claude.id)
+            check(await wait(60) { model.mcp[claude.id]?.servers.first { $0.name == server.name }?.enabled == false },
+                  "mcp claude: disabled \(server.name)")
+            await shot("capabilities-1-mcp-disabled")
+            model.controlMCP("enable", server: server.name, forChat: claude.id)
+            check(await wait(60) { model.mcp[claude.id]?.servers.first { $0.name == server.name }?.enabled == true },
+                  "mcp claude: enabled \(server.name) again")
+            model.controlMCP("reconnect", server: server.name, forChat: claude.id)
+            _ = await wait(90) { !model.mcpBusy.contains(claude.id) }
+            noError("mcp claude: reconnect \(server.name)")
+            check(model.mcp[claude.id]?.servers.first { $0.name == server.name }?.status == .connected,
+                  "mcp claude: \(server.name) connected after reconnect")
+        }
+        await shot("capabilities-2-mcp")
+
+        // Slash commands and skills.
+        for chat in [claude, codex] {
+            model.loadCommandsIfNeeded(forChat: chat.id)
+            check(await wait(90) { model.commands[chat.id]?.available == true },
+                  "commands \(chat.backend.rawValue): \(model.commands[chat.id]?.commands.count ?? 0) listed")
+        }
+        check(model.slashSuggestions(forChat: claude.id, partial: "cont").contains { $0.invocation == "/context" },
+              "commands claude: /cont suggests /context")
+        check(model.slashSuggestions(forChat: codex.id, partial: "goal").first?.invocation == "/goal",
+              "commands codex: /goal offered")
+        model.drafts[claude.id] = "/cont"
+        await shot("capabilities-3-slash")
+        model.drafts[claude.id] = ""
+        let before = model.timeline(claude.id).count
+        model.send("/context", toChat: claude.id)
+        check(await wait(30) { model.timeline(claude.id).count > before }, "commands claude: /context accepted")
+        check(await wait(180) { idle(claude.id) }, "commands claude: /context finished")
+        noError("commands claude: /context")
+        let skillMarker = "e2e-skill-\(Int(Date.now.timeIntervalSince1970) % 100000)"
+        model.select(.chat(codex.id))
+        model.send("/api-design-principles In one line, name the HTTP verb for creating a resource, then write \(skillMarker).",
+                   toChat: codex.id)
+        check(await wait(240) { agentText(codex.id, containing: skillMarker) && idle(codex.id) },
+              "skills codex: skill turn answered")
+        noError("skills codex")
+        await shot("capabilities-4-skill")
+
+        // Claude Code /goal: a condition it can meet, then one it cannot (cleared while active).
+        model.select(.chat(claude.id))
+        check(await wait(30) { model.goalSupport[claude.id]?.available == true }, "goal claude: offered")
+        model.send("/goal The file hello.txt in the working folder contains the word hello. Only read it; change nothing.",
+                   toChat: claude.id)
+        check(await wait(30) { model.goals[claude.id] != nil }, "goal claude: set (\(model.goals[claude.id]?.statusLabel ?? "-"))")
+        await shot("capabilities-5-claude-goal")
+        check(await wait(300) { model.goals[claude.id]?.status == .achieved && idle(claude.id) },
+              "goal claude: achieved (\(model.goals[claude.id]?.statusLabel ?? "-"), \(model.goals[claude.id]?.iterations ?? 0) check(s))")
+        noError("goal claude")
+        await shot("capabilities-6-claude-achieved")
+        model.setGoal("The user has typed the word banana in this chat.", forChat: claude.id)
+        check(await wait(60) { model.goals[claude.id]?.status == .active }, "goal claude: unmeetable goal active")
+        model.clearGoal(forChat: claude.id)
+        check(await wait(120) { model.goals[claude.id].map { !$0.isOpen } ?? true }, "goal claude: cleared (\(model.goals[claude.id]?.statusLabel ?? "none"))")
+        _ = await wait(120) { idle(claude.id) }
+        noError("goal claude: clear")
+
+        // Codex persistent goal with budgets, then pause and clear.
+        model.select(.chat(codex.id))
+        check(await wait(30) { model.goalSupport[codex.id]?.available == true }, "goal codex: offered")
+        let goalMarker = "e2e-goal-\(Int(Date.now.timeIntervalSince1970) % 100000)"
+        model.setGoal("Reply with exactly \(goalMarker), then mark this goal complete.", tokenBudget: 400_000,
+                      timeLimitMinutes: 10, forChat: codex.id)
+        check(await wait(60) { model.goals[codex.id] != nil }, "goal codex: set")
+        check(model.goals[codex.id]?.tokenBudget == 400_000 && model.goals[codex.id]?.timeBudgetSeconds == 600,
+              "goal codex: budgets kept")
+        await shot("capabilities-7-codex-goal")
+        check(await wait(300) { model.goals[codex.id]?.status == .complete && idle(codex.id) },
+              "goal codex: complete (\(model.goals[codex.id]?.statusLabel ?? "-"))")
+        check(agentText(codex.id, containing: goalMarker), "goal codex: worked toward the objective")
+        noError("goal codex")
+        model.setGoal("List every prime number below 10^12, one per message.", forChat: codex.id)
+        check(await wait(60) { model.goals[codex.id]?.status == .active }, "goal codex: second goal active")
+        model.pauseGoal(forChat: codex.id)
+        check(await wait(60) { model.goals[codex.id]?.status == .paused }, "goal codex: paused")
+        _ = await wait(120) { idle(codex.id) }
+        await shot("capabilities-8-codex-paused")
+        model.clearGoal(forChat: codex.id)
+        check(await wait(60) { model.goals[codex.id] == nil }, "goal codex: cleared")
+        noError("goal codex: pause and clear")
+
+        // A group goal set on one member.
+        let known = Set(model.groups.map(\.id))
+        model.createGroup(title: "features e2e group", cwd: "/tmp/hyadex-features-e2e",
+                          participants: [Participant(handle: "claude", backend: .claude, role: "", model: "")])
+        check(await wait(30) { model.groups.contains { !known.contains($0.id) } }, "group goal: group created")
+        guard let group = model.groups.first(where: { !known.contains($0.id) }) else { return }
+        model.select(.group(group.id))
+        _ = await wait(15) { model.group(group.id)?.participants.first?.sessionID != nil }
+        model.setGroupGoal("The user has typed the word banana in this group.", handle: "claude", inGroup: group.id)
+        check(await wait(60) { model.group(group.id)?.goal?.handle == "claude" }, "group goal: set on @claude")
+        check(await wait(60) { model.goal(forGroup: group.id)?.state?.status == .active },
+              "group goal: member goal active (\(model.goal(forGroup: group.id)?.state?.statusLabel ?? "-"))")
+        await shot("capabilities-9-group-goal")
+        model.clearGroupGoal(inGroup: group.id)
+        check(await wait(120) { model.goal(forGroup: group.id)?.state.map { !$0.isOpen } ?? false },
+              "group goal: cleared on the member")
+        noError("group goal")
     }
 }

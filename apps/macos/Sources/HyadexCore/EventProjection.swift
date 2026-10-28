@@ -92,6 +92,14 @@ public struct SessionProjection: Sendable {
             lastPublication = event["publication_id"].string
         case "assistant_text":
             guard let text = event["text"].text else { return }
+            // Claude's /compact prints "Compacted"; its compaction landmark already says so.
+            // A detached output belongs to an earlier priority command (clearing a goal
+            // mid-turn) that the goal bar already reflects.
+            if event["local_command"].string?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "compact"
+                || event["local_command_detached"].bool == true {
+                lastActivity = time
+                return
+            }
             lastAssistantText = text
             lastActivity = time
             append(.message(id: id, author: agent, text: text, time: time))
@@ -163,8 +171,61 @@ public struct SessionProjection: Sendable {
             if let request = event["client_request_id"].string { acceptedRequests.insert(request) }
             guard let queuedID = event["queued_id"].string, !queued.contains(where: { $0.id == queuedID }) else { return }
             queued.append(QueuedMessage(id: queuedID, text: event["display_prompt"].text ?? event["prompt"].text ?? ""))
-        case "turn_unqueued":
+        case "turn_unqueued", "turn_queue_run_now":
             if let queuedID = event["queued_id"].string { queued.removeAll { $0.id == queuedID } }
+        case "turn_queue_paused":
+            let ids = Set(event["queued_ids"].array.compactMap(\.string))
+            for index in queued.indices where ids.contains(queued[index].id) && queued[index].hold == nil {
+                queued[index].hold = .stopped
+            }
+        case "turn_queue_delivery_fenced":
+            if let queuedID = event["queued_id"].string, let index = queued.firstIndex(where: { $0.id == queuedID }) {
+                queued[index].hold = .deliveryUncertain
+            }
+        case "turn_queue_resumed":
+            let ids = Set(event["queued_ids"].array.compactMap(\.string))
+            for index in queued.indices where ids.contains(queued[index].id) && queued[index].hold == .stopped {
+                queued[index].hold = nil
+            }
+        case "turn_queue_updated":
+            if let queuedID = event["queued_id"].string, let position = queued.firstIndex(where: { $0.id == queuedID }),
+               let text = event["display_prompt"].text ?? event["prompt"].text {
+                queued[position].text = text
+            }
+        case "turn_queue_reordered":
+            let order = Dictionary(event["positions"].array.compactMap { entry -> (String, Int)? in
+                guard let id = entry["queued_id"].string, let position = entry["position"].int else { return nil }
+                return (id, position)
+            }, uniquingKeysWith: { $1 })
+            queued.sort { (order[$0.id] ?? .max) < (order[$1.id] ?? .max) }
+        case "turn_steered":
+            // Sent into the running turn: the user's words join it where they arrived.
+            if let queuedID = event["queued_id"].string { queued.removeAll { $0.id == queuedID } }
+            if let request = event["client_request_id"].string { acceptedRequests.insert(request) }
+            if let prompt = event["display_prompt"].text ?? event["prompt"].text, !prompt.isEmpty {
+                append(.message(id: id, author: .user, text: prompt, time: time))
+            }
+        case "agent_notification":
+            if let message = event["message"].text {
+                let important = event["notification_level"].string == "important"
+                append(.divider(id: id, text: (important ? "重要通知：" : "通知：") + message))
+            }
+        case "emergency_alert_raised":
+            append(.divider(id: id, text: "紧急提醒：" + (event["message"].text ?? "")))
+        case "emergency_alert_acknowledged":
+            append(.divider(id: id, text: "已确认紧急提醒"))
+        case "session_forked":
+            let copied = event["copied_events"].int.map { "（\($0) 条记录）" } ?? ""
+            append(.divider(id: id, text: "已分叉出一个新聊天" + copied))
+        case "history_imported" where event["copied_events"].int != nil:
+            append(.divider(id: id, text: "从原聊天分叉而来，以上是复制的对话"))
+        case "claude_compaction_completed":
+            append(.divider(id: id, text: "上下文已压缩"))
+        case "codex_compaction_started":
+            append(.divider(id: id, text: "正在压缩上下文…"))
+        case "codex_compaction_completed":
+            let failed = event["status"].string.map { $0 != "completed" } ?? false
+            append(.divider(id: id, text: failed ? "上下文压缩失败" : "上下文已压缩"))
         default:
             break
         }
@@ -217,8 +278,15 @@ public struct SessionProjection: Sendable {
     public mutating func setQueue(_ turns: [JSON]) {
         queued = turns.compactMap { turn in
             guard let id = turn["id"].string ?? turn["queued_id"].string else { return nil }
-            return QueuedMessage(id: id, text: turn["display_prompt"].text ?? turn["prompt"].text ?? "")
+            let hold: QueuedMessage.Hold? = turn["paused"].bool == true
+                ? QueuedMessage.Hold(rawValue: turn["pause_reason"].string ?? "") ?? .stopped : nil
+            return QueuedMessage(id: id, text: turn["display_prompt"].text ?? turn["prompt"].text ?? "", hold: hold)
         }
+    }
+
+    /// Keeps a queue already known when the timeline is rebuilt.
+    public mutating func replaceQueue(_ messages: [QueuedMessage]) {
+        queued = messages
     }
 
     /// Records the user's own answer so the resolved card says what was chosen.

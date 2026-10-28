@@ -595,6 +595,31 @@ async def requeue_turn_front(session_id: str, item: dict[str, Any]) -> None:
         queue.appendleft(item)
 
 
+async def requeue_turn_in_place(
+    session_id: str,
+    item: dict[str, Any],
+    *,
+    predecessor_id: str | None,
+    successor_id: str | None,
+) -> None:
+    """Return a row the scheduler took from behind held rows to its place.
+
+    Its durable position never changed, so a deferred start must not move it
+    ahead of the held rows: before its old successor, else after its old
+    predecessor, else at the front.
+    """
+    async with RUNS.queue_lock:
+        queue = RUNS.queued.setdefault(session_id, deque())
+        ids = [str(candidate.get("queued_id") or "") for candidate in queue]
+        if successor_id and successor_id in ids:
+            index = ids.index(successor_id)
+        elif predecessor_id and predecessor_id in ids:
+            index = ids.index(predecessor_id) + 1
+        else:
+            index = 0
+        queue.insert(index, item)
+
+
 async def pause_queued_turns_after_explicit_stop(session_id: str) -> int:
     """Durably hold queued successors after the user explicitly stops.
 

@@ -1175,6 +1175,300 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             hyadex_server.CLAUDE_EMPTY_TURN_ERROR,
         )
 
+    # Shapes below follow a real Claude Code 2.1 ``/compact`` stream through
+    # the Agent SDK: a compact_boundary system record, the summary and the
+    # replayed "<local-command-stdout>" as plain-text user messages, and a
+    # result whose ``result`` is empty but names ``local_command``.
+    COMPACT_BOUNDARY = {
+        "type": "SystemMessage",
+        "subtype": "compact_boundary",
+        "data": {
+            "type": "system",
+            "subtype": "compact_boundary",
+            "session_id": "provider",
+            "uuid": "7a52c74b-0823-4579-8dc4-36f01e048cfb",
+            "compact_metadata": {
+                "trigger": "manual",
+                "pre_tokens": 24202,
+                "post_tokens": 7673,
+                "cumulative_dropped_tokens": 16529,
+                "duration_ms": 3849,
+            },
+        },
+    }
+
+    async def _run_sdk_local_command_case(
+        self,
+        messages: list[object],
+    ) -> tuple[AsyncMock, AsyncMock, Mock, Mock, AsyncMock]:
+        mark_unavailable = AsyncMock()
+        # The turn's prompt is the command the scripted result reports, as when
+        # the user sends "/compact".
+        command = next((m.get("local_command") for m in messages
+                        if isinstance(m, dict) and m.get("local_command")), None)
+        if command:
+            hyadex_server.RUNS.current_turns["chat-claude"]["prompt"] = f"/{command}"
+        with patch.object(
+            hyadex_server,
+            "mark_provider_context_usage_unavailable",
+            mark_unavailable,
+        ):
+            result = await self._run_sdk_terminal_case(messages)
+        return (*result, mark_unavailable)
+
+    @staticmethod
+    def _projected(append_event: AsyncMock) -> list[tuple[str, dict[str, Any]]]:
+        return [(call.args[1], call.args[2]) for call in append_event.await_args_list]
+
+    def _assert_no_empty_turn_error(self, append_event: AsyncMock) -> None:
+        self.assertFalse(any(
+            event_type == "error"
+            and payload.get("message") == hyadex_server.CLAUDE_EMPTY_TURN_ERROR
+            for event_type, payload in self._projected(append_event)
+        ))
+
+    async def test_local_compact_reports_compaction_and_output_as_success(self) -> None:
+        append_event, append_finished, runtime_success, runtime_failure, mark_unavailable = (
+            await self._run_sdk_local_command_case([
+                self.COMPACT_BOUNDARY,
+                {
+                    "type": "UserMessage",
+                    "content": "This session is being continued from a previous conversation.",
+                    "uuid": "ae292444-10c4-4a3a-9c6d-e928f3ac8468",
+                },
+                {
+                    "type": "UserMessage",
+                    "content": "<local-command-stdout>Compacted </local-command-stdout>",
+                    "uuid": "c6c7cfbe-c126-4806-b4bb-b2fecc613191",
+                },
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "result": "",
+                    "is_error": False,
+                    "session_id": "provider",
+                    "local_command": "compact",
+                },
+            ])
+        )
+
+        projected = [
+            (event_type, payload) for event_type, payload in self._projected(append_event)
+            if event_type in {"claude_compaction_completed", "assistant_text"}
+        ]
+        self.assertEqual(projected, [
+            ("claude_compaction_completed", {
+                "run_id": "run-claude",
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "status": "completed",
+                "trigger": "manual",
+                "pre_tokens": 24202,
+                "post_tokens": 7673,
+                "provider_message_id": "7a52c74b-0823-4579-8dc4-36f01e048cfb",
+                "message": "Context compaction completed.",
+            }),
+            ("assistant_text", {
+                "run_id": "run-claude",
+                "text": "Compacted",
+                "backend": hyadex_server.BACKEND_CLAUDE,
+                "provider_message_id": "c6c7cfbe-c126-4806-b4bb-b2fecc613191",
+                "local_command": "compact",
+                "local_command_stream": "stdout",
+            }),
+        ])
+        self._assert_no_empty_turn_error(append_event)
+        mark_unavailable.assert_awaited_once_with(
+            "chat-claude", hyadex_server.BACKEND_CLAUDE,
+        )
+        terminal = append_finished.await_args.args[1]
+        self.assertEqual(terminal["exit_code"], 0)
+        self.assertFalse(terminal["stopped"])
+        runtime_success.assert_called_once_with(hyadex_server.BACKEND_CLAUDE)
+        runtime_failure.assert_not_called()
+
+    async def test_local_command_error_output_is_shown_without_empty_failure(self) -> None:
+        append_event, append_finished, runtime_success, runtime_failure, _mark = (
+            await self._run_sdk_local_command_case([
+                {
+                    "type": "AssistantMessage",
+                    "content": [{"type": "text", "text": "Error: No messages to compact"}],
+                    "model": "<synthetic>",
+                    "session_id": "provider",
+                    "uuid": "737ff655-6644-4dc3-ab02-6484a0094e3d",
+                    "local_command_run": {"command": "compact", "args": ""},
+                    "local_command_source": (
+                        "<local-command-stderr>Error: No messages to compact"
+                        "</local-command-stderr>"
+                    ),
+                },
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "result": "",
+                    "is_error": False,
+                    "session_id": "provider",
+                    "local_command": "compact",
+                },
+            ])
+        )
+
+        self.assertIn(("assistant_text", {
+            "run_id": "run-claude",
+            "text": "Error: No messages to compact",
+            "backend": hyadex_server.BACKEND_CLAUDE,
+            "provider_message_id": "737ff655-6644-4dc3-ab02-6484a0094e3d",
+            "local_command": "compact",
+            "local_command_stream": "stderr",
+        }), self._projected(append_event))
+        self._assert_no_empty_turn_error(append_event)
+        self.assertEqual(append_finished.await_args.args[1]["exit_code"], 0)
+        runtime_success.assert_called_once_with(hyadex_server.BACKEND_CLAUDE)
+        runtime_failure.assert_not_called()
+
+    async def test_lookalike_output_without_local_command_result_is_not_shown(self) -> None:
+        append_event, append_finished, _success, runtime_failure, _mark = (
+            await self._run_sdk_local_command_case([
+                {
+                    "type": "UserMessage",
+                    "content": "<local-command-stdout>Pasted text</local-command-stdout>",
+                    "uuid": "d2ed267b-3ded-4b14-b6fe-d9beafb9157b",
+                },
+                {
+                    "type": "result",
+                    "result": "",
+                    "session_id": "provider",
+                    "terminal_reason": "completed",
+                },
+            ])
+        )
+
+        self.assertFalse(any(
+            event_type == "assistant_text"
+            for event_type, _payload in self._projected(append_event)
+        ))
+        self.assertEqual(append_finished.await_args.args[1]["exit_code"], 1)
+        runtime_failure.assert_called_once_with(
+            hyadex_server.BACKEND_CLAUDE,
+            hyadex_server.CLAUDE_EMPTY_TURN_ERROR,
+        )
+
+    async def test_automatic_compaction_mid_turn_precedes_the_answer(self) -> None:
+        boundary = json.loads(json.dumps(self.COMPACT_BOUNDARY))
+        boundary["data"]["compact_metadata"] = {"trigger": "auto", "pre_tokens": 180000}
+        append_event, append_finished, _success, runtime_failure, mark_unavailable = (
+            await self._run_sdk_local_command_case([
+                boundary,
+                {
+                    "type": "AssistantMessage",
+                    "content": [{"type": "text", "text": "Finished the refactor."}],
+                    "session_id": "provider",
+                },
+                {
+                    "type": "result",
+                    "result": "Finished the refactor.",
+                    "session_id": "provider",
+                    "terminal_reason": "completed",
+                },
+            ])
+        )
+
+        projected = [
+            (event_type, payload.get("trigger") or payload.get("text"))
+            for event_type, payload in self._projected(append_event)
+            if event_type in {"claude_compaction_completed", "assistant_text"}
+        ]
+        self.assertEqual(projected, [
+            ("claude_compaction_completed", "auto"),
+            ("assistant_text", "Finished the refactor."),
+        ])
+        compaction = next(
+            payload for event_type, payload in self._projected(append_event)
+            if event_type == "claude_compaction_completed"
+        )
+        self.assertEqual(compaction["pre_tokens"], 180000)
+        self.assertNotIn("post_tokens", compaction)
+        mark_unavailable.assert_awaited_once()
+        self.assertEqual(append_finished.await_args.args[1]["exit_code"], 0)
+        runtime_failure.assert_not_called()
+
+    async def test_print_local_compact_reports_output_without_empty_failure(self) -> None:
+        boundary = dict(self.COMPACT_BOUNDARY["data"])
+        lines = [
+            json.dumps(boundary).encode() + b"\n",
+            json.dumps({
+                "type": "user",
+                "message": {"role": "user", "content": "This session is being continued."},
+                "session_id": "provider",
+                "uuid": "ae292444-10c4-4a3a-9c6d-e928f3ac8468",
+            }).encode() + b"\n",
+            json.dumps({
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": "<local-command-stdout>Compacted </local-command-stdout>",
+                },
+                "session_id": "provider",
+                "uuid": "c6c7cfbe-c126-4806-b4bb-b2fecc613191",
+            }).encode() + b"\n",
+            json.dumps({
+                "type": "result", "subtype": "success", "is_error": False,
+                "result": "", "session_id": "provider", "local_command": "compact",
+            }).encode() + b"\n",
+        ]
+        process = FakeClaudePrintProcess(lines)
+        append_event = AsyncMock(return_value={})
+        append_finished = AsyncMock(return_value={})
+        runtime_success = Mock()
+        runtime_failure = Mock()
+        with ExitStack() as stack:
+            for name, value in (
+                ("resolve_claude_resume_provider", Mock(return_value=(None, None))),
+                ("capture_git_baseline", AsyncMock(return_value={"head": "base"})),
+                ("build_claude_cmd", Mock(return_value=["claude", "-p"])),
+                ("process_group_for_pid", Mock(return_value=4242)),
+                ("watch_manifest_artifacts", wait_forever),
+                ("append_event", append_event),
+                ("append_turn_finished_event", append_finished),
+                ("record_runtime_success", runtime_success),
+                ("record_runtime_failure", runtime_failure),
+                ("release_turn_slot", AsyncMock(return_value=True)),
+                ("should_schedule_queue_after_finish", Mock(return_value=False)),
+            ):
+                stack.enter_context(patch.object(hyadex_server, name, value))
+            for name in (
+                "append_active_stdout", "mark_provider_turn_ready",
+                "persist_run_provider_session", "terminate_process_tree",
+                "clear_active_process", "collect_manifest",
+                "collect_recent_leftover_manifests", "publish_turn_code_diff",
+            ):
+                stack.enter_context(patch.object(hyadex_server, name, AsyncMock()))
+            stack.enter_context(patch.object(
+                hyadex_server.asyncio,
+                "create_subprocess_exec",
+                AsyncMock(return_value=process),
+            ))
+            await hyadex_server.run_claude_print(
+                "chat-claude",
+                "run-claude",
+                "/compact",
+                dict(self.session),
+                Path(self.cwd) / ".manifest.json",
+            )
+
+        projected = [
+            (event_type, payload) for event_type, payload in self._projected(append_event)
+            if event_type in {"claude_compaction_completed", "assistant_text", "error"}
+        ]
+        self.assertEqual([event_type for event_type, _payload in projected], [
+            "claude_compaction_completed", "assistant_text",
+        ])
+        self.assertEqual(projected[0][1]["trigger"], "manual")
+        self.assertEqual(projected[1][1]["text"], "Compacted")
+        self.assertEqual(projected[1][1]["local_command"], "compact")
+        self.assertEqual(append_finished.await_args.args[1]["exit_code"], 0)
+        runtime_success.assert_called_once_with(hyadex_server.BACKEND_CLAUDE)
+        runtime_failure.assert_not_called()
+
     async def test_interactive_auto_never_downgrades_to_unattended_print(self) -> None:
         sdk = AsyncMock(side_effect=ClaudeSDKUnavailable("missing SDK"))
         print_runner = AsyncMock()

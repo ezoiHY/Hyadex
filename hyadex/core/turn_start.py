@@ -27,6 +27,7 @@ from hyadex.core.queue import (
     queued_turn_unqueued_payload,
     request_fields_set,
     requeue_turn_front,
+    requeue_turn_in_place,
     should_schedule_queue_after_finish,
     terminally_discard_queued_turn,
 )
@@ -39,7 +40,7 @@ from hyadex.core.queue_recovery import (
     restore_missing_durable_force_send_row,
     scan_queued_turns_from_events,
 )
-from hyadex.core.runs import RUNS
+from hyadex.core.runs import first_runnable_queued_index, RUNS
 from hyadex.core.server import SERVER
 from hyadex.core.server_logging import concise_error_message
 from hyadex.core.session_settings import (
@@ -352,19 +353,23 @@ async def reconcile_idle_queue_session(
                     recovered_guards.append(
                         "ownerless_transitioning_promotion"
                     )
+            if promoted is not None and promoted.get("_paused_after_stop") is not True:
                 # A committed or safely released promotion keeps its exact
                 # queued_id and resumes through the ordinary scheduler.
                 should_schedule = bool(
                     promoted.get("_durable") is not False
                     and promoted.get("_update_transitioning") is not True
-                    and promoted.get("_paused_after_stop") is not True
                 )
             else:
-                head = next(iter(RUNS.queued.get(session_id) or ()), None)
+                # Rows held for the user keep their place without blocking
+                # the rows behind them (the scheduler returns a held
+                # promotion to the queue first).
+                queue = RUNS.queued.get(session_id)
+                runnable_index = first_runnable_queued_index(queue)
                 should_schedule = bool(
-                    head
-                    and head.get("_durable") is not False
-                    and head.get("_paused_after_stop") is not True
+                    queue is not None
+                    and runnable_index is not None
+                    and queue[runnable_index].get("_durable") is not False
                 )
 
     if cancelled_waiter is not None:
@@ -627,46 +632,67 @@ async def _start_next_queued_turn_locked(
     if stop_cleanup_in_progress(session_id):
         log_queue_promotion_fence(session_id, "explicit_stop", "queue_start")
         return
+    # The neighbours of a row taken from behind held rows, so a deferred start
+    # returns it to its own place rather than ahead of them.
+    taken_predecessor_id: str | None = None
+    taken_successor_id: str | None = None
     async with RUNS.queue_lock:
         if session_id in RUNS.steering:
             return
         item = RUNS.run_now.get(session_id)
-        if item is not None and (
-            item.get("_durable") is False
-            or item.get("_paused_after_stop") is True
-        ):
-            if item.get("_paused_after_stop") is True:
-                # An explicit Stop that lands after promotion wins. Return the
-                # user message to the visible queue, preserving its hold until
-                # a new Run Now request explicitly releases it.
-                RUNS.run_now.pop(session_id, None)
-                queue = RUNS.queued.setdefault(session_id, deque())
-                queued_id = str(item.get("queued_id") or "")
-                if not any(
-                    str(candidate.get("queued_id") or "") == queued_id
-                    for candidate in queue
-                ):
-                    queue.appendleft(item)
+        if item is not None and item.get("_paused_after_stop") is True:
+            # An explicit Stop that lands after promotion wins. Return the
+            # user message to the visible queue, preserving its hold until
+            # a new Run Now request explicitly releases it.
+            RUNS.run_now.pop(session_id, None)
+            queue = RUNS.queued.setdefault(session_id, deque())
+            queued_id = str(item.get("queued_id") or "")
+            if not any(
+                str(candidate.get("queued_id") or "") == queued_id
+                for candidate in queue
+            ):
+                queue.appendleft(item)
+            item = None
+        elif item is not None and item.get("_durable") is False:
             return
         item = RUNS.run_now.pop(session_id, None)
         if item is None:
             queue = RUNS.queued.get(session_id)
-            if queue and (
-                queue[0].get("_durable") is False
-                or queue[0].get("_paused_after_stop") is True
-            ):
+            # Held rows keep their place for the user but never block the
+            # runnable rows behind them, which still run in queue order.
+            index = first_runnable_queued_index(queue)
+            if queue is None or index is None:
                 return
-            item = queue.popleft() if queue else None
-            if queue is not None and not queue:
+            if queue[index].get("_durable") is False:
+                return
+            item = queue[index]
+            if index > 0:
+                taken_predecessor_id = str(queue[index - 1].get("queued_id") or "") or None
+            if index + 1 < len(queue):
+                taken_successor_id = str(queue[index + 1].get("queued_id") or "") or None
+            del queue[index]
+            if not queue:
                 RUNS.queued.pop(session_id, None)
     if not item:
         return
+
+    async def requeue_taken_item() -> None:
+        if taken_predecessor_id is None:
+            await requeue_turn_front(session_id, item)
+        else:
+            await requeue_turn_in_place(
+                session_id,
+                item,
+                predecessor_id=taken_predecessor_id,
+                successor_id=taken_successor_id,
+            )
+
     if (
         session_id in DELETING_SESSIONS
     ):
         # Deletion can still abort while provider cleanup drains. Preserve the
         # durable queue until deletion reaches its commit point.
-        await requeue_turn_front(session_id, item)
+        await requeue_taken_item()
         return
     if (
         session_id in DELETED_SESSION_TOMBSTONES
@@ -731,7 +757,7 @@ async def _start_next_queued_turn_locked(
         # settle that exact owner before propagating instead of waiting for a
         # process restart to discover a zombie row.
         async def settle_cancelled_promotion() -> None:
-            await requeue_turn_front(session_id, item)
+            await requeue_taken_item()
 
         settlement = asyncio.create_task(settle_cancelled_promotion())
         try:
@@ -747,7 +773,7 @@ async def _start_next_queued_turn_locked(
             # The delete endpoint has not committed yet and can still return
             # 409 while provider cleanup drains. Preserve this durable item so
             # an aborted delete can resume normally.
-            await requeue_turn_front(session_id, item)
+            await requeue_taken_item()
             return
         if (
             isinstance(
@@ -785,7 +811,7 @@ async def _start_next_queued_turn_locked(
             already_notified = bool(item.get("_turn_deferred_notified"))
             item["_turn_deferred_notified"] = True
             item["_last_deferred_detail"] = str(e.detail or "")
-            await requeue_turn_front(session_id, item)
+            await requeue_taken_item()
             if not already_notified:
                 await append_event(session_id, "turn_deferred", {
                     "queued_id": item.get("queued_id"),
@@ -810,7 +836,7 @@ async def _start_next_queued_turn_locked(
         previous_detail = item.get("_last_deferred_detail")
         item["_turn_deferred_notified"] = True
         item["_last_deferred_detail"] = deferred_detail
-        await requeue_turn_front(session_id, item)
+        await requeue_taken_item()
         if not already_notified or previous_detail != deferred_detail:
             with suppress(Exception):
                 await append_event(session_id, "turn_deferred", {
@@ -869,7 +895,9 @@ async def _recover_queued_turns_for_sessions(session_items) -> tuple[int, int]:
                 continue
             RUNS.queued[session_id] = deque([*restored, *existing_items])
             rebuilt += len(restored)
-            if not RUNS.queued[session_id][0].get("_paused_after_stop"):
+            # Held rows wait for the user; any runnable row behind them
+            # still continues after a restart.
+            if first_runnable_queued_index(RUNS.queued[session_id]) is not None:
                 scheduled_session_ids.append(session_id)
     for session_id in scheduled_session_ids:
         schedule_next_queued_turn(session_id)
@@ -1155,7 +1183,15 @@ async def _start_turn_locked(
         async with RUNS.queue_lock:
             promotion_owner = RUNS.queue_start_tasks.get(session_id)
             has_prior_queue = bool(
-                RUNS.has_waiting_work(session_id)
+                (
+                    # As in the native clients, messages kept after Stop go
+                    # back to the user: an ordinary message sent to an idle
+                    # chat runs now instead of waiting behind them. Internal
+                    # turns keep waiting for every queued row.
+                    RUNS.has_runnable_waiting_work(session_id)
+                    if req.purpose is None
+                    else RUNS.has_waiting_work(session_id)
+                )
                 or (
                     promotion_owner is not None
                     and not promotion_owner.done()

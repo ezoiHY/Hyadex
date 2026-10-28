@@ -1,6 +1,7 @@
 import HyadexAPI
 import HyadexCore
 import SwiftUI
+@preconcurrency import UserNotifications
 
 public struct SettingsView: View {
     @Bindable var model: AppModel
@@ -22,7 +23,6 @@ public struct SettingsView: View {
 private struct GeneralSettings: View {
     @AppStorage("sendWithCommandReturn") private var sendWithCommandReturn = false
     @AppStorage("expandThinking") private var expandThinking = false
-    @AppStorage("foldToolRuns") private var foldToolRuns = true
     @AppStorage("showUsage") private var showUsage = true
 
     var body: some View {
@@ -34,9 +34,8 @@ private struct GeneralSettings: View {
                 }
             }
             Section("时间线") {
-                Toggle("默认展开思考过程", isOn: $expandThinking)
-                Toggle("把连续的工具调用折叠成一行", isOn: $foldToolRuns)
-                Toggle("显示 token 用量", isOn: $showUsage)
+                Toggle("默认展开每轮的处理过程", isOn: $expandThinking)
+                Toggle("在边栏底部显示套餐用量", isOn: $showUsage)
             }
         }
         .formStyle(.grouped)
@@ -49,8 +48,39 @@ private struct NotificationSettings: View {
     @AppStorage("notifyOnlyInBackground") private var notifyOnlyInBackground = true
     @AppStorage("dockBadge") private var dockBadge = true
 
+    @State private var permission: UNAuthorizationStatus?
+
     var body: some View {
         Form {
+            Section {
+                LabeledContent("系统通知") {
+                    HStack(spacing: 8) {
+                        Text(permissionLabel).foregroundStyle(permission == .denied ? Color.orange : .secondary)
+                        switch permission {
+                        case .notDetermined?:
+                            Button("允许通知") {
+                                Task {
+                                    _ = try? await UNUserNotificationCenter.current()
+                                        .requestAuthorization(options: [.alert, .sound])
+                                    await refresh()
+                                }
+                            }
+                        case .denied?:
+                            Button("打开系统设置") {
+                                if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                        default:
+                            EmptyView()
+                        }
+                    }
+                }
+            } footer: {
+                Text("代理的紧急提醒总会以红色横幅显示在窗口里；允许系统通知后，Hyadex 在后台时也会弹出通知。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section {
                 Toggle("代理需要批准时", isOn: $notifyApproval)
                 Toggle("一轮回复完成时", isOn: $notifyFinished)
@@ -61,6 +91,20 @@ private struct NotificationSettings: View {
             }
         }
         .formStyle(.grouped)
+        .task { await refresh() }
+    }
+
+    private var permissionLabel: String {
+        switch permission {
+        case .authorized?, .provisional?: "已允许"
+        case .denied?: "已关闭"
+        case .notDetermined?: "尚未询问"
+        default: "—"
+        }
+    }
+
+    private func refresh() async {
+        permission = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
     }
 }
 

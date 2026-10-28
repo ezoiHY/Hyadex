@@ -10,6 +10,8 @@ struct TimelineView: View {
     var mentionHandles: Set<String> = []
     /// Name each agent message. A one-agent chat does not need it.
     var showsAuthors = true
+    /// Older history on the server: whether it is loading, and how to load it.
+    var older: (loading: Bool, load: () -> Void)? = nil
     /// Sent but not yet acknowledged by the server.
     var pending: [PendingSend] = []
     var activity: LiveActivity? = nil
@@ -24,26 +26,36 @@ struct TimelineView: View {
     /// Durations of finished member turns, keyed by their first step id.
     var processSeconds: [String: Int] = [:]
     var onDecideMember: (GroupApproval, ApprovalDecision) -> Void = { _, _ in }
+    /// An item to bring into view and highlight briefly (a search hit).
+    var focusID: String? = nil
+    @State private var highlighted: String?
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Theme.timelineSpacing) {
-                    ForEach(rows) { row in
-                        switch row {
-                        case .item(let item):
-                            TimelineRow(item: item, mentionHandles: mentionHandles, showsAuthors: showsAuthors,
-                                        onOpenFile: onOpenFile, onDecide: onDecide, loadMedia: loadMedia)
-                        case .process(_, let steps, let seconds, let live, let inProgress):
-                            ProcessRow(steps: steps, seconds: seconds, live: live ? activity : nil, inProgress: inProgress)
-                        case .answer(let steps, let seconds, let message):
-                            AnswerRow(steps: steps, seconds: seconds, message: message, mentionHandles: mentionHandles,
-                                      onOpenFile: onOpenFile)
-                        case .liveTurn(let turn):
-                            LiveTurnRow(turn: turn, onDecide: onDecideMember)
-                        case .activity:
-                            if let activity { ActivityLine(activity: activity) }
+                    if let older {
+                        HStack {
+                            Spacer()
+                            if older.loading {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Button("加载更早的消息", action: older.load)
+                                    .buttonStyle(.borderless)
+                                    .font(.callout)
+                            }
+                            Spacer()
                         }
+                    }
+                    ForEach(rows) { row in
+                        rowView(row)
+                            // Highlight around the row without moving it.
+                            .background {
+                                RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                                    .fill(Color.accentColor.opacity(row.id == highlighted ? 0.14 : 0))
+                                    .padding(-6)
+                            }
+                            .animation(.easeInOut(duration: 0.4), value: highlighted)
                     }
                     Color.clear.frame(height: 1).id(Self.bottomID)
                 }
@@ -57,11 +69,55 @@ struct TimelineView: View {
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.bottom, for: .sizeChanges)
             .defaultScrollAnchor(.top, for: .alignment)
-            .onChange(of: items.last) { scrollToBottom(proxy) }
+            .onChange(of: items.last) { if highlighted == nil { scrollToBottom(proxy) } }
+            .onChange(of: focusID, initial: true) { focus(proxy) }
             .onChange(of: pending) { scrollToBottom(proxy) }
             .onChange(of: activity?.kind) { scrollToBottom(proxy) }
             // Follow a member's progress, and bring a new approval into view.
             .onChange(of: liveTurns.map { "\($0.id)|\($0.steps.count)|\($0.approvals.count)" }) { scrollToBottom(proxy) }
+        }
+    }
+
+    @ViewBuilder private func rowView(_ row: Row) -> some View {
+        switch row {
+        case .item(let item):
+            TimelineRow(item: item, mentionHandles: mentionHandles, showsAuthors: showsAuthors,
+                        onOpenFile: onOpenFile, onDecide: onDecide, loadMedia: loadMedia)
+        case .process(_, let steps, let seconds, let live, let inProgress):
+            ProcessRow(steps: steps, seconds: seconds, live: live ? activity : nil, inProgress: inProgress)
+        case .answer(let steps, let seconds, let message):
+            AnswerRow(steps: steps, seconds: seconds, message: message, mentionHandles: mentionHandles,
+                      onOpenFile: onOpenFile)
+        case .liveTurn(let turn):
+            LiveTurnRow(turn: turn, onDecide: onDecideMember)
+        case .activity:
+            if let activity { ActivityLine(activity: activity) }
+        }
+    }
+
+    /// The row showing an item: the item itself, or the folded work or answer containing it.
+    private func rowID(containing itemID: String) -> String? {
+        for row in rows {
+            switch row {
+            case .item(let item) where item.id == itemID: return row.id
+            case .process(_, let steps, _, _, _) where steps.contains { $0.id == itemID }: return row.id
+            case .answer(let steps, _, let message) where message.id == itemID || steps.contains { $0.id == itemID }:
+                return row.id
+            default: continue
+            }
+        }
+        return nil
+    }
+
+    private func focus(_ proxy: ScrollViewProxy) {
+        guard let focusID, let eventID = focusID.split(separator: "|").first.map(String.init),
+              let target = rowID(containing: eventID) else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(target, anchor: .center) }
+            highlighted = target
+            try? await Task.sleep(for: .seconds(2.5))
+            if highlighted == target { highlighted = nil }
         }
     }
 
@@ -264,7 +320,13 @@ private struct ProcessRow: View {
     let seconds: Int?
     let live: LiveActivity?
     var inProgress = false
-    @State private var expanded = false
+    /// 设置 › 通用: open a turn's work by default.
+    @AppStorage("expandThinking") private var expandByDefault = false
+    @State private var expandedChoice: Bool?
+    private var expanded: Bool {
+        get { expandedChoice ?? expandByDefault }
+        nonmutating set { expandedChoice = newValue }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -479,7 +541,12 @@ private struct OrchestratorNote: View {
 private struct ThinkingRow: View {
     let seconds: Int
     let text: String
-    @State private var expanded = false
+    @AppStorage("expandThinking") private var expandByDefault = false
+    @State private var expandedChoice: Bool?
+    private var expanded: Bool {
+        get { expandedChoice ?? expandByDefault }
+        nonmutating set { expandedChoice = newValue }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -520,7 +587,12 @@ struct ToolRow: View {
     let output: String
     let status: ToolStatus
     let seconds: Double
-    @State private var expanded = false
+    @AppStorage("expandThinking") private var expandByDefault = false
+    @State private var expandedChoice: Bool?
+    private var expanded: Bool {
+        get { expandedChoice ?? expandByDefault }
+        nonmutating set { expandedChoice = newValue }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

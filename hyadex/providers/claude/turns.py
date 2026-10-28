@@ -78,9 +78,13 @@ from hyadex.providers.claude.runtime import (
     resolve_claude_resume_provider,
 )
 from hyadex.providers.claude.projection import (
+    claude_compaction_completed_payload,
+    claude_local_command_fields_for_turn,
     claude_sdk_result_details,
     mark_provider_turn_ready,
     project_claude_sdk_message,
+    publish_claude_local_command_outputs,
+    remember_claude_local_command_output,
     tool_changed_paths,
 )
 from hyadex.providers.claude.interactions import (
@@ -243,6 +247,8 @@ async def run_claude_print(
     provider_id: str | None = None
     current_tools: dict[str, dict[str, Any]] = {}
     had_tool_activity = False
+    native_output = False
+    local_command_outputs: list[dict[str, Any]] = []
     changed_paths: set[str] = set()
     last_event = time.time()
     idle_killed = False
@@ -288,6 +294,10 @@ async def run_claude_print(
                 )
             etype = event.get("type")
             if etype == "assistant":
+                local_command = claude_local_command_fields_for_turn(event, session_id, run_id)
+                native_output = native_output or (
+                    bool(local_command) and not local_command.get("local_command_detached")
+                )
                 for block in event.get("message", {}).get("content", []):
                     btype = block.get("type")
                     if btype == "text" and block.get("text"):
@@ -297,6 +307,7 @@ async def run_claude_print(
                                 "run_id": run_id,
                                 "text": text,
                                 "backend": BACKEND_CLAUDE,
+                                **local_command,
                                 **run_event_metadata(run_id),
                             })
                     elif btype == "thinking" and block.get("thinking"):
@@ -308,8 +319,27 @@ async def run_claude_print(
                         current_tools[tid] = tool
                         changed_paths.update(tool_changed_paths(tool))
                         await append_event(session_id, "tool_started", {"run_id": run_id, "tool": tool})
+            elif etype == "system" and event.get("subtype") == "compact_boundary":
+                native_output = True
+                await append_event(
+                    session_id,
+                    "claude_compaction_completed",
+                    claude_compaction_completed_payload(run_id, event),
+                )
             elif etype == "user":
-                for block in event.get("message", {}).get("content", []):
+                content = (event.get("message") or {}).get("content", [])
+                if isinstance(content, str):
+                    # Compaction summaries and local-command output arrive
+                    # as plain-text user records.
+                    remember_claude_local_command_output(
+                        local_command_outputs,
+                        content,
+                        event.get("uuid"),
+                    )
+                    continue
+                for block in content if isinstance(content, list) else []:
+                    if not isinstance(block, dict):
+                        continue
                     if block.get("type") == "tool_result":
                         had_tool_activity = True
                         tid = block.get("tool_use_id")
@@ -330,6 +360,13 @@ async def run_claude_print(
                     provider_id = None
                     await append_event(session_id, "error", {"run_id": run_id, "backend": BACKEND_CLAUDE, "message": result_error, **run_event_metadata(run_id)})
                     continue
+                if await publish_claude_local_command_outputs(
+                    session_id,
+                    run_id,
+                    event.get("local_command"),
+                    local_command_outputs,
+                ):
+                    native_output = True
                 final_text = event.get("result", "") or final_text
                 if event.get("session_id"):
                     provider_id = event["session_id"]
@@ -357,6 +394,7 @@ async def run_claude_print(
         prompt=prompt,
         result_text=result_text,
         had_tool_activity=had_tool_activity,
+        native_output=native_output,
         stopped=stopped,
         terminal_result_received=terminal_result_received,
         existing_error=bool(
@@ -837,8 +875,10 @@ async def run_claude_sdk(
     current_diff_baseline = diff_baseline
     current_prompt = prompt
     text_parts: list[str] = []
+    local_command_outputs: list[dict[str, Any]] = []
     current_tools: dict[str, dict[str, Any]] = {}
     tool_activity_run_ids: set[str] = set()
+    native_output_run_ids: set[str] = set()
     projection_error_run_ids: set[str] = set()
     changed_paths: set[str] = set()
     seen_artifacts: set[str] = set()
@@ -1351,6 +1391,8 @@ async def run_claude_sdk(
                     changed_paths=changed_paths,
                     tool_activity_run_ids=tool_activity_run_ids,
                     error_run_ids=projection_error_run_ids,
+                    local_command_outputs=local_command_outputs,
+                    native_output_run_ids=native_output_run_ids,
                 )
                 if projected_result is None:
                     continue
@@ -1785,6 +1827,7 @@ async def run_claude_sdk(
             current_diff_baseline = candidate_baseline
             current_prompt = str(steer_state["request_prompt"])
             text_parts = []
+            local_command_outputs = []
             current_tools = {}
             changed_paths = candidate_paths
             seen_artifacts = candidate_artifacts
@@ -1860,6 +1903,7 @@ async def run_claude_sdk(
                     had_tool_activity=(
                         previous_run_id in tool_activity_run_ids
                     ),
+                    native_output=previous_run_id in native_output_run_ids,
                     stopped=False,
                     terminal_result_received=True,
                     existing_error=bool(
@@ -2157,6 +2201,7 @@ async def run_claude_sdk(
             prompt=current_prompt,
             result_text=result_text,
             had_tool_activity=current_run_id in tool_activity_run_ids,
+            native_output=current_run_id in native_output_run_ids,
             stopped=stopped,
             terminal_result_received=result_details is not None,
             existing_error=bool(

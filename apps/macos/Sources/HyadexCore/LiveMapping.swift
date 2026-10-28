@@ -84,7 +84,7 @@ enum LiveMapping {
     }
 
     static func chat(_ json: JSON, previous: ChatSummary?) -> ChatSummary? {
-        guard let id = json["id"].string, json["archived"].bool != true,
+        guard let id = json["id"].string,
               let backend = json["backend"].string.flatMap(AgentBackend.named) else { return nil }
         var state: ActivityState = LiveMapping.activeEventTypes.contains(json["latest_event_type"].string ?? "")
             ? .running : .idle
@@ -106,14 +106,15 @@ enum LiveMapping {
             state: state,
             pinned: json["pinned"].bool == true,
             unread: json["manual_unread"].bool == true || agentSeq > readSeq,
-            tokensUsed: previous?.tokensUsed ?? 0
+            tokensUsed: previous?.tokensUsed ?? 0,
+            archived: json["archived"].bool == true
         )
     }
 
     /// `members` holds member-chat records by session id. Turns run with the member
     /// chat's settings, so those are authoritative over the group's own copy.
     static func group(_ json: JSON, previous: GroupSummary?, members: [String: JSON] = [:]) -> GroupSummary? {
-        guard let id = json["id"].string, json["archived"].bool != true, json["kind"].string != "autopilot" else { return nil }
+        guard let id = json["id"].string, json["kind"].string != "autopilot" else { return nil }
         let participants = json["participants"].array.compactMap { item -> Participant? in
             guard let handle = item["handle"].string, let backend = item["backend"].string.flatMap(AgentBackend.named) else {
                 return nil
@@ -130,7 +131,7 @@ enum LiveMapping {
                                permission: member.map { PermissionPreset.label(for: $0, backend: backend) })
         }
         let stats = json["stats"]
-        return GroupSummary(
+        var group = GroupSummary(
             id: id,
             title: json["title"].text ?? "讨论组",
             cwd: abbreviate(json["cwd"].string ?? "~"),
@@ -140,8 +141,11 @@ enum LiveMapping {
             lastActivity: json["updated_at"].date ?? .distantPast,
             unread: false,
             promptChars: stats["prompt_chars"].int ?? 0,
-            dispatches: stats["dispatches"].int ?? 0
+            dispatches: stats["dispatches"].int ?? 0,
+            goal: GroupGoal.parse(json["goal"])
         )
+        group.archived = json["archived"].bool == true
+        return group
     }
 
     static func runStatus(_ raw: String?) -> AutopilotStatus {
@@ -239,6 +243,18 @@ enum LiveMapping {
         }
     }
 
+    static func scheduleSpec(_ job: JSON) -> JobSchedule? {
+        switch job["schedule_kind"].string {
+        case "interval":
+            guard let seconds = job["interval_seconds"].int else { return nil }
+            return .interval(seconds: seconds, repeats: job["loop"].bool ?? true,
+                             firstRun: job["next_run_at"].date ?? job["schedule_start_at"].date)
+        case "cron": return job["cron_expression"].string.map(JobSchedule.cron)
+        case "rrule": return job["rrule"].string.map(JobSchedule.rrule)
+        default: return nil
+        }
+    }
+
     static func job(_ json: JSON, chatTitles: [String: String]) -> ScheduledJob? {
         guard let id = json["id"].string else { return nil }
         let target: String
@@ -260,7 +276,10 @@ enum LiveMapping {
             nextRun: json["next_run_at"].date,
             lastResult: lastRun == nil ? nil : (failed ? .failed : .done),
             lastRun: lastRun,
-            enabled: json["enabled"].bool != false
+            enabled: json["enabled"].bool != false,
+            sessionID: json["session_id"].string,
+            groupID: json["group_id"].string,
+            spec: scheduleSpec(json)
         )
     }
 }

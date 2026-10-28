@@ -151,7 +151,8 @@ struct ProjectionTests {
                              "claude_needs_user_action": true]
         #expect(LiveMapping.chat(waiting, previous: nil)?.state == .needsAction)
         #expect(LiveMapping.chat(["id": "s3", "backend": "gemini"], previous: nil) == nil)
-        #expect(LiveMapping.chat(["id": "s4", "backend": "claude", "archived": true], previous: nil) == nil)
+        // Archived chats stay in the list, flagged, for the sidebar's 已归档 section.
+        #expect(LiveMapping.chat(["id": "s4", "backend": "claude", "archived": true], previous: nil)?.archived == true)
     }
 }
 

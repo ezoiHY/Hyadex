@@ -344,6 +344,84 @@ class GroupEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("first task", resent)  # cursor was rolled back
         self.assertIn("You are @codex", resent)  # the charter was never delivered
 
+    async def held(self, session_id: str, *queued_ids: str) -> None:
+        """A Stop in the member chat held these queued turns."""
+        self.engine.observe_member_event(session_id, {"type": "turn_queue_paused", "queued_ids": list(queued_ids)})
+        await self.engine.drain()
+
+    async def test_stop_in_member_chat_settles_and_withdraws_held_group_message(self) -> None:
+        group = await self.create()
+        self.runtime.queue_next = True
+        await self.post(group["id"], "@codex first task")
+        turn = self.runtime.turns[0]
+        codex = self.member(group, "codex")
+
+        await self.held(codex, "q_other", turn["queued_id"])
+
+        self.assertEqual(self.runtime.cancelled, [(codex, turn["queued_id"])])
+        group = self.engine.groups[group["id"]]
+        self.assertEqual({item["status"] for item in group["dispatches"].values()}, {"stopped"})
+        self.assertEqual(self.messages(group["id"])[-1]["text"], "@codex was stopped before it started.")
+        self.assertEqual(self.engine.read_events(group["id"], types={"member_status"})[-1]["state"], "stopped")
+        self.assertEqual(self.engine.read_events(group["id"], types={"round_finished"})[-1]["status"], "done")
+        participant = next(item for item in group["participants"] if item["handle"] == "codex")
+        self.assertEqual(self.engine.participant_status(participant, group)["state"], "idle")
+        # The cursor was rolled back, so the next message resends the first.
+        await self.post(group["id"], "@codex second task")
+        self.assertIn("first task", self.runtime.turns[1]["prompt"])
+
+    async def test_held_group_message_lets_a_sequential_round_continue(self) -> None:
+        group = await self.create()
+        self.runtime.queue_next = True
+        await self.post(group["id"], "@claude then @codex please", mode="sequential")
+        self.assertEqual([turn["session_id"] for turn in self.runtime.turns], [self.member(group, "claude")])
+
+        await self.held(self.member(group, "claude"), self.runtime.turns[0]["queued_id"])
+
+        self.assertEqual([turn["session_id"] for turn in self.runtime.turns],
+                         [self.member(group, "claude"), self.member(group, "codex")])
+        statuses = {item["handle"]: item["status"] for item in self.engine.groups[group["id"]]["dispatches"].values()}
+        self.assertEqual(statuses, {"claude": "stopped", "codex": "running"})
+
+    async def test_unrelated_or_unwithdrawable_held_rows_leave_the_dispatch_queued(self) -> None:
+        group = await self.create()
+        self.runtime.queue_next = True
+        await self.post(group["id"], "@codex task")
+        turn = self.runtime.turns[0]
+        codex = self.member(group, "codex")
+
+        await self.held(codex, "q_direct_message")
+        self.assertEqual(self.runtime.cancelled, [])
+
+        self.runtime.cancel_succeeds = False
+        await self.held(codex, turn["queued_id"])
+        self.assertEqual(self.runtime.cancelled, [(codex, turn["queued_id"])])
+        self.assertEqual({item["status"] for item in self.engine.groups[group["id"]]["dispatches"].values()},
+                         {"queued"})
+        self.assertEqual(self.engine.read_events(group["id"], types={"round_finished"}), [])
+
+    async def test_recovery_settles_a_group_message_held_before_restart(self) -> None:
+        for withdrawn in (True, False):
+            with self.subTest(withdrawn=withdrawn):
+                group = await self.create()
+                self.runtime.queue_next = True
+                await self.post(group["id"], "@codex task")
+                turn = self.runtime.turns[-1]
+                self.runtime.cancelled.clear()
+                self.runtime.cancel_succeeds = withdrawn
+                restarted = GroupEngine(self.root / "groups", self.runtime)
+                self.runtime.engine = restarted
+                self.runtime.progress = {turn["request_id"]: {"held": True}}
+                await restarted.load()
+                await restarted.recover()
+                dispatch = next(item for item in restarted.groups[group["id"]]["dispatches"].values()
+                                if item["queued_id"] == turn["queued_id"])
+                self.assertEqual(self.runtime.cancelled, [(turn["session_id"], turn["queued_id"])])
+                self.assertEqual(dispatch["status"], "stopped" if withdrawn else "queued")
+                self.engine = restarted
+                self.runtime.progress = None
+                self.runtime.cancel_succeeds = True
+
     async def test_stop_falls_back_to_interrupting_a_turn_that_already_started(self) -> None:
         group = await self.create()
         self.runtime.queue_next = True

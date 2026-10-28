@@ -36,28 +36,6 @@ private struct SheetScaffold<Content: View>: View {
     }
 }
 
-/// A folder path field with a "Choose…" button.
-private struct FolderField: View {
-    @Binding var path: String
-    @State private var picking = false
-
-    var body: some View {
-        LabeledContent("工作目录") {
-            HStack {
-                TextField("", text: $path, prompt: Text("~/Code/project"))
-                    .labelsHidden()
-                    .font(.callout.monospaced())
-                Button("选择…") { picking = true }
-            }
-        }
-        .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { result in
-            if case .success(let url) = result {
-                path = url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
-            }
-        }
-    }
-}
-
 struct NewChatSheet: View {
     @Bindable var model: AppModel
     @State private var backend: AgentBackend = .claude
@@ -84,7 +62,7 @@ struct NewChatSheet: View {
             Picker("模型", selection: $modelName) {
                 ForEach(models) { Text($0.label).tag($0.value) }
             }
-            FolderField(path: $cwd)
+            ServerFolderField(model: model, path: $cwd)
             Picker("权限", selection: $permission) {
                 ForEach(permissions, id: \.self) { Text($0).tag($0) }
             }
@@ -113,7 +91,7 @@ struct NewGroupSheet: View {
             model.createGroup(title: title, cwd: cwd, participants: members)
         } content: {
             TextField("名称", text: $title, prompt: Text("例如：登录模块重构"))
-            FolderField(path: $cwd)
+            ServerFolderField(model: model, path: $cwd)
             Section("成员") {
                 Toggle(isOn: $includeClaude) {
                     HStack { AgentAvatar(backend: .claude, size: 18); Text("@claude · Claude Code") }
@@ -153,7 +131,7 @@ struct NewAutopilotSheet: View {
                 TextField("目标", text: $goal, prompt: Text("要完成什么？写清楚范围和验收标准。"), axis: .vertical)
                     .labelsHidden()
                     .lineLimit(4...8)
-                FolderField(path: $cwd)
+                ServerFolderField(model: model, path: $cwd)
                 HStack(spacing: 6) {
                     AgentAvatar(backend: .claude, size: 16); Text("Claude 规划")
                     Image(systemName: "arrow.right").font(.caption).foregroundStyle(.tertiary)

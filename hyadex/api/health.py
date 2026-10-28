@@ -141,6 +141,12 @@ async def health() -> dict[str, Any]:
                 "terminal_protocol": TERMINAL_WEBSOCKET_PROTOCOL,
             },
             "event_stream_liveness_v1": {"available": True, "version": 1},
+            "queue_resume_v1": {
+                "available": True,
+                "version": 1,
+                "endpoint": "/api/sessions/{session_id}/queue/resume",
+                "message": "Messages held by Stop can be resumed in queue order.",
+            },
             "session_fork_completed_prefix_v1": {
                 "available": True,
                 "version": 1,
@@ -290,6 +296,7 @@ async def health() -> dict[str, Any]:
                     "permission_mode_control": True,
                     "permission_modes": True,
                     "context_usage_refresh": True,
+                    "mcp_management": True,
                     "resume": True,
                     "fork": True,
                 },

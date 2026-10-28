@@ -13,7 +13,27 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
+
+
+def queued_turn_is_held(item: dict[str, Any]) -> bool:
+    """The row waits for the user: Stop held it or its delivery is uncertain.
+
+    A held row keeps its place but never blocks the rows behind it; it runs
+    only after an explicit queue resume or Force Send.
+    """
+    return (
+        item.get("_paused_after_stop") is True
+        or item.get("_native_delivery_fenced") is True
+    )
+
+
+def first_runnable_queued_index(items: Iterable[dict[str, Any]] | None) -> int | None:
+    """Index of the first queued row that is not held, in queue order."""
+    for index, item in enumerate(items or ()):
+        if not queued_turn_is_held(item):
+            return index
+    return None
 
 
 @dataclass(eq=False)
@@ -74,6 +94,14 @@ class RunState:
     def has_waiting_work(self, session_id: str) -> bool:
         """Queued rows, a promoted Run-now row, or a Force Send in progress."""
         return bool(self.queued.get(session_id) or self.run_now.get(session_id)) or session_id in self.steering
+
+    def has_runnable_waiting_work(self, session_id: str) -> bool:
+        """Like ``has_waiting_work``, ignoring queued rows held for the user."""
+        return (
+            bool(self.run_now.get(session_id))
+            or session_id in self.steering
+            or first_runnable_queued_index(self.queued.get(session_id)) is not None
+        )
 
 
 RUNS = RunState()

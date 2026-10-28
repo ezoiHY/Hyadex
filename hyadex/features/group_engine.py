@@ -66,7 +66,9 @@ MAX_EARLY_TERMINALS = 64
 
 ACTIVE_DISPATCH_STATES = {"starting", "queued", "running"}
 TERMINAL_EVENT_TYPES = {"turn_finished", "turn_stopped"}
-OBSERVED_EVENT_TYPES = {"turn_started", "turn_unqueued", *TERMINAL_EVENT_TYPES}
+# ``turn_queue_paused``: a Stop in the member chat held queued rows, which may
+# include a group message that has not started.
+OBSERVED_EVENT_TYPES = {"turn_started", "turn_unqueued", "turn_queue_paused", *TERMINAL_EVENT_TYPES}
 
 ANALYSIS_ONLY_SUFFIX = (
     "This is analysis only. Do NOT edit, create, or delete any files. Do NOT write code."
@@ -273,7 +275,11 @@ class GroupRuntime(Protocol):
 
     async def find_member_progress(self, session_id: str, *, run_id: str | None, queued_id: str | None,
                                    request_id: str) -> dict[str, Any]:
-        """Return {exists, run_id, queued_id, terminal, unqueued} from the member chat's events."""
+        """Return {exists, run_id, queued_id, terminal, unqueued, held} from the member chat.
+
+        ``held`` is true when the queued turn is still waiting and a Stop in
+        the member chat holds it. Runtimes that cannot tell may omit it.
+        """
 
     async def set_member_goal(self, session_id: str, objective: str) -> dict[str, Any]: ...
 
@@ -523,6 +529,10 @@ class GroupEngine:
             self._restore_member(group, dispatch)
             await self._finish_dispatch_without_reply(
                 group, dispatch, "stopped", f"@{dispatch['handle']}'s message was removed from its queue.")
+        elif progress.get("held") and dispatch.get("queued_id") and not dispatch.get("run_id"):
+            # Stop held it in the member chat before the restart.
+            dispatch["status"] = "queued"
+            await self._withdraw_held_dispatch(group, dispatch)
         elif dispatch["run_id"]:
             dispatch["status"] = "running"
         elif dispatch["queued_id"]:
@@ -1057,6 +1067,23 @@ class GroupEngine:
             await self._complete_dispatch(group, dispatch, early, advance=False)
         return dispatch
 
+    async def _withdraw_held_dispatch(self, group: dict[str, Any], dispatch: dict[str, Any]) -> bool:
+        """Settle a group message that a Stop in its member chat held.
+
+        A held row waits for that chat's user. For the group it is a stop: the
+        row is withdrawn, so it can never run detached from its round, and the
+        dispatch ends as stopped. If the row cannot be withdrawn (it already
+        started or left the queue, whose own event settles it, or the queue is
+        briefly fenced), the dispatch stays queued.
+        """
+
+        if not await self.runtime.cancel_queued(dispatch["session_id"], str(dispatch["queued_id"])):
+            return False
+        self._restore_member(group, dispatch)
+        await self._finish_dispatch_without_reply(
+            group, dispatch, "stopped", f"@{dispatch['handle']} was stopped before it started.")
+        return True
+
     def _restore_member(self, group: dict[str, Any], dispatch: dict[str, Any]) -> None:
         """Undo a dispatch's member bookkeeping if no later dispatch built on it."""
 
@@ -1201,6 +1228,16 @@ class GroupEngine:
                 match["status"] = "running"
                 await self.append(group, "member_status", {"handle": match["handle"], "state": "running",
                                                            "dispatch_id": match["id"]})
+            return
+        if event.get("type") == "turn_queue_paused":
+            held = {str(item) for item in event.get("queued_ids") or () if item}
+            for match in [item for item in dispatches
+                          if item.get("status") == "queued" and not item.get("run_id")
+                          and str(item.get("queued_id") or "") in held]:
+                if await self._withdraw_held_dispatch(group, match):
+                    round_ = group.get("rounds", {}).get(match.get("round_id"))
+                    if round_ is not None:
+                        await self._advance_round(group, round_)
             return
         if event.get("type") == "turn_unqueued":
             queued_id = str(event.get("queued_id") or "")

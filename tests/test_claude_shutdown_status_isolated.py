@@ -51,6 +51,7 @@ async def probe(error, late_shutdown=False):
     cwd = "unused"
     current_prompt = "user prompt"
     tool_activity_run_ids = set()
+    native_output_run_ids = set()
     current_diff_baseline = {}
     changed_paths = set()
     seen_artifacts = set()

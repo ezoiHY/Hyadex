@@ -873,6 +873,14 @@ def reconcile_cursor_history_items(
     in chronological order and retain unmatched provider items before,
     between, and after them. This is what preserves an external exchange that
     precedes a later Hyadex-owned turn in the same provider delta.
+
+    A credit that carries Claude's message id can only ever match the record
+    with that id, so it is matched by id wherever it falls and never blocks
+    the in-order walk. Claude can deliver one message again in a later turn's
+    stream (the result of a ``/goal clear`` sent mid-turn arrives inside the
+    next ``/compact`` turn): that live copy sits out of transcript order, and
+    its record may even precede this delta. Holding the walk on it made every
+    later message of the delta look new and be imported a second time.
     """
 
     after_seq = max(0, int(timeline_after_seq))
@@ -891,25 +899,53 @@ def reconcile_cursor_history_items(
         message_details=message_details,
     )
 
+    def credit(index: int) -> dict[str, Any]:
+        seq, key = timeline_messages[index]
+        return message_details.get(seq, {"key": key})
+
+    by_message_id: dict[str, list[int]] = {}
+    for index in range(len(timeline_messages)):
+        message_id = credit(index).get("message_id")
+        if message_id:
+            by_message_id.setdefault(message_id, []).append(index)
+    consumed: set[int] = set()
     fresh: list[dict[str, str]] = []
     timeline_index = 0
-    consumed_seq = after_seq
     last_match_index = -1
     for item_index, item in enumerate(items):
         item_details = history_message_match_details(item.get("kind", ""), item.get("text", ""), item, provider_item=True)
-        if (
-            timeline_index < len(timeline_messages)
-            and history_messages_match(item_details, message_details.get(
-                timeline_messages[timeline_index][0], {"key": timeline_messages[timeline_index][1]},
-            ))
-        ):
-            consumed_seq = timeline_messages[timeline_index][0]
-            timeline_index += 1
-            last_match_index = item_index
-        else:
+        matched = next((
+            index for index in by_message_id.get(item_details.get("message_id") or "", ())
+            if index not in consumed and history_messages_match(item_details, credit(index))
+        ), None)
+        if matched is None:
+            while timeline_index < len(timeline_messages) and (
+                timeline_index in consumed or credit(timeline_index).get("message_id")
+            ):
+                timeline_index += 1
+            if (
+                timeline_index < len(timeline_messages)
+                and history_messages_match(item_details, credit(timeline_index))
+            ):
+                matched = timeline_index
+                timeline_index += 1
+        if matched is None:
             fresh.append(item)
+        else:
+            consumed.add(matched)
+            last_match_index = item_index
 
-    if timeline_index == len(timeline_messages):
+    # The watermark covers the consumed prefix of credits. An unconsumed
+    # message-id credit before a consumed one is a re-delivered copy whose
+    # record was already read; an unconsumed credit without an id still stops
+    # it, so a capped pass leaves that credit for the next pass.
+    consumed_seq = after_seq
+    for index, (seq, _key) in enumerate(timeline_messages):
+        if index in consumed:
+            consumed_seq = seq
+        elif not credit(index).get("message_id"):
+            break
+    if len(consumed) == len(timeline_messages):
         # All non-import ownership credits in the fixed window were consumed.
         # Advancing across intervening non-message/import events is safe. If
         # the credit window filled, however, later credits deliberately belong
@@ -1247,6 +1283,7 @@ FORK_HISTORY_EVENT_TYPES = {
     # state, so retaining them preserves the chronology of the conversation.
     "codex_compaction_started",
     "codex_compaction_completed",
+    "claude_compaction_completed",
 }
 
 

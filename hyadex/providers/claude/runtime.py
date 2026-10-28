@@ -119,6 +119,8 @@ from hyadex.providers.claude.goals import (
     refresh_claude_goal,
 )
 from hyadex.providers.claude.history import (
+    canonical_claude_cwd,
+    claude_cwds_match,
     claude_history_candidates,
     claude_transcript_matches_cwd,
     find_claude_history,
@@ -318,15 +320,36 @@ async def mark_claude_sdk_turn_ready_after_ack(
         return True
 
 
+def claude_project_dirs_for_cwd(cwd: str) -> list[Path]:
+    """Return the project directories Claude may have used for ``cwd``.
+
+    Claude names the directory after the symlink-resolved path, while older
+    records and this server keep the path the chat was given. Check both.
+    """
+
+    names: list[str] = []
+    for candidate in (str(Path(cwd).expanduser()), canonical_claude_cwd(cwd)):
+        name = candidate.replace("/", "-")
+        if name not in names:
+            names.append(name)
+    return [CLAUDE_PROJECTS_ROOT / name for name in names]
+
+
 def claude_project_dir_for_cwd(cwd: str) -> Path:
     # Historical fast path. Current Claude versions apply additional private
     # sanitization, so resume also validates UUID candidates by transcript cwd.
-    project_name = str(Path(cwd).expanduser()).replace("/", "-")
-    return CLAUDE_PROJECTS_ROOT / project_name
+    return claude_project_dirs_for_cwd(cwd)[0]
 
 
 def claude_resume_file_for_cwd(provider_id: str, cwd: str) -> Path:
-    return claude_project_dir_for_cwd(cwd) / f"{provider_id}.jsonl"
+    candidates = [
+        directory / f"{provider_id}.jsonl"
+        for directory in claude_project_dirs_for_cwd(cwd)
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
 
 
 def resolve_claude_resume_provider(sess: dict[str, Any], cwd: str) -> tuple[str | None, str | None]:
@@ -335,7 +358,7 @@ def resolve_claude_resume_provider(sess: dict[str, Any], cwd: str) -> tuple[str 
         return None, None
 
     saved_cwd = str(sess.get("claude_session_cwd") or "").strip()
-    if saved_cwd and str(Path(saved_cwd).expanduser()) != str(Path(cwd).expanduser()):
+    if saved_cwd and not claude_cwds_match(saved_cwd, cwd):
         return None, f"Claude resume skipped: provider session {provider_id} was created in {saved_cwd}, not {cwd}."
 
     expected = claude_resume_file_for_cwd(provider_id, cwd)
@@ -680,14 +703,21 @@ def claude_empty_turn_failure_message(
     stopped: bool,
     terminal_result_received: bool,
     existing_error: bool,
+    native_output: bool = False,
 ) -> str:
-    """Return a visible failure for an otherwise silent Claude turn."""
+    """Return a visible failure for an otherwise silent Claude turn.
+
+    ``native_output`` means Claude answered without model text: it ran a
+    local slash command (``/compact`` reports "Compacted") or compacted the
+    context. Its result text is empty, yet the turn succeeded.
+    """
 
     if (
         terminal_result_received
         and str(prompt or "").strip()
         and not clean_assistant_text(result_text)
         and not had_tool_activity
+        and not native_output
         and not stopped
         and not existing_error
     ):
@@ -786,6 +816,7 @@ async def claude_runtime_snapshot(session_id: str) -> dict[str, Any]:
             "permission_mode_control": True,
             "permission_modes": True,
             "context_usage_refresh": True,
+            "mcp_management": bool(is_claude and configured and sdk_available),
             "goals": bool(is_claude and configured and sdk_available),
         },
         "fallback_transport": CLAUDE_TRANSPORT_PRINT,
