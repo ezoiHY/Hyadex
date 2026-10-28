@@ -264,6 +264,10 @@ a chat, graceful app exit stopping the owned process, and restarting with that
 chat preserved. A missing-source launch showed a retryable error and no sample
 content. The 82 Swift tests include process ownership/cancellation and a real
 isolated runner; these checks do not repeat provider-turn acceptance below.
+The release-configuration package (0.1.0, build 202610281141, source 803bb1e2)
+compiled and passed signature verification. Its separate UI recheck is pending
+because native automation was unavailable; the local-startup UI checks above
+used the debug build.
 
 Against an isolated development server (API contract 29) with real Claude Code
 and Codex: sending turns, live updates, approvals for both providers, replies

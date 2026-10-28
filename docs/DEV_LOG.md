@@ -25,6 +25,10 @@ Newest first. Hyadex started from the AgentsDock server source (see
   its normal HTTP transport and real isolated state; these boundaries were not
   mocked. Provider turns and remote Keychain connections were not revalidated
   in this change. Availability: local source/package only.
+- Package: release-configuration build 202610281141 (0.1.0, source 803bb1e2)
+  compiled and passed ad-hoc signature verification. The final package's UI
+  recheck remains pending because the native automation connection was
+  unavailable; the full UI acceptance above used the debug build.
 
 ## 2026-10-28 — Mac app: files, queue, history, alerts, jobs and chat management
 
