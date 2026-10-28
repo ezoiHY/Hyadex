@@ -4,14 +4,14 @@ import HyadexTerminal
 import Observation
 
 public enum ConnectionState: Hashable, Sendable {
-    case demo
+    case disconnected
     case connecting
     case connected(version: String)
     case offline(String)
 
     public var label: String {
         switch self {
-        case .demo: "演示数据"
+        case .disconnected: "未连接"
         case .connecting: "正在连接…"
         case .connected(let version): "已连接 · v\(version)"
         case .offline(let reason): "离线 · \(reason)"
@@ -75,9 +75,11 @@ public enum GoalEditorTarget: Identifiable, Hashable, Sendable {
 @MainActor
 @Observable
 public final class AppModel {
+    public let localServer = LocalServerController()
+    public private(set) var managedLocalServerID: UUID?
     public var servers: [ServerEndpoint]
     public var currentServerID: UUID
-    public var connection: ConnectionState = .demo
+    public var connection: ConnectionState = .disconnected
 
     public var chats: [ChatSummary]
     public var groups: [GroupSummary]
@@ -166,21 +168,32 @@ public final class AppModel {
 
     /// Last action error, shown as a dismissible banner.
     public var errorMessage: String?
-    /// Whether the data shown comes from a server (false: built-in demo data).
+    /// Whether a server connection has completed successfully.
     public private(set) var isLive = false
 
-    @ObservationIgnored private var simulations: [String: Task<Void, Never>] = [:]
     @ObservationIgnored var live: LiveController?
+    @ObservationIgnored private let networkSession: URLSession
+    @ObservationIgnored private var connectionGeneration = UUID()
+    @ObservationIgnored private var managedLocalToken: String?
+    @ObservationIgnored private var defaultPlaceholder: ServerEndpoint?
     /// Events loaded when a chat opens, and per "加载更早的消息" page.
     public static var historyPageSize = 400
 
-    public init(now: Date = .now) {
+    public init(session: URLSession = .shared) {
+        networkSession = session
         let saved = (UserDefaults.standard.data(forKey: Self.serversKey))
             .flatMap { try? JSONDecoder().decode([ServerEndpoint].self, from: $0) } ?? []
         let local = ServerEndpoint(name: "这台 Mac", baseURL: URL(string: "http://127.0.0.1:7870")!)
+        defaultPlaceholder = saved.isEmpty ? local : nil
         servers = saved.isEmpty ? [local] : saved
         currentServerID = UserDefaults.standard.string(forKey: Self.currentServerKey).flatMap(UUID.init)
             .flatMap { id in saved.contains { $0.id == id } ? id : nil } ?? (saved.first ?? local).id
+        chats = []; groups = []; runs = []; jobs = []; timelines = [:]
+    }
+
+    /// Explicit development fixtures for snapshots. They never enable server actions.
+    public convenience init(snapshotFixturesAt now: Date) {
+        self.init()
         chats = SampleData.chats(now: now)
         groups = SampleData.groups(now: now)
         runs = SampleData.runs(now: now)
@@ -343,9 +356,10 @@ public final class AppModel {
 
     // MARK: Terminal
 
-    /// The chat's terminal attachment; nil in demo mode.
+    /// The chat's terminal attachment; available only while connected.
     public func terminalSession(for chatID: String) -> TerminalSession? {
-        guard let live else { return nil }
+        guard let live = requireLive() else { return nil }
+
         if let session = terminalSessions[chatID] { return session }
         let client = live.client
         let session = TerminalSession { columns, rows in
@@ -356,6 +370,7 @@ public final class AppModel {
     }
 
     public func toggleTerminal(_ chatID: String) {
+        guard requireLive() != nil else { return }
         if terminalOpen.contains(chatID) {
             terminalOpen.remove(chatID)
         } else {
@@ -365,18 +380,21 @@ public final class AppModel {
 
     public func refreshTerminalWindows(_ chatID: String) async {
         guard let live, let json = try? await live.client.terminalWindows(chatID) else { return }
+        guard self.live === live else { return }
         terminalWindows[chatID] = TerminalWindow.parse(json)
     }
 
     /// tmux window and pane actions: new-window, split-right, split-down,
     /// select-window, kill-window, kill-pane.
     public func terminalAction(_ chatID: String, _ action: String, target: String? = nil) {
-        guard let live else { return }
+        guard let live = requireLive() else { return }
         Task {
             do {
                 let json = try await live.client.terminalAction(chatID, action: action, target: target)
+                guard self.live === live else { return }
                 terminalWindows[chatID] = TerminalWindow.parse(json)
             } catch {
+                guard self.live === live else { return }
                 errorMessage = error.localizedDescription
             }
         }
@@ -384,13 +402,16 @@ public final class AppModel {
 
     /// Ends the tmux session and everything running in it.
     public func killTerminal(_ chatID: String) {
-        guard let live else { return }
+        guard let live = requireLive() else { return }
         terminalSessions[chatID]?.disconnect()
         terminalSessions[chatID] = nil
         terminalWindows[chatID] = nil
         terminalOpen.remove(chatID)
         Task {
-            do { try await live.client.killTerminal(chatID) } catch { errorMessage = error.localizedDescription }
+            do { try await live.client.killTerminal(chatID) } catch {
+                guard self.live === live else { return }
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -403,18 +424,17 @@ public final class AppModel {
     // MARK: Chats
 
     public func send(_ rawText: String, toChat id: String) {
+        guard let live = requireLive() else { return }
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         let files = attachments[id] ?? []
-        guard !text.isEmpty || !files.isEmpty, let index = chats.firstIndex(where: { $0.id == id }),
+        guard !text.isEmpty || !files.isEmpty, chat(id) != nil,
               !files.contains(where: { $0.state == .uploading }) else { return }
-        // "/btw …" asks a side question, as in Claude Code.
         if text.hasPrefix("/btw"), text.dropFirst(4).first.map(\.isWhitespace) ?? true {
             let question = text.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines)
             sideChatOpen = id
             if !question.isEmpty { askSide(question, inChat: id) }
             return
         }
-        // "/goal …" drives the provider's native goal, as in its own CLI.
         if let argument = SlashParser.goalArgument(text), goalSupport(forChat: id).available {
             switch argument.lowercased() {
             case "": goalEditor = .chat(id)
@@ -425,80 +445,38 @@ public final class AppModel {
         }
         let fileIDs = files.compactMap(\.fileID)
         attachments[id] = nil
-        if let live {
-            live.enqueueSend(text, toChat: id, fileIDs: fileIDs)
-            return
-        }
-        if chats[index].state == .running || chats[index].state == .needsAction {
-            queues[id, default: []].append(QueuedMessage(text: text))
-            return
-        }
-        append(.message(id: UUID().uuidString, author: .user, text: text, time: .now), to: id)
-        chats[index].preview = text
-        chats[index].lastActivity = .now
-        simulateReply(in: id, author: .agent(chats[index].backend.rawValue, chats[index].backend))
+        live.enqueueSend(text, toChat: id, fileIDs: fileIDs)
     }
 
     public func stop(_ key: String) {
-        if let live {
-            Task { await live.stop(key) }
-            return
-        }
-        simulations[key]?.cancel()
-        simulations[key] = nil
-        if let index = chats.firstIndex(where: { $0.id == key }) { chats[index].state = .idle }
-        if let index = groups.firstIndex(where: { $0.id == key }) {
-            for member in groups[index].participants.indices { groups[index].participants[member].state = .idle }
-        }
-        finishStreaming(in: key)
-        markRunningToolsStopped(in: key)
-        append(.divider(id: UUID().uuidString, text: "已停止"), to: key)
+        guard let live = requireLive() else { return }
+        Task { await live.stop(key) }
     }
 
     public func withdrawQueued(_ messageID: String, in key: String) {
-        if let live {
-            Task { await live.withdrawQueued(messageID, in: key) }
-            return
-        }
-        queues[key]?.removeAll { $0.id == messageID }
+        guard let live = requireLive() else { return }
+        Task { await live.withdrawQueued(messageID, in: key) }
     }
 
     /// Moves a queued message back into the composer for editing.
     public func editQueued(_ messageID: String, in key: String) {
-        guard let message = queues[key]?.first(where: { $0.id == messageID }) else { return }
+        guard requireLive() != nil,
+              let message = queues[key]?.first(where: { $0.id == messageID }) else { return }
         withdrawQueued(messageID, in: key)
         drafts[key] = message.text
     }
 
     public func decide(_ approvalID: String, _ decision: ApprovalDecision, in key: String) {
-        if let live {
-            Task { await live.decide(approvalID, decision, in: key) }
-            return
-        }
-        guard var items = timelines[key],
-              let index = items.firstIndex(where: { $0.id == approvalID }),
-              case .approval(let id, let author, let title, let command, let reason, _, let allowsSession) = items[index]
-        else { return }
-        items[index] = .approval(id: id, author: author, title: title, command: command, reason: reason,
-                                 decision: decision, allowsSession: allowsSession)
-        timelines[key] = items
-        guard let chatIndex = chats.firstIndex(where: { $0.id == key }) else { return }
-        if decision == .denied {
-            chats[chatIndex].state = .idle
-            append(.message(id: UUID().uuidString, author: author, text: "好的，不运行这个命令。要换一种方式确认吗？", time: .now), to: key)
-        } else {
-            append(.tool(id: UUID().uuidString, kind: .command, title: command, output: "", status: .running, seconds: 0), to: key)
-            simulateReply(in: key, author: author)
-        }
+        guard let live = requireLive() else { return }
+        Task { await live.decide(approvalID, decision, in: key) }
     }
 
     public func togglePinned(_ id: String) {
+        guard let live = requireLive() else { return }
         guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
         chats[index].pinned.toggle()
-        if let live {
-            let pinned = chats[index].pinned
-            Task { await live.updateChat(id, fields: ["pinned": .bool(pinned)]) }
-        }
+        let pinned = chats[index].pinned
+        Task { await live.updateChat(id, fields: ["pinned": .bool(pinned)]) }
     }
 
     // MARK: Live activity
@@ -544,6 +522,7 @@ public final class AppModel {
         let key = "\(id)|\(fileID ?? "")|\(target ?? "")"
         if let cached = mediaCache[key] { return cached }
         guard let live, let data = try? await live.client.fileData(id, fileID: fileID, target: target) else { return nil }
+        guard self.live === live else { return nil }
         mediaCache[key] = data
         return data
     }
@@ -556,13 +535,15 @@ public final class AppModel {
 
     /// Adds a member to a group; the server picks a free handle.
     public func addMember(_ backend: AgentBackend, toGroup id: String) {
-        if let live { Task { await live.addMember(backend, toGroup: id) } }
+        guard let live = requireLive() else { return }
+        Task { await live.addMember(backend, toGroup: id) }
     }
 
     public func removeMember(_ handle: String, fromGroup id: String) {
+        guard let live = requireLive() else { return }
         guard let index = groups.firstIndex(where: { $0.id == id }) else { return }
         groups[index].participants.removeAll { $0.handle == handle }
-        if let live { Task { await live.removeMember(handle, fromGroup: id) } }
+        Task { await live.removeMember(handle, fromGroup: id) }
     }
 
     // MARK: Models and reasoning effort
@@ -584,6 +565,7 @@ public final class AppModel {
     }
 
     public func setModel(_ value: String, forChat id: String) {
+        guard let live = requireLive() else { return }
         guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
         chats[index].model = value
         var fields: [String: JSON] = ["model": value.isEmpty ? .null : .string(value)]
@@ -592,19 +574,21 @@ public final class AppModel {
             chats[index].effort = ""
             fields["effort"] = .null
         }
-        if let live { Task { await live.updateChat(id, fields: .object(fields)) } }
+        Task { await live.updateChat(id, fields: .object(fields)) }
     }
 
     public func setEffort(_ value: String, forChat id: String) {
+        guard let live = requireLive() else { return }
         guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
         chats[index].effort = value
-        if let live { Task { await live.updateChat(id, fields: ["effort": value.isEmpty ? .null : .string(value)]) } }
+        Task { await live.updateChat(id, fields: ["effort": value.isEmpty ? .null : .string(value)]) }
     }
 
     public func setPermission(_ label: String, forChat id: String) {
+        guard let live = requireLive() else { return }
         guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
         chats[index].permission = label
-        guard let live, let preset = PermissionPreset.preset(label, for: chats[index].backend) else { return }
+        guard let preset = PermissionPreset.preset(label, for: chats[index].backend) else { return }
         Task { await live.updateChat(id, fields: .object(preset.fields.mapValues(JSON.string))) }
     }
 
@@ -614,44 +598,31 @@ public final class AppModel {
     // pursues a persistent thread objective, optionally within a token or
     // time budget. Both run on the provider; the app sets, pauses and clears.
 
-    /// Demo data offers goals everywhere; a server says per chat.
+    /// The server advertises native goal support per chat.
     public func goalSupport(forChat id: String) -> GoalSupport {
-        goalSupport[id] ?? GoalSupport(available: !isLive)
+        goalSupport[id] ?? GoalSupport(available: false)
     }
 
     /// Sets or replaces a chat's goal. Budgets apply to Codex only; nil removes one.
     public func setGoal(_ text: String, tokenBudget: Int? = nil, timeLimitMinutes: Int? = nil, forChat id: String) {
+        guard let live = requireLive() else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let chat = chat(id) ?? memberChat(id) else { return }
-        if let live {
-            Task { await live.setGoal(text, tokenBudget: tokenBudget, timeLimitMinutes: timeLimitMinutes,
-                                      forChat: id, backend: chat.backend) }
-            return
-        }
-        goals[id] = ChatGoal(backend: chat.backend, text: text, status: .active,
-                             tokensUsed: chat.backend == .codex ? 0 : nil, tokenBudget: tokenBudget,
-                             secondsUsed: 0, timeBudgetSeconds: timeLimitMinutes.map { $0 * 60 })
+        Task { await live.setGoal(text, tokenBudget: tokenBudget, timeLimitMinutes: timeLimitMinutes,
+                                  forChat: id, backend: chat.backend) }
     }
 
     public func pauseGoal(forChat id: String) { setGoalStatus("paused", forChat: id) }
     public func resumeGoal(forChat id: String) { setGoalStatus("active", forChat: id) }
 
     private func setGoalStatus(_ status: String, forChat id: String) {
-        guard goals[id]?.backend == .codex else { return }
-        if let live {
-            Task { await live.setCodexGoalStatus(status, forChat: id) }
-            return
-        }
-        goals[id]?.status = ChatGoal.Status(rawValue: status) ?? .active
+        guard let live = requireLive(), goals[id]?.backend == .codex else { return }
+        Task { await live.setCodexGoalStatus(status, forChat: id) }
     }
 
     public func clearGoal(forChat id: String) {
-        guard let goal = goals[id] else { return }
-        if let live {
-            Task { await live.clearGoal(forChat: id, backend: goal.backend) }
-            return
-        }
-        goals[id] = nil
+        guard let live = requireLive(), let goal = goals[id] else { return }
+        Task { await live.clearGoal(forChat: id, backend: goal.backend) }
     }
 
     /// The member chat behind a group participant, as a chat summary.
@@ -675,28 +646,17 @@ public final class AppModel {
 
     /// Sets a native goal on one member and announces it to the group.
     public func setGroupGoal(_ objective: String, handle: String, inGroup id: String) {
+        guard let live = requireLive() else { return }
         let objective = objective.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !objective.isEmpty, let index = groups.firstIndex(where: { $0.id == id }),
-              let member = groups[index].participants.first(where: { $0.handle == handle }) else { return }
-        if let live {
-            Task { await live.setGroupGoal(objective, handle: handle, inGroup: id) }
-            return
-        }
-        groups[index].goal = GroupGoal(handle: handle, objective: objective, setAt: .now)
-        if let session = member.sessionID {
-            goals[session] = ChatGoal(backend: member.backend, text: objective, status: .active)
-        }
-        append(.divider(id: UUID().uuidString, text: "已为 @\(handle) 设置目标"), to: id)
+        guard !objective.isEmpty, group(id)?.participants.contains(where: { $0.handle == handle }) == true else { return }
+        Task { await live.setGroupGoal(objective, handle: handle, inGroup: id) }
     }
 
     /// Clears the goal on the member that holds it.
     public func clearGroupGoal(inGroup id: String) {
-        guard let current = goal(forGroup: id), let session = current.member?.sessionID else { return }
-        if let live, let backend = current.member?.backend {
-            Task { await live.clearGoal(forChat: session, backend: backend) }
-            return
-        }
-        goals[session] = nil
+        guard let live = requireLive(), let current = goal(forGroup: id),
+              let session = current.member?.sessionID, let backend = current.member?.backend else { return }
+        Task { await live.clearGoal(forChat: session, backend: backend) }
     }
 
     // MARK: Slash commands and skills
@@ -750,48 +710,29 @@ public final class AppModel {
 
     /// `action` is reconnect, enable or disable (Claude chats).
     public func controlMCP(_ action: String, server: String?, forChat id: String) {
-        if let live {
-            mcpBusy.insert(id)
-            Task { await live.controlMCP(action, server: server, forChat: id) }
-            return
-        }
-        guard var status = mcp[id] else { return }
-        status.servers = status.servers.map { item in
-            guard server == nil || item.name == server else { return item }
-            let disabled = action == "disable"
-            return MCPServer(name: item.name, status: disabled ? .disabled : .connected, enabled: !disabled,
-                             scope: item.scope, serverInfo: item.serverInfo, toolCount: item.toolCount)
-        }
-        mcp[id] = status
+        guard let live = requireLive() else { return }
+        mcpBusy.insert(id)
+        Task { await live.controlMCP(action, server: server, forChat: id) }
     }
 
     /// Retries each server that failed to connect, one at a time. Servers
     /// that need a sign-in are left alone: Claude Code's `/mcp` signs in.
     public func reconnectFailedMCP(forChat id: String) {
-        let failed = mcp[id]?.servers.filter { $0.status == .failed }.map(\.name) ?? []
-        guard !failed.isEmpty else { return }
-        if let live {
-            mcpBusy.insert(id)
-            // One request: the server retries only failed servers, with a bound that scales with their number.
-            Task { await live.controlMCP("reconnect_all", server: nil, forChat: id) }
-            return
-        }
-        for name in failed { controlMCP("reconnect", server: name, forChat: id) }
+        guard let live = requireLive(), mcp[id]?.servers.contains(where: { $0.status == .failed }) == true else { return }
+        mcpBusy.insert(id)
+        Task { await live.controlMCP("reconnect_all", server: nil, forChat: id) }
     }
 
     // MARK: Attachments
 
     /// Adds files to a chat's composer and uploads them to the chat at once.
     public func attach(_ urls: [URL], toChat id: String) {
+        guard let live = requireLive() else { return }
         for url in urls where !url.hasDirectoryPath {
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
             let attachment = DraftAttachment(name: url.lastPathComponent, size: size)
             attachments[id, default: []].append(attachment)
-            if let live {
-                Task { await live.upload(url, attachment: attachment.id, toChat: id) }
-            } else {
-                setAttachment(attachment.id, in: id, .ready(fileID: attachment.id))
-            }
+            Task { await live.upload(url, attachment: attachment.id, toChat: id) }
         }
     }
 
@@ -807,17 +748,18 @@ public final class AppModel {
     // MARK: Rename, archive, delete
 
     public func rename(_ item: SidebarItem, to rawTitle: String) {
+        guard let live = requireLive() else { return }
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
         switch item {
         case .chat(let id):
             guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
             chats[index].title = title
-            if let live { Task { await live.updateChat(id, fields: ["title": .string(title)]) } }
+            Task { await live.updateChat(id, fields: ["title": .string(title)]) }
         case .group(let id):
             guard let index = groups.firstIndex(where: { $0.id == id }) else { return }
             groups[index].title = String(title.prefix(200))
-            if let live { Task { await live.updateGroup(id, ["title": .string(String(title.prefix(200)))]) } }
+            Task { await live.updateGroup(id, ["title": .string(String(title.prefix(200)))]) }
         default:
             break
         }
@@ -825,16 +767,17 @@ public final class AppModel {
 
     /// Archiving pauses a chat's jobs and closes its terminal; a group stops its rounds.
     public func setArchived(_ item: SidebarItem, _ archived: Bool) {
+        guard let live = requireLive() else { return }
         switch item {
         case .chat(let id):
             guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
             chats[index].archived = archived
             if archived { chats[index].pinned = false }
-            if let live { Task { await live.updateChat(id, fields: ["archived": .bool(archived)]) } }
+            Task { await live.updateChat(id, fields: ["archived": .bool(archived)]) }
         case .group(let id):
             guard let index = groups.firstIndex(where: { $0.id == id }) else { return }
             groups[index].archived = archived
-            if let live { Task { await live.updateGroup(id, ["archived": .bool(archived)]) } }
+            Task { await live.updateGroup(id, ["archived": .bool(archived)]) }
         default:
             return
         }
@@ -843,11 +786,8 @@ public final class AppModel {
 
     /// Deletes a chat (its turn stops; its jobs go) or a group (its member chats are archived).
     public func delete(_ item: SidebarItem) {
-        if let live {
-            Task { await live.delete(item) }
-        } else {
-            removeLocally(item)
-        }
+        guard let live = requireLive() else { return }
+        Task { await live.delete(item) }
     }
 
     func removeLocally(_ item: SidebarItem) {
@@ -894,25 +834,16 @@ public final class AppModel {
     public func job(_ id: String) -> ScheduledJob? { jobs.first { $0.id == id } }
 
     public func createJob(title: String, prompt: String, target: JobTarget, schedule: JobSchedule, enabled: Bool) {
+        guard let live = requireLive() else { return }
         var body = schedule.fields.filter { $0.value != .null }
         body["title"] = .string(title)
         body["prompt"] = .string(prompt)
         body["enabled"] = .bool(enabled)
-        if let live {
-            Task { await live.createJob(.object(body), target: target) }
-            return
-        }
-        let (session, group): (String?, String?) = switch target {
-        case .chat(let id): (id, nil)
-        case .group(let id): (nil, id)
-        }
-        jobs.insert(ScheduledJob(id: "j" + UUID().uuidString.prefix(6), title: title, prompt: prompt,
-                                 target: session.flatMap { chat($0)?.title } ?? group.flatMap { self.group($0)?.title } ?? "",
-                                 schedule: "新任务", nextRun: nil, lastResult: nil, lastRun: nil, enabled: enabled,
-                                 sessionID: session, groupID: group, spec: schedule), at: 0)
+        Task { await live.createJob(.object(body), target: target) }
     }
 
     public func updateJob(_ id: String, title: String, prompt: String, schedule: JobSchedule, enabled: Bool) {
+        guard let live = requireLive() else { return }
         guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
         jobs[index].title = title
         jobs[index].prompt = prompt
@@ -928,37 +859,27 @@ public final class AppModel {
         if case .interval(_, _, let firstRun?) = schedule {
             body["next_run_at"] = .string(ISO8601DateFormatter().string(from: firstRun))
         }
-        if let live { Task { await live.updateJob(id, fields: .object(body)) } }
+        Task { await live.updateJob(id, fields: .object(body)) }
     }
 
     public func deleteJob(_ id: String) {
+        guard let live = requireLive() else { return }
         guard let job = job(id) else { return }
         jobs.removeAll { $0.id == id }
-        if let live { Task { await live.deleteJob(id, groupID: job.groupID) } }
+        Task { await live.deleteJob(id, groupID: job.groupID) }
     }
 
     // MARK: Server folders
 
-    /// Folders on the server under (or starting with) `path`. Without a
-    /// server, folders on this Mac.
+    /// Folders on the connected server under (or starting with) `path`.
     public func directorySuggestions(_ path: String) async -> (folders: [DirectorySuggestion], message: String?) {
-        if let live { return await live.completeDirectory(path) }
-        let expanded = (path.isEmpty ? "~" : path as NSString).expandingTildeInPath
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: expanded)) ?? []
-        let folders = names.filter { !$0.hasPrefix(".") }.sorted().prefix(50).compactMap { name -> DirectorySuggestion? in
-            var isDirectory: ObjCBool = false
-            let full = (expanded as NSString).appendingPathComponent(name)
-            guard FileManager.default.fileExists(atPath: full, isDirectory: &isDirectory), isDirectory.boolValue else {
-                return nil
-            }
-            return DirectorySuggestion(name: name, path: full + "/")
-        }
-        return (folders, nil)
+        guard let live = requireLive() else { return ([], errorMessage) }
+        return await live.completeDirectory(path)
     }
 
     /// Whether the connected server runs on this Mac, so a local folder picker applies.
     public var serverIsLocal: Bool {
-        guard isLive else { return true }
+        guard isLive else { return false }
         let host = currentServer?.baseURL.host()?.lowercased() ?? ""
         return ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host)
     }
@@ -968,45 +889,34 @@ public final class AppModel {
     /// Force Send: Codex takes it into the running turn when it can; otherwise
     /// the running turn stops and this message runs next.
     public func runQueuedNow(_ messageID: String, in key: String) {
-        if let live {
-            Task { await live.runQueuedNow(messageID, in: key) }
-            return
-        }
-        guard let message = queues[key]?.first(where: { $0.id == messageID }) else { return }
-        queues[key]?.removeAll { $0.id == messageID }
-        stop(key)
-        send(message.text, toChat: key)
+        guard let live = requireLive() else { return }
+        Task { await live.runQueuedNow(messageID, in: key) }
     }
 
     /// Continues a queue that Stop held: the held messages are sent in order.
     public func resumeQueue(in key: String) {
-        if let live {
-            Task { await live.resumeQueue(key) }
-            return
-        }
-        queues[key] = queues[key]?.map { message in
-            var message = message
-            if message.hold == .stopped { message.hold = nil }
-            return message
-        }
+        guard let live = requireLive() else { return }
+        Task { await live.resumeQueue(key) }
     }
 
     /// Moves a queued message one place up or down.
     public func moveQueued(_ messageID: String, up: Bool, in key: String) {
+        guard let live = requireLive() else { return }
         guard var queue = queues[key], let index = queue.firstIndex(where: { $0.id == messageID }) else { return }
         let target = up ? index - 1 : index + 1
         guard queue.indices.contains(target) else { return }
         let adjacent = queue[target].id
         queue.swapAt(index, target)
         queues[key] = queue
-        if let live { Task { await live.moveQueued(messageID, up: up, expectedAdjacent: adjacent, in: key) } }
+        Task { await live.moveQueued(messageID, up: up, expectedAdjacent: adjacent, in: key) }
     }
 
     // MARK: Emergency alerts
 
     public func acknowledge(_ alert: EmergencyAlert) {
+        guard let live = requireLive() else { return }
         emergencies.removeAll { $0.sessionID == alert.sessionID }
-        if let live { Task { await live.acknowledge(alert) } }
+        Task { await live.acknowledge(alert) }
     }
 
     // MARK: History and context
@@ -1020,19 +930,20 @@ public final class AppModel {
 
     /// Compacts the chat's context: Codex natively, Claude with its `/compact` command.
     public func compact(_ chatID: String) {
+        guard let live = requireLive() else { return }
         guard let chat = chat(chatID) else { return }
         switch chat.backend {
         case .codex:
-            if let live { Task { await live.compactCodex(chatID) } }
+            Task { await live.compactCodex(chatID) }
         case .claude:
             send("/compact", toChat: chatID)
         }
     }
 
     public func canCompact(_ chatID: String) -> Bool {
-        guard let chat = chat(chatID), chat.state == .idle else { return false }
+        guard isLive, case .connected = connection, let chat = chat(chatID), chat.state == .idle else { return false }
         if chat.backend == .codex { return true }
-        return !isLive || commands[chatID]?.commands.contains { $0.invocation == "/compact" } == true
+        return commands[chatID]?.commands.contains { $0.invocation == "/compact" } == true
     }
 
     // MARK: Search
@@ -1046,30 +957,16 @@ public final class AppModel {
             return
         }
         guard let live else {
-            searchHits = localHits(query)
+            searchHits = []
+            searching = false
             return
         }
         searching = true
         let hits = await live.search(query)
         // A newer search may have started meanwhile.
-        guard searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+        guard self.live === live, searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
         searchHits = hits.filter { chat($0.sessionID) != nil }
         searching = false
-    }
-
-    /// Demo data: the newest matching message of each chat.
-    private func localHits(_ query: String) -> [SearchHit] {
-        chats.compactMap { chat in
-            let matches = timeline(chat.id).compactMap { item -> (String, Author, String)? in
-                guard case .message(let id, let author, let text, _, _, _, _) = item,
-                      text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil else { return nil }
-                return (id, author, text)
-            }
-            guard let (id, author, text) = matches.last else { return nil }
-            return SearchHit(sessionID: chat.id, eventID: id, seq: 0, time: nil,
-                             role: author.kind == .user ? "user" : "assistant", snippet: String(text.prefix(160)),
-                             matches: matches.count)
-        }
     }
 
     /// Opens a chat at a search hit: loads history back to it, then scrolls there.
@@ -1086,31 +983,24 @@ public final class AppModel {
 
     /// Copies a chat with its history (up to its last finished turn) and opens the copy.
     public func fork(_ chatID: String) {
-        guard let source = chat(chatID) else { return }
-        if let live {
-            Task { await live.fork(chatID) }
-            return
-        }
-        let id = "c" + UUID().uuidString.prefix(6)
-        chats.insert(ChatSummary(id: id, title: "Fork of " + source.title, backend: source.backend, model: source.model,
-                                 effort: source.effort, permission: source.permission, cwd: source.cwd,
-                                 preview: source.preview, lastActivity: .now), at: 0)
-        timelines[id] = timeline(chatID) + [.divider(id: UUID().uuidString, text: "从“\(source.title)”分叉")]
-        select(.chat(id))
+        guard let live = requireLive(), chat(chatID) != nil else { return }
+        Task { await live.fork(chatID) }
     }
 
     public func markUnread(_ chatID: String) {
+        guard let live = requireLive() else { return }
         guard let index = chats.firstIndex(where: { $0.id == chatID }) else { return }
         chats[index].unread = true
         markedUnread.insert(chatID)
-        if let live { Task { await live.markUnread(chatID) } }
+        Task { await live.markUnread(chatID) }
     }
 
     public func markRead(_ chatID: String) {
+        guard let live = requireLive() else { return }
         guard let index = chats.firstIndex(where: { $0.id == chatID }) else { return }
         chats[index].unread = false
         markedUnread.remove(chatID)
-        if let live { Task { await live.markRead(chatID) } }
+        Task { await live.markRead(chatID) }
     }
 
     // MARK: Side chat
@@ -1121,40 +1011,28 @@ public final class AppModel {
     }
 
     public func refreshSide(_ chatID: String) {
-        guard let live else {
-            if sideChats[chatID] == nil { sideChats[chatID] = SideChat(sideChatID: "demo") }
-            return
-        }
+        guard let live else { return }
         Task { await live.refreshSide(chatID) }
     }
 
     /// Asks a quick question about the conversation without interrupting the agent.
     public func askSide(_ rawQuestion: String, inChat chatID: String) {
+        guard let live = requireLive() else { return }
         let question = rawQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty else { return }
         sideChatErrors[chatID] = nil
-        if let live {
-            Task { await live.askSide(question, inChat: chatID) }
-            return
-        }
-        var side = sideChats[chatID] ?? SideChat(sideChatID: "demo")
-        side.exchanges.append(.init(requestID: UUID().uuidString, question: question,
-                                    answer: "（演示）这是侧问的回答：不会打断代理，也不会写进对话。", status: .completed))
-        sideChats[chatID] = side
+        Task { await live.askSide(question, inChat: chatID) }
     }
 
     public func cancelSide(_ requestID: String, inChat chatID: String) {
-        if let live { Task { await live.cancelSide(requestID, inChat: chatID) } }
+        guard let live = requireLive() else { return }
+        Task { await live.cancelSide(requestID, inChat: chatID) }
     }
 
     /// Starts a fresh side chat (Codex: with the conversation as it is now).
     public func clearSide(_ chatID: String) {
-        guard let side = sideChats[chatID] else { return }
-        if let live {
-            Task { await live.clearSide(side.sideChatID, inChat: chatID) }
-        } else {
-            sideChats[chatID] = SideChat(sideChatID: "demo")
-        }
+        guard let live = requireLive(), let side = sideChats[chatID] else { return }
+        Task { await live.clearSide(side.sideChatID, inChat: chatID) }
     }
 
     // MARK: Subagents
@@ -1167,8 +1045,9 @@ public final class AppModel {
     // MARK: Group members
 
     public func decide(_ approval: GroupApproval, _ decision: ApprovalDecision, inGroup groupID: String) {
+        guard let live = requireLive() else { return }
         groupApprovals[groupID]?.removeAll { $0.id == approval.id }
-        if let live { Task { await live.decide(approval, decision, inGroup: groupID) } }
+        Task { await live.decide(approval, decision, inGroup: groupID) }
     }
 
     public func permissionChoices(for member: Participant) -> [String] {
@@ -1180,6 +1059,7 @@ public final class AppModel {
     /// keeps its settings; the change applies from the member's next turn.
     public func updateMember(_ handle: String, inGroup groupID: String,
                              model newModel: String? = nil, effort: String? = nil, permission: String? = nil) {
+        guard let live = requireLive() else { return }
         guard let index = groups.firstIndex(where: { $0.id == groupID }),
               let member = groups[index].participants.firstIndex(where: { $0.handle == handle }) else { return }
         let backend = groups[index].participants[member].backend
@@ -1203,168 +1083,83 @@ public final class AppModel {
                 fields[key] = .string(value)
             }
         }
-        if let live, !fields.isEmpty {
+        if !fields.isEmpty {
             Task { await live.updateMember(handle, inGroup: groupID, fields: .object(fields)) }
         }
     }
 
     @discardableResult
     public func createChat(backend: AgentBackend, model: String, cwd: String, permission: String) -> String {
-        if let live {
-            let preset = PermissionPreset.presets(for: backend).first { $0.label == permission }
-            Task { await live.createChat(backend: backend, model: model.isEmpty ? nil : model, cwd: cwd, permission: preset) }
-            return ""
-        }
-        let id = "c" + UUID().uuidString.prefix(6)
-        chats.insert(ChatSummary(id: id, title: "新聊天", backend: backend, model: model, permission: permission,
-                                 cwd: cwd, preview: "还没有消息", lastActivity: .now), at: 0)
-        select(.chat(id))
-        return id
+        guard let live = requireLive() else { return "" }
+        let preset = PermissionPreset.presets(for: backend).first { $0.label == permission }
+        Task { await live.createChat(backend: backend, model: model.isEmpty ? nil : model, cwd: cwd, permission: preset) }
+        return ""
     }
 
     // MARK: Groups
 
     public func send(_ rawText: String, toGroup id: String, mode: GroupMode, analysisOnly: Bool = false) {
+        guard let live = requireLive() else { return }
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let index = groups.firstIndex(where: { $0.id == id }) else { return }
-        if let live {
-            Task { await live.send(text, toGroup: id, mode: mode, analysisOnly: analysisOnly) }
-            return
-        }
-        let handles = Set(groups[index].participants.map(\.handle))
-        var targets = MentionParser.mentions(in: text, handles: handles)
-        if targets.contains("all") { targets = groups[index].participants.map(\.handle) }
-        if targets.isEmpty { targets = [groups[index].defaultResponder] }
-        append(.message(id: UUID().uuidString, author: .user, text: text, time: .now, mentions: targets), to: id)
-        groups[index].preview = text
-        groups[index].lastActivity = .now
-        for member in groups[index].participants.indices where targets.contains(groups[index].participants[member].handle) {
-            groups[index].participants[member].state = .running
-        }
-        let authors = targets.compactMap { handle in
-            groups[index].participants.first { $0.handle == handle }.map { Author.agent($0.handle, $0.backend) }
-        }
-        simulations[id]?.cancel()
-        simulations[id] = Task { [weak self] in
-            for author in authors {
-                guard let self, !Task.isCancelled else { return }
-                await self.stream(reply: Self.demoReply(for: author), as: author, in: id)
-                self.setMember(author.name, .idle, in: id)
-            }
-            guard let self, !Task.isCancelled else { return }
-            self.append(.divider(id: UUID().uuidString, text: "本轮结束 · \(authors.count) 次派发"), to: id)
-        }
+        guard !text.isEmpty, group(id) != nil else { return }
+        Task { await live.send(text, toGroup: id, mode: mode, analysisOnly: analysisOnly) }
     }
 
     public func createGroup(title: String, cwd: String, participants: [Participant]) {
-        if let live {
-            Task { await live.createGroup(title: title, cwd: cwd, participants: participants) }
-            return
-        }
-        let id = "g" + UUID().uuidString.prefix(6)
-        groups.insert(GroupSummary(id: id, title: title.isEmpty ? "新讨论组" : title, cwd: cwd, participants: participants,
-                                   defaultResponder: participants.first?.handle ?? "claude",
-                                   preview: "还没有消息", lastActivity: .now), at: 0)
-        timelines[id] = [.divider(id: "\(id)-0", text: "讨论组已创建 · " + participants.map { "@\($0.handle)" }.joined(separator: " "))]
-        select(.group(id))
+        guard let live = requireLive() else { return }
+        Task { await live.createGroup(title: title, cwd: cwd, participants: participants) }
     }
 
-    private func setMember(_ handle: String, _ state: ActivityState, in groupID: String) {
-        guard let index = groups.firstIndex(where: { $0.id == groupID }),
-              let member = groups[index].participants.firstIndex(where: { $0.handle == handle }) else { return }
-        groups[index].participants[member].state = state
-    }
+
 
     // MARK: Autopilot
 
     public func approve(run id: String) {
-        if let live {
-            Task { await live.runAction(id, "approve") }
-            return
-        }
-        guard let index = runs.firstIndex(where: { $0.id == id }) else { return }
-        let wasPlan = runs[index].completedTasks == 0
-        runs[index].status = .executing
-        if let next = runs[index].tasks.firstIndex(where: { $0.state == .pending }) {
-            runs[index].tasks[next].state = .executing
-        }
-        runs[index].notes.append(.message(id: UUID().uuidString, author: .autopilot,
-                                          text: wasPlan ? "计划已批准，开始执行任务 1。" : "已批准，继续下一步。", time: .now))
-        runs[index].lastActivity = .now
+        guard let live = requireLive() else { return }
+        Task { await live.runAction(id, "approve") }
     }
 
     public func feedback(run id: String, text: String) {
-        if let live {
-            Task { await live.runAction(id, "feedback", feedback: text) }
-            return
-        }
-        guard let index = runs.firstIndex(where: { $0.id == id }), !text.isEmpty else { return }
-        runs[index].status = runs[index].completedTasks == 0 ? .planning : .executing
-        runs[index].notes.append(.message(id: UUID().uuidString, author: .user, text: text, time: .now))
-        runs[index].lastActivity = .now
+        guard let live = requireLive() else { return }
+        Task { await live.runAction(id, "feedback", feedback: text) }
     }
 
     public func pause(run id: String) {
-        if let live {
-            Task { await live.runAction(id, "pause") }
-            return
-        }
-        guard let index = runs.firstIndex(where: { $0.id == id }) else { return }
-        runs[index].status = .paused
-        runs[index].notes.append(.message(id: UUID().uuidString, author: .autopilot, text: "将在当前步骤完成后暂停。", time: .now))
+        guard let live = requireLive() else { return }
+        Task { await live.runAction(id, "pause") }
     }
 
     public func resume(run id: String) {
-        if let live {
-            Task { await live.runAction(id, "resume") }
-            return
-        }
-        guard let index = runs.firstIndex(where: { $0.id == id }) else { return }
-        runs[index].status = .executing
-        runs[index].notes.append(.message(id: UUID().uuidString, author: .autopilot, text: "已继续。", time: .now))
+        guard let live = requireLive() else { return }
+        Task { await live.runAction(id, "resume") }
     }
 
     public func abort(run id: String) {
-        if let live {
-            Task { await live.runAction(id, "abort") }
-            return
-        }
-        guard let index = runs.firstIndex(where: { $0.id == id }) else { return }
-        runs[index].status = .aborted
-        runs[index].notes.append(.message(id: UUID().uuidString, author: .autopilot,
-                                          text: "已中止。worktree 和分支已保留。", time: .now))
+        guard let live = requireLive() else { return }
+        Task { await live.runAction(id, "abort") }
     }
 
     public func createRun(goal: String, cwd: String, approval: ApprovalOption, isolation: IsolationOption,
                           reviewer: ReviewerOption, verifyCommand: String) {
-        if let live {
-            Task {
-                await live.createRun(goal: goal, cwd: cwd, approval: approval, isolation: isolation,
-                                     reviewer: reviewer, verifyCommand: verifyCommand)
-            }
-            return
+        guard let live = requireLive() else { return }
+        Task {
+            await live.createRun(goal: goal, cwd: cwd, approval: approval, isolation: isolation,
+                                 reviewer: reviewer, verifyCommand: verifyCommand)
         }
-        let id = "r" + UUID().uuidString.prefix(6)
-        let title = String(goal.prefix(18))
-        runs.insert(AutopilotRun(id: id, title: title.isEmpty ? "新的自动接力" : title, goal: goal, cwd: cwd,
-                                 branch: isolation == .worktree ? "hyadex/run-\(id.dropFirst())" : nil,
-                                 status: .planning, approval: approval, isolation: isolation, reviewer: reviewer,
-                                 verifyCommand: verifyCommand, planSummary: "", tasks: [],
-                                 notes: [.message(id: UUID().uuidString, author: .autopilot, text: "Claude 正在规划…", time: .now)],
-                                 lastActivity: .now), at: 0)
-        select(.autopilot(id))
     }
 
     // MARK: Jobs
 
     public func setJob(_ id: String, enabled: Bool) {
+        guard let live = requireLive() else { return }
         guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
         jobs[index].enabled = enabled
-        if let live { Task { await live.setJob(id, enabled: enabled) } }
+        Task { await live.setJob(id, enabled: enabled) }
     }
 
     public func runJobNow(_ id: String) {
-        if let live { Task { await live.runJob(id) } }
+        guard let live = requireLive() else { return }
+        Task { await live.runJob(id) }
     }
 
     // MARK: Server
@@ -1377,12 +1172,44 @@ public final class AppModel {
     }
 
     public func saveServers() {
-        if let data = try? JSONEncoder().encode(servers) { UserDefaults.standard.set(data, forKey: Self.serversKey) }
-        UserDefaults.standard.set(currentServerID.uuidString, forKey: Self.currentServerKey)
+        let persistent = servers.filter { $0.id != managedLocalServerID }
+        if let data = try? JSONEncoder().encode(persistent) { UserDefaults.standard.set(data, forKey: Self.serversKey) }
+        if currentServerID != managedLocalServerID {
+            UserDefaults.standard.set(currentServerID.uuidString, forKey: Self.currentServerKey)
+        }
     }
 
     func report(_ error: Error) {
         errorMessage = error.localizedDescription
+    }
+
+    /// Starts the app-owned backend and connects unless the user chose another server meanwhile.
+    public func startLocalServer() async {
+        let attempt = UUID()
+        connectionGeneration = attempt
+        errorMessage = nil
+        do {
+            let local = try await localServer.start()
+            guard connectionGeneration == attempt, !Task.isCancelled else { return }
+            managedLocalServerID = local.endpoint.id
+            managedLocalToken = local.token
+            if let defaultPlaceholder {
+                servers.removeAll { $0 == defaultPlaceholder }
+            }
+            await connect(to: local.endpoint, token: local.token, remember: false)
+        } catch {
+            guard connectionGeneration == attempt, !Task.isCancelled else { return }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Reuses the app-owned local credentials without writing them to the keychain.
+    public func reconnect(to server: ServerEndpoint) async {
+        if server.id == managedLocalServerID {
+            await startLocalServer()
+        } else {
+            await connect(to: server, token: TokenStore.token(for: server.id), remember: false)
+        }
     }
 
     /// Connects on launch. `HYADEX_SERVER_URL` and `HYADEX_TOKEN` override the
@@ -1400,30 +1227,34 @@ public final class AppModel {
         await connect(to: server, token: token, remember: false)
     }
 
-    /// Replaces the demo data with the server's data, or reports why not.
+    /// Connects to one server; late results from replaced attempts are ignored.
     public func connect(to server: ServerEndpoint, token: String?, remember: Bool = true) async {
+        connectionGeneration = UUID()
+        let previousSelection = currentServerID == server.id ? selection : nil
         live?.stop()
         live = nil
-        dropTerminalSessions()
+        resetServerState()
+        errorMessage = nil
         connection = .connecting
-        let controller = LiveController(model: self, client: HyadexClient(endpoint: server, token: token))
-        let previousSelection = selection
+        let controller = LiveController(model: self, client: HyadexClient(endpoint: server, token: token, session: networkSession))
+        live = controller
         do {
-            if !isLive {
-                chats = []; groups = []; runs = []; jobs = []; timelines = [:]; queues = [:]; drafts = [:]
-                usage = [:]; contextUsage = [:]; groupLive = [:]; processSeconds = [:]
-            }
-            mediaCache = [:]
-            // Goals, commands and MCP servers belong to the previous server's chats.
-            goals = [:]; goalSupport = [:]; goalBusy = []; commands = [:]; mcp = [:]; mcpBusy = []
-            dropTerminalSessions()
-            live = controller
-            isLive = true
             try await controller.start()
+            try Task.checkCancellation()
+            guard live === controller else {
+                controller.stop()
+                return
+            }
+            isLive = true
             connection = controller.connectedState
-            if remember {
-                if !servers.contains(where: { $0.id == server.id }) { servers.append(server) }
-                currentServerID = server.id
+            if let index = servers.firstIndex(where: { $0.id == server.id }) {
+                servers[index] = server
+            } else {
+                servers.append(server)
+            }
+            currentServerID = server.id
+            if remember, server.id != managedLocalServerID {
+                if defaultPlaceholder?.id == server.id { defaultPlaceholder = nil }
                 TokenStore.setToken(token, for: server.id)
                 saveServers()
             }
@@ -1434,129 +1265,55 @@ public final class AppModel {
             }
         } catch {
             controller.stop()
+            guard live === controller else { return }
             live = nil
+            resetServerState()
             connection = .offline(error.localizedDescription)
             errorMessage = "无法连接到 \(server.name)：\(error.localizedDescription)"
-            loadDemo()
         }
     }
 
     public func disconnect() {
+        connectionGeneration = UUID()
         live?.stop()
         live = nil
-        dropTerminalSessions()
-        connection = .demo
-        loadDemo()
+        resetServerState()
+        connection = .disconnected
+        errorMessage = nil
     }
 
-    private func loadDemo() {
-        let now = Date.now
+    /// Requiring a completed connection also prevents actions during startup.
+    private func requireLive() -> LiveController? {
+        guard isLive, case .connected = connection, let live else {
+            errorMessage = "尚未连接服务器。请先启动本机后端或连接服务器。"
+            return nil
+        }
+        return live
+    }
+
+    private func resetServerState() {
         isLive = false
-        chats = SampleData.chats(now: now)
-        groups = SampleData.groups(now: now)
-        runs = SampleData.runs(now: now)
-        jobs = SampleData.jobs(now: now)
-        timelines = SampleData.chatTimelines(now: now).merging(SampleData.groupTimelines(now: now)) { $1 }
-        queues = ["c3": [QueuedMessage(text: "测试跑完后把 CHANGELOG 也检查一下。")]]
-        (usage, contextUsage) = SampleData.usage(chats: chats, now: now)
-        (groupLive, processSeconds) = SampleData.groupLive(now: now)
-        (goals, goalSupport, commands, mcp) = SampleData.capabilities()
-        select(firstItem(in: sidebarMode))
+        dropTerminalSessions()
+        chats = []; groups = []; runs = []; jobs = []; timelines = [:]; queues = [:]
+        pendingSends = [:]; liveReasoning = [:]; turnStartedAt = [:]; turnSeconds = [:]
+        catalogs = [:]; groupApprovals = [:]; groupLive = [:]; processSeconds = [:]
+        usage = [:]; contextUsage = [:]; goals = [:]; goalSupport = [:]; goalBusy = []
+        commands = [:]; mcp = [:]; mcpBusy = []; attachments = [:]; emergencies = []
+        olderHistory = []; loadingOlder = []; searchHits = []; searching = false
+        timelineFocus = [:]; sideChats = [:]; sideChatErrors = [:]; subagents = [:]
+        markedUnread = []; drafts = [:]; terminalOpen = []; mediaCache = [:]
+        selection = nil; lastSelection = [:]; selectedFilePath = nil; showChanges = false
+        goalEditor = nil; jobEditor = nil; renaming = nil; pendingDeletion = nil
+        sideChatOpen = nil; sheet = nil
     }
 
     public func testConnection(to endpoint: ServerEndpoint, token: String?) async -> Result<HealthResponse, Error> {
+        let token = endpoint.id == managedLocalServerID && servers.contains(endpoint) ? managedLocalToken : token
         do {
-            return .success(try await HyadexClient(endpoint: endpoint, token: token).health())
+            return .success(try await HyadexClient(endpoint: endpoint, token: token, session: networkSession).health())
         } catch {
             return .failure(error)
         }
     }
 
-    // MARK: Demo simulation
-
-    private func append(_ item: TimelineItem, to key: String) {
-        timelines[key, default: []].append(item)
-    }
-
-    private func simulateReply(in id: String, author: Author) {
-        guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
-        chats[index].state = .running
-        turnStartedAt[id] = .now
-        simulations[id]?.cancel()
-        simulations[id] = Task { [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(for: .milliseconds(700))
-            guard !Task.isCancelled else { return }
-            self.markRunningToolsFinished(in: id)
-            self.append(.thinking(id: UUID().uuidString, seconds: 2, text: "先确认上下文，再给出简短的回答。"), to: id)
-            await self.stream(reply: Self.demoReply(for: author), as: author, in: id)
-            guard !Task.isCancelled, let index = self.chats.firstIndex(where: { $0.id == id }) else { return }
-            self.chats[index].state = .idle
-            self.turnStartedAt[id] = nil
-            self.chats[index].lastActivity = .now
-            self.drainQueue(of: id)
-        }
-    }
-
-    private func drainQueue(of id: String) {
-        guard let next = queues[id]?.first else { return }
-        queues[id]?.removeFirst()
-        send(next.text, toChat: id)
-    }
-
-    private func stream(reply: String, as author: Author, in key: String) async {
-        let messageID = UUID().uuidString
-        append(.message(id: messageID, author: author, text: "", time: .now, streaming: true), to: key)
-        var shown = ""
-        for character in reply {
-            if Task.isCancelled { return }
-            shown.append(character)
-            if shown.count % 3 == 0 || character == "\n" {
-                replaceMessage(messageID, in: key, text: shown, streaming: true)
-                try? await Task.sleep(for: .milliseconds(18))
-            }
-        }
-        replaceMessage(messageID, in: key, text: reply, streaming: false)
-    }
-
-    private func replaceMessage(_ messageID: String, in key: String, text: String, streaming: Bool) {
-        guard var items = timelines[key], let index = items.lastIndex(where: { $0.id == messageID }),
-              case .message(let id, let author, _, let time, let mentions, let receipt, _) = items[index] else { return }
-        items[index] = .message(id: id, author: author, text: text, time: time, mentions: mentions,
-                                receipt: receipt, streaming: streaming)
-        timelines[key] = items
-    }
-
-    private func finishStreaming(in key: String) {
-        guard var items = timelines[key] else { return }
-        for index in items.indices {
-            if case .message(let id, let author, let text, let time, let mentions, let receipt, true) = items[index] {
-                items[index] = .message(id: id, author: author, text: text, time: time, mentions: mentions,
-                                        receipt: receipt, streaming: false)
-            }
-        }
-        timelines[key] = items
-    }
-
-    private func markRunningToolsFinished(in key: String) { settleRunningTools(in: key, as: .succeeded) }
-    private func markRunningToolsStopped(in key: String) { settleRunningTools(in: key, as: .failed) }
-
-    private func settleRunningTools(in key: String, as status: ToolStatus) {
-        guard var items = timelines[key] else { return }
-        for index in items.indices {
-            if case .tool(let id, let kind, let title, let output, .running, let seconds) = items[index] {
-                items[index] = .tool(id: id, kind: kind, title: title, output: output, status: status, seconds: seconds)
-            }
-        }
-        timelines[key] = items
-    }
-
-    nonisolated static func demoReply(for author: Author) -> String {
-        switch author.backend {
-        case .codex:
-            "收到。这是演示模式下的模拟回复：连接真实服务器后，这里会实时流式显示 Codex 的回答、命令输出和改动的文件。"
-        default:
-            "好的。这是演示模式下的模拟回复——连接到你的 Hyadex 服务器后，这里会实时显示 Claude 的思考过程、工具调用和改动。"
-        }
-    }
 }

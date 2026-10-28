@@ -89,8 +89,10 @@ enum Snapshotter {
         Scene(name: "21-sidebar-archived", dark: true, sidebar: true) { model in
             UserDefaults.standard.set(true, forKey: "showArchived")
             model.switchSidebar(to: .work)
-            model.setArchived(.chat("c6"), true)
-            model.setArchived(.chat("c5"), true)
+            for index in model.chats.indices where ["c6", "c5"].contains(model.chats[index].id) {
+                model.chats[index].archived = true
+                model.chats[index].pinned = false
+            }
         },
         Scene(name: "22-sidebar-search", dark: false, sidebar: true) { model in
             model.switchSidebar(to: .work)

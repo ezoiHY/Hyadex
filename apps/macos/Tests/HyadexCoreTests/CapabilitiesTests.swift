@@ -150,17 +150,17 @@ struct CapabilitiesTests {
         #expect(group?.goal?.objective == "all green")
     }
 
-    @MainActor @Test func goalCommandDrivesTheDemoGoal() {
-        let model = AppModel()
+    @MainActor @Test func disconnectedGoalsRequireAServer() {
+        let model = AppModel(snapshotFixturesAt: .now)
+        let goals = model.goals
         model.send("/goal 所有测试通过", toChat: "c1")
-        #expect(model.goals["c1"]?.text == "所有测试通过")
-        #expect(model.goals["c1"]?.status == .active)
         model.send("/goal clear", toChat: "c1")
-        #expect(model.goals["c1"] == nil)
-        model.send("/goal", toChat: "c1")
-        #expect(model.goalEditor == .chat("c1"))
-        // Codex chats are offered /goal even though Codex lists only skills.
-        #expect(model.slashSuggestions(forChat: "c2", partial: "go").first?.invocation == "/goal")
+        model.setGoal("new goal", forChat: "c1")
+        model.clearGoal(forChat: "c1")
+        model.pauseGoal(forChat: "c2")
+        #expect(model.goals == goals)
+        #expect(model.errorMessage != nil)
+        #expect(!AppModel().goalSupport(forChat: "unknown").available)
     }
 }
 
@@ -236,22 +236,19 @@ struct ManagementTests {
         #expect(EmergencyAlert.parse(try Self.json(#"{"id":"s1","emergency_alert":null}"#)) == nil)
     }
 
-    @MainActor @Test func demoArchiveDeleteAndQueue() {
-        let model = AppModel()
+    @MainActor @Test func disconnectedManagementLeavesServerStateUnchanged() {
+        let model = AppModel(snapshotFixturesAt: .now)
+        let chats = model.chats
+        let queue = model.queues
         model.setArchived(.chat("c4"), true)
-        #expect(model.archivedChats.map(\.id) == ["c4"])
-        #expect(!model.visibleChats.contains { $0.id == "c4" })
-        model.setArchived(.chat("c4"), false)
-        #expect(model.archivedChats.isEmpty)
-        model.rename(.chat("c4"), to: "  新名字 ")
-        #expect(model.chat("c4")?.title == "新名字")
+        model.rename(.chat("c4"), to: "新名字")
         model.delete(.chat("c4"))
-        #expect(model.chat("c4") == nil)
-        model.queues["c3"] = [QueuedMessage(id: "a", text: "a"), QueuedMessage(id: "b", text: "b")]
-        model.moveQueued("b", up: true, in: "c3")
-        #expect(model.queues["c3"]?.map(\.id) == ["b", "a"])
+        model.moveQueued("missing", up: true, in: "c3")
         model.attach([URL(fileURLWithPath: "/tmp/x.txt")], toChat: "c1")
-        #expect(model.attachments["c1"]?.first?.fileID != nil)
+        #expect(model.chats == chats)
+        #expect(model.queues == queue)
+        #expect(model.attachments.isEmpty)
+        #expect(model.errorMessage != nil)
     }
 }
 
@@ -310,18 +307,18 @@ struct ExtrasTests {
         #expect(projection.queued.first?.hold == .stopped)
     }
 
-    @MainActor @Test func demoForkUnreadAndSideChat() {
-        let model = AppModel()
+    @MainActor @Test func disconnectedForkAndSideChatDoNotCreateData() {
+        let model = AppModel(snapshotFixturesAt: .now)
+        let chats = model.chats
         model.markUnread("c1")
-        #expect(model.chat("c1")?.unread == true)
-        let before = model.chats.count
         model.fork("c1")
-        #expect(model.chats.count == before + 1)
-        #expect(model.chats.first?.title.hasPrefix("Fork of") == true)
         model.send("/btw 为什么这么改？", toChat: "c4")
-        #expect(model.sideChatOpen == "c4")
-        #expect(model.sideChats["c4"]?.exchanges.count == 1)
-        #expect(model.slashSuggestions(forChat: "c4", partial: "bt").first?.invocation == "/btw")
+        model.askSide("为什么这么改？", inChat: "c4")
+        model.refreshSide("c4")
+        #expect(model.chats == chats)
+        #expect(model.sideChats.isEmpty)
+        #expect(model.sideChatOpen == nil)
+        #expect(model.errorMessage != nil)
     }
 }
 

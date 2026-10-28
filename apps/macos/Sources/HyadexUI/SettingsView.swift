@@ -5,18 +5,19 @@ import SwiftUI
 
 public struct SettingsView: View {
     @Bindable var model: AppModel
+    @AppStorage("settingsTab") private var tab = "general"
 
     public init(model: AppModel) {
         self.model = model
     }
 
     public var body: some View {
-        TabView {
-            Tab("通用", systemImage: "gearshape") { GeneralSettings() }
-            Tab("服务器", systemImage: "server.rack") { ServerSettings(model: model) }
-            Tab("通知", systemImage: "bell.badge") { NotificationSettings() }
+        TabView(selection: $tab) {
+            Tab("通用", systemImage: "gearshape", value: "general") { GeneralSettings() }
+            Tab("服务器", systemImage: "server.rack", value: "server") { ServerSettings(model: model) }
+            Tab("通知", systemImage: "bell.badge", value: "notifications") { NotificationSettings() }
         }
-        .frame(width: 560, height: 420)
+        .frame(width: 680, height: 520)
     }
 }
 
@@ -116,6 +117,21 @@ private struct ServerSettings: View {
     @State private var busy = false
 
     var body: some View {
+        VStack(spacing: 0) {
+            LocalServerControls(model: model)
+                .padding(18)
+            Divider()
+            serverList
+        }
+        .onAppear { selection = selection ?? model.currentServerID }
+        .onChange(of: model.currentServerID) { selection = model.currentServerID }
+        .onChange(of: selection, initial: true) {
+            status = nil
+            token = selection.flatMap(TokenStore.token(for:)) ?? ""
+        }
+    }
+
+    private var serverList: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 List(model.servers, selection: $selection) { server in
@@ -142,6 +158,7 @@ private struct ServerSettings: View {
                     .help("添加服务器")
                     Button {
                         guard let id = selection else { return }
+                        if id == model.currentServerID { model.disconnect() }
                         TokenStore.setToken(nil, for: id)
                         model.servers.removeAll { $0.id == id }
                         model.saveServers()
@@ -158,12 +175,20 @@ private struct ServerSettings: View {
             Divider()
             if let index = model.servers.firstIndex(where: { $0.id == selection }) {
                 Form {
-                    TextField("名称", text: $model.servers[index].name)
-                    TextField("地址", text: Binding(
-                        get: { model.servers[index].baseURL.absoluteString },
-                        set: { if let url = URL(string: $0), url.scheme != nil { model.servers[index].baseURL = url } }))
-                        .font(.callout.monospaced())
-                    SecureField("访问令牌", text: $token, prompt: Text("粘贴服务器的访问令牌"))
+                    if model.servers[index].id == model.managedLocalServerID {
+                        LabeledContent("名称", value: "这台 Mac")
+                        LabeledContent("地址", value: model.servers[index].baseURL.absoluteString)
+                            .font(.callout.monospaced())
+                        Text("连接信息由 Hyadex 自动管理，无需填写令牌。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        TextField("名称", text: $model.servers[index].name)
+                        TextField("地址", text: Binding(
+                            get: { model.servers[index].baseURL.absoluteString },
+                            set: { if let url = URL(string: $0), url.scheme != nil { model.servers[index].baseURL = url } }))
+                            .font(.callout.monospaced())
+                        SecureField("访问令牌", text: $token, prompt: Text("粘贴服务器的访问令牌"))
+                    }
                     HStack {
                         Button("测试") { test(model.servers[index]) }
                         Button(isConnected(index) ? "重新连接" : "连接") { connect(model.servers[index]) }
@@ -177,23 +202,20 @@ private struct ServerSettings: View {
                     if let status {
                         Text(status).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     }
-                    Text("""
+                    if model.servers[index].id != model.managedLocalServerID {
+                      Text("""
                     支持局域网和 Tailscale 地址。令牌只通过 Authorization 头发送，并保存在钥匙串中。\
                     用 `install.sh --show-token` 查看已安装服务器的令牌。
                     """)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    }
                 }
                 .formStyle(.grouped)
                 .onChange(of: model.servers[index]) { model.saveServers() }
             } else {
                 ContentUnavailableView("选择一个服务器", systemImage: "server.rack")
             }
-        }
-        .onAppear { selection = selection ?? model.currentServerID }
-        .onChange(of: selection, initial: true) {
-            status = nil
-            token = selection.flatMap(TokenStore.token(for:)) ?? ""
         }
     }
 
@@ -204,8 +226,12 @@ private struct ServerSettings: View {
     private func test(_ server: ServerEndpoint) {
         busy = true
         status = nil
+        let accessToken = token
         Task {
-            switch await model.testConnection(to: server, token: token) {
+            let result = await model.testConnection(to: server, token: accessToken)
+            busy = false
+            guard selection == server.id else { return }
+            switch result {
             case .success(let health):
                 var parts = ["✅ 可以连接"]
                 if let version = health.version { parts.append("v\(version)") }
@@ -215,21 +241,26 @@ private struct ServerSettings: View {
             case .failure(let error):
                 status = "❌ " + error.localizedDescription
             }
-            busy = false
         }
     }
 
     private func connect(_ server: ServerEndpoint) {
         busy = true
         status = nil
+        let accessToken = token
         Task {
-            await model.connect(to: server, token: token)
+            if server.id == model.managedLocalServerID {
+                await model.startLocalServer()
+            } else {
+                await model.connect(to: server, token: accessToken)
+            }
+            busy = false
+            guard selection == server.id else { return }
             if case .connected = model.connection {
                 status = "✅ 已连接到 \(server.name)"
             } else {
                 status = "❌ " + (model.errorMessage ?? "连接失败")
             }
-            busy = false
         }
     }
 }

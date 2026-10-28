@@ -6,7 +6,12 @@ import SwiftUI
 @main
 struct HyadexApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = AppModel()
+    @State private var model: AppModel = {
+        if ProcessInfo.processInfo.environment["HYADEX_SNAPSHOT_DIR"] != nil {
+            return AppModel(snapshotFixturesAt: .now)
+        }
+        return AppModel()
+    }()
 
     var body: some Scene {
         Window("Hyadex", id: "main") {
@@ -15,7 +20,10 @@ struct HyadexApp: App {
                     SystemNotifier.updateBadge(count)
                 }
                 .task {
-                    await model.autoConnect()
+                    appDelegate.model = model
+                    if ProcessInfo.processInfo.environment["HYADEX_SNAPSHOT_DIR"] == nil {
+                        await model.autoConnect()
+                    }
 
                     await Snapshotter.runIfRequested(model: model)
                     await LiveCheck.runIfRequested(model: model)
@@ -42,11 +50,43 @@ struct HyadexApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    weak var model: AppModel?
+    private var terminating = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Needed when launched as a bare binary (swift run) rather than a bundle.
         NSApp.setActivationPolicy(.regular)
         // A live check runs in the background so the user's typing stays in their own app.
-        if ProcessInfo.processInfo.environment["HYADEX_E2E_DIR"] == nil { NSApp.activate() }
+        let environment = ProcessInfo.processInfo.environment
+        if environment["HYADEX_E2E_DIR"] == nil && environment["HYADEX_BACKGROUND_LAUNCH"] != "1" { NSApp.activate() }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model else { return .terminateNow }
+        if terminating { return .terminateLater }
+        // Only this app's process is stopped. Remote/installed servers are
+        // unaffected, and closing the window does not stop the local server.
+        let ownsDisplayedServer = model.isLive && model.currentServerID == model.localServer.endpoint?.id
+        let activeWork = model.chats.contains(where: { [.running, .needsAction, .queued].contains($0.state) })
+            || model.groups.contains(where: { [.running, .needsAction, .queued].contains($0.state) })
+            || model.runs.contains(where: { $0.status.isActive })
+        if model.localServer.isRunning && (!ownsDisplayedServer || activeWork) {
+            let alert = NSAlert()
+            alert.messageText = "退出并停止本地服务？"
+            alert.informativeText = ownsDisplayedServer
+                ? "本地服务仍有任务正在进行。退出会中断这些任务，聊天记录会保留。"
+                : "本地服务仍在后台运行，当前窗口未连接它。退出会停止该服务及其任务，聊天记录会保留。"
+            alert.addButton(withTitle: "取消")
+            alert.addButton(withTitle: "退出")
+            if alert.runModal() != .alertSecondButtonReturn { return .terminateCancel }
+        }
+        terminating = true
+        Task {
+            model.disconnect()
+            await model.localServer.shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
 
@@ -57,10 +97,13 @@ struct AppCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("新建聊天") { model.sheet = .newChat }
                 .keyboardShortcut("n")
+                .disabled(!model.isLive)
             Button("新建讨论组") { model.sheet = .newGroup }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(!model.isLive)
             Button("新建自动接力") { model.sheet = .newAutopilot }
                 .keyboardShortcut("n", modifiers: [.command, .option])
+                .disabled(!model.isLive)
         }
         CommandGroup(after: .sidebar) {
             ForEach(Array(SidebarMode.allCases.enumerated()), id: \.offset) { index, mode in

@@ -8,6 +8,7 @@ cd "$(dirname "$0")/.."
 CONFIG="${CONFIG:-release}"
 APP="dist/Hyadex.app"
 VERSION="${APP_VERSION:-0.1.0}"
+SOURCE_ROOT="$(cd ../.. && pwd)"
 
 echo "==> swift build -c $CONFIG"
 swift build -c "$CONFIG" --product Hyadex
@@ -35,6 +36,11 @@ iconutil -c icns Resources/AppIcon.iconset -o "$APP/Contents/Resources/AppIcon.i
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$(date +%Y%m%d%H%M)" "$APP/Contents/Info.plist"
+plutil -insert HyadexLocalServerSourcePath -string "$SOURCE_ROOT" "$APP/Contents/Info.plist"
+plutil -insert HyadexSourceCommit -string "$(git rev-parse HEAD)" "$APP/Contents/Info.plist"
+if [ -n "${APP_BUNDLE_ID:-}" ]; then
+    plutil -replace CFBundleIdentifier -string "$APP_BUNDLE_ID" "$APP/Contents/Info.plist"
+fi
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
 echo "==> ad-hoc signing"

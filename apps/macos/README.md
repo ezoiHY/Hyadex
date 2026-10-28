@@ -12,7 +12,9 @@ API. It is built with SwiftPM and does not need an Xcode project.
 
 - macOS 15 or later (the app adopts the current system design on macOS 26+).
 - A Swift 6 toolchain: Xcode, or the Command Line Tools with the macOS SDK.
-- A Hyadex server you can reach (same Mac, LAN or Tailscale) and its access token.
+- For the local server: keep this source checkout and prepare its Python environment
+  once with `uv sync --locked --python 3.13` at the repository root.
+- Or a Hyadex server you can reach (same Mac, LAN or Tailscale) and its access token.
 
 ## Build and run
 
@@ -29,13 +31,30 @@ ad hoc. It also records the SDK version in the binary: SwiftPM's default build
 system otherwise records the deployment target, and macOS then runs the app with
 its legacy window chrome.
 
-## Connect to a server
+## Start or connect to a server
+
+The first window is empty until a real server connects. Click **启动本地服务**
+to start a loopback-only, app-owned backend and connect automatically; no token
+needs copying. The same control is available in Settings → 服务器 and the sidebar
+server menu. Repeated clicks reconnect to the same process, and disconnecting
+leaves it running. Closing the window also leaves it running; quitting Hyadex
+stops this backend and preserves its history. The app asks before quitting if
+local work is active or its activity cannot be checked from the current connection.
+
+This source-built app records its checkout path in its bundle and uses that
+checkout's `.venv` and `scripts/dev_server.py`. Keep the checkout in place. It
+does not install a service or download dependencies. The backend has a private
+`mac-app` named instance, with state in `~/.hyadex-instances/mac-app` and its
+configuration under `~/.config/hyadex-server-instances/mac-app`; it chooses an
+available local port. Existing installed/development servers are not restarted
+or adopted. Only one app may own this instance at a time.
 
 Settings → 服务器: enter the address (for example `http://127.0.0.1:7870`, a LAN
 address or a Tailscale `100.x` address) and the access token, then 连接. The token
 is kept in the login keychain and is sent only in the `Authorization` header. Use
-`./install.sh --show-token` on the server to display it. Without a connection
-the app shows built-in demo data.
+`./install.sh --show-token` on the server to display it. A failed connection or
+disconnect returns to the connection screen, with no sample chats or simulated
+replies. The production app has no demo mode.
 
 ## Using the app
 
@@ -183,7 +202,7 @@ the app shows built-in demo data.
 | Target | Role |
 | --- | --- |
 | `HyadexAPI` | REST client, WebSocket event stream, keychain token store, JSON values. |
-| `HyadexCore` | `AppModel` (@Observable), live controller, event projections, models, demo data. |
+| `HyadexCore` | `AppModel` (@Observable), local server lifecycle, live controller, event projections and models. |
 | `HyadexRichText` | Message rendering: Markdown and TeX parsers, math layout, syntax highlighting. |
 | `HyadexTerminal` | Terminal emulator (xterm subset for tmux), its CoreText view and the PTY socket. |
 | `HyadexUI` | SwiftUI views and design tokens. |
@@ -199,7 +218,15 @@ directly from a shell may not receive windows.
 
 - **Screenshots:** `--env HYADEX_SNAPSHOT_DIR=/tmp/shots` renders each main screen
   to PNG and quits (`HYADEX_SNAPSHOT_ONLY=<name>` selects scenes). System glass
-  materials do not render in these images.
+  materials do not render in these images. Only this explicit development path
+  loads sample fixtures; ordinary startup and connection failures never do.
+- **Local startup acceptance:** use a separate `APP_BUNDLE_ID` when building,
+  then launch with `HYADEX_LOCAL_SERVER_HOME` set to a temporary directory and
+  `HYADEX_LOCAL_SERVER_INSTANCE` set to a unique test name. `HYADEX_LOCAL_SERVER_SOURCE`
+  overrides the source checkout; `HYADEX_LOCAL_SERVER_PORT` can fix a test port.
+  `HYADEX_BACKGROUND_LAUNCH=1` avoids requesting focus at launch. Bundle IDs
+  isolate both app preferences and Keychain service names. Exercise the normal
+  startup button without `HYADEX_SERVER_URL` or `HYADEX_TOKEN` overrides.
 - **Layout stress:** `HYADEX_SNAPSHOT_ONLY=stress` with `HYADEX_STRESS_WIDTH=900`
   switches tabs and the inspector rapidly in a narrow window.
 - **End to end:** with `HYADEX_SERVER_URL` and `HYADEX_TOKEN` pointing at a
@@ -229,6 +256,14 @@ directly from a shell may not receive windows.
   `=menus`/`=drop` and `=picker` run single steps.
 
 ## Verified
+
+Local startup was exercised through the actual app's home button and Settings
+against an isolated, real backend: authenticated connection, repeated selection
+of the local server, Settings connection test, disconnect/reconnect, creation of
+a chat, graceful app exit stopping the owned process, and restarting with that
+chat preserved. A missing-source launch showed a retryable error and no sample
+content. The 82 Swift tests include process ownership/cancellation and a real
+isolated runner; these checks do not repeat provider-turn acceptance below.
 
 Against an isolated development server (API contract 29) with real Claude Code
 and Codex: sending turns, live updates, approvals for both providers, replies
@@ -266,9 +301,11 @@ with event logs recorded from that server.
 - Math covers the LaTeX agents usually write (fractions, roots, scripts, big
   operators, delimiters, accents, matrices, cases, aligned); an unsupported
   command shows the formula's source instead.
-- Not exercised end to end yet: connecting through the Settings form (keychain),
-  creating chats or groups from their sheets, Stop and queued-message editing
-  on a live server, and reconnection after a server restart.
+- Not exercised end to end yet: manually connecting through the Settings form
+  with a remote token (keychain), creating groups from their sheet, Stop and
+  queued-message editing on a live server, and reconnection after an external
+  server restart. Managed local startup/reconnection and chat creation are
+  verified above.
 - Ad-hoc signing only; the keychain may ask again after each rebuild.
 - Slash suggestions, attachments and side questions are offered in chats, not in
   group messages (the server's group message has no attachments).

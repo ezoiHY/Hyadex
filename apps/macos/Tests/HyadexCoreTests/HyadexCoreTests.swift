@@ -43,24 +43,3 @@ struct TimelineTests {
         #expect(group.state == .running)
     }
 }
-
-@MainActor
-struct AppModelTests {
-    @Test func messagesToABusyChatAreQueuedAndEditable() {
-        let model = AppModel()
-        model.send("第一条", toChat: "c3")   // c3 is running in the sample data
-        #expect(model.queues["c3"]?.map(\.text).contains("第一条") == true)
-        let id = model.queues["c3"]!.last!.id
-        model.editQueued(id, in: "c3")
-        #expect(model.drafts["c3"] == "第一条")
-        #expect(model.queues["c3"]?.contains { $0.id == id } == false)
-    }
-
-    @Test func approvingAPlanStartsTheFirstTask() {
-        let model = AppModel()
-        model.approve(run: "r2")
-        let run = model.run("r2")!
-        #expect(run.status == .executing)
-        #expect(run.tasks[0].state == .executing)
-    }
-}

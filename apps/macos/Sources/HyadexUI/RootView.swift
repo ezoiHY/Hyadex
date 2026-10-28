@@ -94,12 +94,16 @@ public struct RootView: View {
     }
 
     @ViewBuilder private var detail: some View {
-        switch model.selection {
+        if !model.isLive && model.chats.isEmpty && model.groups.isEmpty && model.runs.isEmpty {
+            ServerWelcomeView(model: model)
+        } else {
+          switch model.selection {
         case .chat(let id): ChatDetailView(model: model, chatID: id).id(id)
         case .group(let id): GroupDetailView(model: model, groupID: id).id(id)
         case .autopilot(let id): AutopilotView(model: model, runID: id).id(id)
         case .jobs: JobsView(model: model)
         case nil: EmptyDetail(model: model)
+          }
         }
     }
 }
@@ -231,12 +235,12 @@ struct CommandPalette: View {
     }
 
     private var entries: [Entry] {
-        var all: [Entry] = [
+        var all: [Entry] = model.isLive ? [
             Entry(id: "new-chat", title: "新建聊天", subtitle: "命令 · ⌘N", symbol: "bubble.left") { model.sheet = .newChat },
             Entry(id: "new-group", title: "新建讨论组", subtitle: "命令 · ⇧⌘N", symbol: "person.2") { model.sheet = .newGroup },
             Entry(id: "new-run", title: "新建自动接力", subtitle: "命令 · ⌥⌘N", symbol: "arrow.triangle.2.circlepath") { model.sheet = .newAutopilot },
             Entry(id: "jobs", title: "定时任务", subtitle: "前往", symbol: "calendar.badge.clock") { model.select(.jobs) },
-        ]
+        ] : []
         all += model.chats.map { chat in
             Entry(id: chat.id, title: chat.title, subtitle: "聊天 · \(chat.backend.displayName)", symbol: "bubble.left") {
                 model.select(.chat(chat.id))

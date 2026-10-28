@@ -83,7 +83,7 @@ struct SidebarView: View {
                     .contextMenu { chatMenu(chat) }
             }
             if model.visibleChats.isEmpty && model.visiblePinned.isEmpty {
-                EmptyRow(text: model.searchText.isEmpty ? "还没有聊天，点右上角的 + 开始" : "没有匹配的聊天")
+                EmptyRow(text: !model.isLive ? "连接服务器后查看聊天" : model.searchText.isEmpty ? "还没有聊天，点右上角的 + 开始" : "没有匹配的聊天")
             }
         }
         if !model.archivedChats.isEmpty {
@@ -119,7 +119,7 @@ struct SidebarView: View {
                     .contextMenu { groupMenu(group) }
             }
             if model.visibleGroups.isEmpty {
-                EmptyRow(text: model.searchText.isEmpty ? "还没有讨论组，点右上角的 + 开始" : "没有匹配的讨论组")
+                EmptyRow(text: !model.isLive ? "连接服务器后查看讨论组" : model.searchText.isEmpty ? "还没有讨论组，点右上角的 + 开始" : "没有匹配的讨论组")
             }
         }
         if !model.archivedGroups.isEmpty {
@@ -215,6 +215,7 @@ private struct SidebarHeader: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .disabled(!model.isLive)
                 .help(model.sidebarMode.newItemTitle)
                 .accessibilityLabel(model.sidebarMode.newItemTitle)
             }
@@ -418,6 +419,7 @@ private struct ServerFooter: View {
     @Bindable var model: AppModel
     @Environment(\.openSettings) private var openSettings
     @AppStorage("showUsage") private var showUsage = true
+    @AppStorage("settingsTab") private var settingsTab = "general"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -430,7 +432,7 @@ private struct ServerFooter: View {
             Menu {
                 ForEach(model.servers) { server in
                     Button {
-                        model.currentServerID = server.id
+                        Task { await model.reconnect(to: server) }
                     } label: {
                         if server.id == model.currentServerID {
                             Label(server.name, systemImage: "checkmark")
@@ -440,10 +442,14 @@ private struct ServerFooter: View {
                     }
                 }
                 Divider()
-                if model.isLive {
-                    Button("断开连接，查看演示数据") { model.disconnect() }
+                Button(model.localServer.isStarting ? "正在启动本地服务…" : "启动并连接本地服务") {
+                    Task { await model.startLocalServer() }
                 }
-                Button("连接与管理服务器…") { openSettings() }
+                .disabled(model.localServer.isStarting)
+                if model.isLive {
+                    Button("断开连接") { model.disconnect() }
+                }
+                Button("连接与管理服务器…") { settingsTab = "server"; openSettings() }
             } label: {
                 HStack(spacing: 8) {
                     Circle()
@@ -475,7 +481,8 @@ private struct ServerFooter: View {
     private var dotColor: Color {
         switch model.connection {
         case .connected: .green
-        case .connecting, .demo: .yellow
+        case .connecting: .yellow
+        case .disconnected: .secondary
         case .offline: .red
         }
     }

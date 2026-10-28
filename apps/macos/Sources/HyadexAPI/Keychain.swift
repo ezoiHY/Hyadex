@@ -3,7 +3,9 @@ import Security
 
 /// Access tokens live in the login keychain, one item per server.
 public enum TokenStore {
-    private static let service = "dev.hyadex.mac.server-token"
+    // Keep development/acceptance bundles out of the user's saved connections.
+    // The normal bundle retains the original keychain service name.
+    private static let service = (Bundle.main.bundleIdentifier ?? "dev.hyadex.mac") + ".server-token"
 
     public static func token(for server: UUID) -> String? {
         let query: [String: Any] = [

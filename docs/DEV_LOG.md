@@ -3,6 +3,29 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-28 — Mac app: start a local backend and remove demo mode
+
+- The welcome screen, server settings and server menu can start a real,
+  app-owned local backend and connect without copying a token. It uses a
+  separate named instance and an available loopback port; repeated connections
+  reuse its process. Quitting the app stops it and preserves chat history.
+  Existing installed servers are not adopted or restarted. Source builds use
+  their recorded checkout and its prepared Python environment.
+- Ordinary startup, failed connections and disconnects now show an empty
+  connection screen. Removed simulated replies and offline mutations; sample
+  content is limited to explicit development snapshot fixtures. Late results
+  from a disconnected or replaced connection cannot populate another server.
+- Verification: 82 Swift tests passed, including an isolated real backend and
+  startup cancellation/ownership regressions. A separately identified native
+  app (0.1.0, debug build 202610281132, based on source 1d8e6381) was exercised
+  through its actual controls: local startup, authenticated connection and
+  unauthenticated rejection, Settings test, repeated selection, disconnect and
+  reconnect, new-chat creation, app exit and restart with that chat retained,
+  and retryable missing-source failure without sample content. The app used
+  its normal HTTP transport and real isolated state; these boundaries were not
+  mocked. Provider turns and remote Keychain connections were not revalidated
+  in this change. Availability: local source/package only.
+
 ## 2026-10-28 — Mac app: files, queue, history, alerts, jobs and chat management
 
 - Attachments: the paperclip, or files dropped anywhere on a conversation,
