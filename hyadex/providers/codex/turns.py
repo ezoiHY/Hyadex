@@ -7,6 +7,7 @@ from contextlib import suppress
 import json
 import logging.handlers
 import os
+import tempfile
 from pathlib import Path
 import re
 import secrets
@@ -53,6 +54,7 @@ from hyadex.core.queue import (
 from hyadex.core.artifacts import (
     collect_manifest,
     collect_recent_leftover_manifests,
+    publish_artifact_entries,
     watch_manifest_artifacts,
 )
 from hyadex.core.history_sync import append_durable_event_batch, fence_native_steer_delivery
@@ -151,6 +153,7 @@ from hyadex.providers.codex.notifications import (
     codex_app_server_reasoning_summary,
     codex_app_server_tool,
     codex_app_server_tool_output,
+    codex_generated_image,
     codex_call_tool,
     codex_exec_agent_message,
     codex_reasoning_text,
@@ -902,6 +905,25 @@ async def run_codex_app_server(
             "is_error": is_error,
             **current_metadata(),
         })
+        await publish_generated_image(item)
+
+    async def publish_generated_image(item: dict[str, Any]) -> None:
+        """Codex's own image generation becomes a chat image, as the Codex app shows it."""
+        saved, data = codex_generated_image(item)
+        if saved is None and data is None:
+            return
+        temporary = None
+        try:
+            if saved is None:
+                temporary = tempfile.TemporaryDirectory(prefix="hyadex-codex-image-")
+                saved = os.path.join(temporary.name, f"image-{str(item.get('id') or 'generated')[-12:]}.png")
+                await asyncio.to_thread(Path(saved).write_bytes, data)
+            await publish_artifact_entries(session_id, current_run_id, [{"path": saved, "title": Path(saved).name}])
+        except Exception:
+            logger.exception("could not publish a Codex generated image session=%s", session_id)
+        finally:
+            if temporary is not None:
+                temporary.cleanup()
 
     async def stop_manifest_watcher() -> None:
         nonlocal manifest_watch_task

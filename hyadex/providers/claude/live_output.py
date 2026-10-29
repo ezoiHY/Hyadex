@@ -90,14 +90,23 @@ class ClaudeLiveOutput:
         if claude_sdk_type(message) != "AssistantMessage" or claude_sdk_field(message, "parent_tool_use_id"):
             return
         content = claude_sdk_field(message, "content", [])
+        message_id = str(claude_sdk_field(message, "message_id", "") or "")
         for block in content if isinstance(content, list) else []:
             block_type = claude_sdk_type(block)
             kind = "text" if block_type in _TEXT_BLOCKS else "thinking" if block_type in _THINKING_BLOCKS else ""
-            if not kind or not self._open[kind]:
+            if not kind:
                 continue
             # Claude writes one block at a time, so a completed block is the
-            # oldest one still open.
-            item_id = self._open[kind].pop(0)
+            # oldest one still open in its own message. Pairing across
+            # messages let a streamed block that never completed (a thinking
+            # block left out of its message) shift every later pair, and the
+            # last thinking was then kept a second time as partial.
+            candidates = ([item for item in self._open[kind] if item.startswith(message_id + ":")]
+                          if message_id else self._open[kind])
+            if not candidates:
+                continue
+            item_id = candidates[0]
+            self._open[kind].remove(item_id)
             if kind == "text":
                 self._completed_text.add(item_id)
                 await clear_assistant_text_stream(self.session_id, self.run_id, item_id)

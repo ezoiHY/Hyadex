@@ -3,6 +3,45 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-29 — Images: Codex generations shown, work rows timed, in-app preview
+
+- **Codex image generation.** A finished `imageGeneration` item is published
+  as a chat image. The server uses the saved file under
+  `~/.codex/generated_images`, or decodes the base64 result when no file is
+  saved. The tool row now shows the saved path, not truncated base64. The Mac
+  calls the tool 生成图片.
+- **Work rows (Mac).**
+  - Each 已处理 row shows its own run's time, from the turn start (first run)
+    or its first step, to the next shown item. Before, every run in a chat
+    showed the whole turn's time.
+  - An image the agent publishes mid-run shows after that run instead of
+    splitting it in two.
+  - Settled approvals and forms stay inside the run.
+- **Claude thinking.** A Claude message whose thinking block never streamed no
+  longer completes another message's block. That mismatch left a stray
+  "partial" copy of a thought after the answer. Copies already in old logs are
+  hidden.
+- **In-app preview (Mac).** Clicking an image, video or PDF, or a link to a
+  local one, opens Quick Look in the window instead of an outside app. SVG
+  counts as an image.
+- Verification:
+  - New backend and Swift tests; the backend suite and 122 Swift tests pass.
+  - Live, isolated `imagefix` instance:
+    - Codex "生成一张猪咪的图片": the tool output was the saved path. An
+      `artifact_created` image (1.9 MB PNG) came before the answer and showed
+      inline, under "已处理 35 秒".
+    - A Claude chat drew and published an SVG. Its runs showed 10 s and 19 s
+      on their own, with no duplicate thought.
+    - Pressing the Codex image opened the in-app preview; Preview.app did not
+      start.
+- Caveats:
+  - Images Codex generated before this change are not added to old chats; the
+    files stay in `~/.codex/generated_images`.
+  - The original Claude duplicate was not reproduced live; a unit test covers
+    the pairing.
+  - A transparent SVG keeps its transparency, so dark strokes are hard to see
+    in dark mode.
+
 ## 2026-10-29 — Ask another chat with @
 
 - **Mac.** `@` in a chat's composer lists the chats in its project (Tab or

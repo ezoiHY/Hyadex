@@ -32,6 +32,13 @@ public struct SessionProjection: Sendable {
 
     private var index: [String: Int] = [:]
     private var toolStarts: [String: Date] = [:]
+    /// When each item first appeared, and where turns ended (item count → time):
+    /// the durations of the "已处理" rows.
+    private var itemTimes: [String: Date] = [:]
+    private var turnEnds: [Int: Date] = [:]
+    private var eventTime = Date.now
+    /// The current turn's thoughts, to drop a partial copy of one already recorded.
+    private var turnThoughts: Set<String> = []
     /// Uploaded files by id, to name a turn's attachments.
     private var uploads: [String: MediaFile] = [:]
     private var lastPublication: String?
@@ -56,6 +63,44 @@ public struct SessionProjection: Sendable {
 
     public var needsAction: Bool { !pending.isEmpty }
 
+    /// How long each run of work took, by its first step: from the turn's start
+    /// (the turn's first run) or the run's first step, to what ended it — the
+    /// next item shown or the end of the turn. A run still going has none.
+    public var workSeconds: [String: Int] {
+        var result: [String: Int] = [:]
+        var first: String?
+        var start: Date?
+        var turnStart: Date?
+        func close(_ end: Date?) {
+            if let first, let start, let end { result[first] = max(0, Int(end.timeIntervalSince(start).rounded())) }
+            first = nil
+            start = nil
+        }
+        for (position, item) in items.enumerated() {
+            if let end = turnEnds[position] {
+                close(end)
+                turnStart = nil
+            }
+            if case .message(_, let author, _, let time, _, _, _) = item, author.kind == .user {
+                close(time)
+                turnStart = time
+                continue
+            }
+            if item.isWorkStep {
+                if first == nil {
+                    first = item.id
+                    start = turnStart ?? itemTimes[item.id]
+                }
+                continue
+            }
+            if item.floatsPastWork { continue }
+            close(itemTimes[item.id])
+            turnStart = nil
+        }
+        close(turnEnds[items.count])
+        return result
+    }
+
     public mutating func apply(_ events: [JSON]) {
         for event in events { apply(event) }
     }
@@ -65,6 +110,7 @@ public struct SessionProjection: Sendable {
         lastSeq = seq
         let id = event["id"].string ?? "seq-\(seq)"
         let time = event["ts"].date ?? .now
+        eventTime = time
         if let parent = event["parent_tool_id"].string, !parent.isEmpty {
             return applySubagent(event, parent: parent, id: id, time: time)
         }
@@ -74,6 +120,7 @@ public struct SessionProjection: Sendable {
             lastActivity = time
             turnStartedAt = time
             turnUserItem = id
+            turnThoughts = []
             if let request = event["client_request_id"].string {
                 acceptedRequests.insert(request)
                 requestTurns[request] = (id, time)
@@ -118,6 +165,10 @@ public struct SessionProjection: Sendable {
             append(.message(id: id, author: agent, text: text, time: time))
         case "reasoning_summary", "reasoning_text":
             guard let text = event["text"].text else { return }
+            // An older server kept the turn's last thought a second time, as partial.
+            let thought = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if event["partial"].bool == true, turnThoughts.contains(thought) { return }
+            turnThoughts.insert(thought)
             if case .thinking(let previousID, let seconds, let previous)? = items.last {
                 replace(previousID, with: .thinking(id: previousID, seconds: seconds, text: previous + "\n\n" + text))
             } else {
@@ -412,6 +463,7 @@ public struct SessionProjection: Sendable {
     // MARK: Helpers
 
     private mutating func closeTurn(at time: Date) {
+        turnEnds[items.count] = time
         if let start = turnStartedAt, let item = turnUserItem {
             turnSeconds[item] = max(0, Int(time.timeIntervalSince(start).rounded()))
         }
@@ -424,6 +476,7 @@ public struct SessionProjection: Sendable {
             items[position] = item
             return
         }
+        itemTimes[item.id] = eventTime
         index[item.id] = items.count
         items.append(item)
     }
@@ -514,6 +567,8 @@ public struct SessionProjection: Sendable {
             return (.web, input["url"].string ?? input["query"].string ?? name)
         case "TodoWrite":
             return (.edit, "更新待办清单")
+        case "ImageGeneration":
+            return (.mcp, "生成图片")
         case "Task", "Agent":
             return (.mcp, input["description"].string ?? "子代理")
         default:

@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 from contextlib import suppress
 import json
 import logging.handlers
+import os
 import re
 import signal
 import time
@@ -1273,6 +1276,22 @@ def codex_app_server_tool(item: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def codex_generated_image(item: dict[str, Any]) -> tuple[str | None, bytes | None]:
+    """A finished image generation: the file Codex saved, or its decoded image data."""
+    if str(item.get("type") or "") != "imageGeneration" or str(item.get("status") or "completed") == "failed":
+        return None, None
+    saved = str(item.get("savedPath") or "")
+    if saved and os.path.isfile(saved):
+        return saved, None
+    result = item.get("result")
+    if isinstance(result, str) and result:
+        try:
+            return None, base64.b64decode(result, validate=True)
+        except (binascii.Error, ValueError):
+            return None, None
+    return None, None
+
+
 def codex_app_server_tool_output(
     item: dict[str, Any],
     delta_text: str = "",
@@ -1303,7 +1322,8 @@ def codex_app_server_tool_output(
     if item_type == "imageView":
         return item.get("path") or delta_text, None, is_error
     if item_type == "imageGeneration":
-        return item.get("result") or item.get("savedPath") or delta_text, None, is_error
+        # The file, not its base64 `result`: megabytes the timeline cannot use.
+        return item.get("savedPath") or ("Generated an image" if item.get("result") else delta_text), None, is_error
     return delta_text, None, is_error
 
 

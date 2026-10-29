@@ -27,6 +27,7 @@ struct ChatDetailView: View {
                              onOpenFile: model.openFile,
                              onReply: { model.reply($0, $1, in: chatID) },
                              loadMedia: { [model] file in await model.media(chat: chatID, fileID: file.id) },
+                             processSeconds: model.processSeconds[chatID] ?? [:],
                              focusID: model.timelineFocus[chatID])
                     // Files dropped anywhere on the conversation are attached to the next message.
                     .dropDestination(for: URL.self) { urls, _ in
@@ -537,7 +538,7 @@ extension AppModel {
                 if let changed = changes.first(where: { path.hasSuffix($0.path) || $0.path.hasSuffix(path) }) {
                     self.openFile(changed.path)
                 } else if FileManager.default.fileExists(atPath: path) {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                    MediaPreview.open(URL(fileURLWithPath: path))
                 } else if let id {
                     let target = path
                     let name = (target as NSString).lastPathComponent

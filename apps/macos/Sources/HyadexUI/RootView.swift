@@ -1,10 +1,12 @@
 import HyadexCore
+import QuickLook
 import SwiftUI
 
 /// Main window: sidebar · conversation · inspector.
 public struct RootView: View {
     @Bindable var model: AppModel
     @AppStorage(TextSize.key) private var textSize = TextSize.standard
+    @Bindable private var preview = MediaPreview.shared
 
     public init(model: AppModel) {
         self.model = model
@@ -94,6 +96,7 @@ public struct RootView: View {
             case .feedback: EmptyView()
             }
         }
+        .quickLookPreview($preview.url)
         .frame(minWidth: 900, minHeight: 560)
     }
 

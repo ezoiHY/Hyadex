@@ -114,7 +114,7 @@ public struct MediaFile: Identifiable, Hashable, Sendable {
 
     public var isImage: Bool {
         contentType.hasPrefix("image/")
-            || ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp"].contains((name as NSString).pathExtension.lowercased())
+            || ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp", "svg"].contains((name as NSString).pathExtension.lowercased())
     }
 }
 
@@ -147,6 +147,22 @@ public enum TimelineItem: Identifiable, Hashable, Sendable {
 }
 
 public extension TimelineItem {
+    /// Work folded into a turn's "已处理" row: thinking, tools, and answered
+    /// approvals and questions (a pending one shows on its own).
+    var isWorkStep: Bool {
+        switch self {
+        case .thinking, .tool: true
+        case .approval(_, _, _, _, _, let decision, _), .form(_, _, _, let decision): decision != .pending
+        default: false
+        }
+    }
+
+    /// An agent's image: shown after the work around it, never splitting it.
+    var floatsPastWork: Bool {
+        if case .media(_, let author, _) = self { return author.kind == .agent }
+        return false
+    }
+
     /// For an approval, the answer it offers meaning `decision` (the first
     /// refusal for `.denied`); nil for anything else.
     func reply(for decision: ApprovalDecision) -> InteractionReply? {

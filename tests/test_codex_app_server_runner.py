@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import tempfile
 import time
@@ -4050,6 +4051,52 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(packets[-1]["items"], [])
         answers = [call.args[2] for call in events.await_args_list if call.args[1] == "assistant_text"]
         self.assertEqual([(answer["text"], answer.get("partial")) for answer in answers], [("Hello world.", None)])
+
+    @staticmethod
+    def _image_generation(item: dict[str, object]) -> list[dict[str, object]]:
+        item = {"id": "image-1", "type": "imageGeneration", **item}
+        return [
+            {"method": "item/started", "params": {"threadId": "thread-native", "turnId": "turn-native",
+                                                  "item": {**item, "status": "inProgress"}}},
+            {"method": "item/completed", "params": {"threadId": "thread-native", "turnId": "turn-native",
+                                                    "item": {**item, "status": "completed"}}},
+        ]
+
+    async def test_a_generated_image_becomes_a_chat_image(self) -> None:
+        saved = Path(self.cwd) / "exec-image.png"
+        saved.write_bytes(b"\x89PNG fixture")
+        published = []
+
+        async def publish(session_id, run_id, entries, **_kwargs):
+            published.append((session_id, run_id, entries))
+            return []
+
+        with patch.object(hyadex_server, "publish_artifact_entries", publish):
+            events, _packets = await self._run_answer_stream_case([
+                *self._image_generation({"savedPath": str(saved), "result": "iVBORw0KGgo" * 50_000}),
+                agent_message("answer", "Here it is.", "final_answer"),
+                completed_notification(),
+            ])
+        finished = next(call.args[2] for call in events.await_args_list if call.args[1] == "tool_finished")
+        # The timeline keeps the file's path, never the megabytes of base64.
+        self.assertEqual(finished["output"], str(saved))
+        self.assertEqual(published, [("chat-native", "run-original", [{"path": str(saved), "title": "exec-image.png"}])])
+
+    async def test_a_generated_image_without_a_saved_file_is_decoded(self) -> None:
+        captured = []
+
+        async def publish(session_id, run_id, entries, **_kwargs):
+            captured.append(Path(entries[0]["path"]).read_bytes())
+            return []
+
+        with patch.object(hyadex_server, "publish_artifact_entries", publish):
+            events, _packets = await self._run_answer_stream_case([
+                *self._image_generation({"result": base64.b64encode(b"\x89PNG decoded").decode()}),
+                completed_notification(),
+            ])
+        self.assertEqual(captured, [b"\x89PNG decoded"])
+        finished = next(call.args[2] for call in events.await_args_list if call.args[1] == "tool_finished")
+        self.assertEqual(finished["output"], "Generated an image")
 
     async def test_live_commentary_settles_into_its_trace_item(self) -> None:
         events, packets = await self._run_answer_stream_case([

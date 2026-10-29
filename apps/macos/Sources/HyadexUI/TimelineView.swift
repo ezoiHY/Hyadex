@@ -1,6 +1,7 @@
 import HyadexCore
 import HyadexRichText
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A scrolling conversation. Each turn's work (thinking, tool calls,
 /// answered approvals) folds into one "process" row, so the answer stays the
@@ -24,7 +25,7 @@ struct TimelineView: View {
     var loadMedia: @Sendable (MediaFile) async -> Data? = { _ in nil }
     /// Group members' answers in progress.
     var liveTurns: [MemberTurn] = []
-    /// Durations of finished member turns, keyed by their first step id.
+    /// Durations of finished runs of work (a chat's, or a member's turn), keyed by their first step id.
     var processSeconds: [String: Int] = [:]
     var onReplyMember: (GroupApproval, InteractionReply) -> Void = { _, _ in }
     /// An item to bring into view and highlight briefly (a search hit).
@@ -151,36 +152,43 @@ struct TimelineView: View {
         }
     }
 
-    static func isProcess(_ item: TimelineItem) -> Bool {
-        switch item {
-        case .thinking, .tool: true
-        case .approval(_, _, _, _, _, let decision, _), .form(_, _, _, let decision): decision != .pending
-        default: false
-        }
-    }
-
     private var rows: [Row] {
         var result: [Row] = []
         var steps: [TimelineItem] = []
+        /// An agent's images met inside a run of work: shown after it.
+        var floating: [TimelineItem] = []
         var turn: String?  // id of the user message that started the current turn
+        var firstRunOfTurn = true
         let lastUser = items.lastIndex { if case .message(_, let author, _, _, _, _, _) = $0 { author.kind == .user } else { false } }
         var index = 0
         func flush() {
-            guard let first = steps.first else { return }
-            let current = activity != nil && (lastUser.map { index > $0 } ?? true)
-            result.append(.process("process-" + first.id, steps,
-                                   seconds: processSeconds[first.id] ?? turn.flatMap { turnSeconds[$0] }, live: false,
-                                   inProgress: current))
-            steps = []
+            if let first = steps.first {
+                let current = activity != nil && (lastUser.map { index > $0 } ?? true)
+                // A run's own duration; without one (older group data) only the
+                // turn's first run shows the turn's, never every run of it.
+                let seconds = processSeconds[first.id] ?? (firstRunOfTurn ? turn.flatMap { turnSeconds[$0] } : nil)
+                result.append(.process("process-" + first.id, steps, seconds: seconds, live: false, inProgress: current))
+                firstRunOfTurn = false
+                steps = []
+            }
+            result += floating.map(Row.item)
+            floating = []
         }
         for (position, item) in items.enumerated() {
             index = position
-            if Self.isProcess(item) {
+            if item.isWorkStep {
                 steps.append(item)
                 continue
             }
+            if item.floatsPastWork, !steps.isEmpty {
+                floating.append(item)
+                continue
+            }
             flush()
-            if case .message(let id, let author, _, _, _, _, _) = item, author.kind == .user { turn = id }
+            if case .message(let id, let author, _, _, _, _, _) = item, author.kind == .user {
+                turn = id
+                firstRunOfTurn = true
+            }
             result.append(.item(item))
         }
         index = items.count
@@ -188,6 +196,8 @@ struct TimelineView: View {
             // The running turn's work so far, headed by the live status.
             result.append(.process("process-" + first.id, steps, seconds: nil, live: true))
             steps = []
+            result += floating.map(Row.item)
+            floating = []
         } else {
             flush()
         }
@@ -962,7 +972,29 @@ private struct MediaThumbnail: View {
     }
 }
 
-/// Saves a served file under Caches and opens it with its default app.
+/// Images, videos and PDFs open in Quick Look over the window instead of in
+/// another app; RootView presents `url`.
+@MainActor @Observable
+public final class MediaPreview {
+    public static let shared = MediaPreview()
+    public var url: URL?
+
+    static func opensInApp(_ url: URL) -> Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return type.conforms(to: .image) || type.conforms(to: .movie) || type.conforms(to: .pdf)
+    }
+
+    /// Previews `url` here when Quick Look shows it well, else opens its default app.
+    static func open(_ url: URL) {
+        if opensInApp(url) {
+            shared.url = url
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+/// Saves a served file under Caches, then previews it (or opens its default app).
 enum MediaOpener {
     @MainActor
     static func open(_ file: MediaFile, load: @Sendable (MediaFile) async -> Data?) async {
@@ -974,7 +1006,7 @@ enum MediaOpener {
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
-            NSWorkspace.shared.open(url)
+            MediaPreview.open(url)
         } catch {
             NSSound.beep()
         }

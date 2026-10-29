@@ -548,6 +548,8 @@ final class LiveController {
         }
         if model.turnStartedAt[id] != projection.turnStartedAt { model.turnStartedAt[id] = projection.turnStartedAt }
         if model.turnSeconds[id] != projection.turnSeconds { model.turnSeconds[id] = projection.turnSeconds }
+        let workSeconds = projection.workSeconds
+        if model.processSeconds[id] != workSeconds { model.processSeconds[id] = workSeconds }
         if !projection.running, model.liveReasoning[id] != nil { model.liveReasoning[id] = nil }
         if projection.running {
             runningChats.insert(id)
