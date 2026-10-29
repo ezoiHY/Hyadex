@@ -102,6 +102,12 @@ class UpdateSessionRequest(BaseModel):
     codex_permission_profile: str | None = Field(default=None, max_length=240)
     codex_approvals_reviewer: Literal["user", "auto_review", "guardian_subagent"] | None = None
     provider_jobs_access: Literal["full", "read_only", "blocked"] | None = None
+    # Chat consults: which modes other chats may use to ask this chat, whether
+    # this chat's deep questions need the user's approval, and the chats it may
+    # always ask deeply (set by "always allow" on an approval).
+    consult_inbound: Literal["off", "basic", "deep"] | None = None
+    consult_deep_approval: bool | None = None
+    consult_deep_allowed: list[str] | None = Field(default=None, max_length=50)
 
 
 class ReadSessionRequest(BaseModel):

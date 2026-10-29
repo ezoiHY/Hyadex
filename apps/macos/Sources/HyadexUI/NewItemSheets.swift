@@ -42,14 +42,16 @@ struct NewChatSheet: View {
     @State private var modelName = ""
     @State private var cwd = ""
     @State private var permission = "Manual"
+    /// Started from a project: the chat goes into it.
+    @State private var project: String?
 
     private var models: [RuntimeOption] { model.catalog(for: backend).models }
 
     private var permissions: [String] { PermissionPreset.presets(for: backend).map(\.label) }
 
     var body: some View {
-        SheetScaffold(title: "新建聊天", primary: "创建", canSubmit: !cwd.isEmpty) {
-            model.createChat(backend: backend, model: modelName, cwd: cwd, permission: permission)
+        SheetScaffold(title: project.map { "在“\($0)”中新建聊天" } ?? "新建聊天", primary: "创建", canSubmit: !cwd.isEmpty) {
+            model.createChat(backend: backend, model: modelName, cwd: cwd, permission: permission, project: project)
         } content: {
             Picker("代理", selection: $backend) {
                 ForEach(AgentBackend.allCases, id: \.self) { Text($0.displayName).tag($0) }
@@ -68,7 +70,59 @@ struct NewChatSheet: View {
                 ForEach(permissions, id: \.self) { Text($0).tag($0) }
             }
         }
-        .onAppear { if cwd.isEmpty { cwd = model.isLive ? model.defaultCwd : "~/Code/Hyadex" } }
+        .onAppear {
+            if let preset = model.newChatPreset {
+                project = preset.project
+                if let directory = preset.directory { cwd = directory }
+                model.newChatPreset = nil
+            }
+            if cwd.isEmpty { cwd = model.isLive ? model.defaultCwd : "~/Code/Hyadex" }
+        }
+    }
+}
+
+/// Creates or edits a project: its name, and optionally the directory its chats work in.
+struct ProjectSheet: View {
+    @Bindable var model: AppModel
+    let target: ProjectEditorTarget
+    @State private var name = ""
+    @State private var directory = ""
+
+    private var editing: String? {
+        if case .edit(let name) = target { name } else { nil }
+    }
+
+    private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var taken: Bool {
+        trimmed != editing && model.projects.contains { $0.name == trimmed }
+    }
+
+    var body: some View {
+        SheetScaffold(title: editing == nil ? "新建项目" : "编辑项目", primary: editing == nil ? "创建" : "保存",
+                      canSubmit: !trimmed.isEmpty && !taken && trimmed != ProjectGrouping.serverDefault) {
+            model.saveProject(ChatProject(name: trimmed, directory: directory.isEmpty ? nil : directory), replacing: editing)
+            if case .new(_, let chatID?) = target { model.moveChat(chatID, toProject: trimmed) }
+        } content: {
+            TextField("名称", text: $name, prompt: Text("例如 Hyadex"))
+            if taken {
+                Text("已经有同名的项目。").font(.uiMeta).foregroundStyle(.orange)
+            }
+            ServerFolderField(model: model, path: $directory)
+            Text("可以不填。填了之后，在这个目录里工作的聊天会自动归入项目，在项目里新建聊天时也默认用它。")
+                .font(.uiMeta)
+                .foregroundStyle(.secondary)
+        }
+        .onAppear {
+            switch target {
+            case .new(let path, _):
+                directory = path ?? ""
+                if let path { name = path.split(separator: "/").last.map(String.init) ?? "" }
+            case .edit(let current):
+                name = current
+                directory = model.projects.first { $0.name == current }?.directory ?? ""
+            }
+        }
     }
 }
 

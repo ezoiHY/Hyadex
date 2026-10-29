@@ -120,11 +120,14 @@ public struct ChatSummary: Identifiable, Hashable, Sendable {
     /// The provider's token counts across all turns; nil until the server has recorded one.
     public var tokenTotals: TokenTotals?
     public var archived: Bool
+    /// The project the chat was moved into (the server's `folder`); nil when in none.
+    public var folder: String?
 
     public init(id: String, title: String, backend: AgentBackend, model: String, effort: String = "",
                 permission: String, cwd: String, preview: String, lastActivity: Date,
                 state: ActivityState = .idle, pinned: Bool = false, unread: Bool = false, tokensUsed: Int = 0,
-                tokenTotals: TokenTotals? = nil, archived: Bool = false) {
+                tokenTotals: TokenTotals? = nil, archived: Bool = false, folder: String? = nil) {
+        self.folder = folder
         self.tokenTotals = tokenTotals
         self.id = id
         self.title = title
@@ -482,12 +485,16 @@ public struct DraftAttachment: Identifiable, Hashable, Sendable {
     public let name: String
     public let size: Int64
     public var state: State
+    /// The file on this Mac, for its thumbnail and preview.
+    public let localURL: URL?
 
-    public init(id: String = UUID().uuidString, name: String, size: Int64, state: State = .uploading) {
+    public init(id: String = UUID().uuidString, name: String, size: Int64, state: State = .uploading,
+                localURL: URL? = nil) {
         self.id = id
         self.name = name
         self.size = size
         self.state = state
+        self.localURL = localURL
     }
 
     public var fileID: String? { if case .ready(let id) = state { id } else { nil } }
@@ -557,29 +564,45 @@ public struct QueuedMessage: Identifiable, Hashable, Sendable {
     }
 }
 
-/// An approval a group member is waiting for. Members run in hidden member
-/// chats, so the group view surfaces their requests.
+/// An approval or question a group member is waiting for. Members run in
+/// hidden member chats, so the group view surfaces their requests.
 public struct GroupApproval: Identifiable, Hashable, Sendable {
     public var id: String { interactionID }
     public let interactionID: String
     public let handle: String
     public let backend: AgentBackend
     public let sessionID: String
-    public let title: String
-    public let detail: String
-    public let reason: String
-    public let allowsSession: Bool
+    /// The request as the member's own chat shows it: `.approval` or `.form`.
+    public let request: TimelineItem
 
     public init(interactionID: String, handle: String, backend: AgentBackend, sessionID: String,
-                title: String, detail: String, reason: String, allowsSession: Bool) {
+                request: TimelineItem) {
         self.interactionID = interactionID
         self.handle = handle
         self.backend = backend
         self.sessionID = sessionID
-        self.title = title
-        self.detail = detail
-        self.reason = reason
-        self.allowsSession = allowsSession
+        self.request = request
+    }
+
+    public var title: String {
+        switch request {
+        case .approval(_, _, let title, _, _, _, _): title
+        case .form(_, _, let form, _): form.title
+        default: ""
+        }
+    }
+
+    public var detail: String {
+        switch request {
+        case .approval(_, _, _, let command, _, _, _): command
+        case .form(_, _, let form, _): form.fields.map(\.prompt).joined(separator: "\n")
+        default: ""
+        }
+    }
+
+    /// The approval answer meaning `decision`, if the request offers one.
+    public func reply(for decision: ApprovalDecision) -> InteractionReply? {
+        request.reply(for: decision)
     }
 }
 
@@ -591,14 +614,17 @@ public struct MemberTurn: Identifiable, Hashable, Sendable {
     public var steps: [TimelineItem]
     public var approvals: [GroupApproval]
     public var activity: LiveActivity?
+    /// The answer it is writing now, before it is posted to the group.
+    public var liveText: String?
 
     public init(id: String, author: Author, steps: [TimelineItem] = [], approvals: [GroupApproval] = [],
-                activity: LiveActivity? = nil) {
+                activity: LiveActivity? = nil, liveText: String? = nil) {
         self.id = id
         self.author = author
         self.steps = steps
         self.approvals = approvals
         self.activity = activity
+        self.liveText = liveText
     }
 }
 
@@ -621,15 +647,75 @@ public struct LiveActivity: Hashable, Sendable {
 
     public let kind: Kind
     public let label: String
-    /// Live reasoning text or the running command, when known.
+    /// The latest thought (see `ThoughtSummary`) or the running command, when known.
     public let detail: String?
     public let since: Date
+    /// The chat's provider, whose mark the status shows; nil in group rows,
+    /// which name the member above.
+    public let backend: AgentBackend?
 
-    public init(kind: Kind, label: String, detail: String? = nil, since: Date) {
+    public init(kind: Kind, label: String, detail: String? = nil, since: Date, backend: AgentBackend? = nil) {
         self.kind = kind
         self.label = label
         self.detail = detail
         self.since = since
+        self.backend = backend
+    }
+}
+
+/// The one line a live status shows for a provider's thinking: Codex's
+/// newest bold step heading, otherwise the last sentence written so far.
+public enum ThoughtSummary {
+    public static func line(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lines = trimmed.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
+        if let heading = lines.last(where: { $0.count > 4 && $0.hasPrefix("**") && $0.hasSuffix("**") }) {
+            return plain(String(heading.dropFirst(2).dropLast(2)))
+        }
+        let paragraph = lines.last { !$0.isEmpty } ?? trimmed
+        var sentences: [String] = []
+        var current = ""
+        var previous: Character?
+        for character in paragraph {
+            // A full stop ends a sentence only before a space ("3.5" and "file.swift" do not).
+            if previous == ".", character == " " {
+                sentences.append(current)
+                current = ""
+                previous = character
+                continue
+            }
+            current.append(character)
+            if "。！？!?；".contains(character) {
+                sentences.append(current)
+                current = ""
+            }
+            previous = character
+        }
+        sentences.append(current)
+        let parts = sentences.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard var last = parts.last else { return nil }
+        // A sentence just begun says too little on its own.
+        if last.count < 8, parts.count > 1 { last = parts[parts.count - 2] + " " + last }
+        return plain(last)
+    }
+
+    /// Without Markdown emphasis and code marks.
+    private static func plain(_ text: String) -> String {
+        text.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// The turn's latest thinking, unless the answer has started since.
+    public static func latest(in items: some BidirectionalCollection<TimelineItem>) -> String? {
+        for item in items.reversed() {
+            switch item {
+            case .thinking(_, _, let text): return text
+            case .message: return nil
+            default: continue
+            }
+        }
+        return nil
     }
 }
 

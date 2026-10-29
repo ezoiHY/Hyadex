@@ -758,8 +758,9 @@ class ServerGlueTests(unittest.TestCase):
         source = (Path(__file__).resolve().parents[1] / "agent_server.py")
         tree = ast.parse(server_source.text(), filename=str(source))
         selected = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and node.name == "create_native_side_chat"]
-        self.assertEqual(len(selected), 1)
+                    and node.name in {"create_native_side_chat", "codex_side_fork_settings"}]
+        # The fork settings a side chat inherits live in their own function, checked with it.
+        self.assertEqual(len(selected), 2)
         text = "\n".join(ast.unparse(node) for node in selected)
         for forbidden in ("ACTIVE", "QUEUED_TURNS", "BUSY_SESSIONS", "post_turn", "emit(", "save(",
                           "provider_authority", "goal/", "resume_thread", "fork_thread",
@@ -827,7 +828,7 @@ class ServerCallbackTests(unittest.IsolatedAsyncioTestCase):
         source = (Path(__file__).resolve().parents[1] / "agent_server.py")
         tree = ast.parse(server_source.text(), filename=str(source))
         selected = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and node.name == "create_native_side_chat"]
+                    and node.name in {"create_native_side_chat", "codex_side_fork_settings"}]
         cls.code = compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(
             module="__future__", names=[ast.alias(name="annotations")], level=0), *selected], type_ignores=[])),
             str(source), "exec")

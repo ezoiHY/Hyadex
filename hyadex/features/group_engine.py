@@ -1091,20 +1091,41 @@ class GroupEngine:
         return True
 
     def _restore_member(self, group: dict[str, Any], dispatch: dict[str, Any]) -> None:
-        """Undo a dispatch's member bookkeeping if no later dispatch built on it."""
+        """Undo the member bookkeeping of a dispatch that never reached the member.
+
+        Each dispatch advanced the cursor past its messages. Withdrawn
+        dispatches (stopped or removed before they started) delivered nothing,
+        so the cursor goes back to where it was before the oldest of the
+        withdrawn dispatches that end this member's list: their messages are
+        sent with its next dispatch, in any order they were withdrawn. A
+        dispatch still on its way keeps the cursor past its own messages, and
+        a cursor moved by anything else since is left alone.
+        """
 
         participant = self.participant(group, dispatch["handle"])
-        previous = dispatch.get("previous")
-        if participant is None or not isinstance(previous, dict):
+        if participant is None or not isinstance(dispatch.get("previous"), dict):
             return
-        if int(participant.get("cursor_seq") or 0) != int(dispatch.get("through_seq") or 0):
+        # Creation order: the dispatches dict keeps insertion order across saves.
+        mine = [item for item in group.get("dispatches", {}).values() if item.get("handle") == dispatch["handle"]]
+
+        def oldest_withdrawn_at_end() -> dict[str, Any] | None:
+            oldest = None
+            for item in reversed(mine):
+                if not item.get("withdrawn") or not isinstance(item.get("previous"), dict):
+                    break
+                oldest = item
+            return oldest
+
+        settled = oldest_withdrawn_at_end()
+        expected = (int((settled["previous"] or {}).get("cursor_seq") or 0) if settled
+                    else int(mine[-1].get("through_seq") or 0) if mine else None)
+        dispatch["withdrawn"] = True
+        if expected is None or int(participant.get("cursor_seq") or 0) != expected:
             return
-        later = any(item is not dispatch and item.get("handle") == dispatch["handle"]
-                    and (item.get("created_at") or 0) > (dispatch.get("created_at") or 0)
-                    for item in group.get("dispatches", {}).values())
-        if later:
+        target = oldest_withdrawn_at_end()
+        if target is None:
             return
-        for key, value in previous.items():
+        for key, value in target["previous"].items():
             if value is None:
                 participant.pop(key, None)
             else:

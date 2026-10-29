@@ -3786,6 +3786,61 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         await hyadex_server.revoke_provider_authority(second["run_id"])
         self.assertFalse(second_path.exists())
 
+    async def test_native_steer_keeps_reasoning_and_command_that_finish_after_it(self) -> None:
+        def scoped(method: str, **params: object) -> dict[str, object]:
+            return {"method": method, "params": {"threadId": "thread-native", "turnId": "turn-native", **params}}
+
+        command = {"id": "cmd-across", "type": "commandExecution", "command": "make test", "status": "inProgress"}
+        turn = FakeTurn([
+            scoped("item/reasoning/summaryTextDelta", itemId="thinking-across", summaryIndex=0,
+                   delta="Started before the steer"),
+            scoped("item/started", item=command),
+            scoped("item/commandExecution/outputDelta", itemId="cmd-across", delta="first half\n"),
+        ])
+        manager = FakeManager(turn)
+        hyadex_server.RUNS.queued["chat-native"] = deque([{
+            "queued_id": "queued-steer", "prompt": "Also check the docs.", "file_ids": [],
+            "backend": hyadex_server.BACKEND_CODEX,
+        }])
+        stack, events, _finished, _exec_fallback = self.runner_patches(manager)
+        with stack:
+            hyadex_server.release_turn_slot.return_value = True
+            runner = asyncio.create_task(hyadex_server.run_codex_app_server(
+                "chat-native", "run-original", "Original request", dict(self.session),
+                Path(self.cwd) / ".runner-test-manifest.json", allow_exec_fallback=True))
+            try:
+                async def started() -> None:
+                    while not (
+                        any(call.args[1] == "tool_started" for call in events.await_args_list)
+                        and hyadex_server.reasoning_summary_stream_item("chat-native", "run-original", "thinking-across")
+                    ):
+                        await asyncio.sleep(0)
+                await asyncio.wait_for(started(), timeout=10)
+                run_now = await asyncio.wait_for(
+                    hyadex_server.run_queued_turn_now("chat-native", "queued-steer"), timeout=2)
+                turn.feed(scoped("item/reasoning/summaryTextDelta", itemId="thinking-across", summaryIndex=0,
+                                 delta=" and finished after it."))
+                turn.feed(scoped("item/commandExecution/outputDelta", itemId="cmd-across", delta="second half\n"))
+                turn.feed(reasoning_item("thinking-across", "Started before the steer and finished after it."))
+                turn.feed(scoped("item/completed", item={**command, "status": "completed", "exitCode": 0}))
+                turn.feed(agent_message("final", "Done.", "final_answer"))
+                turn.feed(completed_notification())
+                await asyncio.wait_for(runner, timeout=10)
+            finally:
+                if not runner.done():
+                    runner.cancel()
+                    await asyncio.gather(runner, return_exceptions=True)
+
+        summaries = [call.args[2] for call in events.await_args_list
+                     if call.args[1] == "reasoning_summary" and call.args[2].get("item_id") == "thinking-across"]
+        self.assertEqual([(entry["text"], bool(entry.get("partial"))) for entry in summaries],
+                         [("Started before the steer and finished after it.", False)])
+        self.assertEqual(summaries[0]["run_id"], run_now["run_id"])
+        tools = [(call.args[1], call.args[2]) for call in events.await_args_list
+                 if call.args[1] in {"tool_started", "tool_finished"}]
+        self.assertEqual([kind for kind, _payload in tools], ["tool_started", "tool_finished"])
+        self.assertIn("first half", str(tools[1][1].get("output")))
+
     async def test_native_steer_preserves_completed_trace_items_by_item_id(
         self,
     ) -> None:
@@ -3901,28 +3956,31 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
             for call in events.await_args_list
             if call.args[1] == "reasoning_summary"
         ]
+        # Reasoning still being written at the steer belongs to the native turn
+        # that goes on: it stays live and, never completed, is kept as partial
+        # when that run ends.
         self.assertEqual(
             [payload.get("item_id") for payload in trace_payloads],
             [
                 "reason-a",
                 "reason-b",
                 "commentary-before",
-                "unfinished-reasoning",
                 "reason-after",
                 "commentary-after",
+                "unfinished-reasoning",
             ],
         )
         self.assertEqual(
-            [payload["run_id"] for payload in trace_payloads[:4]],
-            ["run-original"] * 4,
+            [payload["run_id"] for payload in trace_payloads[:3]],
+            ["run-original"] * 3,
         )
         self.assertEqual(
-            [payload["run_id"] for payload in trace_payloads[4:]],
-            [run_now["run_id"], run_now["run_id"]],
+            [payload["run_id"] for payload in trace_payloads[3:]],
+            [run_now["run_id"]] * 3,
         )
-        self.assertTrue(trace_payloads[3]["partial"])
-        self.assertEqual(trace_payloads[3]["text"], "This unfinished summary remains visible as partial.")
-        self.assertFalse(any(payload.get("partial") for payload in trace_payloads[:3] + trace_payloads[4:]))
+        self.assertTrue(trace_payloads[5]["partial"])
+        self.assertEqual(trace_payloads[5]["text"], "This unfinished summary remains visible as partial.")
+        self.assertFalse(any(payload.get("partial") for payload in trace_payloads[:5]))
         final_payloads = [
             call.args[2]
             for call in events.await_args_list
@@ -3937,6 +3995,85 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         _finished.assert_awaited_once()
         self.assertEqual(_finished.await_args.args[1]["run_id"], run_now["run_id"])
         self.assertFalse(_finished.await_args.args[1]["stopped"])
+
+    async def _run_answer_stream_case(self, steps) -> tuple[AsyncMock, list[dict[str, object]]]:
+        """Feed ``steps`` (notifications, or text to wait for in a live packet)."""
+        turn = FakeTurn()
+        stack, events, _finished, _fallback = self.runner_patches(FakeManager(turn))
+        broadcast = AsyncMock()
+
+        async def wait_for_text(text):
+            async def ready():
+                while not any(call.args[1].get("type") == "assistant_text_stream" and text in str(call.args[1])
+                              for call in broadcast.await_args_list):
+                    await asyncio.sleep(0)
+            await asyncio.wait_for(ready(), timeout=2)
+
+        with stack, patch.object(hyadex_server.HUB, "broadcast", broadcast), patch.dict(
+            hyadex_server.EVENT_SEQ_CACHE, {"chat-native": 10}, clear=True,
+        ):
+            runner = asyncio.create_task(hyadex_server.run_codex_app_server(
+                "chat-native", "run-original", "Explain", dict(self.session),
+                Path(self.cwd) / ".runner-test-manifest.json", allow_exec_fallback=True))
+            try:
+                for step in steps:
+                    if isinstance(step, str):
+                        await wait_for_text(step)
+                    else:
+                        turn.feed(step)
+                await asyncio.wait_for(runner, timeout=10)
+            finally:
+                if not runner.done():
+                    runner.cancel()
+                    await asyncio.gather(runner, return_exceptions=True)
+        self.assertFalse(hyadex_server.ASSISTANT_TEXT_STREAMS.get("chat-native"))
+        self.assertFalse(hyadex_server.ASSISTANT_TEXT_STREAM_PENDING.get("chat-native"))
+        return events, [call.args[1] for call in broadcast.await_args_list
+                        if call.args[1].get("type") == "assistant_text_stream"]
+
+    @staticmethod
+    def _answer_delta(text: str, item_id: str = "answer") -> dict[str, object]:
+        return {"method": "item/agentMessage/delta", "params": {
+            "threadId": "thread-native", "turnId": "turn-native", "itemId": item_id, "delta": text}}
+
+    async def test_answer_text_is_live_until_its_message_completes(self) -> None:
+        events, packets = await self._run_answer_stream_case([
+            self._answer_delta("Hello"), "Hello",
+            self._answer_delta(" world"),
+            agent_message("answer", "Hello world.", "final_answer"),
+            completed_notification(),
+        ])
+        first = packets[0]["items"][0]
+        self.assertEqual({key: first[key] for key in ("run_id", "item_id", "text", "backend", "after_seq")},
+                         {"run_id": "run-original", "item_id": "answer", "text": "Hello",
+                          "backend": hyadex_server.BACKEND_CODEX, "after_seq": 10})
+        self.assertEqual(packets[-1]["items"], [])
+        answers = [call.args[2] for call in events.await_args_list if call.args[1] == "assistant_text"]
+        self.assertEqual([(answer["text"], answer.get("partial")) for answer in answers], [("Hello world.", None)])
+
+    async def test_live_commentary_settles_into_its_trace_item(self) -> None:
+        events, packets = await self._run_answer_stream_case([
+            self._answer_delta("Looking at the logs", "note"), "Looking at the logs",
+            agent_message("note", "Looking at the logs.", "commentary"),
+            agent_message("answer", "Fixed.", "final_answer"),
+            completed_notification(),
+        ])
+        self.assertEqual(packets[-1]["items"], [])
+        self.assertEqual([call.args[2]["text"] for call in events.await_args_list if call.args[1] == "assistant_text"],
+                         ["Fixed."])
+        self.assertIn("Looking at the logs.", [call.args[2]["text"] for call in events.await_args_list
+                                               if call.args[1] == "reasoning_summary"])
+
+    async def test_interrupted_turn_keeps_the_answer_shown_so_far(self) -> None:
+        events, _packets = await self._run_answer_stream_case([
+            self._answer_delta("Half of the"), "Half of the",
+            completed_notification("interrupted"),
+        ])
+        answers = [call.args[2] for call in events.await_args_list if call.args[1] == "assistant_text"]
+        self.assertEqual(len(answers), 1)
+        self.assertEqual({key: answers[0][key] for key in ("run_id", "item_id", "text", "partial", "text_after_seq")},
+                         {"run_id": "run-original", "item_id": "answer", "text": "Half of the",
+                          "partial": True, "text_after_seq": 10})
 
     async def test_summary_is_live_before_completion_and_replaced_once_authoritatively(self) -> None:
         turn = FakeTurn()
@@ -4353,6 +4490,39 @@ class CodexAppServerRunnerTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(finals), 1)
         self.assertEqual(finals[0]["run_id"], run_now["run_id"])
+
+    async def test_idle_warning_is_written_once_per_quiet_spell(self) -> None:
+        turn = FakeTurn()
+        manager = FakeManager(turn)
+        real_wait = asyncio.wait
+
+        async def fast_poll(futures, *, timeout=None, return_when=asyncio.ALL_COMPLETED):
+            return await real_wait(futures, timeout=min(0.01, timeout) if timeout is not None else 0.01,
+                                   return_when=return_when)
+
+        stack, events, _finished, _exec_fallback = self.runner_patches(manager)
+        with stack, patch.object(hyadex_server.asyncio, "wait", fast_poll), patch.object(
+            hyadex_server, "IDLE_WARN_SECONDS", 0.05,
+        ), patch.object(hyadex_server, "IDLE_KILL_SECONDS", 30):
+            runner = asyncio.create_task(hyadex_server.run_codex_app_server(
+                "chat-native", "run-original", "Original request", dict(self.session),
+                Path(self.cwd) / ".runner-test-manifest.json", allow_exec_fallback=True))
+            try:
+                turn.feed(self._answer_delta("Working"))
+                # Dozens of polls in each quiet spell; activity starts the second one.
+                await asyncio.sleep(0.4)
+                turn.feed(self._answer_delta(" on it"))
+                await asyncio.sleep(0.4)
+                turn.feed(agent_message("answer", "Working on it.", "final_answer"))
+                turn.feed(completed_notification())
+                await asyncio.wait_for(runner, timeout=5)
+            finally:
+                if not runner.done():
+                    runner.cancel()
+                    await asyncio.gather(runner, return_exceptions=True)
+        warnings = [call.args[2] for call in events.await_args_list if call.args[1] == "idle_warning"]
+        self.assertEqual(len(warnings), 2)
+        self.assertEqual({warning["run_id"] for warning in warnings}, {"run-original"})
 
     async def test_first_activity_timeout_fails_fast_instead_of_hanging(self) -> None:
         # turn/start is accepted (FakeManager.start_turn returns a FakeTurn),

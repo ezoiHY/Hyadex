@@ -120,6 +120,20 @@ async def clear_reasoning_summary_stream(session_id: str, run_id: str, item_id: 
     await broadcast_reasoning_summary_stream(session_id, packet)
 
 
+async def move_reasoning_summary_stream(session_id: str, run_id: str, new_run_id: str) -> None:
+    """Carry reasoning still being written into the logical run that continues it.
+
+    After a native turn/steer the provider keeps writing the same item; its
+    remaining deltas and its completed text belong with what was shown.
+    """
+    async with event_delivery_lock(session_id):
+        streams = REASONING_SUMMARY_STREAMS.get(session_id) or {}
+        for key in [key for key in streams if key[0] == run_id]:
+            state = streams.pop(key)
+            state["item"]["run_id"] = new_run_id
+            streams.setdefault((new_run_id, key[1], key[2]), state)
+
+
 async def persist_reasoning_summary(
     session_id: str, payload: dict[str, Any], completed_item_ids: set[str | tuple[str, str]],
 ) -> None:

@@ -576,6 +576,59 @@ Saved settings for a later Claude turn do not reconfigure that connection when
 asking a side question. See [Native side conversations](../docs/NATIVE_SIDE_CHAT.md)
 for follow-ups, cancellation and context behavior.
 
+## Chat Consults
+
+A Work chat's agent can ask another chat in its project a question with the
+`ask` helper (provider tool helper `ask`, CLI `hyadex/cli/ask.py`):
+`ask list` names the chats it may ask, and `ask TITLE` (or chat id), with the
+question on stdin or as `--question`, asks one. Servers advertise
+`chat_consult_v1` (`modes`, `inbound`, `turn_limits`).
+
+- **Basic** answers from the asked chat's existing context without tools:
+  Claude's native `/btw` on that chat, or a Codex fork with its shell tool
+  switched off.
+- **Deep** (`--deep`) sends a read-only fork of the asked chat to investigate
+  its folder: a Claude fork (`fork_session`) offered only Read, Grep and Glob,
+  with no MCP servers and its transcript removed afterwards, or a Codex fork
+  in a read-only sandbox that never asks for approval. Its steps (files read,
+  searches, commands) are recorded.
+
+Neither touches the asked chat's transcript, queue or turn admission, and no
+answer can ask another chat in turn. Who may ask whom:
+
+- The asking and asked chats share a project (`folder`), or, outside
+  projects, a working directory. Archived chats and group members neither ask
+  nor are asked.
+- `consult_inbound` on the asked chat: `off`, `basic` or `deep` (default).
+- A deep question needs the user's approval unless the asking chat sets
+  `consult_deep_approval: false` or lists the asked chat in
+  `consult_deep_allowed` ("always allow" on an approval). An approval waits
+  10 minutes.
+- Each turn may ask 5 basic and 2 deep questions; one deep fork runs per
+  asked chat at a time. Basic answers time out after 2 minutes, deep after 5.
+  The `ask` helper call may take up to 16.5 minutes, so the Codex MCP tool
+  timeout is raised to match.
+
+The ledger is `chat_consults.sqlite3` in the state directory (200 consults per
+chat). A consult ends with its asking turn (`turn_finished`/`turn_stopped`) or
+when the helper stops polling for 45 seconds; consults running at a restart
+end as `interrupted`. Every change sends `chat_consult_updated` (an
+invalidation frame) to both chats' sockets.
+
+Routes: `POST /api/agent/sessions/{id}/consults`,
+`GET /api/agent/sessions/{id}/consults/{consult_id}?wait=` and
+`GET /api/agent/sessions/{id}/consult-targets` for the helper (the run's
+provider capability, action `ask`); `GET /api/sessions/{id}/consults`
+(`outgoing`, `incoming`), `POST .../consults` (the user asks this chat,
+`mode` basic or deep), `GET .../consult-targets` and `POST .../ask`
+(`chat`, `mode`, `question`: the user asks another chat from this one, as
+with `@` in a client's composer; no approval or turn limit, the source
+records `by_user`, and the asking chat's log gets a `chat_consult_asked`
+event for its timeline, never seen by its agent),
+`POST .../consults/{consult_id}/decision`
+(`allow`, `always`, `deny`), `POST .../consults/{consult_id}/cancel` and
+`GET /api/consults/active` for clients.
+
 ## Claude Agent SDK Transport
 
 Interactive desktop clients can opt individual Claude chats into a persistent,
@@ -783,8 +836,9 @@ references and route grants, the chat mailbox and its wakes, handoff digests,
 and the `chats` helper. Their routes, chat search, the inbox and route
 management endpoints, and the `cross_chat_handoffs_v1` capability are no longer
 registered. Use [group discussions](GROUP_DISCUSSIONS.md) or
-[Autopilot](AUTOPILOT.md) for multi-agent work. The per-run provider authority
-used by the jobs, publish, emergency and notify helpers is unchanged.
+[Autopilot](AUTOPILOT.md) for multi-agent work, and [chat consults](#chat-consults)
+to ask another chat a question. The per-run provider authority used by the
+jobs, publish, emergency and notify helpers is unchanged.
 
 Saved data from older servers is handled deterministically:
 
@@ -940,6 +994,9 @@ schema at `/openapi.json`. Paths below that begin with `.../` are relative to
 - Side questions: `GET`/`POST .../side-chat`,
   `DELETE .../side-chat/requests/{request_id}`, `DELETE .../side-chat/{side_chat_id}`,
   `POST .../side-questions`, `DELETE .../side-questions/{request_id}`
+- Chat consults: `GET`/`POST .../consults`, `GET .../consult-targets`, `POST .../ask`,
+  `POST .../consults/{consult_id}/decision`,
+  `POST .../consults/{consult_id}/cancel`, `GET /api/consults/active`
 - Terminal and tmux: `GET`/`DELETE .../terminal`, `POST .../terminal/open`,
   `POST .../terminal/input`, `POST .../terminal/resize`, `POST .../terminal/action`,
   `GET .../terminal/windows`, `WS .../terminal/ws`, `GET .../tmux`,
@@ -992,9 +1049,37 @@ and resumes after its last successfully accepted event; it never resends a turn
 to repair a disconnected stream. Older clients and servers retain their existing
 protocol, without imposing heartbeat expectations on servers lacking this capability.
 
+Two more opt-in lanes on the same socket carry output while the provider is
+still writing it. Neither has an event `seq` or changes history.
+
+- `reasoning_stream=true` (and `reasoning_text=true` for provider plaintext)
+  sends `reasoning_summary_stream` snapshots of thinking in progress: Codex
+  reasoning, and Claude's thinking from partial SDK messages.
+- `live_text_stream_v1` servers accept `text_stream=true` and send
+  `assistant_text_stream` snapshots,
+  `{"type":"assistant_text_stream","revision":…,"items":[{"run_id","item_id","text","after_seq","backend",…}]}`:
+  every answer still being written (a Codex agent message, a Claude text
+  block). `after_seq` is the last durable event when it began.
+
+Each snapshot replaces the previous one, and a socket receives the current one
+right after catch-up. The finished answer arrives as the durable
+`assistant_text` (Codex commentary as `reasoning_summary`), carrying the same
+`item_id` for Codex; its live item then disappears from the next snapshot. A run
+that ends early (Stop, an interrupt, a failure) keeps the text shown so far as
+an `assistant_text` with `partial: true` and `text_after_seq`; after a normal
+completion an unfinished answer stays transient. Unfinished thinking is kept as
+a `reasoning_summary` with `partial: true`, as Codex reasoning already was.
+
 The subagents endpoint folds Claude local-agent lifecycle records into bounded
 `subagent_state` snapshots without returning provider prompts, raw events,
 tool-result output, commands, or output-file paths.
+
+A Claude subagent's own `assistant_text`, `reasoning_summary`, `tool_started`
+and `tool_finished` events carry `parent_tool_id`: the id of the Agent/Task
+tool call that runs it. Clients fold them under that tool, as Claude Code
+does; its text is not the main agent's answer. Session lists report `running`
+(true from a turn's `turn_started` until its `turn_finished` or
+`turn_stopped`), so a client need not infer it from the latest event type.
 
 ### Synchronized side conversations
 

@@ -121,14 +121,17 @@ public final class TerminalEmulator {
     /// Plain text of a rectangle-free, row-major range (selection copy).
     public func text(from start: (x: Int, y: Int), to end: (x: Int, y: Int)) -> String {
         let (a, b) = (start.y, start.x) <= (end.y, end.x) ? (start, end) : (end, start)
+        // A selection made before a resize may lie outside the current grid.
+        let first = max(a.y, 0), last = min(b.y, rows - 1)
+        guard first <= last else { return "" }
         var out: [String] = []
-        for y in a.y...b.y where y < rows {
-            let from = y == a.y ? a.x : 0
-            let to = y == b.y ? b.x : columns - 1
+        for y in first...last {
+            let from = max(y == a.y ? a.x : 0, 0)
+            let to = min(y == b.y ? b.x : columns - 1, columns - 1)
             guard from <= to else { out.append(""); continue }
             let row = lines[y]
             var line = ""
-            for x in from...min(to, columns - 1) where row[x].width > 0 { line += row[x].text }
+            for x in from...to where row[x].width > 0 { line += row[x].text }
             while line.hasSuffix(" ") { line.removeLast() }
             out.append(line)
         }

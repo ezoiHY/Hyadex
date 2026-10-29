@@ -2144,7 +2144,9 @@ class CodexAppServerClientTests(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         factory = FakeProcessFactory()
         process = factory.process
-        client = self.make_client(factory, notification_queue_limit=2)
+        # Nothing consumes this subscription: after its short wait budget the
+        # reader stops pausing for it and the bound fails it.
+        client = self.make_client(factory, notification_queue_limit=2, notification_backlog_wait=0.05)
         self.addAsyncCleanup(client.close)
         await client.start()
         subscription = client.subscribe_thread("thr_backlog")
@@ -2162,10 +2164,64 @@ class CodexAppServerClientTests(unittest.IsolatedAsyncioTestCase):
                 }
             )
 
+        # Unread past its wait budget, the subscription overflows and fails.
+        await wait_until(lambda: subscription._closed)
         with self.assertRaises(CodexAppServerDisconnected) as raised:
             await subscription.next_notification(timeout=1)
         self.assertIn("backlog", str(raised.exception))
         self.assertTrue(subscription._closed)
+
+    @staticmethod
+    def _output_delta(thread_id: str, index: int) -> dict[str, Any]:
+        return {"method": "item/commandExecution/outputDelta", "params": {
+            "threadId": thread_id, "turnId": "turn_burst", "itemId": "cmd", "delta": f"line {index}\n"}}
+
+    async def _feed_burst(self, process: FakeProcess, thread_id: str, count: int) -> None:
+        # Pipe-sized chunks: the reader then routes many buffered lines without yielding.
+        lines = b"".join(json.dumps(self._output_delta(thread_id, index)).encode() + b"\n" for index in range(count))
+        for start in range(0, len(lines), 64 * 1024):
+            process.stdout.feed_data(lines[start:start + 64 * 1024])
+            await asyncio.sleep(0)
+
+    async def test_busy_consumer_receives_a_burst_larger_than_its_queue(self) -> None:
+        factory = FakeProcessFactory()
+        process = factory.process
+        client = self.make_client(factory, notification_queue_limit=64)
+        self.addAsyncCleanup(client.close)
+        await client.start()
+        subscription = client.subscribe_thread("thr_burst")
+        received: list[str] = []
+
+        async def consume() -> None:
+            while len(received) < 2_000:
+                notification = await subscription.next_notification(timeout=5)
+                received.append(notification["params"]["delta"])
+                await asyncio.sleep(0)  # Recording each delta takes a turn of the loop.
+
+        consumer = asyncio.create_task(consume())
+        await self._feed_burst(process, "thr_burst", 2_000)
+        await asyncio.wait_for(consumer, timeout=10)
+        self.assertEqual(received, [f"line {index}\n" for index in range(2_000)])
+        self.assertFalse(subscription._closed)
+
+    async def test_stuck_subscriber_does_not_stall_other_threads(self) -> None:
+        factory = FakeProcessFactory()
+        process = factory.process
+        client = self.make_client(factory, notification_queue_limit=8, notification_backlog_wait=0.1)
+        self.addAsyncCleanup(client.close)
+        await client.start()
+        stuck = client.subscribe_thread("thr_stuck")
+        live = client.subscribe_thread("thr_live")
+        await self._feed_burst(process, "thr_stuck", 20)
+        await self._feed_burst(process, "thr_live", 3)
+        started = asyncio.get_running_loop().time()
+        for index in range(3):
+            notification = await live.next_notification(timeout=2)
+            self.assertEqual(notification["params"]["delta"], f"line {index}\n")
+        self.assertLess(asyncio.get_running_loop().time() - started, 1.5)
+        with self.assertRaises(CodexAppServerDisconnected):
+            while True:
+                await stuck.next_notification(timeout=1)
 
     async def test_concurrent_requests_match_out_of_order_responses(self) -> None:
         factory = FakeProcessFactory()

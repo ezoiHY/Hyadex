@@ -1,4 +1,4 @@
-"""Helper commands agents run inside a turn: jobs, publish, emergency, notify.
+"""Helper commands agents run inside a turn: jobs, publish, emergency, notify, ask.
 
 They use only the standard library and are run by path with the agent's own
 Python; the server passes their paths to providers.
@@ -13,4 +13,5 @@ HELPER_SCRIPTS = {
     "publish": CLI_DIR / "publish.py",
     "emergency": CLI_DIR / "emergency.py",
     "notify": CLI_DIR / "notify.py",
+    "ask": CLI_DIR / "ask.py",
 }

@@ -1,5 +1,6 @@
 import HyadexCore
 import SwiftUI
+import QuickLook
 import UniformTypeIdentifiers
 
 // MARK: - Emergency alerts
@@ -453,44 +454,144 @@ private struct FolderRow: View {
 // MARK: - Attachments
 
 /// Files added to the composer, with their upload state.
+/// The composer's files: pictures as square thumbnails (click to preview),
+/// other files as name chips. Each shows its upload state and can be removed.
 struct AttachmentStrip: View {
     let attachments: [DraftAttachment]
     let onRemove: (String) -> Void
+    @State private var preview: URL?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(alignment: .bottom, spacing: 8) {
                 ForEach(attachments) { attachment in
-                    HStack(spacing: 5) {
-                        switch attachment.state {
-                        case .uploading: ProgressView().controlSize(.mini)
-                        case .ready: Image(systemName: "doc").foregroundStyle(.secondary)
-                        case .failed: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                        }
-                        Text(attachment.name).lineLimit(1).truncationMode(.middle)
-                        if attachment.size > 0 {
-                            Text(ByteCountFormatter.string(fromByteCount: attachment.size, countStyle: .file))
-                                .foregroundStyle(.secondary)
-                        }
-                        Button {
-                            onRemove(attachment.id)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("移除")
+                    if let url = attachment.localURL, Self.isImage(url) {
+                        ImageThumbnail(attachment: attachment, url: url, failure: failure(attachment),
+                                       onOpen: { preview = url }, onRemove: { onRemove(attachment.id) })
+                    } else {
+                        chip(attachment)
                     }
-                    .font(.uiMeta)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(Color.primary.opacity(0.06)))
-                    .help(failure(attachment) ?? attachment.name)
                 }
             }
+            // Room for the thumbnails' remove buttons, which sit over their corners.
+            .padding(.top, 6)
+            .padding(.trailing, 6)
         }
+        .quickLookPreview($preview)
+    }
+
+    static func isImage(_ url: URL) -> Bool {
+        UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true
+    }
+
+    private func chip(_ attachment: DraftAttachment) -> some View {
+        HStack(spacing: 5) {
+            switch attachment.state {
+            case .uploading: ProgressView().controlSize(.mini)
+            case .ready: Image(systemName: "doc").foregroundStyle(.secondary)
+            case .failed: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            }
+            Text(attachment.name).lineLimit(1).truncationMode(.middle)
+            if attachment.size > 0 {
+                Text(ByteCountFormatter.string(fromByteCount: attachment.size, countStyle: .file))
+                    .foregroundStyle(.secondary)
+            }
+            Button {
+                onRemove(attachment.id)
+            } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("移除")
+        }
+        .font(.uiMeta)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(Color.primary.opacity(0.06)))
+        .help(failure(attachment) ?? attachment.name)
     }
 
     private func failure(_ attachment: DraftAttachment) -> String? {
         if case .failed(let message) = attachment.state { "上传失败：\(message)" } else { nil }
+    }
+}
+
+/// A picture in the composer, cropped to a square.
+private struct ImageThumbnail: View {
+    let attachment: DraftAttachment
+    let url: URL
+    let failure: String?
+    let onOpen: () -> Void
+    let onRemove: () -> Void
+    @State private var image: NSImage?
+    @State private var hovering = false
+
+    private static let side: CGFloat = 64
+
+    var body: some View {
+        Button(action: onOpen) {
+            ZStack {
+                Color.primary.opacity(0.06)
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    Image(systemName: "photo").foregroundStyle(.secondary)
+                }
+                if attachment.state == .uploading {
+                    Color.black.opacity(0.35)
+                    ProgressView().controlSize(.small).tint(.white)
+                }
+            }
+            .frame(width: Self.side, height: Self.side)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(failure == nil ? Color(nsColor: .separatorColor) : Color.orange,
+                                  lineWidth: failure == nil ? 0.5 : 1.5)
+            )
+            .overlay(alignment: .bottomLeading) {
+                if failure != nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                        .padding(4)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .topTrailing) {
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 15))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, Color.black.opacity(0.65))
+            }
+            .buttonStyle(.plain)
+            .offset(x: 6, y: -6)
+            .opacity(hovering ? 1 : 0)
+            .help("移除")
+            .accessibilityLabel("移除 \(attachment.name)")
+        }
+        .onHover { hovering = $0 }
+        .help(failure ?? "\(attachment.name) · \(ByteCountFormatter.string(fromByteCount: attachment.size, countStyle: .file))")
+        .accessibilityLabel("图片 \(attachment.name)")
+        .task(id: url) { image = await Self.thumbnail(url, pixels: Self.side * 3) }
+    }
+
+    /// A downsampled copy, read off the main thread.
+    static func thumbnail(_ url: URL, pixels: CGFloat) async -> NSImage? {
+        await Task.detached(priority: .userInitiated) {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: pixels,
+            ]
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        }.value
     }
 }

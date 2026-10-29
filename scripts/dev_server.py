@@ -1,6 +1,6 @@
 """Run an isolated Hyadex development server in the foreground.
 
-    .venv/bin/python scripts/dev_server.py [--instance dev] [--port 7871] [--bind 127.0.0.1]
+    .venv/bin/python scripts/dev_server.py [--instance dev] [--port 7871] [--bind 127.0.0.1] [--exit-with-parent]
 
 The server uses a named instance, so its state, configuration and tmux
 sessions are separate from any installed default server (and from other
@@ -30,6 +30,8 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=7871)
     parser.add_argument("--bind", default="127.0.0.1",
                         help="use 0.0.0.0 to accept LAN/Tailscale connections")
+    parser.add_argument("--exit-with-parent", action="store_true",
+                        help="shut down when the launching process exits (the Mac app's own backend)")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", args.instance) or args.instance == "default":
         parser.error("choose a lowercase instance name other than 'default'")
@@ -53,6 +55,9 @@ def main() -> int:
     env.update({key: str(value) for key, value in paths.items()})
     env.update({"HYADEX_SERVER_INSTANCE": args.instance, "HYADEX_AGENT_TOKEN": token,
                 "PYTHONDONTWRITEBYTECODE": "1"})
+    if args.exit_with_parent:
+        # execve keeps this process id, so the server's parent stays the launcher.
+        env["HYADEX_EXIT_WITH_PARENT_PID"] = str(os.getppid())
     print(f"Hyadex dev server '{args.instance}' on http://{args.bind}:{args.port}", flush=True)
     print(f"State: {paths['HYADEX_STATE_DIR']}", flush=True)
     print(f"Token: {token_file} (send it as 'Authorization: Bearer <token>')", flush=True)

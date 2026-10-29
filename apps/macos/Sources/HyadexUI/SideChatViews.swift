@@ -9,9 +9,13 @@ struct SideChatPanel: View {
     @Bindable var model: AppModel
     let chatID: String
     @State private var question = ""
+    /// Ask in depth: a read-only copy of the chat checks its files before answering.
+    @State private var deep = false
     @FocusState private var focused: Bool
 
     private var side: SideChat? { model.sideChats[chatID] }
+    /// Deep questions you asked here, and questions other chats asked this one (oldest first).
+    private var incoming: [ConsultRecord] { (model.consults[chatID]?.incoming ?? []).reversed() }
     private var backend: AgentBackend? { model.chat(chatID)?.backend }
 
     var body: some View {
@@ -43,7 +47,7 @@ struct SideChatPanel: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if side?.exchanges.isEmpty ?? true {
+                    if side?.exchanges.isEmpty ?? true, incoming.isEmpty {
                         Text(intro)
                             .font(.uiSecondary)
                             .foregroundStyle(.secondary)
@@ -54,6 +58,15 @@ struct SideChatPanel: View {
                     }
                     if let note = side?.contextNote, !(side?.exchanges.isEmpty ?? true) {
                         Text(note).font(.uiMeta).foregroundStyle(.tertiary)
+                    }
+                    if !incoming.isEmpty {
+                        Text("深度查看和其他聊天的提问")
+                            .font(.uiMeta.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+                        ForEach(incoming) { record in
+                            IncomingConsultRow(record: record) { model.cancelConsult(record.id, inChat: chatID) }
+                        }
                     }
                 }
                 .padding(14)
@@ -73,12 +86,23 @@ struct SideChatPanel: View {
             }
             Divider()
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("问点什么（↩ 发送）", text: $question, axis: .vertical)
+                Toggle(isOn: $deep) {
+                    Image(systemName: "text.magnifyingglass")
+                        .font(.system(size: 12, weight: deep ? .semibold : .regular))
+                        .frame(width: 22, height: 22)
+                }
+                .toggleStyle(.button)
+                .buttonStyle(.borderless)
+                .foregroundStyle(deep ? Color.accentColor : .secondary)
+                .help(deep ? "深度：只读副本查看文件后再回答，较慢" : "切换到深度：让只读副本查看文件后再回答")
+                .accessibilityLabel("深度")
+                TextField(deep ? "深度查看：问需要查文件的问题（↩ 发送）" : "问点什么（↩ 发送）",
+                          text: $question, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
                     .focused($focused)
                     .onSubmit(send)
-                    .disabled(side?.isRunning == true)
+                    .disabled(!deep && side?.isRunning == true)
                 Button(action: send) {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 11, weight: .bold))
@@ -99,11 +123,12 @@ struct SideChatPanel: View {
         .onAppear {
             focused = true
             model.refreshSide(chatID)
+            model.refreshConsults(chatID)
         }
     }
 
     private var canSend: Bool {
-        !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && side?.isRunning != true
+        !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (deep || side?.isRunning != true)
     }
 
     private var intro: String {
@@ -114,7 +139,11 @@ struct SideChatPanel: View {
 
     private func send() {
         guard canSend else { return }
-        model.askSide(question, inChat: chatID)
+        if deep {
+            model.askChat(question, deep: true, inChat: chatID)
+        } else {
+            model.askSide(question, inChat: chatID)
+        }
         question = ""
     }
 }

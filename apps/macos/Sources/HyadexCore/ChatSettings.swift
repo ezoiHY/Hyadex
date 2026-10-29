@@ -33,9 +33,16 @@ public struct ChatSettings: Hashable, Sendable {
     /// Whether the server names the chat from its first turns.
     public var autoTitle: Bool
     public var jobsAccess: JobsAccess
+    /// Which questions other chats in the project may send this chat.
+    public var consultInbound: ConsultInbound
+    /// Whether this chat's agent needs your approval before asking another chat in depth.
+    public var consultDeepApproval: Bool
+    /// Chats it may always ask in depth ("总是允许" on an approval).
+    public var consultDeepAllowed: [String]
 
     public init(systemPrompt: String = "", subagentLimit: Int? = nil, subagentLimitSupported: Bool = true,
-                subagentLimitNote: String = "", subagentLimitAppliesTo: String = "", autoTitle: Bool = true, jobsAccess: JobsAccess = .full) {
+                subagentLimitNote: String = "", subagentLimitAppliesTo: String = "", autoTitle: Bool = true, jobsAccess: JobsAccess = .full,
+                consultInbound: ConsultInbound = .deep, consultDeepApproval: Bool = true, consultDeepAllowed: [String] = []) {
         self.systemPrompt = systemPrompt
         self.subagentLimit = subagentLimit
         self.subagentLimitSupported = subagentLimitSupported
@@ -43,6 +50,9 @@ public struct ChatSettings: Hashable, Sendable {
         self.subagentLimitAppliesTo = subagentLimitAppliesTo
         self.autoTitle = autoTitle
         self.jobsAccess = jobsAccess
+        self.consultInbound = consultInbound
+        self.consultDeepApproval = consultDeepApproval
+        self.consultDeepAllowed = consultDeepAllowed
     }
 
     /// Longest system prompt the server accepts by default.
@@ -57,7 +67,10 @@ public struct ChatSettings: Hashable, Sendable {
             subagentLimitNote: control["message"].string ?? "",
             subagentLimitAppliesTo: control["applies_to"].string ?? "",
             autoTitle: session["auto_title_enabled"].bool ?? true,
-            jobsAccess: session["provider_jobs_access"].string.flatMap(JobsAccess.init(rawValue:)) ?? .full)
+            jobsAccess: session["provider_jobs_access"].string.flatMap(JobsAccess.init(rawValue:)) ?? .full,
+            consultInbound: session["consult_inbound"].string.flatMap(ConsultInbound.init(rawValue:)) ?? .deep,
+            consultDeepApproval: session["consult_deep_approval"].bool ?? true,
+            consultDeepAllowed: session["consult_deep_allowed"].array.compactMap(\.string))
     }
 
     /// The PATCH fields that turn `self` into `updated`; unchanged fields are left out.
@@ -72,6 +85,13 @@ public struct ChatSettings: Hashable, Sendable {
         }
         if updated.autoTitle != autoTitle { fields["auto_title_enabled"] = .bool(updated.autoTitle) }
         if updated.jobsAccess != jobsAccess { fields["provider_jobs_access"] = .string(updated.jobsAccess.rawValue) }
+        if updated.consultInbound != consultInbound { fields["consult_inbound"] = .string(updated.consultInbound.rawValue) }
+        if updated.consultDeepApproval != consultDeepApproval {
+            fields["consult_deep_approval"] = .bool(updated.consultDeepApproval)
+        }
+        if updated.consultDeepAllowed != consultDeepAllowed {
+            fields["consult_deep_allowed"] = .array(updated.consultDeepAllowed.map(JSON.string))
+        }
         return fields
     }
 }

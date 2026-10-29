@@ -17,6 +17,17 @@ import Testing
         #expect(row(terminal, 1) == "xy")
     }
 
+    @Test func copyingASelectionFromBeforeAResizeStaysInTheGrid() {
+        let terminal = TerminalEmulator(columns: 10, rows: 3)
+        terminal.feed("0123456789\r\nabcdefghij")
+        terminal.resize(columns: 6, rows: 2)
+        // Selected near the right edge, then the window narrowed.
+        #expect(terminal.text(from: (8, 0), to: (9, 1)) == "\nabcdef")
+        #expect(terminal.text(from: (8, 0), to: (9, 0)) == "")
+        #expect(terminal.text(from: (0, 5), to: (3, 7)) == "")
+        #expect(terminal.text(from: (-3, -1), to: (2, 0)) == "012")
+    }
+
     @Test func deferredWrapKeepsCursorOnLastColumn() {
         let terminal = TerminalEmulator(columns: 4, rows: 2)
         terminal.feed("abcd")

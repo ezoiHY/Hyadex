@@ -460,6 +460,13 @@ class AgentTerminalContextTests(unittest.TestCase):
 
         self.assertEqual(public["system_prompt"], "Use the staging cluster.")
 
+    def test_public_session_reports_whether_a_turn_is_running(self) -> None:
+        running = {"id": "sess-123", "latest_event_type": "turn_queued",
+                   "active_run": {"run_id": "run-1", "backend": "claude"}}
+        for summary in (False, True):
+            self.assertIs(hyadex_server.public_session(running, summary=summary)["running"], True)
+            self.assertIs(hyadex_server.public_session({"id": "sess-123"}, summary=summary)["running"], False)
+
     def test_both_agent_prompts_explain_renderable_latex_delimiters(self) -> None:
         claude_prompt = hyadex_server.CLAUDE_PROMPT_PRELUDE.format()
         codex_prompt = hyadex_server.CODEX_PROMPT_PRELUDE.format(

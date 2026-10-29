@@ -940,7 +940,8 @@ def build_claude_sdk_options(
         # selected effort while exposing only Claude's provider-approved
         # summaries, never raw hidden chain-of-thought.
         thinking={"type": "adaptive", "display": "summarized"},
-        include_partial_messages=False,
+        # Deltas feed the live thinking and text lanes (providers/claude/live_output.py).
+        include_partial_messages=True,
         max_buffer_size=PROCESS_STREAM_LIMIT,
         extra_args=extra_args,
         **subagent_settings,
@@ -1521,6 +1522,55 @@ async def retire_or_record_failed_codex_fork(
     return await persist_abandoned_fork_provider_thread(clean_thread_id)
 
 
+def codex_side_fork_settings(current: dict[str, Any]) -> dict[str, Any]:
+    """What a native Codex fork of this chat inherits: its folder, model,
+    approval policy, sandbox or permission profile and configuration, without
+    the main run's Hyadex helper transport. Side chats and chat consults fork
+    with these; consults then narrow them to read-only."""
+    cwd = existing_cwd(str(current.get("cwd") or DEFAULT_CWD))
+    model, effort, service_tier = codex_runtime_settings(current)
+    approval_policy = current.get("codex_approval_policy")
+    if approval_policy not in CODEX_APPROVAL_POLICIES:
+        approval_policy = CODEX_DEFAULT_APPROVAL_POLICY
+    reviewer = current.get("codex_approvals_reviewer")
+    if reviewer not in CODEX_APPROVAL_REVIEWERS:
+        reviewer = CODEX_DEFAULT_APPROVALS_REVIEWER
+    fork_overrides = {
+        "approvalPolicy": approval_policy,
+        "approvalsReviewer": reviewer,
+        "runtimeWorkspaceRoots": [cwd],
+    }
+    turn_overrides = dict(fork_overrides)
+    permission_profile = str(current.get("codex_permission_profile")
+                             or CODEX_DEFAULT_PERMISSION_PROFILE or "").strip()
+    if permission_profile:
+        fork_overrides["permissions"] = permission_profile
+        turn_overrides["permissions"] = permission_profile
+    else:
+        sandbox = current.get("codex_sandbox_mode")
+        if sandbox not in CODEX_SANDBOX_MODES:
+            sandbox = CODEX_DEFAULT_SANDBOX_MODE
+        fork_overrides["sandbox"] = sandbox
+        turn_overrides["sandboxPolicy"] = {"type": CODEX_SANDBOX_POLICY_TYPES[sandbox]}
+    config = flatten_codex_config_overrides(codex_effective_thread_config(current))
+    reserved_prefix = f"mcp_servers.{CODEX_PROVIDER_MCP_NAME}"
+    config = {key: value for key, value in config.items()
+              if key != reserved_prefix and not key.startswith(reserved_prefix + ".")}
+    fork_overrides["config"] = config
+    if effort:
+        turn_overrides["effort"] = effort
+    if service_tier:
+        fork_overrides["serviceTier"] = codex_app_server_service_tier(service_tier)
+        turn_overrides["serviceTier"] = codex_app_server_service_tier(service_tier)
+    return {
+        "cwd": cwd,
+        "model": model if isinstance(model, str) and model.strip() else None,
+        "approval_policy": approval_policy,
+        "fork_overrides": fork_overrides,
+        "turn_overrides": turn_overrides,
+    }
+
+
 async def create_native_side_chat(session_id: str, *, persisted_state=None, persist_state=None, durable=False):
     """Bind a side conversation to the provider's actual parent.
 
@@ -1583,41 +1633,8 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
             else:
                 from hyadex.providers.codex.side_question import NativeCodexSideChat
                 if self.codex is None:
-                    cwd = existing_cwd(str(current.get("cwd") or DEFAULT_CWD))
-                    model, effort, service_tier = codex_runtime_settings(current)
-                    approval_policy = current.get("codex_approval_policy")
-                    if approval_policy not in CODEX_APPROVAL_POLICIES:
-                        approval_policy = CODEX_DEFAULT_APPROVAL_POLICY
-                    reviewer = current.get("codex_approvals_reviewer")
-                    if reviewer not in CODEX_APPROVAL_REVIEWERS:
-                        reviewer = CODEX_DEFAULT_APPROVALS_REVIEWER
-                    fork_overrides = {
-                        "approvalPolicy": approval_policy,
-                        "approvalsReviewer": reviewer,
-                        "runtimeWorkspaceRoots": [cwd],
-                    }
-                    turn_overrides = dict(fork_overrides)
-                    permission_profile = str(current.get("codex_permission_profile")
-                                             or CODEX_DEFAULT_PERMISSION_PROFILE or "").strip()
-                    if permission_profile:
-                        fork_overrides["permissions"] = permission_profile
-                        turn_overrides["permissions"] = permission_profile
-                    else:
-                        sandbox = current.get("codex_sandbox_mode")
-                        if sandbox not in CODEX_SANDBOX_MODES:
-                            sandbox = CODEX_DEFAULT_SANDBOX_MODE
-                        fork_overrides["sandbox"] = sandbox
-                        turn_overrides["sandboxPolicy"] = {"type": CODEX_SANDBOX_POLICY_TYPES[sandbox]}
-                    config = flatten_codex_config_overrides(codex_effective_thread_config(current))
-                    reserved_prefix = f"mcp_servers.{CODEX_PROVIDER_MCP_NAME}"
-                    config = {key: value for key, value in config.items()
-                              if key != reserved_prefix and not key.startswith(reserved_prefix + ".")}
-                    fork_overrides["config"] = config
-                    if effort:
-                        turn_overrides["effort"] = effort
-                    if service_tier:
-                        fork_overrides["serviceTier"] = codex_app_server_service_tier(service_tier)
-                        turn_overrides["serviceTier"] = codex_app_server_service_tier(service_tier)
+                    settings = codex_side_fork_settings(current)
+                    approval_policy = settings["approval_policy"]
 
                     async def side_server_request(request_id, method, params):
                         def is_current():
@@ -1636,8 +1653,8 @@ async def create_native_side_chat(session_id: str, *, persisted_state=None, pers
                         if persist_state is not None:
                             await persist_state({**binding, "codex": value})
                     self.codex = NativeCodexSideChat(parent_id, executable=CODEX_BIN,
-                        model=model if isinstance(model, str) and model.strip() else None,
-                        cwd=cwd, fork_overrides=fork_overrides, turn_overrides=turn_overrides,
+                        model=settings["model"], cwd=settings["cwd"],
+                        fork_overrides=settings["fork_overrides"], turn_overrides=settings["turn_overrides"],
                         server_request_handler=side_server_request,
                         env=side_questions.isolated_environment(runner_env()),
                         durable=durable,

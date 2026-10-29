@@ -94,10 +94,12 @@ from hyadex.features.search import history_search_index_loop
 from hyadex.features.side_questions import CODEX_GOALS_RECONFIGURING
 from hyadex.features.terminal import scrub_tmux_global_secret_environment, TERMINAL_ATTACHMENTS
 from hyadex.ops import instances as server_instances
+from hyadex.ops.parent_watch import exit_with_parent, owning_parent_pid
 from hyadex.providers.claude.background_state import PROVIDER_WORK_LABEL_LIMIT
 from hyadex.providers.claude.runtime import CLAUDE_STOP_FENCE_RETRY_TASKS, close_claude_sdk_manager
 from hyadex.providers.claude.subagents import CLAUDE_STOP_FENCE_ATTEMPT_TASKS
 from hyadex.providers.codex.commands import SIDE_QUESTIONS
+from hyadex.features.consult_runtime import CONSULTS
 from hyadex.providers.codex.interactions import close_codex_app_server_manager
 from hyadex.providers.codex.runtime import (
     active_provider_background_work_labels,
@@ -1233,8 +1235,15 @@ async def lifespan(app: FastAPI):
         cleanup_abandoned_fork_provider_threads(startup_abandoned_fork_threads)
     )
     host_monitor_task = asyncio.create_task(host_monitor_loop())
+    parent_pid = owning_parent_pid()
+    parent_watch_task = asyncio.create_task(exit_with_parent(parent_pid)) if parent_pid else None
     queue_checkpoint_task = asyncio.create_task(queue_checkpoint_loop())
     history_search_task = asyncio.create_task(history_search_index_loop())
+    # A consult that was answering when the server stopped has no one waiting for it now.
+    try:
+        CONSULTS.recover()
+    except Exception:
+        logger.exception("chat consult recovery failed")
     async def recover_groups_and_autopilot() -> None:
         # Autopilot continues from the group rounds its runs were waiting for.
         await GROUPS.recover()
@@ -1265,7 +1274,7 @@ async def lifespan(app: FastAPI):
     finally:
         SERVER.shutting_down = True
         await bounded_shutdown_phase("side-questions", asyncio.gather(
-            SIDE_QUESTIONS.close(), close_generated_session_titles(),
+            SIDE_QUESTIONS.close(), CONSULTS.close(), close_generated_session_titles(),
         ))
         # Every phase below is bounded by SERVER_SHUTDOWN_PHASE_TIMEOUT_SECONDS
         # (see bounded_shutdown_phase) so one stuck join cannot starve the
@@ -1341,6 +1350,8 @@ async def lifespan(app: FastAPI):
         )
         abandoned_fork_cleanup_task.cancel()
         host_monitor_task.cancel()
+        if parent_watch_task is not None:
+            parent_watch_task.cancel()
         history_search_task.cancel()
         runtime_probe_task.cancel()
         group_recovery_task.cancel()
@@ -1349,6 +1360,7 @@ async def lifespan(app: FastAPI):
             join_cancelled_tasks(
                 abandoned_fork_cleanup_task,
                 host_monitor_task,
+                *((parent_watch_task,) if parent_watch_task is not None else ()),
                 history_search_task,
                 runtime_probe_task,
                 group_recovery_task,

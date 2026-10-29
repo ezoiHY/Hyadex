@@ -17,6 +17,8 @@ public final class EventSocket: @unchecked Sendable {
     private let lock = NSLock()
     private var lastSeq: Int
     private var task: Task<Void, Never>?
+    /// The server bounds each live snapshot to about a million characters.
+    static let maximumMessageSize = 16 * 1024 * 1024
 
     /// - Parameters:
     ///   - path: e.g. `api/sessions/<id>/events` or `api/groups/<id>/events/stream`.
@@ -68,13 +70,22 @@ public final class EventSocket: @unchecked Sendable {
         }
         request.setValue(protocolName, forHTTPHeaderField: "Sec-WebSocket-Protocol")
         let socket = URLSession.shared.webSocketTask(with: request)
+        // Live reasoning and answer snapshots can exceed the 1 MiB default.
+        socket.maximumMessageSize = Self.maximumMessageSize
         socket.resume()
         defer { socket.cancel(with: .goingAway, reason: nil) }
         var received = false
         while !Task.isCancelled {
             let message: URLSessionWebSocketTask.Message
             do {
-                message = try await socket.receive()
+                // receive() does not observe Task cancellation. Closing the
+                // socket ends it, so stop() releases the server subscription
+                // at once instead of at the next frame.
+                message = try await withTaskCancellationHandler {
+                    try await socket.receive()
+                } onCancel: {
+                    socket.cancel(with: .goingAway, reason: nil)
+                }
             } catch {
                 return received
             }

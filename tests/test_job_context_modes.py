@@ -415,7 +415,7 @@ class StandaloneProviderContextTests(unittest.IsolatedAsyncioTestCase):
                 capability = capabilities[0]
                 self.assertEqual(
                     capability["actions"],
-                    {"jobs", "publish", "emergency", "notify"},
+                    {"jobs", "publish", "emergency", "notify", "ask"},
                 )
                 launched_prompt = run_claude.await_args.args[2]
                 self.assertEqual(launched_prompt, "scheduled prompt")

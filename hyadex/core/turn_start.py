@@ -1338,7 +1338,8 @@ async def _start_turn_locked(
         provider_jobs_access = effective_provider_jobs_access(sess)
         provider_actions = {"publish"}
         if provider_turn_may_raise_emergency(req.purpose):
-            provider_actions.update({"emergency", "notify"})
+            # Reaching out on its own (the user, or another chat) is the agent's turn to take.
+            provider_actions.update({"emergency", "notify", "ask"})
         if (
             provider_turn_may_manage_jobs(req.purpose)
             and provider_jobs_access != "blocked"

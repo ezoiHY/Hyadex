@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import HyadexAPI
 
@@ -30,12 +31,19 @@ final class LiveController {
     private var memberProjections: [String: SessionProjection] = [:]
     private var memberSockets: [String: EventSocket] = [:]
     private var memberReasoning: [String: String] = [:]
+    /// Answers still being written, by chat (and member chat) id; not durable.
+    private var chatLiveText: [String: LiveText] = [:]
+    private var memberLiveText: [String: LiveText] = [:]
     private var pollTask: Task<Void, Never>?
     private var runPollTask: Task<Void, Never>?
     private var usageTask: Task<Void, Never>?
     /// Chats whose turn was running at the last publish (to notice a turn end).
     private var runningChats: Set<String> = []
     private var loadingDiffs: Set<String> = []
+    /// Chats marked read after the user saw them, with when the server
+    /// confirmed (`distantFuture` while the request is out). Lists fetched
+    /// before then still count them unread and are overridden.
+    private var seenAt: [String: Date] = [:]
 
     /// Events after which the chat's native goal changed.
     static let goalEventTypes: Set<String> = ["claude_goal_changed", "codex_goal_updated", "codex_goal_cleared"]
@@ -171,12 +179,22 @@ final class LiveController {
 
     func refreshLists() async throws {
         guard isCurrent else { throw CancellationError() }
+        let fetchedAt = Date()
         async let sessionList = client.sessions()
         async let groupList = client.groups(includeArchived: true)
         async let runList = client.runs()
         async let jobList = client.jobs()
         let (sessions, groups, runs, jobs) = try await (sessionList, groupList, runList, jobList)
         guard isCurrent else { throw CancellationError() }
+        // Older servers have no consults; a failure here never fails the poll.
+        let activeConsults = ((try? await client.activeConsults())?["consults"].array ?? []).compactMap(ActiveConsult.parse)
+        guard isCurrent else { throw CancellationError() }
+        if activeConsults != model.activeConsults { model.activeConsults = activeConsults }
+        let awaitingApproval = Set(activeConsults.filter { $0.status == .awaitingApproval }.compactMap(\.sourceID))
+        if case .chat(let open)? = model.selection,
+           activeConsults.contains(where: { $0.sourceID == open || $0.targetID == open }) {
+            Task { await refreshConsults(open) }
+        }
 
         let previousChats = Dictionary(model.chats.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         var chats = sessions.compactMap { LiveMapping.chat($0, previous: previousChats[$0["id"].string ?? ""]) }
@@ -185,11 +203,19 @@ final class LiveController {
                 chats[index].state = projection.needsAction ? .needsAction : projection.running ? .running : .idle
                 if let text = projection.lastAssistantText { chats[index].preview = Self.preview(text) }
             }
-            if model.selection == .chat(chats[index].id), !model.markedUnread.contains(chats[index].id) {
+            // A deep consult waiting for approval needs the user as much as a tool approval does.
+            if awaitingApproval.contains(chats[index].id), chats[index].state == .running {
+                chats[index].state = .needsAction
+            }
+            let id = chats[index].id
+            if model.selection == .chat(id), !model.markedUnread.contains(id) {
                 chats[index].unread = false
+            } else if let seen = seenAt[id] {
+                if fetchedAt > seen { seenAt[id] = nil } else { chats[index].unread = false }
             }
         }
-        // Chats that are not open change state here (the open one in publishChat).
+        // Chats that are not open change state here (the open one, which has a
+        // projection, in publishChat).
         for chat in chats where chatProjections[chat.id] == nil {
             if let old = previousChats[chat.id]?.state { SystemNotifier.chatChanged(chat, from: old, to: chat.state) }
         }
@@ -261,10 +287,27 @@ final class LiveController {
         default: nil
         }
         if socket?.key != key {
+            let previous = socket?.key
             socket?.socket.stop()
             socket = nil
             for stream in memberSockets.values { stream.stop() }
             memberSockets = [:]
+            // Live answers stop updating with their socket; their messages arrive with the history.
+            if let previous {
+                // The server marked the chat read when it was opened; what its
+                // stream showed since has been seen too.
+                if model.chat(previous) != nil, !model.markedUnread.contains(previous) { markSeen(previous) }
+                if chatLiveText.removeValue(forKey: previous) != nil { publishChat(previous) }
+                if !memberLiveText.isEmpty {
+                    memberLiveText = [:]
+                    publishGroup(previous)
+                }
+                // Without its stream a chat's projection stops at the moment it was
+                // left. Forget it, so the polled list drives its sidebar state and
+                // notifications, and reopening reloads it from the server.
+                chatProjections[previous] = nil
+                chatEvents[previous] = nil
+            }
         }
         switch item {
         case .chat(let id): Task { await openChat(id) }
@@ -295,20 +338,28 @@ final class LiveController {
         }
         publishChat(id)
         Task { await refreshContext(id) }
+        Task { await refreshConsults(id) }
         // The user may have moved on while the history loaded; only the
         // conversation that is still selected gets the live stream.
         guard model.selection == .chat(id) else { return }
         try? await client.markRead(id)
         guard isCurrent else { return }
         guard model.selection == .chat(id) else { return }
-        // The reasoning lane carries the provider's live reasoning summary (not durable).
+        // The reasoning and text lanes carry the provider's live reasoning
+        // summary and the answer being written (neither is durable).
         subscribe(key: id, path: "api/sessions/\(id)/events", after: chatProjections[id]?.lastSeq ?? 0,
-                  query: ["reasoning_stream": "true", "reasoning_text": "true"]) { controller, event in
+                  query: ["reasoning_stream": "true", "reasoning_text": "true", "text_stream": "true"]) { controller, event in
             controller.chatProjections[id]?.apply(event)
             controller.chatEvents[id, default: []].append(event)
+            controller.chatLiveText[id]?.settle(with: event)
             controller.publishChat(id)
             if event["type"].string == "subagent_state" || event["type"].string == "turn_finished" {
                 Task { await controller.refreshSubagents(id) }
+            }
+            // A reply finished in front of the user is read (here and in other clients).
+            if event["type"].string == "turn_finished", NSApp?.isActive == true,
+               !controller.model.markedUnread.contains(id) {
+                controller.markSeen(id)
             }
             if Self.goalEventTypes.contains(event["type"].string ?? "") {
                 Task { await controller.refreshContext(id) }
@@ -318,6 +369,9 @@ final class LiveController {
             case "reasoning_summary_stream":
                 let text = frame["items"].array.reversed().compactMap { $0["text"].text }.first
                 controller.model.liveReasoning[id] = text.map { String($0.suffix(400)) }
+            case "assistant_text_stream":
+                controller.chatLiveText[id, default: LiveText()].apply(snapshot: frame)
+                controller.publishChat(id)
             case "provider_runtime_changed" where frame["runtime"].string == "context_usage":
                 controller.applyContext(frame, to: id)
             case "provider_usage_changed":
@@ -325,6 +379,8 @@ final class LiveController {
                 Task { await controller.refreshUsage(only: backend) }
             case "side_chat_updated":
                 Task { await controller.refreshSide(id) }
+            case "chat_consult_updated":
+                Task { await controller.refreshConsults(id) }
             default:
                 break
             }
@@ -375,7 +431,7 @@ final class LiveController {
             guard let sessionID = member.sessionID, memberSockets[sessionID] == nil else { continue }
             let stream = EventSocket(client: client, path: "api/sessions/\(sessionID)/events",
                                      after: memberProjections[sessionID]?.lastSeq ?? 0,
-                                     query: ["reasoning_stream": "true", "reasoning_text": "true"])
+                                     query: ["reasoning_stream": "true", "reasoning_text": "true", "text_stream": "true"])
             memberSockets[sessionID] = stream
             let backend = member.backend
             stream.start { [weak self] frame in
@@ -385,8 +441,10 @@ final class LiveController {
                     case .event(let event):
                         let wasRunning = self.memberProjections[sessionID]?.running ?? false
                         self.memberProjections[sessionID]?.apply(event)
+                        self.memberLiveText[sessionID]?.settle(with: event)
                         if wasRunning, self.memberProjections[sessionID]?.running == false {
                             self.memberReasoning[sessionID] = nil
+                            self.memberLiveText[sessionID] = nil
                             Task { await self.refreshContext(sessionID, backend: backend) }
                         } else if Self.goalEventTypes.contains(event["type"].string ?? "") {
                             Task { await self.refreshContext(sessionID, backend: backend) }
@@ -396,6 +454,8 @@ final class LiveController {
                         case "reasoning_summary_stream":
                             let text = json["items"].array.reversed().compactMap { $0["text"].text }.first
                             self.memberReasoning[sessionID] = text.map { String($0.suffix(400)) }
+                        case "assistant_text_stream":
+                            self.memberLiveText[sessionID, default: LiveText()].apply(snapshot: json)
                         case "provider_runtime_changed" where json["runtime"].string == "context_usage":
                             self.applyContext(json, to: sessionID)
                             return
@@ -480,7 +540,8 @@ final class LiveController {
     private func publishChat(_ id: String) {
         guard isCurrent else { return }
         guard let projection = chatProjections[id] else { return }
-        model.timelines[id] = projection.items
+        if !projection.running { chatLiveText[id] = nil }
+        model.timelines[id] = projection.items + (chatLiveText[id]?.messages(author: projection.agent) ?? [])
         model.queues[id] = projection.queued
         if let pending = model.pendingSends[id], pending.contains(where: { projection.acceptedRequests.contains($0.id) }) {
             model.pendingSends[id] = pending.filter { !projection.acceptedRequests.contains($0.id) }
@@ -553,11 +614,9 @@ final class LiveController {
             let sessionID = dispatch.sessionID ?? member.sessionID
             let turn = sessionID.flatMap { memberProjections[$0]?.turn(forRequest: dispatch.id) }
             let approvals: [GroupApproval] = (turn?.pendingApprovals ?? []).compactMap { item in
-                guard case .approval(let interaction, _, let title, let detail, let reason, _, let allowsSession) = item,
-                      let sessionID else { return nil }
-                return GroupApproval(interactionID: interaction, handle: member.handle, backend: member.backend,
-                                     sessionID: sessionID, title: title, detail: detail, reason: reason,
-                                     allowsSession: allowsSession)
+                guard let sessionID else { return nil }
+                return GroupApproval(interactionID: item.id, handle: member.handle, backend: member.backend,
+                                     sessionID: sessionID, request: item)
             }
             let since = turn?.startedAt ?? dispatch.time
             var activity: LiveActivity?
@@ -567,12 +626,16 @@ final class LiveController {
                 } else if case .tool(_, let kind, let title, _, .running, _)? = turn?.steps.last {
                     activity = LiveActivity(kind: .tool, label: kind.activeVerb, detail: title, since: since)
                 } else {
-                    let reasoning = sessionID.flatMap { memberReasoning[$0] }
-                    activity = LiveActivity(kind: .thinking, label: "正在思考", detail: reasoning, since: since)
+                    let reasoning = sessionID.flatMap { memberReasoning[$0] }.flatMap(ThoughtSummary.line)
+                    activity = LiveActivity(kind: .thinking, label: "正在思考",
+                                            detail: reasoning ?? turn.flatMap { ThoughtSummary.latest(in: $0.steps) }
+                                                .flatMap(ThoughtSummary.line),
+                                            since: since)
                 }
             }
             live.append(MemberTurn(id: dispatch.id, author: .agent(member.handle, member.backend),
-                                   steps: turn?.steps ?? [], approvals: approvals, activity: activity))
+                                   steps: turn?.steps ?? [], approvals: approvals, activity: activity,
+                                   liveText: sessionID.flatMap { memberLiveText[$0]?.items.last?.text }))
         }
         if model.timelines[id] != items { model.timelines[id] = items }
         if model.processSeconds[id] != seconds { model.processSeconds[id] = seconds }
@@ -847,18 +910,14 @@ final class LiveController {
         }
     }
 
-    func decide(_ interactionID: String, _ decision: ApprovalDecision, in id: String) async {
+    func reply(_ interactionID: String, _ reply: InteractionReply, in id: String) async {
         guard isCurrent else { return }
         guard let chat = model.chat(id) else { return }
-        let value = switch decision {
-        case .allowed: "accept"
-        case .allowedForSession: "acceptForSession"
-        default: "decline"
-        }
-        chatProjections[id]?.noteDecision(decision, for: interactionID)
+        chatProjections[id]?.noteDecision(reply.outcome, for: interactionID)
         publishChat(id)
         do {
-            try await client.resolveInteraction(id, backend: chat.backend.rawValue, interactionID: interactionID, decision: value)
+            try await client.resolveInteraction(id, backend: chat.backend.rawValue, interactionID: interactionID,
+                                                response: reply.response)
             guard isCurrent else { return }
         } catch {
             guard isCurrent else { return }
@@ -922,10 +981,12 @@ final class LiveController {
         guard isCurrent else { throw CancellationError() }
     }
 
-    func createChat(backend: AgentBackend, model modelName: String?, cwd: String, permission: PermissionPreset?) async {
+    func createChat(backend: AgentBackend, model modelName: String?, cwd: String, permission: PermissionPreset?,
+                    folder: String? = nil) async {
         guard isCurrent else { return }
         var body: [String: JSON] = ["backend": .string(backend.rawValue), "cwd": .string(LiveMapping.expand(cwd))]
         if let modelName { body["model"] = .string(modelName) }
+        if let folder { body["folder"] = .string(folder) }
         for (key, value) in permission?.fields ?? [:] { body[key] = .string(value) }
         do {
             let session = try await client.createSession(.object(body))
@@ -933,7 +994,7 @@ final class LiveController {
             if let chat = LiveMapping.chat(session, previous: nil) {
                 model.chats.insert(ChatSummary(id: chat.id, title: chat.title, backend: chat.backend, model: chat.model,
                                                effort: chat.effort, permission: chat.permission, cwd: chat.cwd,
-                                               preview: "还没有消息", lastActivity: .now), at: 0)
+                                               preview: "还没有消息", lastActivity: .now, folder: chat.folder), at: 0)
                 model.select(.chat(chat.id))
             }
         } catch {
@@ -1051,18 +1112,13 @@ final class LiveController {
         }
     }
 
-    func decide(_ approval: GroupApproval, _ decision: ApprovalDecision, inGroup groupID: String) async {
+    func reply(_ approval: GroupApproval, _ reply: InteractionReply, inGroup groupID: String) async {
         guard isCurrent else { return }
-        let value = switch decision {
-        case .allowed: "accept"
-        case .allowedForSession: "acceptForSession"
-        default: "decline"
-        }
-        memberProjections[approval.sessionID]?.noteDecision(decision, for: approval.interactionID)
+        memberProjections[approval.sessionID]?.noteDecision(reply.outcome, for: approval.interactionID)
         publishGroup(groupID)
         do {
             try await client.resolveInteraction(approval.sessionID, backend: approval.backend.rawValue,
-                                                interactionID: approval.interactionID, decision: value)
+                                                interactionID: approval.interactionID, response: reply.response)
             guard isCurrent else { return }
         } catch {
             guard isCurrent else { return }
@@ -1458,12 +1514,89 @@ final class LiveController {
 
     func markUnread(_ id: String) async {
         guard isCurrent else { return }
+        seenAt[id] = nil
         do { try await client.markUnread(id) } catch { if isCurrent { model.report(error) } }
+    }
+
+    /// Marks a chat read after the user saw it, keeping its dot off until the
+    /// server's lists agree.
+    private func markSeen(_ id: String) {
+        seenAt[id] = .distantFuture
+        if let index = model.chats.firstIndex(where: { $0.id == id }), model.chats[index].unread {
+            model.chats[index].unread = false
+        }
+        Task {
+            try? await client.markRead(id)
+            guard isCurrent, seenAt[id] != nil else { return }
+            seenAt[id] = Date()
+        }
     }
 
     func markRead(_ id: String) async {
         guard isCurrent else { return }
         do { try await client.markRead(id) } catch { if isCurrent { model.report(error) } }
+    }
+
+    // MARK: Chat consults
+
+    func refreshConsults(_ id: String) async {
+        guard isCurrent else { return }
+        guard let json = try? await client.consults(id) else { return }  // older servers have none
+        guard isCurrent else { return }
+        let consults = ChatConsults.parse(json)
+        if model.consults[id] != consults { model.consults[id] = consults }
+    }
+
+    func decideConsult(_ consultID: String, decision: String, inChat id: String) async {
+        guard isCurrent else { return }
+        do {
+            _ = try await client.decideConsult(id, consultID: consultID, decision: decision)
+        } catch {
+            guard isCurrent else { return }
+            model.report(error)
+        }
+        await refreshConsults(id)
+    }
+
+    func cancelConsult(_ consultID: String, inChat id: String) async {
+        guard isCurrent else { return }
+        do {
+            _ = try await client.cancelConsult(id, consultID: consultID)
+        } catch {
+            guard isCurrent else { return }
+            model.report(error)
+        }
+        await refreshConsults(id)
+    }
+
+    func loadConsultTargets(_ id: String) async {
+        guard isCurrent else { return }
+        guard let json = try? await client.consultTargets(id) else { return }  // older servers have none
+        guard isCurrent else { return }
+        let targets = json["chats"].array.compactMap(ConsultTarget.parse)
+        if model.consultTargets[id] != targets { model.consultTargets[id] = targets }
+    }
+
+    func askFromChat(_ target: ConsultTarget, question: String, deep: Bool, inChat id: String) async {
+        guard isCurrent else { return }
+        do {
+            _ = try await client.askFromChat(id, chat: target.id, question: question, deep: deep)
+        } catch {
+            guard isCurrent else { return }
+            model.report(error)
+        }
+        await refreshConsults(id)
+    }
+
+    func askChat(_ question: String, deep: Bool, inChat id: String) async {
+        guard isCurrent else { return }
+        do {
+            _ = try await client.askChat(id, question: question, deep: deep)
+        } catch {
+            guard isCurrent else { return }
+            model.sideChatErrors[id] = Self.sideMessage(error)
+        }
+        await refreshConsults(id)
     }
 
     // MARK: Side chat

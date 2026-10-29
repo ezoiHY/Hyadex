@@ -26,6 +26,8 @@ private struct GeneralSettings: View {
     @AppStorage(TextSize.key) private var textSize = TextSize.standard
     @AppStorage("expandThinking") private var expandThinking = false
     @AppStorage("showUsage") private var showUsage = true
+    @AppStorage(ScreenshotShortcut.key) private var screenshotShortcut = ScreenshotShortcut.standard
+    @AppStorage("groupChatsByProject") private var groupByProject = true
 
     var body: some View {
         Form {
@@ -45,6 +47,18 @@ private struct GeneralSettings: View {
             Section("时间线") {
                 Toggle("默认展开每轮的处理过程", isOn: $expandThinking)
                 Toggle("在边栏底部显示套餐用量", isOn: $showUsage)
+                Toggle("边栏按项目分组聊天", isOn: $groupByProject)
+            }
+            Section {
+                Picker("全局截图快捷键", selection: $screenshotShortcut) {
+                    ForEach(ScreenshotShortcut.allCases) { Text($0.label).tag($0) }
+                }
+            } header: {
+                Text("截图")
+            } footer: {
+                Text("在任何 App 中按下快捷键，框选屏幕区域（空格键切换为窗口），截图会添加到当前聊天的输入框。第一次使用时需要允许 Hyadex 录制屏幕。")
+                    .font(.uiMeta)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

@@ -54,11 +54,17 @@ struct BlockStack: View {
     let context: RichContext
     var spacing: CGFloat = RichMetrics.blockSpacing
     var depth = 0
+    var secondary = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                BlockView(block: block, context: context, depth: depth)
+            ForEach(Array(RichSegment.split(blocks).enumerated()), id: \.offset) { _, segment in
+                switch segment {
+                case .text(let blocks):
+                    SelectableText(blocks: blocks, context: context, spacing: spacing, depth: depth, secondary: secondary)
+                case .block(let block):
+                    BlockView(block: block, context: context, depth: depth)
+                }
             }
         }
     }
@@ -84,7 +90,7 @@ struct BlockView: View {
         case .list(let ordered, let start, let items):
             RichList(ordered: ordered, start: start, items: items, context: context, depth: depth)
         case .quote(let blocks):
-            BlockStack(blocks: blocks, context: context, spacing: 8, depth: depth)
+            BlockStack(blocks: blocks, context: context, spacing: 8, depth: depth, secondary: true)
                 .foregroundStyle(.secondary)
                 .padding(.leading, 14)
                 .overlay(alignment: .leading) {

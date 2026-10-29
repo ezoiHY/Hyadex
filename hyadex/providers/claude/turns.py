@@ -92,6 +92,7 @@ from hyadex.providers.claude.interactions import (
     claude_run_has_pending_interaction,
 )
 from hyadex.providers.claude.goals import CLAUDE_GOAL_PENDING, refresh_claude_goal
+from hyadex.providers.claude.live_output import ClaudeLiveOutput
 from hyadex.providers.claude.context_usage import (
     claude_provider_id_for_session,
     sample_claude_context_usage,
@@ -294,6 +295,9 @@ async def run_claude_print(
                     str(event["session_id"]),
                 )
             etype = event.get("type")
+            # A subagent's records name the Agent/Task call that runs it.
+            parent_tool_id = str(event.get("parent_tool_use_id") or "")
+            nested = {"parent_tool_id": parent_tool_id} if parent_tool_id else {}
             if etype == "assistant":
                 local_command = claude_local_command_fields_for_turn(event, session_id, run_id)
                 native_output = native_output or (
@@ -308,18 +312,20 @@ async def run_claude_print(
                                 "run_id": run_id,
                                 "text": text,
                                 "backend": BACKEND_CLAUDE,
+                                **nested,
                                 **local_command,
                                 **run_event_metadata(run_id),
                             })
                     elif btype == "thinking" and block.get("thinking"):
-                        await append_event(session_id, "reasoning_summary", {"run_id": run_id, "text": block["thinking"]})
+                        await append_event(session_id, "reasoning_summary",
+                                           {"run_id": run_id, "text": block["thinking"], **nested})
                     elif btype in ("tool_use", "server_tool_use"):
                         had_tool_activity = True
                         tid = block.get("id") or f"tool_{uuid.uuid4().hex[:8]}"
                         tool = {"id": tid, "name": block.get("name", "tool"), "input": block.get("input", {})}
                         current_tools[tid] = tool
                         changed_paths.update(tool_changed_paths(tool))
-                        await append_event(session_id, "tool_started", {"run_id": run_id, "tool": tool})
+                        await append_event(session_id, "tool_started", {"run_id": run_id, "tool": tool, **nested})
             elif etype == "system" and event.get("subtype") == "compact_boundary":
                 native_output = True
                 await append_event(
@@ -349,6 +355,7 @@ async def run_claude_print(
                             "run_id": run_id,
                             "tool_id": tid,
                             "tool": current_tools.pop(tid, None),
+                            **nested,
                             "output": content,
                             "is_error": block.get("is_error") is True,
                         })
@@ -873,6 +880,7 @@ async def run_claude_sdk(
     current_run_id = run_id
     current_handle = handle
     current_reconciliation_batches = initial_reconciliation_batches
+    live_output = ClaudeLiveOutput(session_id, current_run_id)
     receipts_persisted_run_ids: set[str] = set()
     current_diff_baseline = diff_baseline
     current_prompt = prompt
@@ -1381,7 +1389,16 @@ async def run_claude_sdk(
                             cwd=cwd,
                         )
                         provider_persisted_id = message_provider_id
-                if provider_id and claude_sdk_type(message) != "StreamEvent":
+                if claude_sdk_type(message) == "StreamEvent":
+                    # Live thinking and text never decide the run's outcome.
+                    with suppress(Exception):
+                        await live_output.observe(message)
+                    # A response's first event still marks the provider
+                    # ready, as its first message did before partial messages.
+                    event = claude_sdk_field(message, "event", {})
+                    if not isinstance(event, dict) or event.get("type") != "message_start":
+                        continue
+                elif provider_id:
                     with suppress(Exception):
                         await refresh_claude_goal(session_id, provider_id=provider_id)
                 projected_result = await project_claude_sdk_message(
@@ -1396,6 +1413,8 @@ async def run_claude_sdk(
                     local_command_outputs=local_command_outputs,
                     native_output_run_ids=native_output_run_ids,
                 )
+                with suppress(Exception):
+                    await live_output.complete(message)
                 if projected_result is None:
                     continue
                 result_details = projected_result
@@ -1816,6 +1835,8 @@ async def run_claude_sdk(
                 lineage.append(steering_message)
 
             current_run_id = candidate_run_id
+            previous_live_output = live_output
+            live_output = ClaudeLiveOutput(session_id, candidate_run_id)
             current_handle = candidate_handle
             current_reconciliation_batches = candidate_reconciliation_batches
             options = candidate_options
@@ -1882,6 +1903,9 @@ async def run_claude_sdk(
                 already_published_ready=candidate_provider_ready,
             )
 
+            # Thinking or text the interrupted response was still writing.
+            with suppress(Exception):
+                await previous_live_output.finish(ended_early=prior_aborted)
             if prior_aborted:
                 await append_event(session_id, "turn_stopped", {
                     "run_id": previous_run_id,
@@ -2141,6 +2165,17 @@ async def run_claude_sdk(
 
     async def finalize_sdk_run() -> None:
         nonlocal current_reconciliation_batches, cancelled_error
+        # Keep thinking and text shown before the run ended mid-block, ahead
+        # of its errors and terminal event.
+        with suppress(Exception):
+            await live_output.finish(ended_early=bool(
+                cancelled_error is not None
+                or current_run_id in RUNS.stopped_runs
+                or stream_error
+                or result_details is None
+                or result_details.get("aborted")
+                or result_details.get("is_error")
+            ))
         if retire_supervisor:
             with suppress(Exception):
                 await interrupt_claude_sdk_run_bounded(current_handle)

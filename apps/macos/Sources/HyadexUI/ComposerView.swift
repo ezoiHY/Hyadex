@@ -29,12 +29,22 @@ struct ComposerView<MenuItems: View, Leading: View, Trailing: View>: View {
     let onStop: () -> Void
     let onEditQueued: (String) -> Void
     let onWithdrawQueued: (String) -> Void
-    /// Less frequent actions, in the "+" menu after 添加文件… (side chat, goal…).
+    /// Less frequent actions, in the "+" menu after 添加文件… (a screenshot, a group's answer mode…).
     @ViewBuilder let menuItems: () -> MenuItems
     /// Shown right of "+": the permission mode, or a group's members.
     @ViewBuilder let leading: () -> Leading
     /// Shown left of the send button: model, effort and context.
     @ViewBuilder let trailing: () -> Trailing
+    /// A line above the box: where the agent works.
+    var header: AnyView? = nil
+    /// Chats this one may ask with @ (chats only); nil turns chat mentions off.
+    var chatMentions: [ConsultTarget]? = nil
+    /// Called once the user starts typing @ (loads `chatMentions`).
+    var onBeginChatMention: () -> Void = {}
+    /// Asks a chat directly when the message starts with its @: (chat, question, deep).
+    var onAskChat: ((ConsultTarget, String, Bool) -> Void)? = nil
+    /// The chat's agent, for "not sent to …".
+    var agentName = "代理"
 
     @FocusState private var focused: Bool
     @State private var highlighted = 0
@@ -42,10 +52,29 @@ struct ComposerView<MenuItems: View, Leading: View, Trailing: View>: View {
     @AppStorage("sendWithCommandReturn") private var sendWithCommandReturn = false
     @State private var picking = false
     @State private var dropTargeted = false
+    /// A direct question to another chat asks a read-only copy of it to check its files.
+    @State private var askDeep = false
 
     private var uploading: Bool { attachments?.contains { $0.state == .uploading } ?? false }
     private var hasFiles: Bool { attachments?.contains { $0.fileID != nil } ?? false }
-    private var canSend: Bool { (!trimmed.isEmpty || hasFiles) && !uploading }
+    private var canSend: Bool {
+        if let directAsk { return !directAsk.question.isEmpty }
+        return (!trimmed.isEmpty || hasFiles) && !uploading
+    }
+
+    /// The chat name typed after "@", while chat mentions are on.
+    private var chatMentionPartial: String? { chatMentions == nil ? nil : ChatMention.partial(in: draft) }
+
+    private var chatSuggestions: [ConsultTarget] {
+        guard let partial = chatMentionPartial, let chatMentions else { return [] }
+        return ChatMention.matches(partial, in: chatMentions)
+    }
+
+    /// A message that opens with another chat's @ asks that chat, not this agent.
+    private var directAsk: (target: ConsultTarget, question: String)? {
+        guard let chatMentions, onAskChat != nil else { return nil }
+        return ChatMention.direct(in: draft, targets: chatMentions)
+    }
 
     private var trimmed: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -66,12 +95,26 @@ struct ComposerView<MenuItems: View, Leading: View, Trailing: View>: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            if let header {
+                HStack(spacing: 0) {
+                    header
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, -2)
+            }
             if !queued.isEmpty {
                 QueueStrip(queued: queued, isRunning: isRunning, onEdit: onEditQueued, onWithdraw: onWithdrawQueued,
                            onRunNow: onRunQueuedNow, onMove: onMoveQueued, onResume: onResumeQueue)
             }
             if !suggestions.isEmpty {
                 MentionSuggestions(handles: suggestions, candidates: mentionCandidates, onPick: complete)
+            }
+            if !chatSuggestions.isEmpty {
+                ChatMentionSuggestions(targets: chatSuggestions, onPick: complete)
+            }
+            if let directAsk {
+                DirectAskBar(target: directAsk.target, deep: $askDeep, agentName: agentName)
             }
             if partialCommand != nil, !commandSuggestions.isEmpty || slashNote != nil {
                 CommandSuggestions(commands: commandSuggestions, highlighted: min(highlighted, commandSuggestions.count - 1),
@@ -95,6 +138,12 @@ struct ComposerView<MenuItems: View, Leading: View, Trailing: View>: View {
                             complete(command)
                             return .handled
                         }
+                        // Return picks the chat being typed after "@", like Tab.
+                        if let chat = chatSuggestions.first, chatMentionPartial?.isEmpty == false,
+                           !press.modifiers.contains(.shift) {
+                            complete(chat)
+                            return .handled
+                        }
                         if sendWithCommandReturn {
                             if press.modifiers.contains(.command) {
                                 send()
@@ -114,6 +163,10 @@ struct ComposerView<MenuItems: View, Leading: View, Trailing: View>: View {
                             complete(command)
                             return .handled
                         }
+                        if let chat = chatSuggestions.first {
+                            complete(chat)
+                            return .handled
+                        }
                         guard let first = suggestions.first else { return .ignored }
                         complete(first)
                         return .handled
@@ -127,6 +180,9 @@ struct ComposerView<MenuItems: View, Leading: View, Trailing: View>: View {
                         guard !commandSuggestions.isEmpty else { return .ignored }
                         highlighted = min(commandSuggestions.count - 1, highlighted + 1)
                         return .handled
+                    }
+                    .onChange(of: chatMentionPartial == nil) { wasNone, isNone in
+                        if wasNone && !isNone { onBeginChatMention() }
                     }
                     .onChange(of: partialCommand) { old, new in
                         highlighted = 0
@@ -240,15 +296,27 @@ struct ComposerView<MenuItems: View, Leading: View, Trailing: View>: View {
             .disabled(!canSend)
             // ⌘↩ must be a key equivalent: the text view would take it before onKeyPress.
             .keyboardShortcut(sendWithCommandReturn ? KeyboardShortcut(.return, modifiers: .command) : nil)
-            .help(isRunning ? "加入队列（\(sendWithCommandReturn ? "⌘↩" : "↩")）" : "发送（\(sendWithCommandReturn ? "⌘↩" : "↩")）")
-            .accessibilityLabel(isRunning ? "加入队列" : "发送")
+            .help(directAsk.map { "问「\($0.target.title)」" }
+                  ?? (isRunning ? "加入队列（\(sendWithCommandReturn ? "⌘↩" : "↩")）" : "发送（\(sendWithCommandReturn ? "⌘↩" : "↩")）"))
+            .accessibilityLabel(directAsk.map { "问\($0.target.title)" } ?? (isRunning ? "加入队列" : "发送"))
         }
     }
 
     private func send() {
         guard canSend else { return }
+        if let directAsk, let onAskChat {
+            onAskChat(directAsk.target, directAsk.question, askDeep && directAsk.target.allowsDeep)
+            draft = ""
+            askDeep = false
+            return
+        }
         onSend(draft)
         draft = ""
+    }
+
+    private func complete(_ chat: ConsultTarget) {
+        guard let at = draft.lastIndex(of: "@") else { return }
+        draft = String(draft[..<at]) + ChatMention.token(chat.title) + " "
     }
 
     private var highlightedCommand: ProviderCommand? {
@@ -413,6 +481,67 @@ private struct MentionSuggestions: View {
             Spacer()
             Text("⇥ 补全").font(.uiMeta).foregroundStyle(.tertiary)
         }
+    }
+}
+
+/// Chats in the project matching what follows "@".
+private struct ChatMentionSuggestions: View {
+    let targets: [ConsultTarget]
+    let onPick: (ConsultTarget) -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(targets) { target in
+                Button {
+                    onPick(target)
+                } label: {
+                    HStack(spacing: 5) {
+                        if let backend = target.backend {
+                            ProviderMark(backend: backend, size: 13)
+                        }
+                        Text(target.title).lineLimit(1)
+                        if target.working {
+                            Text("工作中").foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.uiSecondary)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("问「\(target.title)」：把问题写在后面，回答会显示在这个聊天里")
+            }
+            Spacer()
+            Text("⇥ 补全").font(.uiMeta).foregroundStyle(.tertiary)
+        }
+    }
+}
+
+/// Shown while a message opens with another chat's @: it goes to that chat, not this agent.
+private struct DirectAskBar: View {
+    let target: ConsultTarget
+    @Binding var deep: Bool
+    let agentName: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "bubble.left.and.text.bubble.right").foregroundStyle(.secondary)
+            Text("直接问「\(target.title)」").font(.uiMeta.weight(.semibold)).lineLimit(1)
+            Text("回答显示在这里，不发给 \(agentName)").font(.uiMeta).foregroundStyle(.secondary).lineLimit(1)
+            Spacer(minLength: 6)
+            Picker("询问方式", selection: $deep) {
+                Text("基础").tag(false)
+                Text("深度").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .disabled(!target.allowsDeep)
+            .help(target.allowsDeep ? "基础凭它记得的回答；深度让它的只读副本查看文件后回答，较慢"
+                                    : "「\(target.title)」只接受基础提问")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
     }
 }
 

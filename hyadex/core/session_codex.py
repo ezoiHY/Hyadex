@@ -288,6 +288,7 @@ def codex_app_server_env() -> dict[str, str]:
     env["HYADEX_PUBLISH_CLI"] = str(HELPER_SCRIPTS["publish"])
     env["HYADEX_EMERGENCY_CLI"] = str(HELPER_SCRIPTS["emergency"])
     env["HYADEX_NOTIFY_CLI"] = str(HELPER_SCRIPTS["notify"])
+    env["HYADEX_ASK_CLI"] = str(HELPER_SCRIPTS["ask"])
     scrub_provider_runtime_environment(env)
     return env
 

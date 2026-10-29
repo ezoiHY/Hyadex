@@ -128,6 +128,7 @@ from hyadex.providers.codex.threads import (
     CODEX_APP_SERVER_THREAD_LRU_LOCK,
 )
 from hyadex.providers.registry import other_local_instance_provider_keys
+from hyadex.features.consult_runtime import CONSULTS
 from hyadex.providers.state import PROVIDERS
 from hyadex.providers.subagents import build_subagent_snapshot
 from hyadex.providers.codex.subagents import reconcile_codex_subagents
@@ -136,6 +137,7 @@ from hyadex.providers.claude.subagents import (
     CLAUDE_STOP_FENCE_ATTEMPT_TASKS,
     evict_claude_sdk_chat,
 )
+from hyadex.providers.text_stream import assistant_text_stream_snapshot
 from hyadex.ops import session_ownership as local_session_ownership
 
 logger = logging.getLogger("hyadex-server")
@@ -342,6 +344,7 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
             # deletion instead of returning while stale work remains alive.
             await SIDE_QUESTIONS.close_session(session_id)
             SIDE_QUESTIONS.delete_history(session_id)
+            await CONSULTS.delete_session(session_id)
             await cancel_claude_stop_fence_retry(
                 session_id,
                 clear_fence=True,
@@ -698,6 +701,7 @@ async def delete_session(session_id: str, discard_updated_at: str | None = None)
                     DELETED_SESSION_TOMBSTONES.add(session_id)
                     DELETING_SESSIONS.discard(session_id)
                 SIDE_QUESTIONS.delete_history(session_id)
+                await CONSULTS.delete_session(session_id)
                 if session_id in CLAUDE_STOP_FENCE_SESSIONS:
                     # No retry/attempt task remains after the bounded
                     # pre-delete join above. Clear synchronously after the
@@ -810,6 +814,7 @@ async def session_events(
     visible: bool | None = None,
     reasoning_stream: bool = False,
     reasoning_text: bool = False,
+    text_stream: bool = False,
     liveness: bool = False,
     history_projection: bool = False,
 ) -> None:
@@ -869,6 +874,7 @@ async def session_events(
             # later append observes the subscriber before it broadcasts.
             activated = False
             reasoning_snapshot = None
+            text_snapshot = None
             async with event_delivery_lock(session_id):
                 gap_boundary = await asyncio.to_thread(
                     last_event_seq_from_file,
@@ -876,12 +882,15 @@ async def session_events(
                 )
                 if cursor >= gap_boundary:
                     activated = await HUB.register_accepted(session_id, ws, **(
-                        {"reasoning_stream": True, **({"reasoning_text": True} if reasoning_text else {})} if reasoning_stream else {}))
+                        {"reasoning_stream": True, **({"reasoning_text": True} if reasoning_text else {})} if reasoning_stream else {}),
+                        **({"text_stream": True} if text_stream else {}))
                     if activated and reasoning_stream:
                         reasoning_snapshot = reasoning_summary_stream_snapshot(session_id)
                         if not reasoning_text:
                             reasoning_snapshot["items"] = [item for item in reasoning_snapshot["items"]
                                 if item.get("phase") != "reasoning"]
+                    if activated and text_stream:
+                        text_snapshot = assistant_text_stream_snapshot(session_id)
             if cursor >= gap_boundary:
                 if not activated:
                     # This should be unreachable after a successful
@@ -892,6 +901,8 @@ async def session_events(
                     return
                 if reasoning_snapshot is not None:
                     await asyncio.wait_for(ws.send_json(reasoning_snapshot), timeout=WEBSOCKET_SEND_TIMEOUT_SECONDS)
+                if text_snapshot is not None:
+                    await asyncio.wait_for(ws.send_json(text_snapshot), timeout=WEBSOCKET_SEND_TIMEOUT_SECONDS)
                 if liveness:
                     await send_event_stream_status(ws, session_id, "ready")
                 if history_projection:

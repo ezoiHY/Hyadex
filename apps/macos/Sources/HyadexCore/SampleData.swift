@@ -1,4 +1,5 @@
 import Foundation
+import HyadexAPI
 
 /// Demo content shown until the app is connected to a real server.
 public enum SampleData {
@@ -409,5 +410,179 @@ public enum SampleData {
         for id in ["c1", "c3", "c4", "c6"] { commands[id] = claude; mcp[id] = claudeMCP }
         for id in ["c2", "c5"] { commands[id] = codex; mcp[id] = codexMCP }
         return (goals, [:], commands, mcp)
+    }
+
+    // MARK: Interactions (snapshot scenes only)
+
+    /// A Claude chat waiting on AskUserQuestion, as the server forwards it.
+    public static func questionTimeline(now: Date) -> [TimelineItem] {
+        let claude = Author.agent("claude", .claude)
+        let strategy: JSON = [
+            "id": "question_1", "header": "重连策略", "question": "断线后用哪种重连策略？", "multiSelect": false,
+            "isOther": true, "options": [
+                ["label": "指数退避（推荐）", "description": "0.5 秒起，翻倍到 30 秒，加随机抖动"],
+                ["label": "固定间隔", "description": "每 5 秒重试一次，实现简单"],
+            ],
+        ]
+        let scope: JSON = [
+            "id": "question_2", "header": "覆盖范围", "question": "哪些连接要一起改？", "multiSelect": true,
+            "isOther": true, "options": [
+                ["label": "聊天事件流", "description": ""], ["label": "讨论组事件流", "description": ""],
+                ["label": "终端", "description": "PTY 断开后重新附着 tmux"],
+            ],
+        ]
+        let params: JSON = ["questions": [strategy, scope]]
+        return [
+            .message(id: "q-1", author: .user, text: "把断线重连做得更稳一点，先问我需要确定的地方。",
+                     time: now.addingTimeInterval(-120)),
+            .thinking(id: "q-2", seconds: 6, text: "需要确认重连策略和改动范围。"),
+            .form(id: "q-3", author: claude,
+                  form: InteractionForm.parse(method: "item/tool/requestUserInput", params: params)!,
+                  decision: .pending),
+        ]
+    }
+
+    /// A Codex command approval offering a rule for later and only `cancel` to refuse.
+    public static func codexApprovalTimeline(now: Date) -> [TimelineItem] {
+        let codex = Author.agent("codex", .codex)
+        let params: JSON = ["availableDecisions": [
+            "accept",
+            ["acceptWithExecpolicyAmendment": ["execpolicy_amendment": ["./gradlew", "connectedCheck"]]],
+            "cancel",
+        ]]
+        return [
+            .message(id: "a-1", author: .user, text: "在设备上跑一下连接测试。", time: now.addingTimeInterval(-60)),
+            .approval(id: "a-2", author: codex, title: "运行命令", command: "./gradlew connectedCheck",
+                      reason: "需要访问已连接的测试设备，超出了当前沙箱的权限。", decision: .pending,
+                      choices: ApprovalChoice.choices(method: "item/commandExecution/requestApproval", params: params)),
+        ]
+    }
+
+    /// A Claude answer still being written, after its finished work.
+    public static func liveAnswerTimeline(now: Date) -> [TimelineItem] {
+        let claude = Author.agent("claude", .claude)
+        var live = LiveText()
+        live.apply(snapshot: ["items": [[
+            "item_id": "msg_demo:1", "run_id": "run_demo", "after_seq": 3,
+            "text": "重连现在分三步：\n\n1. 断线后按 **0.5 秒** 起的指数退避重试，最长 30 秒，并加上随机抖动；\n2. 重连时带上",
+        ]]])
+        return [
+            .message(id: "l-1", author: .user, text: "把方案写下来。", time: now.addingTimeInterval(-40)),
+            .thinking(id: "l-2", seconds: 4, text: "按刚才确定的策略整理。"),
+            .tool(id: "l-3", kind: .read, title: "Sources/HyadexAPI/EventSocket.swift", output: "", status: .succeeded,
+                  seconds: 0.1),
+        ] + live.messages(author: claude)
+    }
+
+    /// A turn that asked another chat twice: a basic answer that came back, and
+    /// a deep question waiting for the user's approval.
+    public static func consultTimeline(now: Date) -> [TimelineItem] {
+        [
+            .message(id: "q-1", author: .user, text: "问问后端那个聊天：服务监听哪个端口？部署说明里的金丝雀比例是多少？",
+                     time: now.addingTimeInterval(-40)),
+            .thinking(id: "q-2", seconds: 2, text: "端口后端聊天应该记得；部署说明它没读过，需要深度查看。"),
+            .consult(id: "q-3", call: ConsultCall(
+                target: "后端重构", deep: false, question: "服务监听哪个端口？", running: false,
+                receipt: ConsultReceipt(ok: true, consultID: "cns_basic", chatTitle: "后端重构", status: .completed,
+                                        answer: "服务监听 **7123** 端口（`server.py` 里的 `PORT = 7123`）。", confident: true))),
+            .consult(id: "q-4", call: ConsultCall(
+                target: "后端重构", deep: true, question: "notes/ 下的部署说明把金丝雀比例设成多少？请查文件后回答。")),
+        ]
+    }
+
+    /// The consults behind `consultTimeline`, as the server lists them.
+    public static func consults(now: Date) -> ChatConsults {
+        ChatConsults(outgoing: [
+            ConsultRecord(id: "cns_deep", sourceID: "c1", sourceTitle: "重构 WebSocket 断线续传", sourceBackend: .claude,
+                          targetID: "c2", targetTitle: "后端重构", targetBackend: .codex, mode: .deep,
+                          question: "notes/ 下的部署说明把金丝雀比例设成多少？请查文件后回答。", status: .awaitingApproval,
+                          createdAt: now.addingTimeInterval(-5)),
+            ConsultRecord(id: "cns_basic", sourceID: "c1", sourceTitle: "重构 WebSocket 断线续传", sourceBackend: .claude,
+                          targetID: "c2", targetTitle: "后端重构", targetBackend: .codex, mode: .basic,
+                          question: "服务监听哪个端口？", status: .completed,
+                          answer: "服务监听 **7123** 端口（`server.py` 里的 `PORT = 7123`）。", confident: true,
+                          createdAt: now.addingTimeInterval(-30), duration: 5.4, inputTokens: 78_559, outputTokens: 93),
+        ])
+    }
+
+    /// The chats c1 may ask with @.
+    public static let consultTargets = [
+        ConsultTarget(id: "c2", title: "后端重构", backend: .codex),
+        ConsultTarget(id: "c3", title: "后端压测脚本", backend: .claude, working: true),
+        ConsultTarget(id: "c5", title: "README 中英双语", backend: .claude, allowsDeep: false),
+    ]
+
+    /// A question the user asked another chat with @, answered.
+    public static func userConsultTimeline(now: Date) -> [TimelineItem] {
+        [
+            .message(id: "u-1", author: .user, text: "把重连的最大间隔调到 30 秒", time: now.addingTimeInterval(-300)),
+            .message(id: "u-2", author: .agent("claude", .claude), text: "已改成最长 30 秒，并加了抖动。",
+                     time: now.addingTimeInterval(-280)),
+            .consult(id: "consult-cns_user", call: ConsultCall(
+                target: "后端重构", deep: true, question: "服务端的心跳间隔是多少？", running: false,
+                consultID: "cns_user", byUser: true)),
+        ]
+    }
+
+    public static func userConsults(now: Date) -> ChatConsults {
+        ChatConsults(outgoing: [
+            ConsultRecord(id: "cns_user", sourceID: "c1", sourceTitle: "重构 WebSocket 断线续传", sourceBackend: .claude,
+                          targetID: "c2", targetTitle: "后端重构", targetBackend: .codex, mode: .deep,
+                          question: "服务端的心跳间隔是多少？", status: .completed,
+                          answer: "心跳每 **15 秒**一次，45 秒没有进展就判定断线。\n\n依据：`hyadex/api/sessions.py:903`。",
+                          confident: true, steps: [ConsultStep(kind: "command", title: "rg -n heartbeat hyadex/api")],
+                          createdAt: now.addingTimeInterval(-60), duration: 18, inputTokens: 91_200, outputTokens: 180),
+        ])
+    }
+
+    /// What a chat was asked: your own deep question, and another chat's, still looking.
+    public static func incomingConsults(now: Date) -> ChatConsults {
+        ChatConsults(incoming: [
+            ConsultRecord(id: "cns_in2", sourceID: "c1", sourceTitle: "重构 WebSocket 断线续传", sourceBackend: .claude,
+                          targetID: "c2", targetTitle: "后端重构", mode: .deep,
+                          question: "notes/ 下的部署说明把金丝雀比例设成多少？", status: .running,
+                          steps: [ConsultStep(kind: "command", title: "rg --files notes"),
+                                  ConsultStep(kind: "command", title: "nl -ba notes/deploy.md")],
+                          createdAt: now.addingTimeInterval(-6)),
+            ConsultRecord(id: "cns_in1", targetID: "c2", targetTitle: "后端重构", mode: .deep,
+                          question: "config.txt 里 RETRIES 是多少？查一下文件。", status: .completed,
+                          answer: "`RETRIES` 是 **5**。\n\n依据：`config.txt:2` 写着 `RETRIES=5`。",
+                          steps: [ConsultStep(kind: "command", title: "nl -ba config.txt")],
+                          createdAt: now.addingTimeInterval(-120), duration: 14),
+        ])
+    }
+
+    /// A Claude turn whose summarized thinking has arrived and finished; the answer has not started.
+    public static func thinkingTimeline(now: Date) -> [TimelineItem] {
+        [
+            .message(id: "t-1", author: .user, text: "能给我讲下数学二次方程吗", time: now.addingTimeInterval(-9)),
+            .thinking(id: "t-2", seconds: 0, text: "这是一个宽泛的概念性问题，用户可能是初学者。我打算用中文回复，先给一个简短的概述介绍二次方程是什么，再问一句对方的程度。"),
+        ]
+    }
+
+    /// An answer with display and inline math, a list and a question, as Claude writes them.
+    public static func mathAnswerTimeline(now: Date) -> [TimelineItem] {
+        [
+            .message(id: "m-1", author: .user, text: "能给我讲下数学二次方程吗", time: now.addingTimeInterval(-60)),
+            .thinking(id: "m-2", seconds: 6, text: "先给概述，再问对方的程度。"),
+            .message(id: "m-3", author: .agent("claude", .claude), text: #"""
+            好的。先给你一个整体印象，再看从哪里讲起最合适。
+
+            **二次方程**就是未知数最高次是 2 的方程，标准形式是：
+
+            $$ax^2 + bx + c = 0 \quad (a \neq 0)$$
+
+            比如 $x^2 - 5x + 6 = 0$。解这个方程，就是找出哪些 $x$ 代进去能让左边等于 0。
+
+            > 三种解法：**因式分解**、**配方法**、**求根公式**，背后是同一个思路。
+
+            1. 第一次学，想从“二次方程是什么”开始
+            2. 学过一点，但某种解法没弄懂
+               - [x] 因式分解
+               - [ ] 求根公式 $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$
+
+            告诉我你的情况，或者直接把卡住的地方发给我也行。
+            """#, time: now.addingTimeInterval(-30)),
+        ]
     }
 }

@@ -370,6 +370,41 @@ class GroupEngineTests(unittest.IsolatedAsyncioTestCase):
         await self.post(group["id"], "@codex second task")
         self.assertIn("first task", self.runtime.turns[1]["prompt"])
 
+    async def test_withdrawn_queued_messages_reach_the_member_with_its_next_dispatch(self) -> None:
+        for how in ("group stop", "member stop"):
+            with self.subTest(how=how):
+                group = await self.create()
+                self.runtime.queue_next = True
+                await self.post(group["id"], "@codex FIRST task")
+                self.runtime.queue_next = True
+                await self.post(group["id"], "@codex SECOND task")
+                first, second = self.runtime.turns[-2], self.runtime.turns[-1]
+                if how == "group stop":
+                    await self.engine.stop(group["id"])
+                    await self.engine.drain()
+                else:
+                    await self.held(first["session_id"], first["queued_id"], second["queued_id"])
+                await self.post(group["id"], "@codex THIRD task")
+                prompt = self.runtime.turns[-1]["prompt"]
+                # Neither queued message reached @codex, so both come with the next one, once.
+                for text in ("FIRST task", "SECOND task", "THIRD task"):
+                    self.assertEqual(prompt.count(text), 1, (text, prompt))
+
+    async def test_a_delivered_dispatch_keeps_its_messages_when_a_later_one_is_withdrawn(self) -> None:
+        group = await self.create()
+        await self.post(group["id"], "@codex FIRST task")
+        delivered = self.runtime.turns[-1]
+        self.runtime.queue_next = True
+        await self.post(group["id"], "@codex SECOND task")
+        queued = self.runtime.turns[-1]
+        await self.held(queued["session_id"], queued["queued_id"])
+        await self.finish(delivered, "done with the first")
+        await self.post(group["id"], "@codex THIRD task")
+        prompt = self.runtime.turns[-1]["prompt"]
+        self.assertNotIn("FIRST task", prompt)
+        self.assertIn("SECOND task", prompt)
+        self.assertIn("THIRD task", prompt)
+
     async def test_held_group_message_lets_a_sequential_round_continue(self) -> None:
         group = await self.create()
         self.runtime.queue_next = True

@@ -1169,6 +1169,12 @@ class SessionStore:
                         sess.pop("_title_seed", None)
             if patch.get("auto_title_enabled") is not None:
                 sess["auto_title_enabled"] = bool(patch["auto_title_enabled"])
+            if patch.get("consult_inbound") is not None:
+                sess["consult_inbound"] = str(patch["consult_inbound"])
+            if patch.get("consult_deep_approval") is not None:
+                sess["consult_deep_approval"] = bool(patch["consult_deep_approval"])
+            if patch.get("consult_deep_allowed") is not None:
+                sess["consult_deep_allowed"] = [str(value) for value in patch["consult_deep_allowed"]][:50]
             for key, default, allowed in (
                 (
                     "claude_permission_mode",
@@ -2482,6 +2488,7 @@ def public_session(sess: dict[str, Any], *, summary: bool = False) -> dict[str, 
         "codex_permission_profile", "codex_approvals_reviewer",
         "provider_jobs_access",
         "codex_goal", "codex_goal_time_budget_seconds",
+        "consult_inbound", "consult_deep_approval", "consult_deep_allowed",
     )
     public = {
         k: sess.get(k)
@@ -2498,6 +2505,9 @@ def public_session(sess: dict[str, Any], *, summary: bool = False) -> dict[str, 
             "last_read_agent_event_seq", "last_read_agent_event_at", "manual_unread",
         )
     }
+    # Set by turn_started and cleared by its turn_finished/turn_stopped, so a
+    # list shows a working chat as busy whatever its latest event is.
+    public["running"] = isinstance(sess.get("active_run"), dict)
     if isinstance(sess.get("group_member"), dict):
         public["group_member"] = dict(sess["group_member"])
     if isinstance(sess.get("token_totals"), dict):

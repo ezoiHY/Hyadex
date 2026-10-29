@@ -61,7 +61,7 @@ logger = logging.getLogger("hyadex-server")
 
 HISTORY_SEARCH_DB = STATE_DIR / "history_search.sqlite3"
 HISTORY_SEARCH_LOCK = threading.Lock()
-HISTORY_SEARCH_INDEX_VERSION = "8"
+HISTORY_SEARCH_INDEX_VERSION = "9"
 HISTORY_SEARCH_SYNC_INTERVAL_SECONDS = max(
     0.25, float(hyadex_setting("HISTORY_SEARCH_SYNC_INTERVAL_SECONDS", "1.0"))
 )
@@ -133,14 +133,53 @@ def timeline_search_tokens(query: str) -> list[str]:
     return [(phrase or word).casefold() for phrase, word in matches if phrase or word]
 
 
+# unicode61 keeps a run of Chinese, Japanese or Korean characters as one token,
+# so a word inside a sentence ("测试" in "然后运行测试") could never match. The
+# index and the query therefore separate each such character with a zero-width
+# space (a unicode61 separator); a query word becomes a phrase of adjacent
+# characters, which matches it anywhere in the text.
+HISTORY_SEARCH_CJK_SEPARATOR = "\u200b"
+HISTORY_SEARCH_CJK_CHARACTER = re.compile(
+    "["
+    "\u1100-\u11ff"  # Hangul Jamo
+    "\u3005-\u3007"  # 々 〆 〇
+    "\u3040-\u30ff"  # Hiragana, Katakana
+    "\u3100-\u312f"  # Bopomofo
+    "\u3130-\u318f"  # Hangul Compatibility Jamo
+    "\u31f0-\u31ff"  # Katakana Phonetic Extensions
+    "\u3400-\u4dbf"  # CJK Extension A
+    "\u4e00-\u9fff"  # CJK Unified Ideographs
+    "\uac00-\ud7af"  # Hangul Syllables
+    "\uf900-\ufaff"  # CJK Compatibility Ideographs
+    "\uff66-\uff9f"  # Halfwidth Katakana
+    "\U00020000-\U0003134f"  # CJK Extensions B-H and Compatibility Supplement
+    "]"
+)
+
+
+def history_search_index_text(text: str) -> str:
+    """Return the text as stored in the index, one token per CJK character."""
+
+    return HISTORY_SEARCH_CJK_CHARACTER.sub(
+        lambda match: f"{HISTORY_SEARCH_CJK_SEPARATOR}{match.group(0)}{HISTORY_SEARCH_CJK_SEPARATOR}",
+        text.replace(HISTORY_SEARCH_CJK_SEPARATOR, ""),
+    )
+
+
+def history_search_display_text(text: str) -> str:
+    return text.replace(HISTORY_SEARCH_CJK_SEPARATOR, "")
+
+
 def timeline_search_fts_query(query: str) -> str:
     matches = re.findall(r'"([^"]+)"|(\S+)', query.strip())
     terms: list[str] = []
     for phrase, word in matches:
         value = (phrase or word).casefold()
-        if not value:
+        # A term without letters or digits ("-", "…") has no tokens, and an
+        # empty phrase would make the whole AND query match nothing.
+        if not any(character.isalnum() for character in value):
             continue
-        escaped = value.replace('"', '""')
+        escaped = history_search_index_text(value).replace('"', '""')
         terms.append(f'"{escaped}"' if phrase else f'"{escaped}"*')
     return " AND ".join(terms)
 
@@ -1036,8 +1075,9 @@ def read_semantic_timeline_page(
 
 def search_timeline_index(session_id: str, query: str, limit: int = 40) -> dict[str, Any]:
     tokens = timeline_search_tokens(query)
+    fts_query = timeline_search_fts_query(query)
     session = STORE.sessions.get(session_id)
-    if not tokens or (
+    if not fts_query or (
         isinstance(session, dict) and session.get("_fork_initializing")
     ):
         return {"session_id": session_id, "query": query, "results": []}
@@ -1052,7 +1092,7 @@ def search_timeline_index(session_id: str, query: str, limit: int = 40) -> dict[
             WHERE history_search MATCH ? AND session_id = ?
             ORDER BY CAST(seq AS INTEGER) DESC
             LIMIT ?
-        """, (timeline_search_fts_query(query), session_id, max(1, min(100, limit)))).fetchall()
+        """, (fts_query, session_id, max(1, min(100, limit)))).fetchall()
     finally:
         connection.close()
     with suppress(OSError):
@@ -1064,7 +1104,7 @@ def search_timeline_index(session_id: str, query: str, limit: int = 40) -> dict[
         "seq": int(row[1] or 0),
         "ts": row[2],
         "role": row[3] or "system",
-        "snippet": timeline_search_snippet(str(row[4] or ""), tokens),
+        "snippet": timeline_search_snippet(history_search_display_text(str(row[4] or "")), tokens),
     } for row in rows]
     return {"session_id": session_id, "query": query, "results": results}
 
@@ -1273,7 +1313,7 @@ def sync_history_search_index(
                     if record:
                         role, text = record
                         pending.append((
-                            text,
+                            history_search_index_text(text),
                             session_id,
                             str(event.get("id") or event.get("seq") or uuid.uuid4().hex),
                             int(event.get("seq") or 0),
@@ -1372,9 +1412,9 @@ def search_all_timelines(
     eligible_session_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     tokens = timeline_search_tokens(query)
-    if not tokens:
-        return {"query": query, "results": []}
     fts_query = timeline_search_fts_query(query)
+    if not fts_query:
+        return {"query": query, "results": []}
     # Restrict against the authoritative in-memory session set, not only the
     # asynchronously maintained SQLite active bit. This prevents staged or
     # just-removed fork rows from leaking during background-index latency.
@@ -1422,7 +1462,7 @@ def search_all_timelines(
             "seq": int(row[2] or 0),
             "ts": row[3],
             "role": row[4] or "system",
-            "snippet": timeline_search_snippet(str(row[5] or ""), tokens),
+            "snippet": timeline_search_snippet(history_search_display_text(str(row[5] or "")), tokens),
             "match_count": int(row[6] or 1),
         } for row in rows],
     }

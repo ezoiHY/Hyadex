@@ -20,13 +20,15 @@ struct ProjectionTests {
         projection.apply(Array(events[...requestIndex]))
         #expect(projection.running)
         #expect(projection.needsAction)
-        guard case .approval(_, _, let title, let detail, _, .pending, let allowsSession)? = projection.items.last else {
+        guard case .approval(_, _, let title, let detail, _, .pending, let choices)? = projection.items.last else {
             Issue.record("expected a pending approval, got \(String(describing: projection.items.last))")
             return
         }
         #expect(title == "修改文件")
         #expect(detail.hasPrefix("hello.txt"))
-        #expect(allowsSession)
+        // Claude offers accept, accept for the session, decline and cancel.
+        #expect(choices.map(\.reply.response) == [["decision": "accept"], ["decision": "acceptForSession"],
+                                                   ["decision": "decline"], ["decision": "cancel"]])
 
         // The rest of the turn: resolved, tools done, answer, diff, finished.
         projection.apply(Array(events[(requestIndex + 1)...]))
@@ -37,9 +39,11 @@ struct ProjectionTests {
             case .message(_, let author, _, _, _, _, _): author.kind == .user ? "user" : "agent"
             case .tool(_, let kind, _, _, let status, _): "tool:\(kind.rawValue):\(status == .succeeded ? "ok" : "?")"
             case .approval(_, _, _, _, _, let decision, _): "approval:\(decision == .resolved ? "resolved" : "?")"
+            case .form: "form"
             case .changes: "changes"
             case .thinking: "thinking"
             case .divider: "divider"
+            case .consult: "consult"
             case .media: "media"
             }
         }
@@ -94,9 +98,16 @@ struct ProjectionTests {
         #expect(tool?.0.hasPrefix("printf") == true)
         #expect(tool?.1 == "hi\nbye\n")
         #expect(projection.items.contains { if case .thinking = $0 { true } else { false } })
-        #expect(projection.items.contains {
-            if case .approval(_, _, "运行命令", _, _, .resolved, false) = $0 { true } else { false }
-        })
+        let choices = projection.items.compactMap { item -> [ApprovalChoice]? in
+            if case .approval(_, _, "运行命令", _, _, .resolved, let choices) = item { return choices }
+            return nil
+        }.first
+        // Codex offered accept, a rule for this command, and cancel (no decline, no session).
+        #expect(choices?.map(\.role) == [.allow, .allowMore, .deny])
+        #expect(choices?.last?.reply.response == ["decision": "cancel"])
+        #expect(choices?[1].label.hasPrefix("允许，以后不再询问以 printf") == true)
+        #expect(choices?[1].reply.response["decision"]["acceptWithExecpolicyAmendment"]["execpolicy_amendment"]
+            .array.count == 3)
     }
 
     @Test func replayedEventsAreIgnored() throws {
@@ -153,6 +164,11 @@ struct ProjectionTests {
         #expect(LiveMapping.chat(["id": "s3", "backend": "gemini"], previous: nil) == nil)
         // Archived chats stay in the list, flagged, for the sidebar's 已归档 section.
         #expect(LiveMapping.chat(["id": "s4", "backend": "claude", "archived": true], previous: nil)?.archived == true)
+        // The server's own `running` wins over the latest event (a message queued while it works).
+        #expect(LiveMapping.chat(["id": "s5", "backend": "claude", "latest_event_type": "turn_queued", "running": true],
+                                 previous: nil)?.state == .running)
+        #expect(LiveMapping.chat(["id": "s6", "backend": "claude", "latest_event_type": "assistant_text", "running": false],
+                                 previous: nil)?.state == .idle)
     }
 }
 

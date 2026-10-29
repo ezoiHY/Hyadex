@@ -61,6 +61,11 @@ from hyadex.providers.codex.reasoning_stream import (
     update_reasoning_summary_stream,
 )
 from hyadex.providers.codex.runtime import is_codex_app_server_retry_notice
+from hyadex.providers.text_stream import (
+    clear_assistant_text_stream,
+    finish_assistant_text_stream,
+    update_assistant_text_stream,
+)
 
 logger = logging.getLogger("hyadex-server")
 
@@ -143,6 +148,7 @@ async def consume_codex_native_turn(
     reasoning_summary_deltas: dict[str, list[str]] = {}
     plan_deltas: dict[str, list[str]] = {}
     completed_reasoning_items: set[str | tuple[str, str]] = set()
+    completed_text_items: set[str] = set()
     terminal_status = "completed"
     terminal_error: str | None = None
     schedule_queue = True
@@ -359,6 +365,8 @@ async def consume_codex_native_turn(
                     continue
                 seen_goal_turn_ids.add(notification_turn_id)
                 await finish_reasoning_summary_stream(session_id, operation_id, completed_reasoning_items)
+                # The previous goal turn finished; an answer it left unfinished stays transient.
+                await finish_assistant_text_stream(session_id, operation_id, completed_text_items, keep=False)
                 turn_id = notification_turn_id
                 goal_turn_running = True
                 terminal_status = "completed"
@@ -438,6 +446,11 @@ async def consume_codex_native_turn(
                 assistant_deltas.setdefault(item_id, []).append(
                     str(params.get("delta") or "")
                 )
+                if item_id not in completed_text_items:
+                    with suppress(Exception):
+                        await update_assistant_text_stream(session_id, operation_id, item_id, params.get("delta"), {
+                            "backend": BACKEND_CODEX, "provider_turn_id": turn_id, "purpose": f"codex_{operation}",
+                        })
                 continue
             if method == "item/reasoning/textDelta" and item_id:
                 if ("reasoning", item_id) not in completed_reasoning_items:
@@ -506,6 +519,10 @@ async def consume_codex_native_turn(
                                 "purpose": f"codex_{operation}",
                             },
                         )
+                    # Its durable event replaces the text shown while it was written.
+                    completed_text_items.add(item_id)
+                    with suppress(Exception):
+                        await clear_assistant_text_stream(session_id, operation_id, item_id)
                 elif item_type in {"reasoning", "plan"}:
                     if item_type == "reasoning":
                         plaintext_identity = ("reasoning", item_id)
@@ -641,8 +658,11 @@ async def consume_codex_native_turn(
         terminal_status = "failed"
         terminal_error = concise_error_message(exc)
     finally:
-        summary_cleanup = asyncio.create_task(finish_reasoning_summary_stream(
-            session_id, operation_id, completed_reasoning_items))
+        async def finish_live_output() -> None:
+            await finish_reasoning_summary_stream(session_id, operation_id, completed_reasoning_items)
+            await finish_assistant_text_stream(session_id, operation_id, completed_text_items,
+                                               keep=terminal_status != "completed")
+        summary_cleanup = asyncio.create_task(finish_live_output())
         try:
             await asyncio.shield(summary_cleanup)
         except asyncio.CancelledError:

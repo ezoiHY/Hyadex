@@ -41,17 +41,25 @@ struct HyadexApp: App {
         }
 
         MenuBarExtra {
-            MenuBarStatus(model: model)
+            MenuBarStatus(model: model, delegate: appDelegate)
         } label: {
-            Image(systemName: model.needsActionCount > 0 ? "sparkles.rectangle.stack.fill" : "sparkles.rectangle.stack")
+            MenuBarLabel(model: model, delegate: appDelegate)
         }
         .menuBarExtraStyle(.menu)
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    weak var model: AppModel?
+    weak var model: AppModel? {
+        didSet { registerScreenshotShortcut() }
+    }
+    /// Shows the main window, even after it was closed (set by the menu bar label).
+    var openMainWindow: () -> Void = {}
     private var terminating = false
+    private var screenshotKey: GlobalHotKey?
+    private var registeredShortcut: ScreenshotShortcut?
+    private var defaultsObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Needed when launched as a bare binary (swift run) rather than a bundle.
@@ -59,6 +67,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A live check runs in the background so the user's typing stays in their own app.
         let environment = ProcessInfo.processInfo.environment
         if environment["HYADEX_E2E_DIR"] == nil && environment["HYADEX_BACKGROUND_LAUNCH"] != "1" { NSApp.activate() }
+        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
+                                                                  queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.registerScreenshotShortcut() }
+        }
+    }
+
+    /// Registers 设置 › 通用 › 全局截图快捷键 again whenever it changes.
+    private func registerScreenshotShortcut() {
+        let environment = ProcessInfo.processInfo.environment
+        guard model != nil, environment["HYADEX_SNAPSHOT_DIR"] == nil, environment["HYADEX_E2E_DIR"] == nil else { return }
+        let shortcut = ScreenshotShortcut.current
+        guard shortcut != registeredShortcut else { return }
+        screenshotKey?.unregister()
+        screenshotKey = nil
+        registeredShortcut = shortcut
+        guard let carbon = shortcut.carbon else { return }
+        screenshotKey = GlobalHotKey(keyCode: carbon.keyCode, modifiers: carbon.modifiers) { [weak self] in
+            self?.takeScreenshot()
+        }
+        if screenshotKey == nil {
+            model?.errorMessage = "截图快捷键 \(shortcut.label) 已被其他 App 占用，请在 设置 › 通用 中换一个。"
+        }
+    }
+
+    func takeScreenshot(hideApp: Bool = false) {
+        guard let model else { return }
+        Task {
+            await ScreenCapture.capture(into: model, hideApp: hideApp)
+            openMainWindow()
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -103,6 +141,8 @@ struct AppCommands: Commands {
                 .disabled(!model.isLive)
             Button("新建自动接力") { model.sheet = .newAutopilot }
                 .keyboardShortcut("n", modifiers: [.command, .option])
+                .disabled(!model.isLive)
+            Button("新建项目…") { model.projectEditor = .new(directory: nil, chatID: nil) }
                 .disabled(!model.isLive)
         }
         CommandGroup(after: .sidebar) {
@@ -176,11 +216,22 @@ struct AppCommands: Commands {
 /// Menu bar: what is running and what needs you, without opening the window.
 struct MenuBarStatus: View {
     let model: AppModel
+    let delegate: AppDelegate
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let waiting = model.chats.filter { $0.state == .needsAction }
         let running = model.chats.filter { $0.state == .running }
+        if !model.isLive {
+            Text("未连接服务器")
+        }
+        if !model.emergencies.isEmpty {
+            Section("紧急提醒") {
+                ForEach(model.emergencies) { alert in
+                    Button("\(alert.chatTitle)：\(alert.message)") { open(.chat(alert.sessionID)) }
+                }
+            }
+        }
         if !waiting.isEmpty {
             Section("需要你处理") {
                 ForEach(waiting) { chat in
@@ -202,6 +253,11 @@ struct MenuBarStatus: View {
             }
         }
         Divider()
+        Button(ScreenshotShortcut.current == .off ? "截图到当前聊天"
+               : "截图到当前聊天（\(ScreenshotShortcut.current.label)）") {
+            delegate.takeScreenshot(hideApp: true)
+        }
+        .disabled(model.screenshotTarget == nil)
         Button("打开 Hyadex") { openWindow(id: "main"); NSApp.activate() }
         Button("退出") { NSApp.terminate(nil) }
             .keyboardShortcut("q")

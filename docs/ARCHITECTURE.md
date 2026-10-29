@@ -12,10 +12,10 @@ changes a persisted data format, a protocol string or an API contract.
 | `hyadex/providers/` | Provider registry, authority, commands, usage, instructions and shared provider state (`state`) |
 | `hyadex/providers/claude/` | The Agent SDK client (`sdk`, `sdk_manager`), the turn runner (`turns`), runtime, catalog, context usage, interactions, goals, history, subagents and side questions |
 | `hyadex/providers/codex/` | The app-server client (`app_server`, `app_server_manager`), the turn runners (`turns`, `exec_runner`, `native_turns`), managers, threads, goals, notifications, interactions, tools, forks, history, subagents and side questions |
-| `hyadex/features/` | Scheduled jobs, the group engine and its runtime, Autopilot, terminals, files, forks, history import, search, titles, emergency alerts and side questions |
+| `hyadex/features/` | Scheduled jobs, the group engine and its runtime, chat consults (`consult_engine`, wired by `consult_runtime`), Autopilot, terminals, files, forks, history import, search, titles, emergency alerts and side questions |
 | `hyadex/api/` | Routes, one module per area; `app.py` is the FastAPI factory |
 | `hyadex/ops/` | Server lifecycle, source installation, named instances, local session ownership and the gateway/execution service layout (`ops/execution/`) |
-| `hyadex/cli/` | The jobs, publish, emergency and notify helpers agents run inside a turn; `HELPER_SCRIPTS` holds their paths |
+| `hyadex/cli/` | The jobs, publish, emergency, notify and ask helpers agents run inside a turn; `HELPER_SCRIPTS` holds their paths |
 | `hyadex/main.py` | Request authentication middleware, route mounting, `app` and `main()` |
 
 Root entry points: `agent_server.py` (installed services run
@@ -81,8 +81,8 @@ cache that one module rebinds with `global` stays private to that module.
 
 Route modules declare their own `router`; `hyadex/main.py` appends their
 routes to the application router in a fixed order (`mount_routes`), so they
-stay plain routes. Group, Autopilot and side-question routers are built by
-factories that receive their engine. Importing `hyadex`, its engines or its
+stay plain routes. Group, Autopilot, side-question and consult routers are
+built by factories that receive their engine. Importing `hyadex`, its engines or its
 routers does not start a server, create state directories or start provider
 processes.
 

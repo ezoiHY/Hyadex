@@ -292,6 +292,9 @@ class CodexAppServerSubscription:
     _queue: asyncio.Queue[Any]
     _closed: bool = False
     _last_enqueued_sequence: int = 0
+    # Seconds the reader has paused for this subscription's backlog; past the
+    # budget it is treated as stuck and no longer slows other threads.
+    _backlog_wait_spent: float = 0.0
 
     def _matches(self, notification: dict[str, Any]) -> bool:
         notification_thread_id, notification_turn_id = _notification_scope(notification)
@@ -585,6 +588,7 @@ class CodexAppServerClient:
         process_exit_timeout: float = 1.0,
         process_stream_limit: int = 16 * 1024 * 1024,
         notification_queue_limit: int = 8192,
+        notification_backlog_wait: float = 30.0,
         json_parse_thread_threshold: int = 1024 * 1024,
         fork_cleanup_grace: float = 30.0,
         process_factory: ProcessFactory | None = None,
@@ -614,6 +618,7 @@ class CodexAppServerClient:
         self.process_exit_timeout = max(0.0, float(process_exit_timeout))
         self.process_stream_limit = process_stream_limit
         self.notification_queue_limit = max(1, int(notification_queue_limit))
+        self.notification_backlog_wait = max(0.0, float(notification_backlog_wait))
         self.json_parse_thread_threshold = max(
             0,
             int(json_parse_thread_threshold),
@@ -1370,6 +1375,7 @@ class CodexAppServerClient:
                 params = message.get("params")
                 if method and isinstance(params, dict):
                     self._route_notification({"method": method, "params": params})
+                    await self._relieve_notification_backlog()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1429,6 +1435,32 @@ class CodexAppServerClient:
             text = line.decode("utf-8", "replace").strip()
             if text and not self._authentication_submitted:
                 self._stderr_tail.append(text)
+
+    async def _relieve_notification_backlog(self) -> None:
+        """Pause reading while a subscriber's queue is more than half full.
+
+        Buffered lines are read without yielding, so a verbose command's
+        thousands of output deltas can arrive faster than a consumer that
+        records each one. Pausing lets the app-server's own pipe absorb the
+        burst. A subscriber that does not drain within its budget is left to
+        overflow as before, so one stuck consumer cannot stall every thread.
+        """
+        high_water = max(1, self.notification_queue_limit // 2)
+        loop = asyncio.get_running_loop()
+        while True:
+            backlogged = [
+                subscription for subscription in self._subscriptions
+                if not subscription._closed
+                and subscription._queue.qsize() >= high_water
+                and subscription._backlog_wait_spent < self.notification_backlog_wait
+            ]
+            if not backlogged:
+                return
+            started = loop.time()
+            await asyncio.sleep(0.005)
+            waited = loop.time() - started
+            for subscription in backlogged:
+                subscription._backlog_wait_spent += waited
 
     def _route_notification(self, notification: dict[str, Any]) -> None:
         method = str(notification.get("method") or "")

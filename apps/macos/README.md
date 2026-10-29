@@ -47,7 +47,9 @@ does not install a service or download dependencies. The backend has a private
 `mac-app` named instance, with state in `~/.hyadex-instances/mac-app` and its
 configuration under `~/.config/hyadex-server-instances/mac-app`; it chooses an
 available local port. Existing installed/development servers are not restarted
-or adopted. Only one app may own this instance at a time.
+or adopted. Only one app may own this instance at a time. The backend is started
+with `--exit-with-parent`, so it also shuts down if the app crashes or is
+force-quit, and the next launch can start the instance again.
 
 Settings → 服务器: enter the address (for example `http://127.0.0.1:7870`, a LAN
 address or a Tailscale `100.x` address) and the access token, then 连接. The token
@@ -63,9 +65,17 @@ replies. The production app has no demo mode.
   creates an item of the current tab. Each tab remembers its last selection, and
   an orange dot marks a tab with something waiting for you. ⌃⌘1–3 switch tabs,
   ⌘K jumps anywhere.
-- **Conversation.** A sent message appears at once with a live status line
-  (starting, thinking with the provider's live reasoning summary when it sends
-  one, running a command or editing a file, with elapsed time). Each turn's work
+- **Projects.** Work chats are grouped by project, then by working directory
+  (the most recent group first, the home folder last; sections collapse).
+  新建项目 (in the sidebar, the File menu, or a chat's 移到项目 menu) takes a name
+  and an optional directory; chats working there join it. Moving a chat sets its
+  server-side `folder`; the project list itself is kept on this Mac per server.
+  A section's + starts a chat in its directory. 设置 › 通用 turns grouping off.
+- **Conversation.** The title bar shows the provider's mark and the chat's
+  title; the working directory sits above the composer (click it to reveal,
+  copy or open a terminal there). A sent message appears at once with a live
+  status line (starting, thinking with the turn's latest thought on one line,
+  running a command or editing a file, with elapsed time). Each turn's work
   (thinking, tool calls, answered approvals) folds into one "已处理 12 秒 · 运行 2
   条命令" row that expands to the steps, so answers, changed files and pending
   approvals stay in view. Messages sent while the agent works queue up: each can
@@ -73,23 +83,35 @@ replies. The production app has no demo mode.
   running turn when it can, otherwise the turn stops and it runs next). After a
   Stop, queued messages are held until 继续发送. Approvals are inline (Allow,
   Always allow for this chat, Deny). Return sends, Shift-Return adds a line, Esc stops.
-  The composer's "+" holds 添加文件…, 侧问 and 设定目标… (in a group also the answer
-  mode, 只分析 and 添加成员); its bottom row shows the permission mode, the context
-  ring, and the model and effort.
+  The composer's "+" holds 添加文件… and 截图… (in a group also the answer mode,
+  只分析 and 添加成员); its bottom row shows the permission mode, the context
+  ring, and two menus: the model, and the effort (when the model has levels).
+  侧问 and 设定目标 sit in the toolbar beside the terminal.
   Files go with the next message: "+" › 添加文件…, drop them anywhere on the
   conversation, or ⌘V a screenshot or files copied in Finder; each uploads at
-  once and shows its progress. Text, including text that carries a picture of
-  itself (Numbers, Word), still pastes as text.
+  once and shows its progress (pictures as square thumbnails, click for Quick
+  Look). Text, including text that carries a picture of itself (Numbers,
+  Word), still pastes as text.
+  Screenshots: press ⌥⇧S in any app (设置 › 通用 changes or turns off the
+  shortcut), or use "+" › 截图… or the menu bar, then drag an area (Space picks
+  a window). The picture goes into the open chat's composer. The first capture
+  asks for the Screen Recording permission.
   "加载更早的消息" at the top pages back through long chats.
   Model, effort and permissions are set per chat from the composer, with the
   providers' own names (Claude Code's Manual / Accept edits / Plan / Auto /
   Don't Ask / Bypass Permissions; Codex's Read Only / Default / Full Access).
   A ring next to them shows how full the chat's context window is.
+- **Menu bar.** The icon is grey while no server is connected, red for an
+  emergency alert, carries a count of items waiting for you, and pulses slowly
+  while agents run. Its menu lists them and takes a screenshot into the open chat.
 - **Usage.** The bottom of the sidebar shows each provider account's plan usage
   as its CLI reports it; click it for every window and its reset time.
 - **Messages.** Agent replies render GitHub-flavoured Markdown (headings,
   nested and task lists, tables, quotes, highlighted code with copy), TeX math
   (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) and images. Your own messages show as typed.
+  A drag selects across paragraphs, lists and formulas; copying gives plain
+  text with math as TeX. The copy button under an answer (on hover) copies it
+  all as Markdown.
   Everything is native: the `HyadexRichText` target has its own parsers and
   lays math out with CoreText in the system's STIX Two Math font, with no
   third-party packages.
@@ -114,7 +136,7 @@ replies. The production app has no demo mode.
   windows, new windows, splits, and closing a pane or the whole session. Hiding
   the panel only detaches; commands keep running, and reopening it repaints the
   current screen. Drag its top edge to change the height.
-- **Goals.** + › 设定目标… in the composer (or typing `/goal …`, `/goal clear`) sets the
+- **Goals.** 设定目标 in the toolbar (or typing `/goal …`, `/goal clear`) sets the
   provider's native goal: Claude Code's `/goal` completion condition, checked
   after every reply until it holds, or Codex's persistent objective with an
   optional token and time budget. While a goal is set, a bar above the composer
@@ -131,10 +153,27 @@ replies. The production app has no demo mode.
   be reconnected, disabled or enabled again, and failed servers retried; servers
   that need a sign-in are signed in with `/mcp` in Claude Code itself. Codex
   servers show their state once the chat's thread is running.
-- **Side questions.** + › 侧问 in the composer (⇧⌘B, or typing `/btw …`) opens a
+- **Side questions.** 侧问 in the toolbar (⇧⌘B, or typing `/btw …`) opens a
   panel beside the conversation for quick questions that neither interrupt the
   agent nor enter its transcript: Claude Code's native `/btw`, or for Codex an
   answer from a fork of its thread.
+- **Asking another chat.** A chat's agent can ask another chat in its project
+  (the server's `ask` helper). A card in the timeline shows whom it asked, in
+  基础 (from that chat's memory) or 深度 (a read-only copy of it checks its files)
+  mode, the files and commands a deep copy looks at while it works, and the
+  answer with its token use. A deep question first asks you: 允许, 总是允许询问
+  that chat, or 拒绝; the chat shows as needing you meanwhile. 停止 ends a running
+  one. The asked chat's side panel lists the questions it was asked, and its 深度
+  switch lets you ask it in depth yourself. Its sidebar row shows a magnifying
+  glass while a deep copy of it is at work. Chat settings › 聊天互问 choose
+  whether other chats may ask it (关闭, 只允许基础, 基础和深度) and whether its own
+  deep questions need your approval.
+- **@ another chat.** Typing `@` in a chat's composer lists the chats in its
+  project (Tab or Return completes `@「title」`). A message that starts with a
+  chat's @ asks that chat directly: a bar above the box says so, with 基础 or
+  深度, and the answer arrives in a 你问「…」 card without involving this chat's
+  agent; 转给 quotes it into the composer for the agent. An @ further into a
+  message is ordinary text, and the agent may ask that chat itself.
 - **Search.** The sidebar search filters chat titles as you type and, after a
   pause, searches every chat's messages; a hit opens the chat at that message
   (loading older history if needed) and highlights it.

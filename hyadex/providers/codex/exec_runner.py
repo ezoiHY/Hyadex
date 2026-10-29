@@ -208,6 +208,8 @@ async def run_codex_exec(
         sess.get("session_id") if sess.get("backend") == BACKEND_CODEX else None
     )
     last_event = time.time()
+    # The event time an idle_warning was written for: one warning per quiet spell.
+    idle_warned_for: float | None = None
     resume_started_at = last_event
     idle_killed = False
     resume_stalled = False
@@ -450,7 +452,8 @@ async def run_codex_exec(
                     await terminate_process_tree(proc)
                     break
                 idle = time.time() - last_event
-                if idle >= IDLE_WARN_SECONDS:
+                if idle >= IDLE_WARN_SECONDS and idle_warned_for != last_event:
+                    idle_warned_for = last_event
                     await append_event(session_id, "idle_warning", {"run_id": run_id, "idle_seconds": int(idle)})
                 if idle >= IDLE_KILL_SECONDS:
                     idle_killed = True

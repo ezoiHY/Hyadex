@@ -189,6 +189,59 @@ class EventWebSocketCatchupTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(reopened.events[0]["items"], [])
             self.assertGreater(reopened.events[0]["revision"], live["revision"])
 
+    async def test_live_answer_text_is_opt_in(self) -> None:
+        hub = hyadex_server.SubscriberHub()
+        legacy, reasoning, text = FakeWebSocket(), FakeWebSocket(), FakeWebSocket()
+        await hub.register_accepted("chat", legacy)
+        await hub.register_accepted("chat", reasoning, reasoning_stream=True)
+        await hub.register_accepted("chat", text, text_stream=True)
+        await hub.broadcast("chat", {"type": "assistant_text_stream", "items": [{"text": "Writing"}]})
+        self.assertFalse(legacy.events)
+        self.assertFalse(reasoning.events)
+        self.assertEqual(text.events[0]["items"], [{"text": "Writing"}])
+        # The text lane does not open the reasoning lane.
+        await hub.broadcast("chat", {"type": "reasoning_summary_stream", "items": [{"phase": "summary", "text": "x"}]})
+        self.assertEqual(len(text.events), 1)
+        await hub.broadcast("chat", {"type": "assistant_text", "seq": 2})
+        self.assertEqual(len(legacy.events), 1)
+        self.assertEqual(len(text.events), 2)
+        await hub.unsubscribe("chat", text)
+        self.assertFalse(hub._text_subscribers)
+
+    async def test_reconnect_receives_answers_being_written(self) -> None:
+        session_id = "answer-reconnect"
+        with (
+            tempfile.TemporaryDirectory() as root,
+            patch.object(hyadex_server, "AGENT_TOKEN", ""),
+            patch.dict(hyadex_server.STORE.sessions, {session_id: {"id": session_id}}, clear=True),
+            patch.object(hyadex_server, "events_path", return_value=Path(root) / "events.jsonl"),
+            patch.object(hyadex_server, "prepare_provider_history_metadata_repair"),
+            patch.object(hyadex_server, "fork_internal_run_ids", return_value=set()),
+            patch.dict(hyadex_server.EVENT_SEQ_CACHE, {session_id: 1}, clear=True),
+            patch.dict(hyadex_server.ASSISTANT_TEXT_STREAMS, {}, clear=True),
+        ):
+            event = {"seq": 1, "id": "start", "session_id": session_id, "type": "turn_started",
+                "ts": "2026-09-20T00:00:00Z", "run_id": "run", "prompt": "Question"}
+            (Path(root) / "events.jsonl").write_text(json.dumps(event) + "\n")
+            await hyadex_server.update_assistant_text_stream(session_id, "run", "answer", "Half of the", {"backend": "codex"})
+            legacy = FakeWebSocket()
+            await hyadex_server.session_events(session_id, legacy, after=0)
+            self.assertEqual([packet["type"] for packet in legacy.events], ["turn_started"])
+            opted = FakeWebSocket()
+            await hyadex_server.session_events(session_id, opted, after=0, text_stream=True)
+            self.assertEqual([packet["type"] for packet in opted.events], ["turn_started", "assistant_text_stream"])
+            live = opted.events[-1]
+            self.assertNotIn("seq", live)
+            self.assertEqual({key: live["items"][0][key] for key in ("run_id", "item_id", "text", "after_seq", "backend")},
+                             {"run_id": "run", "item_id": "answer", "text": "Half of the", "after_seq": 1,
+                              "backend": "codex"})
+            self.assertEqual(hyadex_server.EVENT_SEQ_CACHE[session_id], 1)
+            await hyadex_server.clear_assistant_text_stream(session_id, "run")
+            reopened = FakeWebSocket()
+            await hyadex_server.session_events(session_id, reopened, after=1, text_stream=True)
+            self.assertEqual(reopened.events[0]["items"], [])
+            self.assertGreater(reopened.events[0]["revision"], live["revision"])
+
     async def test_catchup_waits_for_committed_import_projection_before_reading(self) -> None:
         """A fsynced import is not ready for replay until its proof is published."""
         session_id = "import-proof-race-chat"

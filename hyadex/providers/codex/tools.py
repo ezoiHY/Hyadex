@@ -62,6 +62,8 @@ from hyadex.providers.instructions import (
     PROVIDER_TOOL_REPLAY_LOCK,
     PROVIDER_TOOL_REPLAY_TOMBSTONE_LIMIT,
     PROVIDER_TOOL_REPLAY_TOMBSTONES,
+    PROVIDER_TOOL_HELPER_TIMEOUT_SECONDS,
+    PROVIDER_TOOL_LONGEST_TIMEOUT_SECONDS,
     PROVIDER_TOOL_TIMEOUT_SECONDS,
 )
 from hyadex.providers.registry import request_client_is_provider_helper_local
@@ -194,10 +196,10 @@ async def execute_provider_tool(
         "publish": HELPER_SCRIPTS["publish"],
         "emergency": HELPER_SCRIPTS["emergency"],
         "notify": HELPER_SCRIPTS["notify"],
-
+        "ask": HELPER_SCRIPTS["ask"],
     }
     command = [sys.executable, str(scripts[helper]), "--authority-file", str(authority_path)]
-    if helper in {"jobs", "publish", "emergency", "notify"}:
+    if helper in {"jobs", "publish", "emergency", "notify", "ask"}:
         command.extend(["--chat-id", session_id])
     command.extend(resolved)
     proc: asyncio.subprocess.Process | None = None
@@ -244,7 +246,7 @@ async def execute_provider_tool(
         stream_tasks = [stdout_task, stderr_task, stdin_task, wait_task]
         stdout, stderr, _written, _returncode = await asyncio.wait_for(
             asyncio.gather(*stream_tasks),
-            timeout=PROVIDER_TOOL_TIMEOUT_SECONDS,
+            timeout=PROVIDER_TOOL_HELPER_TIMEOUT_SECONDS.get(helper, PROVIDER_TOOL_TIMEOUT_SECONDS),
         )
     except asyncio.TimeoutError as exc:
         if proc is not None:
@@ -443,7 +445,7 @@ def codex_provider_mcp_config() -> dict[str, Any]:
         f"{prefix}.default_tools_approval_mode": "approve",
         f"{prefix}.supports_parallel_tool_calls": False,
         f"{prefix}.startup_timeout_sec": 10,
-        f"{prefix}.tool_timeout_sec": int(PROVIDER_TOOL_TIMEOUT_SECONDS + 5),
+        f"{prefix}.tool_timeout_sec": int(PROVIDER_TOOL_LONGEST_TIMEOUT_SECONDS + 5),
     }
 
 

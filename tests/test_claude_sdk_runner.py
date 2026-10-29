@@ -1042,6 +1042,93 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
         runtime_success.assert_not_called()
         runtime_failure.assert_not_called()
 
+    @staticmethod
+    def _stream_event(event: dict[str, Any]) -> dict[str, Any]:
+        return {"type": "StreamEvent", "uuid": "stream", "session_id": "provider", "event": event}
+
+    def _streamed_block(self, index: int, kind: str, *deltas: str) -> list[dict[str, Any]]:
+        field, delta_type = ("thinking", "thinking_delta") if kind == "thinking" else ("text", "text_delta")
+        return [
+            self._stream_event({"type": "content_block_start", "index": index, "content_block": {"type": kind}}),
+            *(self._stream_event({"type": "content_block_delta", "index": index,
+                                  "delta": {"type": delta_type, field: delta}}) for delta in deltas),
+        ]
+
+    async def _run_streamed_case(
+        self, messages: list[object],
+    ) -> tuple[AsyncMock, AsyncMock, list[dict[str, Any]]]:
+        broadcast = AsyncMock()
+        with patch.object(hyadex_server.HUB, "broadcast", broadcast), patch.dict(
+            hyadex_server.EVENT_SEQ_CACHE, {"chat-claude": 5},
+        ):
+            append_event, append_finished, _success, _failure = await self._run_sdk_terminal_case(messages)
+        return append_event, append_finished, [call.args[1] for call in broadcast.await_args_list]
+
+    async def test_partial_messages_are_live_until_their_blocks_complete(self) -> None:
+        append_event, _finished, packets = await self._run_streamed_case([
+            self._stream_event({"type": "message_start", "message": {"id": "msg_1"}}),
+            *self._streamed_block(0, "thinking", "Reading", " the tests"),
+            self._stream_event({"type": "content_block_stop", "index": 0}),
+            {"type": "AssistantMessage", "session_id": "provider",
+             "content": [{"type": "thinking", "thinking": "Reading the tests"}]},
+            *self._streamed_block(1, "text", "All ", "green."),
+            {"type": "AssistantMessage", "session_id": "provider",
+             "content": [{"type": "text", "text": "All green."}]},
+            {"type": "result", "result": "All green.", "session_id": "provider", "terminal_reason": "end_turn"},
+        ])
+
+        thinking = [packet for packet in packets if packet["type"] == "reasoning_summary_stream"]
+        text = [packet for packet in packets if packet["type"] == "assistant_text_stream"]
+        self.assertEqual(thinking[0]["items"][0]["text"], "Reading")
+        self.assertEqual((thinking[0]["items"][0]["backend"], thinking[0]["items"][0]["after_seq"]),
+                         (hyadex_server.BACKEND_CLAUDE, 5))
+        self.assertEqual(thinking[-1]["items"], [])
+        self.assertEqual({key: text[0]["items"][0][key] for key in ("run_id", "item_id", "text", "backend")},
+                         {"run_id": "run-claude", "item_id": "msg_1:1", "text": "All ",
+                          "backend": hyadex_server.BACKEND_CLAUDE})
+        self.assertEqual(text[-1]["items"], [])
+        # The completed blocks are the only durable records.
+        durable = [(call.args[1], call.args[2]) for call in append_event.await_args_list
+                   if call.args[1] in {"assistant_text", "reasoning_summary"}]
+        self.assertEqual([(kind, payload["text"]) for kind, payload in durable],
+                         [("reasoning_summary", "Reading the tests"), ("assistant_text", "All green.")])
+        self.assertFalse(any(payload.get("partial") for _kind, payload in durable))
+
+    async def test_interrupted_run_keeps_partial_thinking_and_text(self) -> None:
+        append_event, append_finished, _packets = await self._run_streamed_case([
+            self._stream_event({"type": "message_start", "message": {"id": "msg_2"}}),
+            *self._streamed_block(0, "thinking", "Comparing the two"),
+            {"type": "AssistantMessage", "session_id": "provider",
+             "content": [{"type": "thinking", "thinking": "Comparing the two options"}]},
+            *self._streamed_block(1, "thinking", "Option B is"),
+            *self._streamed_block(2, "text", "Here is half an ans"),
+            {"type": "result", "result": "", "session_id": "provider", "terminal_reason": "aborted_streaming"},
+        ])
+
+        durable = [(call.args[1], call.args[2]) for call in append_event.await_args_list
+                   if call.args[1] in {"assistant_text", "reasoning_summary"}]
+        self.assertEqual([(kind, payload["text"], bool(payload.get("partial"))) for kind, payload in durable], [
+            ("reasoning_summary", "Comparing the two options", False),
+            ("reasoning_summary", "Option B is", True),
+            ("assistant_text", "Here is half an ans", True),
+        ])
+        partial_text = durable[2][1]
+        self.assertEqual((partial_text["run_id"], partial_text["item_id"], partial_text["text_after_seq"]),
+                         ("run-claude", "msg_2:2", 5))
+        self.assertTrue(append_finished.await_args.args[1]["stopped"])
+
+    async def test_unfinished_text_of_a_completed_run_stays_transient(self) -> None:
+        append_event, append_finished, packets = await self._run_streamed_case([
+            self._stream_event({"type": "message_start", "message": {"id": "msg_3"}}),
+            *self._streamed_block(0, "text", "Never completed"),
+            {"type": "result", "result": "Done.", "session_id": "provider", "terminal_reason": "end_turn"},
+        ])
+
+        self.assertFalse(any(call.args[1] == "assistant_text" and call.args[2].get("partial")
+                             for call in append_event.await_args_list))
+        self.assertEqual([packet for packet in packets if packet["type"] == "assistant_text_stream"][-1]["items"], [])
+        self.assertFalse(append_finished.await_args.args[1]["stopped"])
+
     async def test_sdk_iterator_end_before_terminal_never_waits_forever(self) -> None:
         handle = PrematurelyEndedClaudeRun()
 
@@ -4714,6 +4801,38 @@ class ClaudeSDKRunnerTests(unittest.IsolatedAsyncioTestCase):
             [payload["is_error"] for payload in finished],
             [False, False, True, False],
         )
+
+    async def test_subagent_output_names_the_tool_that_runs_it(self) -> None:
+        from claude_agent_sdk.types import AssistantMessage, TextBlock, ToolResultBlock, ToolUseBlock, UserMessage
+
+        append_event = AsyncMock(return_value={})
+        text_parts: list[str] = []
+        current_tools: dict[str, dict[str, object]] = {}
+        with patch.object(hyadex_server, "append_event", append_event), patch.object(
+            hyadex_server, "mark_provider_turn_ready", AsyncMock(),
+        ):
+            for message in (
+                AssistantMessage(content=[TextBlock(text="Searching the handlers."),
+                                          ToolUseBlock(id="child-read", name="Read", input={"file_path": "a.py"})],
+                                 model="claude-test", parent_tool_use_id="agent-1", session_id="provider"),
+                UserMessage(content=[ToolResultBlock(tool_use_id="child-read", content="code")],
+                            parent_tool_use_id="agent-1"),
+                AssistantMessage(content=[TextBlock(text="The agent found it.")], model="claude-test",
+                                 session_id="provider"),
+            ):
+                await hyadex_server.project_claude_sdk_message(
+                    "chat-claude", "run-claude", message, text_parts=text_parts,
+                    current_tools=current_tools, changed_paths=set(),
+                )
+
+        events = [(call.args[1], call.args[2]) for call in append_event.await_args_list
+                  if call.args[1] != "raw_event"]  # the subagent lifecycle fold
+        self.assertEqual([(kind, payload.get("parent_tool_id")) for kind, payload in events], [
+            ("assistant_text", "agent-1"), ("tool_started", "agent-1"), ("tool_finished", "agent-1"),
+            ("assistant_text", None),
+        ])
+        # Only the main conversation's text is the turn's own text.
+        self.assertEqual(text_parts, ["The agent found it."])
 
     async def test_claude_thinking_summary_is_projected_to_reasoning(self) -> None:
         from claude_agent_sdk.types import AssistantMessage, ThinkingBlock

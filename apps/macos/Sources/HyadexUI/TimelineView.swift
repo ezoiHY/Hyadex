@@ -18,14 +18,15 @@ struct TimelineView: View {
     /// Finished turn durations keyed by the user message id.
     var turnSeconds: [String: Int] = [:]
     var onOpenFile: (String) -> Void = { _ in }
-    var onDecide: (String, ApprovalDecision) -> Void = { _, _ in }
+    /// Answers an approval, question or form (by interaction id).
+    var onReply: (String, InteractionReply) -> Void = { _, _ in }
     /// Bytes of an attached or published file.
     var loadMedia: @Sendable (MediaFile) async -> Data? = { _ in nil }
     /// Group members' answers in progress.
     var liveTurns: [MemberTurn] = []
     /// Durations of finished member turns, keyed by their first step id.
     var processSeconds: [String: Int] = [:]
-    var onDecideMember: (GroupApproval, ApprovalDecision) -> Void = { _, _ in }
+    var onReplyMember: (GroupApproval, InteractionReply) -> Void = { _, _ in }
     /// An item to bring into view and highlight briefly (a search hit).
     var focusID: String? = nil
     @State private var highlighted: String?
@@ -74,7 +75,9 @@ struct TimelineView: View {
             .onChange(of: pending) { scrollToBottom(proxy) }
             .onChange(of: activity?.kind) { scrollToBottom(proxy) }
             // Follow a member's progress, and bring a new approval into view.
-            .onChange(of: liveTurns.map { "\($0.id)|\($0.steps.count)|\($0.approvals.count)" }) { scrollToBottom(proxy) }
+            .onChange(of: liveTurns.map { "\($0.id)|\($0.steps.count)|\($0.approvals.count)|\($0.liveText?.count ?? 0)" }) {
+                scrollToBottom(proxy)
+            }
         }
     }
 
@@ -82,14 +85,14 @@ struct TimelineView: View {
         switch row {
         case .item(let item):
             TimelineRow(item: item, mentionHandles: mentionHandles, showsAuthors: showsAuthors,
-                        onOpenFile: onOpenFile, onDecide: onDecide, loadMedia: loadMedia)
+                        onOpenFile: onOpenFile, onReply: onReply, loadMedia: loadMedia)
         case .process(_, let steps, let seconds, let live, let inProgress):
             ProcessRow(steps: steps, seconds: seconds, live: live ? activity : nil, inProgress: inProgress)
         case .answer(let steps, let seconds, let message):
             AnswerRow(steps: steps, seconds: seconds, message: message, mentionHandles: mentionHandles,
                       onOpenFile: onOpenFile)
         case .liveTurn(let turn):
-            LiveTurnRow(turn: turn, onDecide: onDecideMember)
+            LiveTurnRow(turn: turn, onReply: onReplyMember)
         case .activity:
             if let activity { ActivityLine(activity: activity) }
         }
@@ -151,7 +154,7 @@ struct TimelineView: View {
     static func isProcess(_ item: TimelineItem) -> Bool {
         switch item {
         case .thinking, .tool: true
-        case .approval(_, _, _, _, _, let decision, _): decision != .pending
+        case .approval(_, _, _, _, _, let decision, _), .form(_, _, _, let decision): decision != .pending
         default: false
         }
     }
@@ -218,16 +221,19 @@ struct TimelineView: View {
     }
 }
 
-/// Shimmering "正在思考" text, with the elapsed time; static under Reduce Motion.
+/// What the agent is doing: the provider's mark at work, shimmering "正在思考"
+/// with the elapsed time, and the latest thought on one line; still under
+/// Reduce Motion.
 struct ActivityLine: View {
     let activity: LiveActivity
+    /// As the header of a turn's work: whether the steps are shown (draws the chevron).
+    var expanded: Bool? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Image(systemName: symbol)
-                    .foregroundStyle(.secondary)
-                    .symbolEffect(.pulse, options: .repeating, isActive: activity.kind != .waiting)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 7) {
+                ActivityMark(activity: activity)
+                    .frame(width: 15)
                 ShimmerText(text: activity.label, active: activity.kind != .waiting)
                 if activity.kind == .tool, let detail = activity.detail {
                     Text(detail)
@@ -237,15 +243,18 @@ struct ActivityLine: View {
                         .truncationMode(.middle)
                 }
                 Elapsed(since: activity.since)
+                if let expanded { Chevron(expanded: expanded) }
             }
             .font(.uiSecondary)
             if activity.kind == .thinking, let detail = activity.detail {
                 Text(detail)
-                    .font(.uiSecondary)
+                    .font(.uiMeta)
                     .foregroundStyle(.secondary)
-                    .lineLimit(3)
+                    .lineLimit(2)
+                    .truncationMode(.head)
                     .padding(.leading, 22)
-                    .transition(.opacity)
+                    .contentTransition(.opacity)
+                    .animation(.easeOut(duration: 0.25), value: detail)
             }
             // A provider can stall upstream; after a while, say what the user can do.
             if activity.kind != .waiting {
@@ -261,14 +270,51 @@ struct ActivityLine: View {
         }
         .accessibilityElement(children: .combine)
     }
+}
 
-    private var symbol: String {
-        switch activity.kind {
-        case .starting: "bolt.horizontal"
-        case .thinking: "brain"
-        case .tool: "gearshape"
-        case .waiting: "hand.raised"
+/// The provider's mark while it starts or thinks (Claude's spark turning,
+/// Codex's cloud breathing); otherwise a symbol for the step.
+private struct ActivityMark: View {
+    let activity: LiveActivity
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if let backend = activity.backend, activity.kind == .thinking || activity.kind == .starting {
+            if reduceMotion {
+                ProviderMark(backend: backend, size: 13)
+            } else {
+                SwiftUI.TimelineView(.animation) { context in
+                    let time = context.date.timeIntervalSinceReferenceDate
+                    ProviderMark(backend: backend, size: 13)
+                        .rotationEffect(.degrees(backend == .claude ? (time * 50).truncatingRemainder(dividingBy: 360) : 0))
+                        .scaleEffect(backend == .codex ? 0.88 + 0.12 * (0.5 + 0.5 * sin(time * 3)) : 1)
+                }
+            }
+        } else {
+            switch activity.kind {
+            case .thinking, .starting:
+                Image(systemName: "ellipsis")
+                    .foregroundStyle(.secondary)
+                    .symbolEffect(.variableColor.iterative, options: .repeating, isActive: !reduceMotion)
+            case .tool:
+                Image(systemName: "gearshape")
+                    .foregroundStyle(.secondary)
+                    .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
+            case .waiting:
+                Image(systemName: "hand.raised").foregroundStyle(.secondary)
+            }
         }
+    }
+}
+
+private struct Chevron: View {
+    let expanded: Bool
+
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.uiSmall.weight(.semibold))
+            .foregroundStyle(.tertiary)
+            .rotationEffect(.degrees(expanded ? 90 : 0))
     }
 }
 
@@ -335,16 +381,13 @@ private struct ProcessRow: View {
             } label: {
                 HStack(spacing: 6) {
                     if let live {
-                        ActivityLine(activity: live)
+                        ActivityLine(activity: live, expanded: expanded)
                     } else {
                         Image(systemName: "checklist")
                             .foregroundStyle(.secondary)
                         Text(summary).foregroundStyle(.secondary)
+                        Chevron(expanded: expanded)
                     }
-                    Image(systemName: "chevron.right")
-                        .font(.uiSmall.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
                     Spacer(minLength: 0)
                 }
                 .font(.uiSecondary)
@@ -392,7 +435,7 @@ struct TimelineRow: View {
     var mentionHandles: Set<String> = []
     var showsAuthors = true
     var onOpenFile: (String) -> Void = { _ in }
-    var onDecide: (String, ApprovalDecision) -> Void = { _, _ in }
+    var onReply: (String, InteractionReply) -> Void = { _, _ in }
     var loadMedia: @Sendable (MediaFile) async -> Data? = { _ in nil }
 
     var body: some View {
@@ -411,13 +454,21 @@ struct TimelineRow: View {
             ThinkingRow(seconds: seconds, text: text)
         case .tool(_, let kind, let title, let output, let status, let seconds):
             ToolRow(kind: kind, title: title, output: output, status: status, seconds: seconds)
+        case .consult(_, let call):
+            ConsultCard(call: call)
         case .changes(_, let set):
             ChangesCard(set: set, onOpenFile: onOpenFile)
-        case .approval(let id, let author, let title, let command, let reason, let decision, let allowsSession):
+        case .approval(let id, let author, let title, let command, let reason, let decision, let choices):
             ApprovalCard(author: author, title: title, command: command, reason: reason, decision: decision,
-                         allowsSession: allowsSession, showsAuthor: showsAuthors) {
-                onDecide(id, $0)
+                         choices: choices, showsAuthor: showsAuthors) {
+                onReply(id, $0)
             }
+        case .form(let id, let author, let form, let decision):
+            FormCard(author: author, form: form, decision: decision, showsAuthor: showsAuthors) {
+                onReply(id, $0)
+            }
+            // A new request starts with empty answers.
+            .id(id)
         case .media(_, let author, let files):
             MediaGroup(files: files, alignTrailing: author.kind == .user, load: loadMedia)
         case .divider(_, let text):
@@ -478,6 +529,7 @@ private struct AgentMessage: View {
     let showsAuthor: Bool
     let mentionHandles: Set<String>
     let onOpenFile: (String) -> Void
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -492,8 +544,43 @@ private struct AgentMessage: View {
             if let receipt, !receipt.files.isEmpty {
                 ReceiptChip(set: receipt, onOpenFile: onOpenFile)
             }
+            if !streaming, !text.isEmpty {
+                AnswerActions(text: text, visible: hovering)
+            }
         }
+        .onHover { hovering = $0 }
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// Under a finished answer, shown while the pointer is over it: copy the
+/// whole answer as the agent wrote it (Markdown).
+struct AnswerActions: View {
+    let text: String
+    let visible: Bool
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            copied = true
+            Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+        } label: {
+            Label(copied ? "已拷贝" : "拷贝", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .labelStyle(.iconOnly)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 22, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .font(.uiMeta)
+        .foregroundStyle(.secondary)
+        .help("拷贝回答（Markdown）")
+        .accessibilityLabel("拷贝回答")
+        .opacity(visible || copied ? 1 : 0)
+        .animation(.easeOut(duration: 0.15), value: visible)
+        .padding(.top, -4)
     }
 }
 
@@ -554,7 +641,7 @@ private struct ThinkingRow: View {
                 withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: "brain")
+                    Image(systemName: "lightbulb.min")
                     Text(seconds > 0 ? "思考了 \(seconds) 秒" : "思考过程")
                     Image(systemName: "chevron.right")
                         .font(.uiSmall.weight(.semibold))
@@ -714,18 +801,26 @@ struct ApprovalCard: View {
     let command: String
     let reason: String
     let decision: ApprovalDecision
-    let allowsSession: Bool
+    /// The answers the provider offers for this request.
+    let choices: [ApprovalChoice]
     var showsAuthor = true
-    let onDecide: (ApprovalDecision) -> Void
+    let onReply: (InteractionReply) -> Void
 
     private var decisionLabel: String {
         switch decision {
         case .denied: "已拒绝"
         case .allowedForSession: "已允许（本会话）"
+        case .allowedAlways: "已允许（以后不再询问）"
         case .resolved: "已处理"
         default: "已允许"
         }
     }
+
+    private var deny: ApprovalChoice? { choices.first { $0.role == .deny } }
+    private var allow: ApprovalChoice? { choices.first { $0.role == .allow } }
+    private var session: ApprovalChoice? { choices.first { $0.reply.outcome == .allowedForSession } }
+    /// Rules for later requests, and other answers, behind one menu.
+    private var more: [ApprovalChoice] { choices.filter { ![deny, allow, session].contains($0) } }
 
     var body: some View {
         if decision == .pending {
@@ -741,18 +836,28 @@ struct ApprovalCard: View {
                 }
                 CodeBlock(code: command, language: title == "运行命令" ? "shell" : nil, wraps: true)
                 HStack(spacing: 8) {
-                    Button("拒绝") { onDecide(.denied) }
-                        .keyboardShortcut(.delete, modifiers: .command)
-                        .help("拒绝（⌘⌫）")
-                    Spacer()
-                    if allowsSession {
-                        Button("本会话内始终允许") { onDecide(.allowedForSession) }
+                    if let deny {
+                        Button(deny.label) { onReply(deny.reply) }
+                            .keyboardShortcut(.delete, modifiers: .command)
+                            .help("\(deny.label)（⌘⌫）")
                     }
-                    Button("允许") { onDecide(.allowed) }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.orange)
-                        .keyboardShortcut(.return, modifiers: .command)
-                        .help("允许（⌘↩）")
+                    Spacer()
+                    if !more.isEmpty {
+                        Menu("更多选项") {
+                            ForEach(more) { choice in Button(choice.label) { onReply(choice.reply) } }
+                        }
+                        .fixedSize()
+                    }
+                    if let session {
+                        Button(session.label) { onReply(session.reply) }
+                    }
+                    if let allow {
+                        Button(allow.label) { onReply(allow.reply) }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.orange)
+                            .keyboardShortcut(.return, modifiers: .command)
+                            .help("\(allow.label)（⌘↩）")
+                    }
                 }
                 .controlSize(.regular)
             }
@@ -935,6 +1040,7 @@ private struct AnswerRow: View {
     let message: TimelineItem
     let mentionHandles: Set<String>
     let onOpenFile: (String) -> Void
+    @State private var hovering = false
 
     var body: some View {
         if case .message(_, let author, let text, let time, _, let receipt, let streaming) = message {
@@ -949,7 +1055,11 @@ private struct AnswerRow: View {
                 if let receipt, !receipt.files.isEmpty {
                     ReceiptChip(set: receipt, onOpenFile: onOpenFile)
                 }
+                if !streaming, !text.isEmpty {
+                    AnswerActions(text: text, visible: hovering)
+                }
             }
+            .onHover { hovering = $0 }
             .accessibilityElement(children: .contain)
         }
     }
@@ -959,7 +1069,7 @@ private struct AnswerRow: View {
 /// any approval it is waiting for, where it happens.
 private struct LiveTurnRow: View {
     let turn: MemberTurn
-    let onDecide: (GroupApproval, ApprovalDecision) -> Void
+    let onReply: (GroupApproval, InteractionReply) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -973,10 +1083,12 @@ private struct LiveTurnRow: View {
             } else if !turn.steps.isEmpty {
                 ProcessRow(steps: turn.steps, seconds: nil, live: nil, inProgress: true)
             }
+            if let text = turn.liveText {
+                AgentMessage(author: turn.author, text: text, time: .now, receipt: nil, streaming: true,
+                             showsAuthor: false, mentionHandles: [], onOpenFile: { _ in })
+            }
             ForEach(turn.approvals) { approval in
-                ApprovalCard(author: turn.author, title: approval.title, command: approval.detail,
-                             reason: approval.reason, decision: .pending, allowsSession: approval.allowsSession,
-                             showsAuthor: false) { onDecide(approval, $0) }
+                TimelineRow(item: approval.request, showsAuthors: false, onReply: { onReply(approval, $1) })
             }
         }
     }

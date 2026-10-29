@@ -147,10 +147,13 @@ class NativeCodexSideChat:
                  cwd: str | None = None,
                  fork_overrides: dict | None = None, turn_overrides: dict | None = None,
                  server_request_handler=None, durable: bool = False,
-                 resume_state: dict | None = None, persist_state=None):
+                 resume_state: dict | None = None, persist_state=None,
+                 instructions: str | None = None):
         if not isinstance(parent_thread_id, str) or not parent_thread_id.strip():
             raise SideQuestionError(409, "The parent Codex conversation is not available yet")
         self.parent_thread_id = parent_thread_id
+        # Chat consults replace the side-chat rules with their own (read-only).
+        self.instructions = SIDE_INSTRUCTIONS if instructions is None else instructions
         self.parent_rollout_path = parent_rollout_path
         self.executable = executable
         self.model = model
@@ -211,7 +214,7 @@ class NativeCodexSideChat:
         params = {
             **self.fork_overrides,
             "ephemeral": not self.durable, "excludeTurns": True,
-            "developerInstructions": "\n\n".join(value for value in (inherited_instructions, SIDE_INSTRUCTIONS) if value),
+            "developerInstructions": "\n\n".join(value for value in (inherited_instructions, self.instructions) if value),
             "config": config,
         }
         if self.cwd:
@@ -252,7 +255,8 @@ class NativeCodexSideChat:
         elif metadata.get("ephemeral") is not True or metadata.get("path") is not None:
             raise SideQuestionError(503, "Codex did not confirm an ephemeral side chat")
 
-    async def ask(self, question: str) -> str:
+    async def ask(self, question: str, *, on_notification=None) -> str:
+        """Run one turn in the fork. `on_notification` sees each of its packets (progress)."""
         if self._closed:
             raise SideQuestionError(409, "Side chat was closed; open a new side chat")
         if self._lock.locked():
@@ -276,6 +280,9 @@ class NativeCodexSideChat:
                 while True:
                     packet = await turn.next_notification()
                     method, data = packet.get("method"), packet.get("params", {})
+                    if on_notification is not None:
+                        with suppress(Exception):
+                            on_notification(packet)
                     if method == "item/completed":
                         item = data.get("item", {})
                         if item.get("type") == "agentMessage" and item.get("phase") in (None, "", "final_answer"):

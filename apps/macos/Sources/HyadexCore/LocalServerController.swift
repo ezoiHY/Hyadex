@@ -120,8 +120,11 @@ public final class LocalServerController {
         let endpoint = ServerEndpoint(id: endpointID, name: "这台 Mac", baseURL: URL(string: "http://127.0.0.1:\(port)")!)
         let child = Process()
         child.executableURL = python
+        // --exit-with-parent: the backend shuts itself down if this app crashes
+        // or is force-quit, so it never holds the instance for the next launch.
         child.arguments = [source.appending(path: "scripts/dev_server.py").path,
-                           "--instance", config.instanceName, "--port", String(port), "--bind", "127.0.0.1"]
+                           "--instance", config.instanceName, "--port", String(port), "--bind", "127.0.0.1",
+                           "--exit-with-parent"]
         child.currentDirectoryURL = source
         var environment = ProcessInfo.processInfo.environment
         // The runner also scrubs server variables. Keep the native process

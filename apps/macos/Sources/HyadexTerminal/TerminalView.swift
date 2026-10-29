@@ -65,6 +65,9 @@ public final class TerminalNSView: NSView, @preconcurrency NSTextInputClient {
     private func reportSize() {
         guard bounds.width > 0, bounds.height > 0 else { return }
         let size = gridSize
+        let emulator = session.emulator
+        // The grid reflows; cells selected before no longer mean the same text.
+        if size.columns != emulator.columns || size.rows != emulator.rows { selection = nil }
         session.resize(columns: size.columns, rows: size.rows)
     }
 

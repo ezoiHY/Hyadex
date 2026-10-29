@@ -3,6 +3,261 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-29 — Ask another chat with @
+
+- **Mac.** `@` in a chat's composer lists the chats in its project (Tab or
+  Return completes `@「title」`).
+  - A message that opens with a chat's @ asks that chat directly, 基础 or 深度
+    (a bar above the box says it is not sent to this chat's agent).
+  - The answer arrives in a 你问「…」 card; 转给 <agent> quotes it into the
+    composer.
+  - An @ later in a message goes to the agent as text; the agent instructions
+    now say `@「TITLE」` names a chat it can ask.
+- **Server.** `GET /api/sessions/{id}/consult-targets` and
+  `POST /api/sessions/{id}/ask` for clients. A question the user asks this way
+  needs no approval and counts against no turn. The asking chat's log gets a
+  `chat_consult_asked` event for its timeline, and its agent never sees it.
+- Verification:
+  - New backend and Swift tests; the backend suite and 119 Swift tests pass.
+  - Live, isolated `mention` instance:
+    - In the app, `@Back` listed "Backend B". The composer's own send button
+      (pressed through accessibility) asked it, and the card showed "server.py
+      uses 3 workers" after 7 s. The asking Claude chat's log held only the
+      mark, and its agent never ran.
+    - A mid-message `@「Backend B」` sent to a Claude chat made it ask Backend B
+      through the Hyadex tool on its own.
+  - Not verified: 转给 by hand.
+
+## 2026-10-29 — Chats ask each other (basic and deep)
+
+- **Chat consults.** A Work chat's agent can ask another chat in its project
+  with the new `ask` helper (`ask list`; `ask TITLE` with the question on
+  stdin; `--deep`).
+  - Basic answers from that chat's context without tools: Claude's `/btw`, or
+    a Codex fork with its shell tool off.
+  - Deep sends a read-only fork to investigate the folder: Claude with only
+    Read, Grep and Glob, no MCP servers, and its transcript removed after;
+    Codex in a read-only sandbox that never asks.
+  - Neither touches the asked chat's transcript, queue or turns, and an answer
+    cannot ask another chat in turn.
+  - Defaults: same project (or working directory); a deep question needs your
+    approval (or "always" for that chat); per turn 5 basic and 2 deep; one deep
+    fork per chat at a time; 2- and 5-minute limits; a 10-minute approval wait.
+    A consult ends with its asking turn.
+  - New modules: `features/consult_engine.py` (ledger, scope, limits,
+    approvals, lifetime), `features/consult_runtime.py` (provider executors),
+    `api/consults.py`, `providers/claude/consult.py`, `cli/ask.py`.
+  - Codex side-chat fork settings moved into `codex_side_fork_settings`, shared
+    by side chats and consults.
+- **Mac.** A consult card in the timeline: whom, 基础 or 深度, a deep copy's live
+  steps, the answer and its tokens, approval buttons (允许 / 总是允许 / 拒绝) and
+  停止. A chat waiting for that approval counts as needing you. The asked
+  chat's side panel lists its incoming questions and gains a 深度 switch for
+  your own. Sidebar rows show a magnifying glass while a deep copy works.
+  Chat settings gain 聊天互问.
+- **Claude's Hyadex tool is always loaded.** With many MCP tools configured,
+  Claude Code defers them behind tool search. The Hyadex tool's listing now
+  carries `anthropic/alwaysLoad`.
+- Verification:
+  - 17 new backend tests (engine, routes); the backend suite and 117 Swift
+    tests pass.
+  - Live, isolated `consult` instance, real turns:
+    - A Claude chat asked a Codex chat through the Hyadex tool, basic (3
+      workers, 5 s) and deep after approval (2 commands, `notes/deploy.md`
+      lines 2–3, 13 s).
+    - A Codex chat asked a Claude chat, basic (`/btw`, 23 s) and deep after
+      "always allow" (Grep, Glob, Read, 14 s).
+    - The asked chats' event logs and the project's files were unchanged, and
+      the Claude fork's transcript was removed.
+    - Stop while an approval was pending cancelled the consult.
+    - A deep question asked from the side panel answered in 14 s.
+    - The app showed the cards and the side panel from that server.
+  - Found on the way:
+    - The tool refuses flags that abbreviate identity flags, so `--chat` (a
+      prefix of `--chat-id`) became a positional argument.
+    - Turns sent without the Mac's interactive capabilities run Claude in print
+      mode, where only the helper CLIs exist.
+  - Not verified: the full UI live checks; approving from the card by hand.
+
+## 2026-10-29 — Mac: thoughts in view, selectable answers, projects, screenshots
+
+- **Thinking status.** Claude sends its summarized thinking in bursts that
+  finish as they arrive, so the live text was gone almost at once. The status
+  line now keeps the turn's latest thought on one line (Codex: its newest step
+  heading) until the next one or the answer. The provider's mark replaces the
+  brain icon: Claude's spark turns, Codex's cloud breathes (still under Reduce
+  Motion). Before the first thought arrives (about 5 s for Sonnet), the line
+  shows only "正在思考".
+- **Selectable answers.** Each paragraph was its own text view, so a drag
+  stopped at the paragraph edge, and inline math copied as "￼". Paragraphs,
+  headings, lists, quotes and display math now share one AppKit text view per
+  run, so a drag selects across them. Copying gives Markdown-like plain text
+  (math as `$…$`/`$$…$$`, list markers as `1.`/`-`/`- [x]`). Code blocks,
+  tables and images keep their own views. A copy button under each finished
+  answer, shown on hover, copies the whole answer as written.
+- **Composer pictures.** Image attachments show as square thumbnails (click
+  for Quick Look, × on hover, upload progress over the picture). Other files
+  keep their name chips.
+- **Screenshots.** A system-wide shortcut (default ⌥⇧S; 设置 › 通用 offers
+  ⌃⇧S, ⌃⌥⌘S or off) starts the system's area selection. The picture goes into
+  the open chat's composer. The composer's "+" menu and the menu bar have
+  截图… too, and they move Hyadex aside first. It needs the Screen Recording
+  permission; without it, the app asks once and says where to grant it.
+- **Title and directory.** The title bar shows the provider's mark (or a
+  group's member marks) and the title, without the subtitle. The working
+  directory sits above the composer (long paths keep their last folders), with
+  在 Finder 中显示, 拷贝路径 and the terminal.
+- **Projects.** Work chats are grouped in the sidebar by project, then by
+  working directory, the most recent first, and the home folder last.
+  新建项目 (sidebar, File menu, or a chat's 移到项目 menu) takes a name and an
+  optional directory, whose chats join it. Moving a chat sets its server-side
+  `folder`, so other clients see it; the list of projects, empty ones
+  included, is kept on this Mac per server. Sections collapse. A section's +
+  starts a chat in its directory and project. 设置 › 通用 › 边栏按项目分组
+  turns grouping off.
+- **Menu bar icon.** It is grey while no server is connected and red for an
+  emergency alert. A badge counts items waiting for you, and the icon pulses
+  slowly while agents run. The menu also lists emergency alerts and says when
+  it is not connected.
+- **Unread dot.** A chat watched to the end of its reply got the unread dot
+  as soon as you left it: the server marks a chat read when it is opened, and
+  what arrived while it stayed open still counted as new. Leaving a chat now
+  marks it read, and so does a reply that finishes while Hyadex is in front.
+  Until the server's list agrees, the dot stays off. A chat marked unread by
+  hand stays unread.
+- **Toolbar and composer.** 侧问 and 设定目标 moved from the composer's "+"
+  menu to the toolbar, beside the terminal. The goal button also serves a
+  group, and it is tinted while a goal is open. "+" keeps 添加文件… and
+  截图…. The model and the effort are two menus. The effort menu is hidden
+  for a model without levels.
+- **Sidebar headings.** Project and pinned headings are larger (13 pt,
+  semibold) than the list's small captions.
+- Verification:
+  - In process against the isolated `features` instance, the toolbar's 侧问
+    opened the chat's side panel and 设定目标 opened the goal sheet. The
+    composer showed separate 模型 and 推理强度 menus, and "+" no longer
+    listed 侧问. The UI live checks now press the toolbar buttons (not run
+    in full).
+  - Snapshots: the toolbar in a chat and in a group (side chat and terminal
+    greyed there), and the larger headings.
+  - Live against the isolated `features` instance, `HYADEX_E2E_EXTRAS` checks
+    two cases with real Claude turns. A reply watched to the end stays read
+    after leaving. A reply that finishes while another chat is open shows the
+    dot. With the fix turned off, the first check failed. The run also showed
+    the older "kept while the chat is open" check could fail: opening the chat
+    marked it read while the test marked it unread. The test now lets the open
+    land first.
+  - 112 Swift tests pass. New tests cover thought lines, the status fallback,
+    project grouping, `folder` mapping, text runs, and copied text. The
+    wrap test caught that measuring had used the view's width.
+  - In process, on demo data: a synthesized drag across a whole answer copied
+    every paragraph, with math as TeX.
+  - Live, against the isolated `livefix` instance:
+    - A real Sonnet turn with the screenshot's question kept both of its
+      thoughts (English, then Chinese) in the status line until the answer
+      began.
+    - The status item's own image followed the app's states: template while
+      idle, red and not template when urgent, and changing frames while a
+      chat ran.
+  - Not verified: the menu bar and the title mark on screen (this session
+    cannot record the screen; the title's glass setting needs macOS 26), and
+    the screenshot shortcut, which needs a key press and the Screen Recording
+    permission.
+
+## 2026-10-28 — Review fixes: sidebar, sockets, backend, Codex, Claude, groups
+
+- **Mac sidebar.** A chat you left while it worked no longer stays
+  "running" or "needs action" until you reopen it, and its finished-reply and
+  approval notifications fire. Its projection is dropped with its socket and
+  reloaded on reopening, and the polled list drives it meanwhile. Session lists
+  now report `running`, set from `turn_started` to its terminal event, instead
+  of leaving it to the latest event type.
+- **Mac sockets.** Leaving a chat or group closes its event sockets at once.
+  `receive()` ignored Task cancellation, so each switch had left a server
+  subscription open until the next frame. Sockets accept 16 MiB messages,
+  enough for the live snapshots.
+- **Mac terminal.** Copying a selection made before the window narrowed no
+  longer crashes. Resizing clears the selection.
+- **Mac local backend.** The app-owned backend shuts down when the app crashes
+  or is force-quit (`dev_server.py --exit-with-parent`, watched by
+  `hyadex/ops/parent_watch.py`), so the next launch can take the instance.
+- **Codex.**
+  - `idle_warning` is written once per quiet spell, not every 5 seconds.
+  - The reader pauses while a subscriber's queue is over half full. A
+    command's burst of output deltas no longer overflows the queue and aborts
+    the turn. A subscriber that stays stuck still fails after 30 seconds.
+  - Approvals and questions from a live subagent thread reach the parent
+    chat, under its turn's approval policy, instead of being declined.
+  - Force Send carries reasoning and answers still being written, and running
+    commands, into the run that continues them: they finish once, in full,
+    with one card.
+- **Claude.**
+  - The run's owner is bound into the options its CLI was started with. A
+    command list or MCP request during a cold connect could swap the options
+    and make every Hyadex tool of that connection fail as stale.
+  - A disconnect that outlasts its 2-second bound now finishes in the
+    background. Cancelling it skipped the SDK's SIGTERM/SIGKILL and left the
+    CLI running.
+  - A subagent's events carry `parent_tool_id`. The Mac app folds them into
+    the Agent card (its steps, then its result); they are no longer the main
+    agent's messages or the sidebar preview.
+- **Groups.** When several queued messages for one member are withdrawn
+  (group Stop, or Stop in the member's chat), all of them reach it with its
+  next message. Before, the first was skipped.
+- Verification:
+  - Fixture tests: the backend suite (3,080 tests) and 102 Swift tests pass.
+    New tests cover each fix, and the Claude cold-connect test fails without
+    its fix.
+  - Live runtime, isolated `livefix` instance:
+    - A backend whose launcher was SIGKILLed shut down and released its
+      instance, which then started again.
+    - A real Codex command printing 20,000 lines finished normally.
+    - A real Claude subagent's tool events carried their Agent call's id.
+  - Not exercised live: the sidebar, socket and terminal changes in the
+    running app (only their unit tests); Codex subagent approvals and Force
+    Send; the slow Claude disconnect; the 30-minute idle warning.
+
+## 2026-10-28 — Answers live, questions answerable, Chinese search
+
+- **Live output.** Claude chats now run the Agent SDK with partial messages:
+  thinking streams on the existing reasoning lane, as Codex reasoning does.
+  Answers of both providers (Claude text blocks, Codex agent messages,
+  including goal continuations) stream on a new opt-in socket lane
+  (`text_stream=true` → `assistant_text_stream`, capability
+  `live_text_stream_v1`). The Mac app shows them as a streaming message, and
+  in a group under the member still answering. The finished block or message
+  stays the durable record. A run that ends early keeps the text shown so far
+  as an `assistant_text` with `partial: true`; unfinished thinking is kept as
+  partial, as before for Codex. On Stop, Claude Code itself emits the truncated
+  block, which is kept as is.
+- **Mac interactions.** Approvals offer the decisions the provider sent, with
+  their exact response bodies. Codex command approvals often offer only
+  `cancel` to refuse; the old 拒绝 always sent `decline` and was rejected.
+  Exec-policy and network rules are under 更多选项. Legacy Codex approvals
+  use their review decisions. Codex permission requests grant what was asked,
+  for the turn or the session. Claude's AskUserQuestion and Codex's
+  request_user_input open a form: single choice, multiple choice, "其他" free
+  text, secret and number fields, and 跳过. MCP elicitations are filled in from
+  their schema, or opened as a link. Before, every request was an Allow/Deny
+  card, and questions returned HTTP 400.
+- **Search.** Chinese, Japanese and Korean words now match inside sentences
+  ("测试" finds "…然后运行测试"). Index version 9 separates each CJK
+  character with a zero-width space and searches a word as a phrase; the index
+  rebuilds once. A search term made only of punctuation no longer empties the
+  results.
+- Verification:
+  - Fixture tests: the backend suite (3,065 tests) passes, and 99 Swift tests
+    pass. New tests cover the live lanes, partial retention, each interaction
+    kind's response body, and CJK search.
+  - Live runtime: an isolated `livefix` instance ran real Claude Code 2.1.309
+    and Codex 0.164.0-alpha.11.1. Both streamed answers before their durable
+    message and both kept the result after Stop (Codex as a partial answer). A
+    real AskUserQuestion was answered with the form's body (multi-select and
+    free text). A real Codex command approval offered accept, a rule and cancel.
+  - Client: the form, approval and live-answer cards were checked in snapshot
+    renders (scenes 24–26). The app's `HYADEX_E2E_UI` run against a live server
+    and MCP elicitation with a real MCP server were not exercised.
+
 ## 2026-10-28 — New app icon
 
 - The icon keeps the V of the Hyades and orange Aldebaran, with crisp stars,

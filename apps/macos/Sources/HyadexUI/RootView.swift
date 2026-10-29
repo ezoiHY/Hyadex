@@ -52,6 +52,8 @@ public struct RootView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 TerminalButton(model: model)
+                SideChatButton(model: model)
+                GoalButton(model: model)
                 DetailsButton(model: model)
                 ChangesButton(model: model)
             }
@@ -64,6 +66,9 @@ public struct RootView: View {
         }
         .sheet(item: $model.renaming) { target in
             RenameSheet(model: model, target: target)
+        }
+        .sheet(item: $model.projectEditor) { target in
+            ProjectSheet(model: model, target: target)
         }
         .sheet(item: $model.settingsEditor) { target in
             SettingsSheet(model: model, target: target)
@@ -156,6 +161,53 @@ private struct TerminalButton: View {
         .keyboardShortcut("`", modifiers: .control)
         .disabled(chatID == nil)
         .help(open ? "隐藏终端（⌃`）" : "打开终端（⌃`）")
+    }
+}
+
+/// The open chat's side chat: questions about the conversation that stay out of it.
+private struct SideChatButton: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        let chatID: String? = if case .chat(let id) = model.selection { id } else { nil }
+        let open = chatID != nil && model.sideChatOpen == chatID
+        Button {
+            if let chatID { model.toggleSideChat(chatID) }
+        } label: {
+            Label("侧问", systemImage: open ? "text.bubble.fill" : "text.bubble")
+        }
+        .disabled(chatID == nil)
+        .help(open ? "关闭侧问（⇧⌘B）" : "侧问：问点什么，不打断代理（⇧⌘B）")
+    }
+}
+
+/// The goal of the open chat or group: set one, or edit the one it has.
+private struct GoalButton: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        let state = self.state
+        Button {
+            if let target = state.target { model.goalEditor = target }
+        } label: {
+            Label(state.open ? "编辑目标" : "设定目标", systemImage: "target")
+        }
+        .foregroundStyle(state.open ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+        .disabled(!state.available)
+        .help(state.reason ?? (state.open ? "编辑目标" : "设定目标：代理会一直工作到它达成"))
+    }
+
+    private var state: (target: GoalEditorTarget?, open: Bool, available: Bool, reason: String?) {
+        switch model.selection {
+        case .chat(let id)?:
+            let support = model.goalSupport(forChat: id)
+            return (.chat(id), model.goals[id]?.isOpen == true, support.available, support.reason)
+        case .group(let id)?:
+            let members = model.group(id)?.participants.isEmpty == false
+            return (.group(id), model.goal(forGroup: id)?.state?.isOpen == true, members, nil)
+        default:
+            return (nil, false, false, nil)
+        }
     }
 }
 

@@ -36,6 +36,16 @@ public struct SessionProjection: Sendable {
     private var uploads: [String: MediaFile] = [:]
     private var lastPublication: String?
     private var decided: [String: ApprovalDecision] = [:]
+    /// What each Agent/Task tool's subagent did (events with `parent_tool_id`),
+    /// shown in that tool's card the way Claude Code nests it.
+    private var subagentLogs: [String: SubagentLog] = [:]
+
+    struct SubagentLog: Sendable {
+        /// Tool ids in order, with their line and whether they failed.
+        var tools: [(id: String, line: String, failed: Bool)] = []
+        /// The subagent's latest narration.
+        var text = ""
+    }
 
     public init(backend: AgentBackend, cwd: String) {
         self.backend = backend
@@ -55,6 +65,9 @@ public struct SessionProjection: Sendable {
         lastSeq = seq
         let id = event["id"].string ?? "seq-\(seq)"
         let time = event["ts"].date ?? .now
+        if let parent = event["parent_tool_id"].string, !parent.isEmpty {
+            return applySubagent(event, parent: parent, id: id, time: time)
+        }
         switch event["type"].string ?? "" {
         case "turn_started":
             running = true
@@ -110,32 +123,56 @@ public struct SessionProjection: Sendable {
             } else {
                 append(.thinking(id: id, seconds: 0, text: text))
             }
+        case "chat_consult_asked":
+            // The user asked another chat from here (@ in the composer); its card reads the live consult.
+            guard let consultID = event["consult_id"].string else { return }
+            append(.consult(id: "consult-" + consultID, call: ConsultCall(
+                target: event["target"]["title"].string ?? "聊天", deep: event["mode"].string == "deep",
+                question: event["question"].string ?? "", running: false, consultID: consultID, byUser: true)))
         case "tool_started":
             let tool = event["tool"]
             guard let toolID = tool["id"].string else { return }
             toolStarts[toolID] = time
+            // A question to another chat is shown as its own card, not folded into the steps.
+            if let call = ConsultCall.parse(tool: tool) {
+                append(.consult(id: toolID, call: call))
+                return
+            }
             let info = Self.describe(tool: tool, cwd: cwd)
             append(.tool(id: toolID, kind: info.kind, title: info.title, output: "", status: .running, seconds: 0))
         case "tool_finished":
             let tool = event["tool"]
             guard let toolID = event["tool_id"].string ?? tool["id"].string else { return }
+            let started = index[toolID].map { items[$0] }
+            if case .consult(_, var call)? = started ?? ConsultCall.parse(tool: tool).map({ .consult(id: toolID, call: $0) }) {
+                call.running = false
+                call.receipt = ConsultReceipt.parse(output: Self.toolText(event["output"]),
+                                                    failed: event["is_error"].bool == true)
+                replace(toolID, with: .consult(id: toolID, call: call))
+                return
+            }
             let info = Self.describe(tool: tool, cwd: cwd)
             let seconds = toolStarts[toolID].map { max(0, time.timeIntervalSince($0)) } ?? 0
             let failed = event["is_error"].bool == true || (event["exit_code"].int ?? 0) != 0
-            let output = Self.clip(event["output"].string ?? "")
+            let output = subagentOutput(toolID, result: Self.clip(event["output"].string ?? ""))
             let item = TimelineItem.tool(id: toolID, kind: info.kind, title: info.title, output: output,
                                          status: failed ? .failed : .succeeded, seconds: seconds)
             if index[toolID] != nil { replace(toolID, with: item) } else { append(item) }
         case "claude_interaction_requested", "codex_interaction_requested":
             let interaction = event["interaction"]
             guard let interactionID = interaction["id"].string else { return }
+            let method = interaction["method"].string ?? ""
             let params = interaction["params"]
             let decisions = params["availableDecisions"].array.compactMap(\.string)
             pending[interactionID] = PendingApproval(id: interactionID, decisions: decisions)
+            if let form = InteractionForm.parse(method: method, params: params) {
+                append(.form(id: interactionID, author: agent, form: form, decision: .pending))
+                return
+            }
             let request = Self.describe(interaction: interaction, cwd: cwd)
             append(.approval(id: interactionID, author: agent, title: request.title, command: request.detail,
                              reason: request.reason, decision: .pending,
-                             allowsSession: decisions.isEmpty || decisions.contains("acceptForSession")))
+                             choices: ApprovalChoice.choices(method: method, params: params)))
         case "claude_interaction_resolved", "codex_interaction_resolved":
             guard let interactionID = event["interaction_id"].string else { return }
             pending[interactionID] = nil
@@ -236,7 +273,7 @@ public struct SessionProjection: Sendable {
     public struct TurnSlice: Hashable, Sendable {
         /// Thinking, tool calls and answered approvals, in order.
         public var steps: [TimelineItem] = []
-        /// Approvals still waiting for a decision.
+        /// Approvals and questions still waiting for the user.
         public var pendingApprovals: [TimelineItem] = []
         public var changes: FileChangeSet?
         public var seconds: Int?
@@ -253,9 +290,9 @@ public struct SessionProjection: Sendable {
             let item = items[position]
             if case .message(_, let author, _, _, _, _, _) = item, author.kind == .user { break }
             switch item {
-            case .thinking, .tool:
+            case .thinking, .tool, .consult:
                 slice.steps.append(item)
-            case .approval(let id, _, _, _, _, let decision, _):
+            case .approval(let id, _, _, _, _, let decision, _), .form(let id, _, _, let decision):
                 if decision == .pending && pending[id] != nil { slice.pendingApprovals.append(item) } else { slice.steps.append(item) }
             case .changes(_, let set):
                 files += set.files
@@ -307,6 +344,71 @@ public struct SessionProjection: Sendable {
         items[position] = .changes(id: id, set: FileChangeSet(files: files))
     }
 
+    // MARK: Subagents
+
+    /// A subagent's tool calls and narration fold into its Agent tool's card;
+    /// they never become the main agent's messages. Without a known parent
+    /// (history paged in mid-turn) they stay with the turn's folded work.
+    private mutating func applySubagent(_ event: JSON, parent: String, id: String, time: Date) {
+        guard let position = index[parent], case .tool(_, let kind, let title, _, let status, let seconds) = items[position]
+        else {
+            switch event["type"].string {
+            case "assistant_text", "reasoning_summary", "reasoning_text":
+                if let text = event["text"].text { append(.thinking(id: id, seconds: 0, text: text)) }
+            case "tool_started":
+                let tool = event["tool"]
+                guard let toolID = tool["id"].string else { return }
+                let info = Self.describe(tool: tool, cwd: cwd)
+                append(.tool(id: toolID, kind: info.kind, title: info.title, output: "", status: .running, seconds: 0))
+            case "tool_finished":
+                guard let toolID = event["tool_id"].string ?? event["tool"]["id"].string, index[toolID] != nil,
+                      case .tool(_, let kind, let title, _, _, let seconds)? = index[toolID].map({ items[$0] }) else { return }
+                let failed = event["is_error"].bool == true
+                replace(toolID, with: .tool(id: toolID, kind: kind, title: title,
+                                            output: Self.clip(event["output"].string ?? ""),
+                                            status: failed ? .failed : .succeeded, seconds: seconds))
+            default:
+                break
+            }
+            return
+        }
+        var log = subagentLogs[parent] ?? SubagentLog()
+        switch event["type"].string {
+        case "tool_started":
+            let tool = event["tool"]
+            guard let toolID = tool["id"].string, !log.tools.contains(where: { $0.id == toolID }) else { return }
+            log.tools.append((toolID, Self.describe(tool: tool, cwd: cwd).title, false))
+        case "tool_finished":
+            guard let toolID = event["tool_id"].string ?? event["tool"]["id"].string,
+                  let entry = log.tools.firstIndex(where: { $0.id == toolID }) else { return }
+            log.tools[entry].failed = event["is_error"].bool == true
+        case "assistant_text":
+            guard let text = event["text"].text else { return }
+            log.text = text
+        default:
+            return
+        }
+        subagentLogs[parent] = log
+        lastActivity = time
+        if case .tool(_, _, _, let output, _, _) = items[position] {
+            let result = status == .running ? "" : (output.components(separatedBy: Self.subagentResultMarker).last ?? output)
+            items[position] = .tool(id: parent, kind: kind, title: title, output: subagentOutput(parent, result: result),
+                                    status: status, seconds: seconds)
+        }
+    }
+
+    private static let subagentResultMarker = "\n\n— 结果 —\n"
+
+    /// A subagent tool's card: its recent steps, then its result once it finished.
+    private func subagentOutput(_ toolID: String, result: String) -> String {
+        guard let log = subagentLogs[toolID] else { return result }
+        var lines = log.tools.suffix(8).map { "· " + $0.line + ($0.failed ? "（失败）" : "") }
+        if log.tools.count > 8 { lines.insert("…还有 \(log.tools.count - 8) 次工具调用", at: 0) }
+        if !log.text.isEmpty, result.isEmpty { lines.append(Self.clip(log.text, limit: 400)) }
+        let steps = "子代理用了 \(log.tools.count) 次工具\n" + lines.joined(separator: "\n")
+        return result.isEmpty ? steps : steps + Self.subagentResultMarker + result
+    }
+
     // MARK: Helpers
 
     private mutating func closeTurn(at time: Date) {
@@ -332,11 +434,16 @@ public struct SessionProjection: Sendable {
     }
 
     private mutating func setDecision(_ decision: ApprovalDecision, for interactionID: String) {
-        guard let position = index[interactionID],
-              case .approval(let id, let author, let title, let command, let reason, _, let allowsSession) = items[position]
-        else { return }
-        items[position] = .approval(id: id, author: author, title: title, command: command, reason: reason,
-                                    decision: decision, allowsSession: allowsSession)
+        guard let position = index[interactionID] else { return }
+        switch items[position] {
+        case .approval(let id, let author, let title, let command, let reason, _, let choices):
+            items[position] = .approval(id: id, author: author, title: title, command: command, reason: reason,
+                                        decision: decision, choices: choices)
+        case .form(let id, let author, let form, _):
+            items[position] = .form(id: id, author: author, form: form, decision: decision)
+        default:
+            break
+        }
     }
 
     private mutating func settleRunningTools(as status: ToolStatus) {
@@ -345,6 +452,13 @@ public struct SessionProjection: Sendable {
                 items[position] = .tool(id: id, kind: kind, title: title, output: output, status: status, seconds: seconds)
             }
         }
+    }
+
+    /// A tool's output as text: a string, or the text parts of an MCP result.
+    static func toolText(_ output: JSON) -> String {
+        if let text = output.string { return text }
+        let parts = output["content"].array.isEmpty ? output.array : output["content"].array
+        return parts.compactMap { $0["text"].string ?? $0.string }.joined(separator: "\n")
     }
 
     static func clip(_ text: String, limit: Int = 4_000) -> String {
@@ -403,6 +517,13 @@ public struct SessionProjection: Sendable {
         case "Task", "Agent":
             return (.mcp, input["description"].string ?? "子代理")
         default:
+            if ConsultCall.isHyadexTool(name) {
+                // Hyadex's own helpers (jobs, publish, notify, ask list…), by what they do.
+                let helper = input["helper"].string ?? "helper"
+                if helper == "ask" { return (.mcp, "查看可以询问的聊天") }
+                let arguments = input["arguments"].array.compactMap(\.string).prefix(2).joined(separator: " ")
+                return (.mcp, "Hyadex · \(helper) \(arguments)".trimmingCharacters(in: .whitespaces))
+            }
             if name.hasPrefix("mcp__") {
                 let parts = name.split(separator: "_", omittingEmptySubsequences: true)
                 return (.mcp, parts.dropFirst().joined(separator: " · "))
@@ -415,6 +536,34 @@ public struct SessionProjection: Sendable {
         let method = interaction["method"].string ?? ""
         let params = interaction["params"]
         let reason = params["reason"].text ?? ""
+        if method == "execCommandApproval" {
+            let command = abbreviateHome(unwrapShell(params["command"].array.compactMap(\.string).joined(separator: " ")))
+            return ("运行命令", command, reason.isEmpty ? "在 \(relative(params["cwd"].string ?? cwd, to: cwd)) 中运行" : reason)
+        }
+        if method == "applyPatchApproval" {
+            let paths = (params["fileChanges"].object ?? [:]).keys.sorted().map { relative($0, to: cwd) }
+            return ("修改文件", paths.joined(separator: "\n"), reason)
+        }
+        if method == "item/permissions/requestApproval" {
+            let permissions = params["permissions"]
+            var lines: [String] = []
+            if permissions["network"]["enabled"].bool == true { lines.append("访问网络") }
+            let files = permissions["fileSystem"]
+            lines += files["read"].array.compactMap(\.string).map { "读取 " + relative($0, to: cwd) }
+            lines += files["write"].array.compactMap(\.string).map { "写入 " + relative($0, to: cwd) }
+            for entry in files["entries"].array {
+                let path = entry["path"]
+                let target = path["path"].string.map { relative($0, to: cwd) } ?? path["pattern"].string
+                    ?? path["value"]["kind"].string ?? "?"
+                let access = switch entry["access"].string {
+                case "write": "写入"
+                case "deny": "禁止访问"
+                default: "读取"
+                }
+                lines.append("\(access) \(target)")
+            }
+            return ("更多权限", lines.joined(separator: "\n"), reason)
+        }
         if method.contains("commandExecution") || params["kind"].string == "command" {
             let command = abbreviateHome(unwrapShell(params["command"].string ?? ""))
             return ("运行命令", command, reason.isEmpty ? "在 \(relative(params["cwd"].string ?? cwd, to: cwd)) 中运行" : reason)

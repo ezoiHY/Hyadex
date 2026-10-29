@@ -31,7 +31,7 @@ class AgentPromptFormatTests(unittest.TestCase):
             self.assertNotIn("pending=true", compact)
             self.assertNotIn("Chats `wait`", compact)
             self.assertNotIn("cross-chat", compact.lower())
-            self.assertIn("Jobs, Publish, Emergency, and Notify", compact)
+            self.assertIn("Jobs, Publish, Emergency, Notify, and Ask", compact)
 
 
 if __name__ == "__main__":

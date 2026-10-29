@@ -287,6 +287,10 @@ async def project_claude_sdk_message(
     """
 
     message_type = claude_sdk_type(message)
+    # A subagent's messages name the Agent/Task call that runs it. Its events
+    # carry that id so clients can fold them under that tool, as Claude Code does.
+    parent_tool_id = str(claude_sdk_field(message, "parent_tool_use_id") or "")
+    nested = {"parent_tool_id": parent_tool_id} if parent_tool_id else {}
     provider_id = str(claude_sdk_field(message, "session_id") or "")
     if message_type == "SystemMessage":
         data = claude_sdk_field(message, "data", {})
@@ -326,6 +330,7 @@ async def project_claude_sdk_message(
             "run_id": run_id,
             "tool_id": tool_id or None,
             "tool": current_tools.pop(tool_id, None),
+            **nested,
             "output": event_output_text(
                 claude_sdk_field(block, "content", "")
             ),
@@ -366,12 +371,13 @@ async def project_claude_sdk_message(
                     str(claude_sdk_field(block, "text") or "")
                 )
                 if text:
-                    if not detached:
+                    if not detached and not parent_tool_id:
                         text_parts.append(text)
                     await append_event(session_id, "assistant_text", {
                         "run_id": run_id,
                         "text": text,
                         "backend": BACKEND_CLAUDE,
+                        **nested,
                         **({"provider_message_id": message_uuid}
                            if (message_uuid := claude_sdk_field(message, "uuid")) else {}),
                         **local_command,
@@ -383,6 +389,7 @@ async def project_claude_sdk_message(
                     await append_event(session_id, "reasoning_summary", {
                         "run_id": run_id,
                         "text": thinking,
+                        **nested,
                     })
             elif block_type in {
                 "ToolUseBlock",
@@ -407,6 +414,7 @@ async def project_claude_sdk_message(
                 await append_event(session_id, "tool_started", {
                     "run_id": run_id,
                     "tool": tool,
+                    **nested,
                 })
             elif block_type in {
                 "ToolResultBlock",

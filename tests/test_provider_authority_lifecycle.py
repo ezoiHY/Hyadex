@@ -241,7 +241,7 @@ class ProviderAuthorityLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("team_read", candidate_record["actions"])
         self.assertEqual(
             candidate_record["actions"],
-            {"jobs", "publish", "emergency", "notify"},
+            {"jobs", "publish", "emergency", "notify", "ask"},
         )
         candidate_record["native_transition_nonce"] = "2" * 32
         await self.assert_denied(candidate_token, action="jobs")

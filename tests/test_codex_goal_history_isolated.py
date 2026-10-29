@@ -100,6 +100,7 @@ def load_projection():
         "timeline_index_is_error": lambda *_: False,
         "timeline_search_event_text": lambda event: str(event.get("prompt") or event.get("text") or ""),
         "timeline_search_value": lambda value: str(value or ""),
+        "history_search_index_text": lambda text: text,
         "TIMELINE_IMPORTED_PROMPT_HIDDEN_FIELD": "_hyadex_imported_prompt_hidden",
         "CLAUDE_METADATA_REPAIR_CACHE": SimpleNamespace(project_event=lambda *_: None, is_hidden=lambda *_: False),
         "CODEX_GOAL_HISTORY_REPAIR_CACHE": SimpleNamespace(is_hidden=Mock(return_value=False)),

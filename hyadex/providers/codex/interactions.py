@@ -25,6 +25,9 @@ from hyadex.core.session_codex import (
     codex_app_server_managers,
     CODEX_RETIRED_APP_SERVER_MANAGERS,
     CODEX_SESSION_APP_SERVER_MANAGERS,
+    CODEX_SUBAGENT_INDEX_LOCK,
+    CODEX_SUBAGENT_LIVE_GENERATIONS,
+    CODEX_SUBAGENT_SESSION_INDEX,
 )
 from hyadex.core.state import DELETED_SESSION_TOMBSTONES, DELETING_SESSIONS
 from hyadex.features.usage import bounded_codex_interaction_value
@@ -60,12 +63,28 @@ def effective_codex_approval_policy(sess: dict[str, Any]) -> str:
     return policy if policy in CODEX_APPROVAL_POLICIES else CODEX_DEFAULT_APPROVAL_POLICY
 
 
+def codex_thread_is_active_run(session_id: str, thread_id: str) -> bool:
+    """The running turn's own thread, or a live subagent thread it spawned."""
+    active = RUNS.active.get(session_id) or {}
+    if thread_id and str(active.get("provider_thread_id") or "") == thread_id:
+        return True
+    with CODEX_SUBAGENT_INDEX_LOCK:
+        return (
+            bool(active)
+            and CODEX_SUBAGENT_SESSION_INDEX.get(thread_id) == session_id
+            and thread_id in CODEX_SUBAGENT_LIVE_GENERATIONS
+        )
+
+
 def active_codex_approval_policy(session_id: str, thread_id: str) -> str:
-    """Use the current native turn's policy, not next-turn settings edits."""
+    """Use the current native turn's policy, not next-turn settings edits.
+
+    A subagent runs under the policy of the turn that spawned it.
+    """
     active = RUNS.active.get(session_id) or {}
     captured = str(active.get("codex_approval_policy") or "")
     if (
-        str(active.get("provider_thread_id") or "") == thread_id
+        codex_thread_is_active_run(session_id, thread_id)
         and captured in CODEX_APPROVAL_POLICIES
     ):
         return captured
@@ -94,9 +113,10 @@ def codex_request_is_interactive(session_id: str, thread_id: str) -> bool:
     if thread_id in CODEX_INTERACTIVE_CONTROL_THREADS:
         return True
     active = RUNS.active.get(session_id)
+    # A subagent's approvals and questions reach the user like its parent's.
     return bool(
         active
-        and str(active.get("provider_thread_id") or "") == thread_id
+        and codex_thread_is_active_run(session_id, thread_id)
         and active.get("interactive_app_server") is True
     )
 

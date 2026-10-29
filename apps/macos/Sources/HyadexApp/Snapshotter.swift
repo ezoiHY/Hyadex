@@ -49,7 +49,12 @@ enum Snapshotter {
         Scene(name: "09-command-palette", dark: false) { model in
             model.sheet = .commandPalette
         },
-        Scene(name: "12-sidebar-work", dark: true, sidebar: true) { model in model.switchSidebar(to: .work) },
+        Scene(name: "12-sidebar-work", dark: true, sidebar: true) { model in
+            model.switchSidebar(to: .work)
+            // One project made by hand; the other chats group by their directory.
+            model.projects = [ChatProject(name: "发布", directory: nil)]
+            for index in model.chats.indices where model.chats[index].id == "c3" { model.chats[index].folder = "发布" }
+        },
         Scene(name: "13-sidebar-group", dark: true, sidebar: true) { model in model.switchSidebar(to: .group) },
         Scene(name: "14-sidebar-autopilot", dark: false, sidebar: true) { model in model.switchSidebar(to: .autopilot) },
         Scene(name: "15-tab-stress", dark: true, stress: true) { _ in },
@@ -101,6 +106,60 @@ enum Snapshotter {
         Scene(name: "23-jobs-empty", dark: true) { model in
             model.jobs = []; model.select(.jobs)
         },
+        Scene(name: "24-question", dark: false) { model in
+            model.select(.chat("c1"))
+            model.timelines["c1"] = SampleData.questionTimeline(now: .now)
+        },
+        Scene(name: "25-codex-approval", dark: false) { model in
+            model.select(.chat("c2"))
+            model.timelines["c2"] = SampleData.codexApprovalTimeline(now: .now)
+        },
+        Scene(name: "26-live-answer", dark: true) { model in
+            model.select(.chat("c1"))
+            model.timelines["c1"] = SampleData.liveAnswerTimeline(now: .now)
+        },
+        Scene(name: "27-thinking", dark: true) { model in
+            model.select(.chat("c6"))
+            model.timelines["c6"] = SampleData.thinkingTimeline(now: .now)
+            if let index = model.chats.firstIndex(where: { $0.id == "c6" }) { model.chats[index].state = .running }
+            model.turnStartedAt["c6"] = .now.addingTimeInterval(-6)
+        },
+        Scene(name: "28-math-answer", dark: false) { model in
+            model.select(.chat("c6"))
+            model.timelines["c6"] = SampleData.mathAnswerTimeline(now: .now)
+            if let index = model.chats.firstIndex(where: { $0.id == "c6" }) { model.chats[index].state = .idle }
+            model.attachments["c6"] = [
+                DraftAttachment(name: "粘贴的图片 2026-10-29 00.06.02.png", size: 179_200, state: .ready(fileID: "f1"),
+                                localURL: samplePicture()),
+                DraftAttachment(name: "截图 2.png", size: 52_000, localURL: samplePicture()),
+                DraftAttachment(name: "crash-report.ips", size: 48_213, state: .ready(fileID: "f2")),
+            ]
+        },
+        Scene(name: "29-consult", dark: false) { model in
+            model.select(.chat("c1"))
+            model.timelines["c1"] = SampleData.consultTimeline(now: .now)
+            model.consults["c1"] = SampleData.consults(now: .now)
+            if let index = model.chats.firstIndex(where: { $0.id == "c1" }) { model.chats[index].state = .running }
+            model.turnStartedAt["c1"] = .now.addingTimeInterval(-40)
+        },
+        Scene(name: "30-consult-panel", dark: true) { model in
+            model.select(.chat("c2"))
+            model.sideChatOpen = "c2"
+            model.consults["c2"] = SampleData.incomingConsults(now: .now)
+        },
+        Scene(name: "31-chat-mention", dark: false) { model in
+            model.select(.chat("c1"))
+            model.consultTargets["c1"] = SampleData.consultTargets
+            model.drafts["c1"] = "问问 @后端"
+        },
+        Scene(name: "32-direct-ask", dark: true) { model in
+            model.select(.chat("c1"))
+            model.timelines["c1"] = SampleData.userConsultTimeline(now: .now)
+            model.consults["c1"] = SampleData.userConsults(now: .now)
+            model.consultTargets["c1"] = SampleData.consultTargets
+            model.drafts["c1"] = "@「后端重构」 部署说明里的金丝雀比例是多少？"
+            if let index = model.chats.firstIndex(where: { $0.id == "c1" }) { model.chats[index].state = .idle }
+        },
         // Last: entering full screen moves the window to its own Space.
         Scene(name: "10-fullscreen-dark", dark: true, fullscreen: true) { model in
             model.select(.chat("c1"))
@@ -109,6 +168,24 @@ enum Snapshotter {
             model.select(.chat("c1"))
         },
     ]
+
+    /// A wide picture, written once, for attachment thumbnails.
+    static func samplePicture() -> URL {
+        let url = FileManager.default.temporaryDirectory.appending(path: "hyadex-snapshot-picture.png")
+        guard !FileManager.default.fileExists(atPath: url.path) else { return url }
+        let image = NSImage(size: NSSize(width: 640, height: 400), flipped: false) { rect in
+            NSGradient(colors: [.systemTeal, .systemIndigo])?.draw(in: rect, angle: 35)
+            NSColor.white.withAlphaComponent(0.85).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 60, y: 60, width: 520, height: 280), xRadius: 18, yRadius: 18).fill()
+            NSColor.systemIndigo.withAlphaComponent(0.6).setFill()
+            for row in 0..<5 { NSBezierPath(rect: NSRect(x: 100, y: 280 - row * 44, width: 300 - row * 30, height: 14)).fill() }
+            return true
+        }
+        if let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            try? png.write(to: url)
+        }
+        return url
+    }
 
     static func runIfRequested(model: AppModel) async {
         guard let directory = ProcessInfo.processInfo.environment["HYADEX_SNAPSHOT_DIR"] else { return }

@@ -581,7 +581,7 @@ def create_claude_sdk_mcp_server(
         raise ClaudeSDKUnavailable(
             "claude-agent-sdk is not installed; use the claude -p fallback"
         ) from exc
-    return create_sdk_mcp_server(
+    server = create_sdk_mcp_server(
         name=name,
         version=version,
         tools=[
@@ -593,6 +593,27 @@ def create_claude_sdk_mcp_server(
             )
         ],
     )
+    # With many MCP tools configured, Claude Code defers them behind tool
+    # search, and agents then believed the Hyadex tool missing and fell back
+    # to the helper CLIs. Mark it always loaded; the SDK forwards only
+    # maxResultSizeChars in `_meta`, so list the tool here.
+    try:
+        from mcp.types import Tool
+
+        listed = [Tool.model_validate({
+            "name": tool_name,
+            "description": description,
+            "inputSchema": input_schema,
+            "_meta": {"anthropic/alwaysLoad": True},
+        })]
+
+        async def list_tools() -> list[Any]:
+            return listed
+
+        server["instance"].list_tools()(list_tools)
+    except Exception:  # noqa: BLE001 - an older SDK keeps its own listing
+        logger.debug("Hyadex MCP tool listing kept the SDK default", exc_info=True)
+    return server
 
 
 @dataclass
@@ -1291,6 +1312,11 @@ class ClaudeSDKSupervisor:
             raise ValueError("chat_id is required")
         self.chat_id = clean_chat_id
         self.options = options
+        # The options the current client was built from. The manager may swap
+        # ``options`` for the next reconnect while this one is connecting; the
+        # live CLI still calls the Hyadex tool of these, so the run's owner is
+        # bound here.
+        self._client_options = options
         self.configuration_key = str(configuration_key)
         self.ownership_token = f"claudeowner_{uuid.uuid4().hex}"
         bind_permission_owner(self.options, self.ownership_token)
@@ -1652,16 +1678,20 @@ class ClaudeSDKSupervisor:
         if task in done:
             await asyncio.gather(task, return_exceptions=True)
             return
-        task.cancel()
+        # Stop and deletion do not wait longer. The SDK's close still runs
+        # its own bounded steps (stdin EOF, a grace period, SIGTERM, SIGKILL);
+        # cancelling it here would skip them and leave the CLI and its tools
+        # running unsupervised, so it finishes in the background, retained
+        # with the other cleanup owners.
+        self._late_connect_cleanup_tasks.add(task)
 
-        def consume_result(completed: asyncio.Task[Any]) -> None:
+        def cleanup_finished(completed: asyncio.Task[Any]) -> None:
+            self._late_connect_cleanup_tasks.discard(completed)
             if not completed.cancelled():
                 with suppress(BaseException):
                     completed.exception()
 
-        # A cancellation-hostile third-party disconnect must not block Stop
-        # or deletion. Consume its eventual result without awaiting it here.
-        task.add_done_callback(consume_result)
+        task.add_done_callback(cleanup_finished)
 
     async def _cancel_task_bounded(self, task: asyncio.Task[Any]) -> bool:
         """Cancel one SDK-owned task without allowing teardown to wedge."""
@@ -1731,12 +1761,16 @@ class ClaudeSDKSupervisor:
                 await self._cancel_task_bounded(task)
 
     def late_connect_cleanup_tasks(self) -> set[asyncio.Task[None]]:
-        """Return cleanup owners retained after exact supervisor retirement."""
+        """Return cleanup owners retained after exact supervisor retirement.
+
+        These are late-connect cleanups and disconnects still closing their CLI.
+        """
 
         return set(self._late_connect_cleanup_tasks)
 
     async def _new_client(self) -> ClaudeSDKClientProtocol:
         client: ClaudeSDKClientProtocol | None = None
+        self._client_options = self.options
         try:
             client_options, background_hook = _connection_background_hook(self.options)
             self._background_reconciliation_hook = background_hook
@@ -1838,7 +1872,7 @@ class ClaudeSDKSupervisor:
         if self._background_reconciliation_hook is not None:
             self._background_reconciliation_hook.retire()
             self._background_reconciliation_hook = None
-        bind_provider_tool_owner(self.options, "", "")
+        bind_provider_tool_owner(self._client_options, "", "")
         client = self._client
         receiver = self._receiver_task
         self._client = None
@@ -1853,7 +1887,7 @@ class ClaudeSDKSupervisor:
         self._cancel_ack_timeout()
         active = self._active_run
         self._active_run = None
-        bind_provider_tool_owner(self.options, "", "")
+        bind_provider_tool_owner(self._client_options, "", "")
         self._inflight_tasks.clear()
         if self._background_reconciliation_hook is not None:
             self._background_reconciliation_hook.retire()
@@ -2007,7 +2041,7 @@ class ClaudeSDKSupervisor:
                 await command.on_supervisor_ready(self.ownership_token)
             except BaseException as exc:
                 self._active_run = None
-                bind_provider_tool_owner(self.options, "", "")
+                bind_provider_tool_owner(self._client_options, "", "")
                 handle._fail(
                     exc
                     if isinstance(exc, Exception)
@@ -2022,7 +2056,7 @@ class ClaudeSDKSupervisor:
         # supervisor generation. Bind it only after the ACTIVE admission hook,
         # at the final actor-serialized boundary before query delivery.
         bind_provider_tool_owner(
-            self.options,
+            self._client_options,
             self.ownership_token,
             command.run_id,
         )
@@ -2068,7 +2102,7 @@ class ClaudeSDKSupervisor:
                 )
         except ClaudeSDKSupervisorClosed as exc:
             self._active_run = None
-            bind_provider_tool_owner(self.options, "", "")
+            bind_provider_tool_owner(self._client_options, "", "")
             handle._fail(exc)
             if not command.response.done():
                 command.response.set_exception(exc)
@@ -2079,7 +2113,7 @@ class ClaudeSDKSupervisor:
                 f"Claude SDK query delivery is uncertain for chat {self.chat_id}: {exc}"
             )
             self._active_run = None
-            bind_provider_tool_owner(self.options, "", "")
+            bind_provider_tool_owner(self._client_options, "", "")
             handle._fail(error)
             if not command.response.done():
                 command.response.set_exception(error)
@@ -2766,7 +2800,7 @@ class ClaudeSDKSupervisor:
             self._cancel_ack_timeout()
             active._finish(command.message)
             self._active_run = None
-            bind_provider_tool_owner(self.options, "", "")
+            bind_provider_tool_owner(self._client_options, "", "")
             self._inflight_tasks.clear()
             if had_inflight_tasks and forced_run_end:
                 # An interrupted/error response can strand provider-side task

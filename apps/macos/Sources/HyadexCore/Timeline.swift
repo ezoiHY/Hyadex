@@ -90,6 +90,12 @@ public enum ToolStatus: Hashable, Sendable { case running, succeeded, failed }
 
 public enum ApprovalDecision: Hashable, Sendable {
     case pending, allowed, allowedForSession, denied
+    /// Allowed with a rule for later requests (a command prefix, a network host).
+    case allowedAlways
+    /// Questions or a form answered here; a short summary of the answer.
+    case answered(String)
+    /// Questions skipped without an answer.
+    case skipped
     /// Answered elsewhere (another client, or before this app connected).
     case resolved
 }
@@ -121,17 +127,31 @@ public enum TimelineItem: Identifiable, Hashable, Sendable {
     case tool(id: String, kind: ToolKind, title: String, output: String, status: ToolStatus, seconds: Double)
     case changes(id: String, set: FileChangeSet)
     case approval(id: String, author: Author, title: String, command: String, reason: String,
-                  decision: ApprovalDecision, allowsSession: Bool = true)
+                  decision: ApprovalDecision, choices: [ApprovalChoice] = ApprovalChoice.standard)
+    /// Questions an agent asks, or an MCP server's form.
+    case form(id: String, author: Author, form: InteractionForm, decision: ApprovalDecision)
     case divider(id: String, text: String)
     /// Images and files: a user's attachments or an agent's published artifacts.
     case media(id: String, author: Author, files: [MediaFile])
+    /// A question the agent asked another chat (its Hyadex `ask` call).
+    case consult(id: String, call: ConsultCall)
 
     public var id: String {
         switch self {
         case .message(let id, _, _, _, _, _, _), .thinking(let id, _, _), .tool(let id, _, _, _, _, _),
-             .changes(let id, _), .approval(let id, _, _, _, _, _, _), .divider(let id, _), .media(let id, _, _):
+             .changes(let id, _), .approval(let id, _, _, _, _, _, _), .form(let id, _, _, _), .divider(let id, _),
+             .media(let id, _, _), .consult(let id, _):
             id
         }
+    }
+}
+
+public extension TimelineItem {
+    /// For an approval, the answer it offers meaning `decision` (the first
+    /// refusal for `.denied`); nil for anything else.
+    func reply(for decision: ApprovalDecision) -> InteractionReply? {
+        guard case .approval(_, _, _, _, _, _, let choices) = self else { return nil }
+        return choices.first { $0.reply.outcome == decision }?.reply
     }
 }
 
@@ -140,6 +160,14 @@ public extension Array where Element == TimelineItem {
     var pendingApproval: (id: String, author: Author)? {
         for item in reversed() {
             if case .approval(let id, let author, _, _, _, .pending, _) = item { return (id, author) }
+        }
+        return nil
+    }
+
+    /// The newest unanswered question or form, if any.
+    var pendingForm: (id: String, author: Author)? {
+        for item in reversed() {
+            if case .form(let id, let author, _, .pending) = item { return (id, author) }
         }
         return nil
     }

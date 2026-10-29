@@ -52,6 +52,11 @@ from hyadex.core.server import SERVER
 from hyadex.core.sessions import CLAUDE_STOP_FENCE_SESSIONS, STORE
 from hyadex.core.turn_start import reconcile_idle_queued_turns_from_health_poll
 from hyadex.core.util import bounded_lock, server_identity
+from hyadex.features.consult_engine import (
+    INBOUND_POLICIES as CONSULT_INBOUND_POLICIES,
+    MODES as CONSULT_MODES,
+    TURN_LIMITS as CONSULT_TURN_LIMITS,
+)
 from hyadex.features.jobs import JOBS, scheduled_job_resource_diagnostics
 from hyadex.features.terminal import tmux_capability
 from hyadex.features.usage import PROVIDER_USAGE
@@ -128,6 +133,11 @@ async def health() -> dict[str, Any]:
             "subagent_limit_v1": {"version": 1, "backends": ["codex", "claude"]},
             "provider_usage": {"available": bool(AGENT_TOKEN), "version": 1, "backends": ["codex", "claude"]},
             "side_questions": side_questions.capability(),
+            # One Work chat asks another in its project: basic (memory) or deep (read-only fork).
+            "chat_consult_v1": {
+                "available": bool(AGENT_TOKEN), "version": 1, "modes": list(CONSULT_MODES),
+                "inbound": list(CONSULT_INBOUND_POLICIES), "turn_limits": dict(CONSULT_TURN_LIMITS),
+            },
             "websocket_auth_v1": {
                 "available": True,
                 "required": False,
@@ -141,6 +151,10 @@ async def health() -> dict[str, Any]:
                 "terminal_protocol": TERMINAL_WEBSOCKET_PROTOCOL,
             },
             "event_stream_liveness_v1": {"available": True, "version": 1},
+            # Session event sockets opened with text_stream=true also receive
+            # assistant_text_stream snapshots of answers still being written.
+            "live_text_stream_v1": {"available": True, "version": 1, "query": "text_stream",
+                                    "packet": "assistant_text_stream"},
             "queue_resume_v1": {
                 "available": True,
                 "version": 1,

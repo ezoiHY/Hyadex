@@ -72,6 +72,29 @@ private struct ChatSettingsSheet: View {
                 .accessibilityLabel("代理管理定时任务")
                 .help("代理能否在对话里自己创建、修改定时任务")
             }
+            Section {
+                Picker("其他聊天向它提问", selection: $edited.consultInbound) {
+                    ForEach(ConsultInbound.allCases) { Text($0.label).tag($0) }
+                }
+                .accessibilityLabel("其他聊天向它提问")
+                .help("同一项目里的其他聊天能否问它：基础凭它已经知道的回答，深度让它的只读副本查看文件后回答")
+                Toggle("它深度询问别的聊天前要我批准", isOn: $edited.consultDeepApproval)
+                    .accessibilityLabel("深度询问前要我批准")
+                if !edited.consultDeepAllowed.isEmpty {
+                    LabeledContent("总是允许深度询问") {
+                        HStack(spacing: 8) {
+                            Text("\(edited.consultDeepAllowed.count) 个聊天").foregroundStyle(.secondary)
+                            Button("清除") { edited.consultDeepAllowed = [] }
+                        }
+                    }
+                }
+            } header: {
+                Text("聊天互问")
+            } footer: {
+                Text("只在同一项目（或同一工作目录）里的聊天之间。回答不进入被问聊天的对话，也不打断它。")
+                    .font(.uiMeta)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .disabled(saving)

@@ -20,6 +20,9 @@ struct SidebarView: View {
     /// window server and renders black in process, so draw a plain one.
     var drawsOwnSelection = false
     @AppStorage("showArchived") private var showArchived = false
+    @AppStorage("groupChatsByProject") private var groupByProject = true
+    /// Collapsed project sections, one id per line.
+    @AppStorage("collapsedProjects") private var collapsedProjects = ""
 
     var body: some View {
         List(selection: Binding(get: { drawsOwnSelection ? nil : model.selection }, set: { model.selectFromSidebar($0) })) {
@@ -73,28 +76,50 @@ struct SidebarView: View {
     @ViewBuilder private var workSections: some View {
         searchSection
         if !model.visiblePinned.isEmpty {
-            Section("置顶") {
-                ForEach(model.visiblePinned) { chat in
-                    ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id)).modifier(OwnSelection(item: SidebarItem.chat(chat.id), on: drawsOwnSelection, model: model))
-                        .contextMenu { chatMenu(chat) }
-                }
+            Section {
+                ForEach(model.visiblePinned) { chat in chatRow(chat) }
+            } header: {
+                SidebarHeading(title: "置顶", systemImage: "pin")
             }
         }
-        Section(model.visiblePinned.isEmpty ? "" : "最近") {
-            ForEach(model.visibleChats) { chat in
-                ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id)).modifier(OwnSelection(item: SidebarItem.chat(chat.id), on: drawsOwnSelection, model: model))
-                    .contextMenu { chatMenu(chat) }
+        if groupByProject {
+            ForEach(model.projectSections) { section in
+                Section(isExpanded: expanded(section.id)) {
+                    ForEach(section.chats) { chat in chatRow(chat) }
+                    if section.chats.isEmpty {
+                        EmptyRow(text: "还没有聊天")
+                    }
+                } header: {
+                    ProjectHeader(section: section, canCreate: model.isLive) { model.newChat(in: section) }
+                        .contextMenu { projectMenu(section) }
+                }
             }
-            if model.visibleChats.isEmpty && model.visiblePinned.isEmpty {
-                EmptyRow(text: !model.isLive ? "连接服务器后查看聊天" : model.searchText.isEmpty ? "还没有聊天，点右上角的 + 开始" : "没有匹配的聊天")
+            if model.visibleChats.isEmpty && model.visiblePinned.isEmpty && model.projectSections.isEmpty {
+                Section { EmptyRow(text: emptyChatsText) }
+            }
+            if model.isLive && model.searchText.isEmpty {
+                Section {
+                    Button {
+                        model.projectEditor = .new(directory: nil, chatID: nil)
+                    } label: {
+                        Label("新建项目", systemImage: "folder.badge.plus")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .selectionDisabled()
+                }
+            }
+        } else {
+            Section(model.visiblePinned.isEmpty ? "" : "最近") {
+                ForEach(model.visibleChats) { chat in chatRow(chat) }
+                if model.visibleChats.isEmpty && model.visiblePinned.isEmpty {
+                    EmptyRow(text: emptyChatsText)
+                }
             }
         }
         if !model.archivedChats.isEmpty {
             Section(isExpanded: $showArchived) {
-                ForEach(model.archivedChats) { chat in
-                    ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id }).tag(SidebarItem.chat(chat.id)).modifier(OwnSelection(item: SidebarItem.chat(chat.id), on: drawsOwnSelection, model: model))
-                        .contextMenu { chatMenu(chat) }
-                }
+                ForEach(model.archivedChats) { chat in chatRow(chat) }
             } header: {
                 Text("已归档 · \(model.archivedChats.count)")
             }
@@ -157,6 +182,62 @@ struct SidebarView: View {
         }
     }
 
+    private var emptyChatsText: String {
+        !model.isLive ? "连接服务器后查看聊天" : model.searchText.isEmpty ? "还没有聊天，点右上角的 + 开始" : "没有匹配的聊天"
+    }
+
+    private func chatRow(_ chat: ChatSummary) -> some View {
+        ChatRow(chat: chat, alert: model.emergencies.contains { $0.sessionID == chat.id },
+                consulted: model.isBeingConsulted(chat.id))
+            .tag(SidebarItem.chat(chat.id))
+            .modifier(OwnSelection(item: SidebarItem.chat(chat.id), on: drawsOwnSelection, model: model))
+            .contextMenu { chatMenu(chat) }
+    }
+
+    /// A section stays open unless collapsed; search shows every match.
+    private func expanded(_ id: String) -> Binding<Bool> {
+        Binding(get: {
+            !model.searchText.isEmpty || !collapsedProjects.split(separator: "\n").contains { $0 == id }
+        }, set: { open in
+            var ids = collapsedProjects.split(separator: "\n").map(String.init).filter { $0 != id }
+            if !open { ids.append(id) }
+            collapsedProjects = ids.joined(separator: "\n")
+        })
+    }
+
+    @ViewBuilder
+    private func projectMenu(_ section: ProjectSection) -> some View {
+        Button("在此新建聊天") { model.newChat(in: section) }
+            .disabled(!model.isLive)
+        switch section.kind {
+        case .project:
+            if model.projects.contains(where: { $0.name == section.title }) {
+                Button("编辑项目…") { model.projectEditor = .edit(section.title) }
+            } else {
+                Button("编辑项目…") {
+                    model.saveProject(ChatProject(name: section.title))
+                    model.projectEditor = .edit(section.title)
+                }
+            }
+            Button("删除项目（保留聊天）") { model.deleteProject(section.title) }
+        case .directory:
+            Button("设为项目…") { model.projectEditor = .new(directory: section.directory, chatID: nil) }
+        case .other:
+            EmptyView()
+        }
+        if let directory = section.directory, model.serverIsLocal {
+            Divider()
+            Button("在 Finder 中显示") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: (directory as NSString).expandingTildeInPath)])
+            }
+        }
+    }
+
+    /// Projects a chat can move into: the user's, and folders set elsewhere.
+    private var projectNames: [String] {
+        Set(model.projects.map(\.name) + model.chats.compactMap(\.folder)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
     @ViewBuilder
     private func chatMenu(_ chat: ChatSummary) -> some View {
         let item = SidebarItem.chat(chat.id)
@@ -171,6 +252,17 @@ struct SidebarView: View {
             .disabled(chat.archived)
         if !chat.archived {
             Button(chat.pinned ? "取消置顶" : "置顶") { model.togglePinned(chat.id) }
+            Menu("移到项目") {
+                ForEach(projectNames, id: \.self) { name in
+                    Button(name) { model.moveChat(chat.id, toProject: name) }
+                        .disabled(chat.folder == name)
+                }
+                if !projectNames.isEmpty { Divider() }
+                Button("新建项目…") { model.projectEditor = .new(directory: nil, chatID: chat.id) }
+                if chat.folder != nil {
+                    Button("移出项目") { model.moveChat(chat.id, toProject: nil) }
+                }
+            }
         }
         Divider()
         Button(chat.archived ? "取消归档" : "归档") { model.setArchived(item, !chat.archived) }
@@ -187,6 +279,58 @@ struct SidebarView: View {
         }
         Button(group.archived ? "取消归档" : "归档") { model.setArchived(item, !group.archived) }
         Button("删除…", role: .destructive) { model.pendingDeletion = item }
+    }
+}
+
+/// A project's name in the sidebar, with "+" for a new chat in it on hover.
+private struct ProjectHeader: View {
+    let section: ProjectSection
+    let canCreate: Bool
+    let onNewChat: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            SidebarHeading(title: section.title,
+                           systemImage: section.kind == .other ? "tray" : section.kind == .project ? "folder.fill" : "folder")
+            Spacer(minLength: 4)
+            if canCreate && section.kind != .other {
+                Button(action: onNewChat) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(hovering ? 1 : 0)
+                .help("在“\(section.title)”中新建聊天")
+                .accessibilityLabel("在\(section.title)中新建聊天")
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .help(section.directory ?? section.title)
+    }
+}
+
+/// A section of chats you sorted (a project, the pinned chats): larger than
+/// the list's small caption headings.
+private struct SidebarHeading: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11 * Theme.scale, weight: .medium))
+                .frame(width: 15)
+            Text(title)
+                .font(.uiSecondary)
+                .fontWeight(.semibold)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .foregroundStyle(.secondary)
     }
 }
 
@@ -315,6 +459,8 @@ private struct ChatRow: View {
     let chat: ChatSummary
     /// An agent's unacknowledged emergency alert.
     var alert = false
+    /// A read-only copy of this chat is answering another chat's deep question.
+    var consulted = false
 
     var body: some View {
         HStack(spacing: 9) {
@@ -348,6 +494,12 @@ private struct ChatRow: View {
                 .accessibilityLabel("紧急提醒")
         } else if chat.state != .idle {
             StateIndicator(state: chat.state, size: 11)
+        } else if consulted {
+            Image(systemName: "text.magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .help("另一个聊天正在深度询问它，由它的只读副本查看文件")
+                .accessibilityLabel("正在被深度询问")
         } else if chat.unread {
             Circle().fill(Color.accentColor).frame(width: 7, height: 7).accessibilityLabel("未读")
         } else {

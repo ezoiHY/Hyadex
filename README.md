@@ -44,7 +44,7 @@ a native Mac app rather than a terminal.
 
 | | |
 | --- | --- |
-| **Chats** | Live thinking, tool calls and replies; inline approvals; a durable message queue with Force Send; resuming an existing Claude/Codex conversation; forks; side questions (`/btw`) that never enter the transcript |
+| **Chats** | Live thinking, tool calls and replies; inline approvals; a durable message queue with Force Send; resuming an existing Claude/Codex conversation; forks; side questions (`/btw`) that never enter the transcript; asking another chat in the project, from its memory or, in depth, through a read-only copy of it |
 | **Group discussions** | Mention-based routing, per-member cursors, agent hand-offs with a hop limit, a shared brief, sequential or parallel rounds, and zero-token receipts of the files each reply changed |
 | **Autopilot** | Plan → approve → execute → verify → review → commit, with per-run choices for approval (plan, every step, none), isolation (worktree branch or in place) and reviewer |
 | **Goals** | Claude Code's `/goal` completion condition and Codex's persistent objective with token and time budgets, for chats and group members |

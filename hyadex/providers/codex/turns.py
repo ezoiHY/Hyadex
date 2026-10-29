@@ -163,9 +163,16 @@ from hyadex.providers.codex.notifications import (
 from hyadex.providers.codex.reasoning_stream import (
     clear_reasoning_summary_stream,
     finish_reasoning_summary_stream,
+    move_reasoning_summary_stream,
     persist_reasoning_summary,
     reasoning_summary_stream_item,
     update_reasoning_summary_stream,
+)
+from hyadex.providers.text_stream import (
+    clear_assistant_text_stream,
+    finish_assistant_text_stream,
+    move_assistant_text_stream,
+    update_assistant_text_stream,
 )
 from hyadex.providers.codex.runtime import (
     archive_rejected_codex_session,
@@ -302,6 +309,8 @@ async def run_codex_app_server(
     synthetic_notification_sequence = 0
     handled_notification_sequence = 0
     last_activity = time.monotonic()
+    # The activity time an idle_warning was written for: one warning per quiet spell.
+    idle_warned_for: float | None = None
     cancelled_exit = False
     child_notification_handler: Any = None
     child_continuation_stop = asyncio.Event()
@@ -703,6 +712,8 @@ async def run_codex_app_server(
     emitted_final_item_ids: set[str] = set()
     emitted_reasoning_item_ids: set[str | tuple[str, str]] = set()
     reasoning_stream_run_ids = {current_run_id}
+    # Agent messages whose live text is now durable (an answer or commentary).
+    settled_text_item_ids: set[str] = set()
     assistant_deltas: dict[str, list[str]] = {}
     reasoning_summary_deltas: dict[str, list[str]] = {}
     plan_deltas: dict[str, list[str]] = {}
@@ -751,14 +762,23 @@ async def run_codex_app_server(
                 "provider_thread_id": provider_id} if initial_provider_turn_id else {}),
         }
 
+    async def settle_live_text(item_id: str) -> None:
+        # The message's durable event replaces the text shown while it was written.
+        if item_id:
+            settled_text_item_ids.add(item_id)
+            with suppress(Exception):
+                await clear_assistant_text_stream(session_id, current_run_id, item_id)
+
     async def emit_final_text(value: Any, *, item_id: str = "") -> None:
         text = clean_assistant_text(str(value or ""))
         if not text:
+            await settle_live_text(item_id)
             return
         if (
             item_id
             and item_id in emitted_final_item_ids
         ) or text in seen_text:
+            await settle_live_text(item_id)
             return
         seen_text.add(text)
         text_parts.append(text)
@@ -770,6 +790,7 @@ async def run_codex_app_server(
         })
         if item_id:
             emitted_final_item_ids.add(item_id)
+        await settle_live_text(item_id)
 
     async def emit_reasoning(
         value: Any,
@@ -805,6 +826,8 @@ async def run_codex_app_server(
             await append_event(session_id, "reasoning_summary", payload)
             if item_id:
                 emitted_reasoning_item_ids.add(reasoning_identity)
+        if phase == "commentary":
+            await settle_live_text(item_id)
 
     async def flush_pending_unknown(*, final: bool) -> None:
         nonlocal pending_unknown_message, pending_unknown_item_id
@@ -1015,6 +1038,13 @@ async def run_codex_app_server(
         # delta state at the logical UI boundary; turn-wide completed item IDs
         # deliberately survive so a repeated notification cannot duplicate a
         # pre-steer reasoning/commentary item under the new logical run.
+        # A command still running at the steer finishes in the new logical
+        # run: keep its one card and its output so far.
+        running = started_tools - finished_tools
+        kept_calls = {tool_id: tool_calls[tool_id] for tool_id in running if tool_id in tool_calls}
+        kept_output = {tool_id: tool_output_deltas[tool_id] for tool_id in running if tool_id in tool_output_deltas}
+        kept_lengths = {tool_id: tool_output_lengths[tool_id] for tool_id in running if tool_id in tool_output_lengths}
+        kept_truncated = tool_output_truncated & running
         text_parts.clear()
         seen_text.clear()
         seen_reasoning.clear()
@@ -1027,6 +1057,11 @@ async def run_codex_app_server(
         tool_calls.clear()
         started_tools.clear()
         finished_tools.clear()
+        started_tools.update(running)
+        tool_calls.update(kept_calls)
+        tool_output_deltas.update(kept_output)
+        tool_output_lengths.update(kept_lengths)
+        tool_output_truncated.update(kept_truncated)
         changed_paths.clear()
         seen_artifacts.clear()
         pending_unknown_message = ""
@@ -1532,8 +1567,12 @@ async def run_codex_app_server(
                 ),
             ]
             await append_durable_event_batch(session_id, event_specs)
-            await finish_reasoning_summary_stream(
-                session_id, previous_run_id, emitted_reasoning_item_ids)
+            # The native turn goes on writing the same reasoning and message
+            # after the steer: their remaining deltas and completed text join
+            # what was already shown instead of being cut off there.
+            await move_reasoning_summary_stream(session_id, previous_run_id, candidate_run_id)
+            with suppress(Exception):
+                await move_assistant_text_stream(session_id, previous_run_id, candidate_run_id)
             await revoke_provider_authority(previous_run_id)
         except BaseException as exc:
             await retire_accepted_transition()
@@ -1726,6 +1765,14 @@ async def run_codex_app_server(
             assistant_deltas.setdefault(item_id, []).append(
                 str(params.get("delta") or "")
             )
+            # Shown while it is written, like native Codex; after Stop the
+            # text the user saw is what a partial answer keeps.
+            if not stopped_output and item_id not in settled_text_item_ids:
+                with suppress(Exception):
+                    await update_assistant_text_stream(
+                        session_id, current_run_id, item_id, params.get("delta"),
+                        {"backend": BACKEND_CODEX, **current_metadata()},
+                    )
             return False
         if method == "item/reasoning/textDelta" and item_id:
             if ("reasoning", item_id) not in emitted_reasoning_item_ids:
@@ -2357,7 +2404,8 @@ async def run_codex_app_server(
                                         await turn.interrupt()
                                 terminal_status = "failed"
                                 break
-                            if idle >= IDLE_WARN_SECONDS:
+                            if idle >= IDLE_WARN_SECONDS and idle_warned_for != last_activity:
+                                idle_warned_for = last_activity
                                 await append_event(session_id, "idle_warning", {
                                     "run_id": current_run_id,
                                     "idle_seconds": int(idle),
@@ -2706,6 +2754,9 @@ async def run_codex_app_server(
                 for summary_run_id in reasoning_stream_run_ids:
                     await finish_reasoning_summary_stream(
                         session_id, summary_run_id, emitted_reasoning_item_ids)
+                    await finish_assistant_text_stream(
+                        session_id, summary_run_id, settled_text_item_ids,
+                        keep=terminal_status != "completed" or stop_requested_for_current_run())
                 if pending_goal_steer_handoff is not None:
                     future = pending_goal_steer_handoff["request"].get("future")
                     if future is not None and not future.done():

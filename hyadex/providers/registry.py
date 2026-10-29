@@ -282,7 +282,7 @@ def native_steer_provider_actions(
     )
     actions = {"publish"}
     if provider_turn_may_raise_emergency(selected.get("purpose")):
-        actions.update({"emergency", "notify"})
+        actions.update({"emergency", "notify", "ask"})
     if jobs_access != "blocked" and AGENT_TOKEN:
         actions.add("jobs")
     return actions, jobs_access
@@ -374,6 +374,7 @@ async def authorize_provider_action(
         "publish",
         "emergency",
         "notify",
+        "ask",
     ],
     session_id: str,
 ) -> dict[str, Any]:

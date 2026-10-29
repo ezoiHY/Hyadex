@@ -507,7 +507,7 @@ enum LiveCheck {
         model.drafts[claude.id] = ""
 
         // Side chat panel.
-        check(await UIDriver.choose("侧问") { UIDriver.press("添加", role: NSAccessibility.Role(rawValue: "AXMenuButton")) }, "ui: + → 侧问")
+        check(UIDriver.press("侧问"), "ui: toolbar → 侧问")
         check(await wait(10) { UIDriver.find("不打断代理") != nil }, "ui: side panel opened")
         _ = await wait(15) { model.sideChats[claude.id] != nil }
         let before = model.sideChats[claude.id]?.exchanges.count ?? 0
@@ -523,7 +523,7 @@ enum LiveCheck {
         check(await wait(5) { model.sideChatOpen == nil }, "ui: side panel gone")
 
         // Goal sheet and goal bar.
-        check(await UIDriver.choose("设定目标…") { UIDriver.press("添加", role: NSAccessibility.Role(rawValue: "AXMenuButton")) }, "ui: + → 设定目标…")
+        check(UIDriver.press("设定目标"), "ui: toolbar → 设定目标")
         check(await wait(5) { UIDriver.sheetShown }, "ui: goal sheet shown")
         check(UIDriver.type("The user has typed the word kiwi in this chat.", into: "例如"), "ui: typed the condition")
         await pause(0.4)
@@ -790,13 +790,13 @@ enum LiveCheck {
         stored = try? await model.chatSettings(claude.id)
         check(stored?.systemPrompt == "", "gaps: an empty prompt clears it on the server")
 
-        // The composer's + menu holds the side chat and the goal.
-        check(await UIDriver.choose("侧问") { UIDriver.press("添加", role: NSAccessibility.Role(rawValue: "AXMenuButton")) }, "gaps: + → 侧问")
-        check(await wait(8) { model.sideChatOpen == claude.id }, "gaps: the side chat opened from the + menu")
+        // The toolbar holds the side chat and the goal.
+        check(UIDriver.press("侧问"), "gaps: toolbar → 侧问")
+        check(await wait(8) { model.sideChatOpen == claude.id }, "gaps: the side chat opened from the toolbar")
         model.toggleSideChat(claude.id)
-        check(await UIDriver.choose("设定目标…") { UIDriver.press("添加", role: NSAccessibility.Role(rawValue: "AXMenuButton")) }, "gaps: + → 设定目标…")
-        check(await wait(5) { model.goalEditor != nil }, "gaps: the goal sheet opened from the + menu")
-        await shot("gaps-02c-goal-from-plus")
+        check(UIDriver.press("设定目标"), "gaps: toolbar → 设定目标")
+        check(await wait(5) { model.goalEditor != nil }, "gaps: the goal sheet opened from the toolbar")
+        await shot("gaps-02c-goal-from-toolbar")
         model.goalEditor = nil
         await pause()
 
@@ -1010,6 +1010,7 @@ enum LiveCheck {
         // Unread: stays unread while open, clears on the next visit.
         model.select(.chat(claude.id))
         _ = await wait(15) { !model.timeline(claude.id).isEmpty }
+        try? await Task.sleep(for: .seconds(1))  // opening marks it read; let that land first
         model.markUnread(claude.id)
         try? await Task.sleep(for: .seconds(6))  // one list refresh
         check(model.chat(claude.id)?.unread == true, "unread: marked, and kept while the chat is open")
@@ -1023,6 +1024,21 @@ enum LiveCheck {
         let marker = "srch\(stamp)"
         model.send("Reply with exactly \(marker) and nothing else.", toChat: claude.id)
         check(await wait(180) { agentText(claude.id, marker) && idle(claude.id) }, "search: marker message answered")
+        // A reply watched to the end stays read after leaving; one that
+        // finishes while the user is elsewhere gets the dot.
+        model.select(.chat(codex.id))
+        try? await Task.sleep(for: .seconds(6))  // one list refresh
+        check(model.chat(claude.id)?.unread == false, "unread: a reply watched to the end stays read after leaving")
+        model.select(.chat(claude.id))
+        let away = "away\(stamp)"
+        model.send("Reply with exactly \(away) and nothing else.", toChat: claude.id)
+        _ = await wait(30) { model.chat(claude.id)?.state == .running }
+        model.select(.chat(codex.id))
+        check(await wait(180) { model.chat(claude.id)?.unread == true }, "unread: a reply finished elsewhere shows the dot")
+        model.select(.chat(claude.id))
+        check(await wait(30) { agentText(claude.id, away) && model.chat(claude.id)?.unread == false },
+              "unread: opening it shows the reply and clears the dot")
+        noError("unread after a reply")
         model.switchSidebar(to: .work)
         model.searchText = marker
         check(await wait(30) { model.searchHits.contains { $0.sessionID == claude.id } }, "search: hit found by content")

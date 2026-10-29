@@ -432,5 +432,90 @@ class TimelineSearchForkTests(unittest.TestCase):
         }
 
 
+class TimelineSearchCJKTests(unittest.TestCase):
+    session_id = "cjk-chat"
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.previous_state_dir = hyadex_server.STATE_DIR
+        self.previous_search_db = hyadex_server.HISTORY_SEARCH_DB
+        hyadex_server.STATE_DIR = Path(self.temporary.name)
+        hyadex_server.HISTORY_SEARCH_DB = hyadex_server.STATE_DIR / "history_search.sqlite3"
+        hyadex_server.FORK_INTERNAL_RUN_CACHE.clear()
+        hyadex_server.FORK_INTERNAL_RUN_LOCKS.clear()
+        texts = [
+            ("turn_started", "prompt", "请修复登录页面，然后运行测试"),
+            ("assistant_text", "text", "我们在讨论中文搜索的问题"),
+            ("assistant_text", "text", "テストを実行しました"),
+            ("assistant_text", "text", "검색을 수정했습니다"),
+            ("assistant_text", "text", "Ran pytest then 运行test测试 again"),
+            ("reasoning_summary", "text", "Plain English reasoning about the login page"),
+        ]
+        path = hyadex_server.events_path(self.session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(
+            json.dumps({
+                "id": f"event-{seq}",
+                "session_id": self.session_id,
+                "seq": seq,
+                "type": event_type,
+                "ts": f"2026-07-21T00:00:{seq:02d}Z",
+                "run_id": "run-1",
+                field: text,
+            }, ensure_ascii=False, separators=(",", ":")) + "\n"
+            for seq, (event_type, field, text) in enumerate(texts, start=1)
+        ), encoding="utf-8")
+        connection = hyadex_server.history_search_connection()
+        try:
+            hyadex_server.sync_history_search_index(connection, {self.session_id}, {self.session_id})
+        finally:
+            connection.close()
+
+    def tearDown(self) -> None:
+        hyadex_server.FORK_INTERNAL_RUN_CACHE.clear()
+        hyadex_server.FORK_INTERNAL_RUN_LOCKS.clear()
+        hyadex_server.STATE_DIR = self.previous_state_dir
+        hyadex_server.HISTORY_SEARCH_DB = self.previous_search_db
+        self.temporary.cleanup()
+
+    def seqs(self, query: str) -> list[int]:
+        return [result["seq"] for result in hyadex_server.search_timeline_index(self.session_id, query)["results"]]
+
+    def test_words_inside_chinese_japanese_and_korean_text_match(self) -> None:
+        self.assertEqual(self.seqs("测试"), [5, 1])
+        self.assertEqual(self.seqs("中文"), [2])
+        self.assertEqual(self.seqs("登录页面"), [1])
+        self.assertEqual(self.seqs("実行"), [3])
+        self.assertEqual(self.seqs("テスト"), [3])
+        self.assertEqual(self.seqs("색을"), [4])
+        self.assertEqual(self.seqs("行test"), [5])
+        self.assertEqual(self.seqs("测试 登录"), [1])
+        self.assertEqual(self.seqs('"运行 测试"'), [1])
+        self.assertEqual(self.seqs("测验"), [])
+
+    def test_latin_prefix_search_is_unchanged(self) -> None:
+        self.assertEqual(self.seqs("login"), [6])
+        self.assertEqual(self.seqs("reason"), [6])
+        self.assertEqual(self.seqs("pytest"), [5])
+        self.assertEqual(self.seqs("test"), [5])
+
+    def test_snippets_show_the_original_text(self) -> None:
+        results = hyadex_server.search_timeline_index(self.session_id, "测试")["results"]
+        self.assertEqual(
+            [result["snippet"] for result in results],
+            ["Ran pytest then 运行test测试 again", "请修复登录页面，然后运行测试"],
+        )
+        with patch.object(hyadex_server.STORE, "sessions", {self.session_id: {"id": self.session_id}}):
+            global_results = hyadex_server.search_all_timelines("中文")["results"]
+        self.assertEqual([result["snippet"] for result in global_results], ["我们在讨论中文搜索的问题"])
+
+    def test_punctuation_only_terms_are_ignored(self) -> None:
+        self.assertEqual(self.seqs("login -"), [6])
+        self.assertEqual(self.seqs("测试 ，"), [5, 1])
+        self.assertEqual(hyadex_server.search_timeline_index(self.session_id, "- …")["results"], [])
+        with patch.object(hyadex_server.STORE, "sessions", {self.session_id: {"id": self.session_id}}):
+            self.assertEqual(hyadex_server.search_all_timelines("-")["results"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

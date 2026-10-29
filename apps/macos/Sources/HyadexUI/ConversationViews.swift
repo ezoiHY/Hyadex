@@ -25,7 +25,7 @@ struct ChatDetailView: View {
                              activity: model.activity(forChat: chatID),
                              turnSeconds: model.turnSeconds[chatID] ?? [:],
                              onOpenFile: model.openFile,
-                             onDecide: { model.decide($0, $1, in: chatID) },
+                             onReply: { model.reply($0, $1, in: chatID) },
                              loadMedia: { [model] file in await model.media(chat: chatID, fileID: file.id) },
                              focusID: model.timelineFocus[chatID])
                     // Files dropped anywhere on the conversation are attached to the next message.
@@ -61,16 +61,109 @@ struct ChatDetailView: View {
                              onWithdrawQueued: { model.withdrawQueued($0, in: chatID) },
                              menuItems: { ChatMenuItems(model: model, chat: chat) },
                              leading: { PermissionMenu(model: model, chat: chat) },
-                             trailing: { ChatControls(model: model, chat: chat) })
+                             trailing: { ChatControls(model: model, chat: chat) },
+                             header: AnyView(WorkingDirectoryMenu(model: model, path: chat.cwd, chatID: chat.id)),
+                             chatMentions: model.consultTargets[chatID] ?? [],
+                             onBeginChatMention: { model.loadConsultTargets(chatID) },
+                             onAskChat: { target, question, deep in
+                                 model.askFromChat(target, question: question, deep: deep, inChat: chatID)
+                             },
+                             agentName: chat.backend.displayName)
                 if model.terminalOpen.contains(chatID) {
                     Divider()
                     TerminalDock(model: model, chatID: chatID)
                 }
             }
             .environment(\.messageActions, model.messageActions(chat: chatID))
+            .environment(\.consultActions, model.consultActions(chat: chatID))
             .navigationTitle(chat.title)
-            .navigationSubtitle("\(chat.backend.displayName) · \(model.catalog(for: chat.backend).modelName(chat.model)) · \(chat.cwd)")
+            .toolbar { ConversationMark(backends: [chat.backend], help: chat.backend.displayName) }
         }
+    }
+}
+
+/// Who the conversation is with, left of its title: the provider's mark, or
+/// the members' marks in a group. On macOS 26 it sits on the bar itself, not
+/// in a glass capsule like the buttons.
+struct ConversationMark: ToolbarContent {
+    let backends: [AgentBackend]
+    let help: String
+
+    var body: some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .navigation) { mark }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .navigation) { mark }
+        }
+    }
+
+    private var mark: some View {
+        Group {
+            if backends.count == 1, let backend = backends.first {
+                ProviderMark(backend: backend, size: 18)
+            } else {
+                AvatarStack(backends: backends, size: 18)
+            }
+        }
+        .padding(.horizontal, 2)
+        .help(help)
+        .accessibilityElement()
+        .accessibilityLabel(help)
+    }
+}
+
+/// The agent's working directory, above the composer: reveal, copy, or open a terminal there.
+struct WorkingDirectoryMenu: View {
+    let model: AppModel
+    let path: String
+    /// The chat whose terminal opens there (nil in groups).
+    var chatID: String? = nil
+
+    var body: some View {
+        Menu {
+            if model.serverIsLocal {
+                Button("在 Finder 中显示", systemImage: "folder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: (path as NSString).expandingTildeInPath)])
+                }
+            }
+            Button("拷贝路径", systemImage: "doc.on.doc") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(path, forType: .string)
+            }
+            if let chatID {
+                Button(model.terminalOpen.contains(chatID) ? "隐藏终端" : "在终端中打开", systemImage: "terminal") {
+                    model.toggleTerminal(chatID)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "folder")
+                Text(Self.short(path))
+                    .lineLimit(1)
+            }
+            .font(.uiMeta)
+            .foregroundStyle(.secondary)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("工作目录：\(path)")
+        .accessibilityLabel("工作目录 \(path)")
+    }
+
+    /// A long path keeps its last folders: "…/scratchpad/live-work".
+    static func short(_ path: String, limit: Int = 48) -> String {
+        guard path.count > limit else { return path }
+        var kept: [Substring] = []
+        for part in path.split(separator: "/").reversed() {
+            let candidate = ([part] + kept).joined(separator: "/")
+            if !kept.isEmpty, candidate.count + 2 > limit { break }
+            kept.insert(part, at: 0)
+        }
+        let tail = kept.joined(separator: "/")
+        return "…/" + (tail.count > limit ? String(tail.suffix(limit)) : tail)
     }
 }
 
@@ -86,6 +179,7 @@ private struct ChatControls: View {
             ContextMeter(usage: usage, compact: model.canCompact(chat.id) ? { model.compact(chat.id) } : nil)
                 .onAppear { if chat.backend == .claude { model.loadCommandsIfNeeded(forChat: chat.id) } }
         }
+        let modelName = catalog.modelName(chat.model)
         Menu {
             Picker("模型", selection: Binding(get: { chat.model }, set: { model.setModel($0, forChat: chat.id) })) {
                 ForEach(catalog.modelOptions(current: chat.model)) { option in
@@ -93,21 +187,42 @@ private struct ChatControls: View {
                 }
             }
             .pickerStyle(.inline)
-            Picker("推理强度", selection: Binding(get: { chat.effort }, set: { model.setEffort($0, forChat: chat.id) })) {
-                ForEach(catalog.effortOptions(model: chat.model, current: chat.effort)) { option in
-                    Text(option.label).tag(option.value)
-                }
-            }
-            .pickerStyle(.inline)
         } label: {
-            Text("\(catalog.modelName(chat.model))  \(catalog.effortName(chat.effort, model: chat.model))")
-                .font(.uiSecondary)
+            Text(modelName).font(.uiSecondary)
         }
-        // The system's own trailing chevron, as Codex shows next to its model.
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.visible)
-        .help("模型和推理强度")
-        .accessibilityLabel("模型 \(catalog.modelName(chat.model))，推理强度 \(catalog.effortName(chat.effort, model: chat.model))")
+        .modifier(QuietMenu(help: "模型", label: "模型 \(modelName)"))
+        // A model without effort levels has only its default: no menu.
+        let efforts = catalog.effortOptions(model: chat.model, current: chat.effort)
+        if efforts.count > 1 {
+            let effortName = catalog.effortName(chat.effort, model: chat.model)
+            Menu {
+                Picker("推理强度", selection: Binding(get: { chat.effort }, set: { model.setEffort($0, forChat: chat.id) })) {
+                    ForEach(efforts) { option in
+                        Text(option.label).tag(option.value)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Text(effortName).font(.uiSecondary)
+            }
+            .modifier(QuietMenu(help: "推理强度", label: "推理强度 \(effortName)"))
+        }
+    }
+}
+
+/// A composer menu as quiet text with the system's own trailing chevron, as
+/// Codex shows next to its model.
+private struct QuietMenu: ViewModifier {
+    let help: String
+    let label: String
+
+    func body(content: Content) -> some View {
+        content
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.visible)
+            .fixedSize()
+            .help(help)
+            .accessibilityLabel(label)
     }
 }
 
@@ -117,15 +232,14 @@ private struct ChatMenuItems: View {
     let chat: ChatSummary
 
     var body: some View {
-        Button(model.sideChatOpen == chat.id ? "关闭侧问" : "侧问", systemImage: "text.bubble") {
-            model.toggleSideChat(chat.id)
+        Button(screenshotTitle, systemImage: "camera.viewfinder") {
+            Task { await ScreenCapture.capture(into: model, chat: chat.id, hideApp: true) }
         }
-        .keyboardShortcut("b", modifiers: [.command, .shift])
-        let support = model.goalSupport(forChat: chat.id)
-        Button(model.goals[chat.id]?.isOpen == true ? "编辑目标…" : "设定目标…", systemImage: "target") {
-            model.goalEditor = .chat(chat.id)
-        }
-        .disabled(!support.available)
+    }
+
+    private var screenshotTitle: String {
+        let shortcut = ScreenshotShortcut.current
+        return shortcut == .off ? "截图…" : "截图…（任意 App 中 \(shortcut.label)）"
     }
 }
 
@@ -328,10 +442,6 @@ private struct GroupMenuItems: View {
         .pickerStyle(.inline)
         Toggle("只分析，不改代码", isOn: $analysisOnly)
         Divider()
-        Button(model.goal(forGroup: group.id)?.state?.isOpen == true ? "编辑目标…" : "设定目标…", systemImage: "target") {
-            model.goalEditor = .group(group.id)
-        }
-        .disabled(group.participants.isEmpty)
         Menu("添加成员", systemImage: "person.badge.plus") {
             ForEach(AgentBackend.allCases, id: \.self) { backend in
                 Button(backend.displayName) { model.addMember(backend, toGroup: group.id) }
@@ -357,7 +467,7 @@ struct GroupDetailView: View {
                              onOpenFile: model.openFile,
                              liveTurns: model.groupLive[groupID] ?? [],
                              processSeconds: model.processSeconds[groupID] ?? [:],
-                             onDecideMember: { model.decide($0, $1, inGroup: groupID) })
+                             onReplyMember: { model.reply($0, $1, inGroup: groupID) })
                 if let current = model.goal(forGroup: groupID), current.state?.status != .cleared {
                     let goal = current.state ?? ChatGoal(backend: current.member?.backend ?? .claude,
                                                          text: current.goal.objective, status: .starting)
@@ -380,16 +490,31 @@ struct GroupDetailView: View {
                              onWithdrawQueued: { model.withdrawQueued($0, in: groupID) },
                              menuItems: { GroupMenuItems(model: model, group: group, mode: $mode, analysisOnly: $analysisOnly) },
                              leading: { GroupControls(model: model, group: group, mode: mode, analysisOnly: $analysisOnly) },
-                             trailing: { EmptyView() })
+                             trailing: { EmptyView() },
+                             header: AnyView(WorkingDirectoryMenu(model: model, path: group.cwd)))
             }
             .environment(\.messageActions, model.messageActions(chat: nil))
             .navigationTitle(group.title)
-            .navigationSubtitle("讨论组 · \(group.participants.map { "@" + $0.handle }.joined(separator: " ")) · \(group.cwd)")
+            .toolbar {
+                ConversationMark(backends: group.participants.map(\.backend),
+                                 help: "讨论组 · " + group.participants.map { "@" + $0.handle }.joined(separator: " "))
+            }
         }
     }
 }
 
 extension AppModel {
+    /// Consult cards read the chat's live consults and answer approvals.
+    func consultActions(chat id: String) -> ConsultActions {
+        ConsultActions(
+            record: { [weak self] call in self?.consultRecord(for: call, inChat: id) },
+            decide: { [weak self] consultID, decision in self?.decideConsult(consultID, decision: decision, inChat: id) },
+            cancel: { [weak self] consultID in self?.cancelConsult(consultID, inChat: id) },
+            forward: { [weak self] answer, title in self?.forwardConsultAnswer(answer, from: title, inChat: id) },
+            agentName: chat(id)?.backend.displayName ?? "代理"
+        )
+    }
+
     /// Images resolve through the server (with authentication); a file link
     /// opens that file's diff when the conversation changed it, the file
     /// itself when it is on this Mac, or the server's copy of an artifact.

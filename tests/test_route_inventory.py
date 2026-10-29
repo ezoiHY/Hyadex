@@ -54,10 +54,15 @@ MAC_CLIENT = {
     ("GET", "/api/jobs"),
     ("PATCH", "/api/jobs/{job_id}"),
     ("POST", "/api/jobs/{job_id}/run"),
+    ("GET", "/api/sessions/{session_id}/consults"),
+    ("POST", "/api/sessions/{session_id}/consults"),
+    ("POST", "/api/sessions/{session_id}/consults/{consult_id}/decision"),
+    ("POST", "/api/sessions/{session_id}/consults/{consult_id}/cancel"),
+    ("GET", "/api/consults/active"),
 }
 
-# hyadex_jobs, hyadex_publish, hyadex_emergency and hyadex_notify, run by
-# agents inside a chat.
+# hyadex_jobs, hyadex_publish, hyadex_emergency, hyadex_notify and hyadex_ask,
+# run by agents inside a chat.
 CHAT_HELPERS = {
     ("GET", "/api/agent/sessions/{session_id}/jobs"),
     ("POST", "/api/agent/sessions/{session_id}/jobs"),
@@ -67,6 +72,9 @@ CHAT_HELPERS = {
     ("POST", "/api/agent/sessions/{session_id}/artifacts"),
     ("POST", "/api/agent/sessions/{session_id}/emergency-alerts"),
     ("POST", "/api/agent/sessions/{session_id}/notifications"),
+    ("GET", "/api/agent/sessions/{session_id}/consult-targets"),
+    ("POST", "/api/agent/sessions/{session_id}/consults"),
+    ("GET", "/api/agent/sessions/{session_id}/consults/{consult_id}"),
 }
 
 # Kept for client features that are planned next.

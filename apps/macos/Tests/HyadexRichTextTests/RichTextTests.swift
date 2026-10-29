@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import HyadexRichText
 
@@ -102,5 +103,70 @@ struct MathTests {
         #expect(rendered.image.size.width > 10)
         #expect(rendered.descent > 4)  // the denominator hangs below the baseline
         #expect(MathRenderer.render(#"\frac{a}"#, fontSize: 14, display: false, dark: false) == nil)
+    }
+}
+
+struct SelectableTextTests {
+    @Test func textBlocksShareARunUntilCodeTablesOrImages() {
+        let document = RichDocument.parsed("""
+        Intro ![shot](a.png) after
+
+        - item
+
+        ```swift
+        let a = 1
+        ```
+
+        - with code:
+
+          ```
+          x
+          ```
+
+        > quote
+        """, mentions: [])
+        let kinds = RichSegment.split(document.blocks).map { segment -> String in
+            switch segment {
+            case .text(let blocks): "text\(blocks.count)"
+            case .block(.paragraph): "image"
+            case .block(.code): "code"
+            case .block(.list): "list"
+            case .block: "other"
+            }
+        }
+        // The image breaks its paragraph; a list holding code keeps its own views.
+        #expect(kinds == ["text1", "image", "text2", "code", "list", "text1"])
+    }
+
+    @MainActor @Test func copiesMathAsTeXAndMarkersAsMarkdown() {
+        let document = RichDocument.parsed("""
+        Solve $x^2 = 4$:
+
+        $$x = \\pm 2$$
+
+        1. first
+           - [x] done
+        2. second
+        """, mentions: [])
+        guard case .text(let blocks)? = RichSegment.split(document.blocks).first else {
+            Issue.record("no text run"); return
+        }
+        var builder = TextRunBuilder(dark: false)
+        let view = RichTextView.make()
+        view.setContent(builder.build(blocks))
+        let all = NSRange(location: 0, length: view.textStorage?.length ?? 0)
+        #expect(view.plainText(in: all) == """
+        Solve $x^2 = 4$:
+        $$x = \\pm 2$$
+        1. first
+          - [x] done
+        2. second
+        """)
+        // Text wraps to the proposed width.
+        let long = RichDocument.parsed(String(repeating: "A sentence long enough to wrap. ", count: 12), mentions: [])
+        view.setContent(builder.build(long.blocks))
+        let wide = view.fittingSize(width: 600)
+        let narrow = view.fittingSize(width: 120)
+        #expect(wide.width == 600 && narrow.height > wide.height * 3)
     }
 }

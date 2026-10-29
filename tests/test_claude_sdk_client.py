@@ -613,6 +613,42 @@ class ClaudeSDKSupervisorTests(unittest.IsolatedAsyncioTestCase):
                 next_handle = await self.manager.start_run(chat, "next", run_id="next", options={}, configuration_key="same")
                 self.assertFalse(next_handle.done)
 
+    async def test_run_owner_is_bound_to_the_options_its_client_was_built_from(self) -> None:
+        bound: list[tuple[str, str, str]] = []
+
+        def options(name: str) -> dict[str, Any]:
+            return {"_hyadex_bind_provider_tool_owner": lambda token, run: bound.append((name, token, run))}
+
+        release = asyncio.Event()
+        factory = self.factory
+
+        def slow_factory(client_options: Any) -> FakeClaudeClient:
+            client = factory(client_options)
+            connect = client.connect
+
+            async def slow_connect() -> None:
+                await release.wait()
+                await connect()
+            client.connect = slow_connect  # type: ignore[method-assign]
+            return client
+
+        self.manager._client_factory = slow_factory
+        first, second = options("first"), options("second")
+        start = asyncio.create_task(self.manager.start_run(
+            "chat", "work", run_id="run-1", options=first, configuration_key="same"))
+        for _ in range(100):
+            if factory.clients:
+                break
+            await asyncio.sleep(0)
+        # Command discovery asks for the same chat while its cold connect runs.
+        supervisor = await self.manager.get("chat", options=second, configuration_key="same")
+        self.assertIs(supervisor.options, second)  # the race: options swapped mid-connect
+        release.set()
+        await asyncio.wait_for(start, 2)
+        # The live CLI calls the Hyadex tool of the options it was built with.
+        self.assertIn(("first", supervisor.ownership_token, "run-1"), bound)
+        self.assertNotIn(("second", supervisor.ownership_token, "run-1"), bound)
+
     async def test_goal_clear_rejects_stale_owner_without_query(self) -> None:
         await self.manager.start_run("goal", "work", run_id="current", options={}, configuration_key="same")
         for arguments in ({"run_id": "previous"}, {"run_id": "current", "expected_generation": "previous"}):
@@ -1572,6 +1608,36 @@ class ClaudeSDKSupervisorTests(unittest.IsolatedAsyncioTestCase):
         await client.emit(result)
         self.assertEqual(await asyncio.wait_for(collect(handle), 1), [result])
         self.assertEqual(await handle.wait_result(), result)
+        await manager.close_all()
+
+    async def test_slow_disconnect_is_not_cut_short_by_its_bound(self) -> None:
+        closed = asyncio.Event()
+
+        class SlowClosingClient(FakeClaudeClient):
+            async def disconnect(self) -> None:
+                # Like the SDK: wait for the CLI, then escalate; never abandoned midway.
+                await asyncio.sleep(0.2)
+                await super().disconnect()
+                closed.set()
+
+        manager = ClaudeSDKSupervisorManager(
+            client_factory=lambda options: SlowClosingClient(options),
+            idle_ttl_seconds=None,
+            disconnect_timeout_seconds=0.02,
+        )
+        handle = await manager.start_run("chat", "Prompt", run_id="run", options={}, configuration_key="same")
+        supervisor = manager._supervisors["chat"]
+        client = supervisor._client
+        started = asyncio.get_running_loop().time()
+        await asyncio.wait_for(manager.evict("chat", force=True), 1)
+        self.assertLess(asyncio.get_running_loop().time() - started, 0.15)
+        self.assertFalse(closed.is_set())
+        self.assertTrue(handle.done)
+        await asyncio.wait_for(asyncio.gather(*supervisor.late_connect_cleanup_tasks()), 1)
+        await asyncio.sleep(0)
+        self.assertTrue(closed.is_set())
+        self.assertTrue(client.disconnected)
+        self.assertFalse(supervisor.late_connect_cleanup_tasks())
         await manager.close_all()
 
     async def test_query_delivery_timeout_bounds_cancellation_hostile_write(self) -> None:

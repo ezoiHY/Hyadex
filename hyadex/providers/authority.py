@@ -141,7 +141,7 @@ async def provider_authority_runtime_env(
     return validated
 
 
-PROVIDER_AUTHORITY_ACTIONS = frozenset({"jobs", "publish", "emergency", "notify"})
+PROVIDER_AUTHORITY_ACTIONS = frozenset({"jobs", "publish", "emergency", "notify", "ask"})
 
 
 async def issue_provider_authority(
@@ -867,6 +867,7 @@ def agent_runner_env(
     env["HYADEX_PUBLISH_CLI"] = str(HELPER_SCRIPTS["publish"])
     env["HYADEX_EMERGENCY_CLI"] = str(HELPER_SCRIPTS["emergency"])
     env["HYADEX_NOTIFY_CLI"] = str(HELPER_SCRIPTS["notify"])
+    env["HYADEX_ASK_CLI"] = str(HELPER_SCRIPTS["ask"])
     env.update(validate_provider_runtime_env(provider_runtime_env))
     return env
 

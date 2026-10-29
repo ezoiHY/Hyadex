@@ -37,6 +37,8 @@ class SubscriberHub:
         self._reservations: dict[str, set[WebSocket]] = {}
         self._reasoning_subscribers: set[WebSocket] = set()
         self._reasoning_text_subscribers: set[WebSocket] = set()
+        # Sockets that asked for answers while they are written (text_stream).
+        self._text_subscribers: set[WebSocket] = set()
         self._lock = asyncio.Lock()
 
     def _connection_count_locked(self) -> int:
@@ -80,6 +82,7 @@ class SubscriberHub:
         async with self._lock:
             self._reasoning_subscribers.discard(ws)
             self._reasoning_text_subscribers.discard(ws)
+            self._text_subscribers.discard(ws)
             subs = self._subscribers.get(sid)
             if subs:
                 subs.discard(ws)
@@ -93,6 +96,7 @@ class SubscriberHub:
 
     async def register_accepted(
         self, sid: str, ws: WebSocket, *, reasoning_stream: bool = False, reasoning_text: bool = False,
+        text_stream: bool = False,
     ) -> bool:
         """Activate a reserved socket after it has completed catch-up."""
 
@@ -120,13 +124,17 @@ class SubscriberHub:
                 self._reasoning_subscribers.add(ws)
                 if reasoning_text:
                     self._reasoning_text_subscribers.add(ws)
+            if text_stream:
+                self._text_subscribers.add(ws)
             return True
 
     async def broadcast(self, sid: str, event: dict[str, Any]) -> None:
         transient = event.get("type") == "reasoning_summary_stream"
+        live_text = event.get("type") == "assistant_text_stream"
         async with self._lock:
             subs = [ws for ws in self._subscribers.get(sid, set())
-                    if not transient or ws in self._reasoning_subscribers]
+                    if (not transient or ws in self._reasoning_subscribers)
+                    and (not live_text or ws in self._text_subscribers)]
 
         async def send(ws: WebSocket) -> WebSocket | None:
             try:
@@ -171,6 +179,7 @@ class SubscriberHub:
                     current.discard(ws)
                     self._reasoning_subscribers.discard(ws)
                     self._reasoning_text_subscribers.discard(ws)
+                    self._text_subscribers.discard(ws)
                 if not current:
                     self._subscribers.pop(sid, None)
 

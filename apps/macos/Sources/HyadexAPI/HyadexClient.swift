@@ -383,6 +383,46 @@ public struct HyadexClient: Sendable {
         try await request("GET", "api/sessions/\(id)/side-chat", nativeToken: true)
     }
 
+    // MARK: Chat consults
+
+    /// What this chat asked other chats (`outgoing`) and was asked (`incoming`), newest first.
+    public func consults(_ id: String) async throws -> JSON {
+        try await get("api/sessions/\(id)/consults")
+    }
+
+    /// The user asks this chat directly; `deep` lets a read-only copy of it investigate.
+    public func askChat(_ id: String, question: String, deep: Bool) async throws -> JSON {
+        try await post("api/sessions/\(id)/consults", [
+            "mode": .string(deep ? "deep" : "basic"), "question": .string(question),
+        ])
+    }
+
+    /// Approves (`allow`, `always`) or declines (`deny`) a deep consult this chat's agent asked for.
+    public func decideConsult(_ id: String, consultID: String, decision: String) async throws -> JSON {
+        try await post("api/sessions/\(id)/consults/\(consultID)/decision", ["decision": .string(decision)])
+    }
+
+    public func cancelConsult(_ id: String, consultID: String) async throws -> JSON {
+        try await post("api/sessions/\(id)/consults/\(consultID)/cancel")
+    }
+
+    /// The chats this chat may ask (same project, accepting questions), most recent first.
+    public func consultTargets(_ id: String) async throws -> JSON {
+        try await get("api/sessions/\(id)/consult-targets")
+    }
+
+    /// The user asks `chat` a question from this chat (@ in its composer); the answer stays in this chat's view.
+    public func askFromChat(_ id: String, chat: String, question: String, deep: Bool) async throws -> JSON {
+        try await post("api/sessions/\(id)/ask", [
+            "chat": .string(chat), "mode": .string(deep ? "deep" : "basic"), "question": .string(question),
+        ])
+    }
+
+    /// Consults still waiting or answering, across all chats.
+    public func activeConsults() async throws -> JSON {
+        try await get("api/consults/active")
+    }
+
     public func askSideChat(_ id: String, requestID: String, question: String, sideChatID: String,
                             after: String?) async throws -> JSON {
         try await request("POST", "api/sessions/\(id)/side-chat", body: [
@@ -407,10 +447,11 @@ public struct HyadexClient: Sendable {
         _ = try await request("DELETE", "api/sessions/\(id)/queue/\(queuedID)")
     }
 
-    /// Answers a pending approval. `backend` is "claude" or "codex".
-    public func resolveInteraction(_ id: String, backend: String, interactionID: String, decision: String) async throws {
+    /// Answers a pending approval, question or form with the `response` body its
+    /// kind expects. `backend` is "claude" or "codex".
+    public func resolveInteraction(_ id: String, backend: String, interactionID: String, response: JSON) async throws {
         _ = try await post("api/sessions/\(id)/\(backend)/interactions/\(interactionID)/resolve",
-                           ["response": ["decision": .string(decision)]])
+                           ["response": response])
     }
 
     /// Unified diff of the files a run changed.

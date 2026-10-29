@@ -31,6 +31,7 @@ from hyadex.api import (
 from hyadex.api.app import ApplicationBindings, create_app
 from hyadex.api.autopilot import create_autopilot_router
 from hyadex.api.common import require_native_admin_control
+from hyadex.api.consults import create_consult_router
 from hyadex.api.groups import create_group_router
 from hyadex.core.config import (
     AGENT_TOKEN,
@@ -74,6 +75,7 @@ from hyadex.core.state import (
     USER_ROUTE,
 )
 from hyadex.features import side_question_service as side_questions
+from hyadex.features.consult_runtime import CONSULTS
 from hyadex.features.group_runtime import AUTOPILOT, GROUPS
 from hyadex.features.usage import HUB, join_task_despite_caller_cancellation
 from hyadex.ops import instances as server_instances
@@ -86,7 +88,7 @@ from hyadex.providers.codex.tools import (
     request_exact_codex_provider_mcp_secret,
 )
 import hyadex.providers.codex.turns
-from hyadex.providers.registry import request_client_is_provider_helper_local
+from hyadex.providers.registry import authorize_provider_action, request_client_is_provider_helper_local
 
 logger = logging.getLogger("hyadex-server")
 
@@ -358,6 +360,9 @@ router.include_router(side_questions.create_side_question_router(
     session_exists=native_session_available,
     runtime=SIDE_QUESTIONS,
 ))
+
+
+router.include_router(create_consult_router(CONSULTS, authorize_agent=authorize_provider_action))
 
 
 router.include_router(create_autopilot_router(AUTOPILOT))

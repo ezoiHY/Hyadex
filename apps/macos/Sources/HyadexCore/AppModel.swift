@@ -45,6 +45,31 @@ public enum JobTarget: Hashable, Sendable {
 }
 
 /// A chat or group being renamed.
+/// What the project sheet creates or edits.
+public enum ProjectEditorTarget: Identifiable, Hashable, Sendable {
+    /// A new project, optionally for a directory, and a chat to move into it.
+    case new(directory: String?, chatID: String?)
+    case edit(String)
+
+    public var id: String {
+        switch self {
+        case .new(let directory, let chatID): "new-\(directory ?? "")-\(chatID ?? "")"
+        case .edit(let name): "edit-" + name
+        }
+    }
+}
+
+/// Where the new-chat sheet starts: a project's directory and name.
+public struct NewChatPreset: Hashable, Sendable {
+    public let directory: String?
+    public let project: String?
+
+    public init(directory: String?, project: String?) {
+        self.directory = directory
+        self.project = project
+    }
+}
+
 public struct RenameTarget: Identifiable, Hashable, Sendable {
     public let item: SidebarItem
     public let title: String
@@ -128,6 +153,13 @@ public final class AppModel {
     public var loadingOlder: Set<String> = []
     public var jobEditor: JobEditorTarget?
     public var renaming: RenameTarget?
+    public var projectEditor: ProjectEditorTarget?
+    /// Set before showing the new-chat sheet from a project.
+    public var newChatPreset: NewChatPreset?
+    /// The user's projects on the current server (see `ChatProject`).
+    public var projects: [ChatProject] = [] {
+        didSet { saveProjects() }
+    }
     /// The chat's advanced settings or the group's settings, open in a sheet.
     public var settingsEditor: SettingsEditorTarget?
     /// A chat or group waiting for the user to confirm its deletion.
@@ -141,6 +173,12 @@ public final class AppModel {
     /// Side chats by chat id, and the chat whose side-chat panel is open.
     public var sideChats: [String: SideChat] = [:]
     public var sideChatOpen: String?
+    /// Each open chat's consults: what it asked other chats, and what it was asked.
+    public var consults: [String: ChatConsults] = [:]
+    /// Consults still waiting or answering on the server (sidebar marks, approvals).
+    public var activeConsults: [ActiveConsult] = []
+    /// The chats each chat may ask, for the @ list in its composer.
+    public var consultTargets: [String: [ConsultTarget]] = [:]
     public var sideChatErrors: [String: String] = [:]
     /// Subagents by chat id.
     public var subagents: [String: [Subagent]] = [:]
@@ -468,9 +506,16 @@ public final class AppModel {
         drafts[key] = message.text
     }
 
+    /// Answers an approval with the choice meaning `decision` (allow, for the session, deny).
     public func decide(_ approvalID: String, _ decision: ApprovalDecision, in key: String) {
+        guard let reply = timeline(key).first(where: { $0.id == approvalID })?.reply(for: decision) else { return }
+        self.reply(approvalID, reply, in: key)
+    }
+
+    /// Answers an approval, question or form in a chat.
+    public func reply(_ interactionID: String, _ reply: InteractionReply, in key: String) {
         guard let live = requireLive() else { return }
-        Task { await live.decide(approvalID, decision, in: key) }
+        Task { await live.reply(interactionID, reply, in: key) }
     }
 
     public func togglePinned(_ id: String) {
@@ -494,19 +539,33 @@ public final class AppModel {
         if items.pendingApproval != nil {
             return LiveActivity(kind: .waiting, label: "等待你批准", since: since)
         }
-        if turnStartedAt[id] == nil, !pending.isEmpty {
-            return LiveActivity(kind: .starting, label: "正在启动 \(chat.backend.displayName)", since: since)
+        if items.pendingForm != nil {
+            return LiveActivity(kind: .waiting, label: "等待你回答", since: since)
         }
-        for item in items.reversed() {
+        if consults[id]?.outgoing.contains(where: { $0.status == .awaitingApproval }) == true {
+            return LiveActivity(kind: .waiting, label: "等待你批准深度询问", since: since)
+        }
+        if turnStartedAt[id] == nil, !pending.isEmpty {
+            return LiveActivity(kind: .starting, label: "正在启动 \(chat.backend.displayName)", since: since,
+                                backend: chat.backend)
+        }
+        var turn = items[...]
+        for (index, item) in items.enumerated().reversed() {
             if case .tool(_, let kind, let title, _, .running, _) = item {
                 return LiveActivity(kind: .tool, label: kind.activeVerb, detail: title, since: since)
             }
-            if case .message(_, let author, _, _, _, _, _) = item, author.kind == .user { break }
+            if case .consult(_, let call) = item, call.running {
+                return LiveActivity(kind: .tool, label: "正在询问", detail: "「\(call.target)」", since: since)
+            }
+            if case .message(_, let author, _, _, _, _, _) = item, author.kind == .user {
+                turn = items[(index + 1)...]
+                break
+            }
         }
-        if let reasoning = liveReasoning[id], !reasoning.isEmpty {
-            return LiveActivity(kind: .thinking, label: "正在思考", detail: reasoning, since: since)
-        }
-        return LiveActivity(kind: .thinking, label: "正在思考", since: since)
+        // Claude's summarized thinking arrives in bursts that finish at once,
+        // so the turn's last finished thought stays in view until the next one.
+        let thought = liveReasoning[id].flatMap(ThoughtSummary.line) ?? ThoughtSummary.latest(in: turn).flatMap(ThoughtSummary.line)
+        return LiveActivity(kind: .thinking, label: "正在思考", detail: thought, since: since, backend: chat.backend)
     }
 
     // MARK: Usage and media
@@ -732,10 +791,22 @@ public final class AppModel {
         guard let live = requireLive() else { return }
         for url in urls where !url.hasDirectoryPath {
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
-            let attachment = DraftAttachment(name: url.lastPathComponent, size: size)
+            let attachment = DraftAttachment(name: url.lastPathComponent, size: size, localURL: url)
             attachments[id, default: []].append(attachment)
             Task { await live.upload(url, attachment: attachment.id, toChat: id) }
         }
+    }
+
+    /// The chat a screenshot goes to: the one open in the window.
+    public var screenshotTarget: String? {
+        if case .chat(let id)? = selection, let chat = chat(id), !chat.archived { return id }
+        return nil
+    }
+
+    /// Adds a screenshot to a chat's composer and shows that chat.
+    public func attachScreenshot(_ url: URL, toChat id: String) {
+        if selection != .chat(id) { select(.chat(id)) }
+        attach([url], toChat: id)
     }
 
     public func removeAttachment(_ attachmentID: String, fromChat id: String) {
@@ -1075,6 +1146,73 @@ public final class AppModel {
         Task { await live.cancelSide(requestID, inChat: chatID) }
     }
 
+    // MARK: Chat consults
+
+    /// The consult behind an `ask` call in this chat: by its id once the call
+    /// returned, before that the newest one with its question and chat.
+    public func consultRecord(for call: ConsultCall, inChat chatID: String) -> ConsultRecord? {
+        let outgoing = consults[chatID]?.outgoing ?? []
+        if let consultID = call.consultID ?? call.receipt?.consultID {
+            return outgoing.first { $0.id == consultID }
+        }
+        let mode: ConsultMode = call.deep ? .deep : .basic
+        return outgoing.first { record in
+            record.mode == mode && record.question == call.question
+                && (record.targetTitle.caseInsensitiveCompare(call.target) == .orderedSame || record.targetID == call.target)
+        }
+    }
+
+    public func refreshConsults(_ chatID: String) {
+        guard let live else { return }
+        Task { await live.refreshConsults(chatID) }
+    }
+
+    /// Answers a deep consult's approval: "allow", "always" (this chat may ask that one deeply), or "deny".
+    public func decideConsult(_ consultID: String, decision: String, inChat chatID: String) {
+        guard let live = requireLive() else { return }
+        Task { await live.decideConsult(consultID, decision: decision, inChat: chatID) }
+    }
+
+    public func cancelConsult(_ consultID: String, inChat chatID: String) {
+        guard let live = requireLive() else { return }
+        Task { await live.cancelConsult(consultID, inChat: chatID) }
+    }
+
+    /// Asks this chat directly; `deep` lets a read-only copy of it check its files first.
+    public func askChat(_ rawQuestion: String, deep: Bool, inChat chatID: String) {
+        guard let live = requireLive() else { return }
+        let question = rawQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty else { return }
+        sideChatErrors[chatID] = nil
+        Task { await live.askChat(question, deep: deep, inChat: chatID) }
+    }
+
+    /// Loads the chats this chat may ask, once the user starts typing @.
+    public func loadConsultTargets(_ chatID: String) {
+        guard let live else { return }
+        Task { await live.loadConsultTargets(chatID) }
+    }
+
+    /// The user asks another chat from this one; the answer appears here, for the user.
+    public func askFromChat(_ target: ConsultTarget, question rawQuestion: String, deep: Bool, inChat chatID: String) {
+        guard let live = requireLive() else { return }
+        let question = rawQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty else { return }
+        Task { await live.askFromChat(target, question: question, deep: deep, inChat: chatID) }
+    }
+
+    /// Puts another chat's answer in this chat's composer, quoted, to pass on to its agent.
+    public func forwardConsultAnswer(_ answer: String, from title: String, inChat chatID: String) {
+        let quoted = answer.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n")
+        let existing = drafts[chatID] ?? ""
+        drafts[chatID] = "「\(title)」的回答：\n\(quoted)\n\n" + existing
+    }
+
+    /// Whether a read-only copy of this chat is answering another chat's deep question now.
+    public func isBeingConsulted(_ chatID: String) -> Bool {
+        activeConsults.contains { $0.targetID == chatID && $0.mode == .deep && $0.status == .running }
+    }
+
     /// Starts a fresh side chat (Codex: with the conversation as it is now).
     public func clearSide(_ chatID: String) {
         guard let live = requireLive(), let side = sideChats[chatID] else { return }
@@ -1090,10 +1228,17 @@ public final class AppModel {
 
     // MARK: Group members
 
+    /// Answers a member's approval with the choice meaning `decision`.
     public func decide(_ approval: GroupApproval, _ decision: ApprovalDecision, inGroup groupID: String) {
+        guard let reply = approval.reply(for: decision) else { return }
+        self.reply(approval, reply, inGroup: groupID)
+    }
+
+    /// Answers a member's approval, question or form.
+    public func reply(_ approval: GroupApproval, _ reply: InteractionReply, inGroup groupID: String) {
         guard let live = requireLive() else { return }
         groupApprovals[groupID]?.removeAll { $0.id == approval.id }
-        Task { await live.decide(approval, decision, inGroup: groupID) }
+        Task { await live.reply(approval, reply, inGroup: groupID) }
     }
 
     public func permissionChoices(for member: Participant) -> [String] {
@@ -1135,11 +1280,74 @@ public final class AppModel {
     }
 
     @discardableResult
-    public func createChat(backend: AgentBackend, model: String, cwd: String, permission: String) -> String {
+    public func createChat(backend: AgentBackend, model: String, cwd: String, permission: String,
+                           project: String? = nil) -> String {
         guard let live = requireLive() else { return "" }
         let preset = PermissionPreset.presets(for: backend).first { $0.label == permission }
-        Task { await live.createChat(backend: backend, model: model.isEmpty ? nil : model, cwd: cwd, permission: preset) }
+        Task {
+            await live.createChat(backend: backend, model: model.isEmpty ? nil : model, cwd: cwd, permission: preset,
+                                  folder: project)
+        }
         return ""
+    }
+
+    // MARK: Projects
+
+    /// The sidebar's chat groups (pinned and archived chats stay in their own sections).
+    public var projectSections: [ProjectSection] {
+        let sections = ProjectGrouping.sections(chats: visibleChats, projects: projects)
+        return searchText.isEmpty ? sections : sections.filter { !$0.chats.isEmpty }
+    }
+
+    /// Adds a project, or updates the one named `previous`: its chats move along with a new name.
+    public func saveProject(_ project: ChatProject, replacing previous: String? = nil) {
+        let name = project.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != ProjectGrouping.serverDefault else { return }
+        let directory = project.directory.map(ProjectGrouping.normalized).flatMap { $0.isEmpty ? nil : $0 }
+        let saved = ChatProject(name: String(name.prefix(80)), directory: directory)
+        if let previous, let index = projects.firstIndex(where: { $0.name == previous }) {
+            projects[index] = saved
+            if previous != saved.name {
+                for chat in chats where chat.folder == previous { moveChat(chat.id, toProject: saved.name) }
+            }
+        } else if let index = projects.firstIndex(where: { $0.name == saved.name }) {
+            projects[index] = saved
+        } else {
+            projects.append(saved)
+        }
+    }
+
+    /// Removes a project; its chats are kept and go back to grouping by directory.
+    public func deleteProject(_ name: String) {
+        projects.removeAll { $0.name == name }
+        for chat in chats where chat.folder == name { moveChat(chat.id, toProject: nil) }
+    }
+
+    /// Moves a chat into a project, or out of every project (nil).
+    public func moveChat(_ id: String, toProject name: String?) {
+        guard let live = requireLive(), let index = chats.firstIndex(where: { $0.id == id }) else { return }
+        chats[index].folder = name
+        Task { await live.updateChat(id, fields: ["folder": .string(name ?? ProjectGrouping.serverDefault)]) }
+    }
+
+    /// The new-chat sheet, starting in a project's directory.
+    public func newChat(in section: ProjectSection) {
+        newChatPreset = NewChatPreset(directory: section.directory ?? projects.first { $0.name == section.projectName }?.directory,
+                                      project: section.projectName)
+        sheet = .newChat
+    }
+
+    private static func projectsKey(_ server: UUID) -> String { "chatProjects." + server.uuidString }
+
+    static func savedProjects(for server: UUID) -> [ChatProject] {
+        guard let data = UserDefaults.standard.data(forKey: projectsKey(server)) else { return [] }
+        return (try? JSONDecoder().decode([ChatProject].self, from: data)) ?? []
+    }
+
+    private func saveProjects() {
+        // While disconnected (or switching servers) the list is not the server's.
+        guard isLive, let data = try? JSONEncoder().encode(projects) else { return }
+        UserDefaults.standard.set(data, forKey: Self.projectsKey(currentServerID))
     }
 
     // MARK: Groups
@@ -1299,6 +1507,7 @@ public final class AppModel {
                 servers.append(server)
             }
             currentServerID = server.id
+            projects = Self.savedProjects(for: server.id)
             if remember, server.id != managedLocalServerID {
                 if defaultPlaceholder?.id == server.id { defaultPlaceholder = nil }
                 TokenStore.setToken(token, for: server.id)
@@ -1339,6 +1548,7 @@ public final class AppModel {
 
     private func resetServerState() {
         isLive = false
+        projects = []
         dropTerminalSessions()
         chats = []; groups = []; runs = []; jobs = []; timelines = [:]; queues = [:]
         pendingSends = [:]; liveReasoning = [:]; turnStartedAt = [:]; turnSeconds = [:]
@@ -1346,7 +1556,7 @@ public final class AppModel {
         usage = [:]; contextUsage = [:]; goals = [:]; goalSupport = [:]; goalBusy = []
         commands = [:]; mcp = [:]; mcpBusy = []; attachments = [:]; emergencies = []
         olderHistory = []; loadingOlder = []; searchHits = []; searching = false
-        timelineFocus = [:]; sideChats = [:]; sideChatErrors = [:]; subagents = [:]
+        timelineFocus = [:]; sideChats = [:]; sideChatErrors = [:]; subagents = [:]; consults = [:]; activeConsults = []; consultTargets = [:]
         markedUnread = []; drafts = [:]; terminalOpen = []; mediaCache = [:]
         selection = nil; lastSelection = [:]; selectedFilePath = nil; showChanges = false
         goalEditor = nil; jobEditor = nil; renaming = nil; settingsEditor = nil; pendingDeletion = nil

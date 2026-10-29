@@ -88,8 +88,9 @@ enum LiveMapping {
     static func chat(_ json: JSON, previous: ChatSummary?) -> ChatSummary? {
         guard let id = json["id"].string,
               let backend = json["backend"].string.flatMap(AgentBackend.named) else { return nil }
-        var state: ActivityState = LiveMapping.activeEventTypes.contains(json["latest_event_type"].string ?? "")
-            ? .running : .idle
+        // Servers that report `running` know; older ones leave it to the latest event.
+        let running = json["running"].bool ?? LiveMapping.activeEventTypes.contains(json["latest_event_type"].string ?? "")
+        var state: ActivityState = running ? .running : .idle
         if json["claude_needs_user_action"].bool == true || json["codex_needs_user_action"].bool == true {
             state = .needsAction
         }
@@ -111,7 +112,9 @@ enum LiveMapping {
             unread: json["manual_unread"].bool == true || agentSeq > readSeq,
             tokensUsed: totals?.total ?? previous?.tokensUsed ?? 0,
             tokenTotals: totals ?? previous?.tokenTotals,
-            archived: json["archived"].bool == true
+            archived: json["archived"].bool == true,
+            folder: json["folder"].string.map { $0.trimmingCharacters(in: .whitespaces) }
+                .flatMap { $0.isEmpty || $0 == ProjectGrouping.serverDefault ? nil : $0 }
         )
     }
 
