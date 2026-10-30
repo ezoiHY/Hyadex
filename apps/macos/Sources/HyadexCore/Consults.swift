@@ -353,10 +353,16 @@ public struct ConsultReceipt: Hashable, Sendable {
     }
 
     /// From the tool's output: a JSON receipt, or plain text when the helper failed early.
+    /// Codex hands the receipt over as an MCP result, its text inside `content`.
     public static func parse(output: String, failed: Bool) -> ConsultReceipt {
-        let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let data = text.data(using: .utf8), let json = try? JSONDecoder().decode(JSON.self, from: data),
-              json["ok"].bool != nil else {
+        var text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        var json = text.data(using: .utf8).flatMap { try? JSONDecoder().decode(JSON.self, from: $0) }
+        if let wrapper = json, wrapper["ok"].bool == nil, !wrapper["content"].array.isEmpty {
+            text = wrapper["content"].array.compactMap { $0["text"].string }.joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            json = text.data(using: .utf8).flatMap { try? JSONDecoder().decode(JSON.self, from: $0) }
+        }
+        guard let json, json["ok"].bool != nil else {
             return ConsultReceipt(ok: false, error: text.isEmpty ? (failed ? "询问失败" : nil) : text)
         }
         return ConsultReceipt(

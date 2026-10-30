@@ -237,18 +237,22 @@ public struct SessionProjection: Sendable {
             guard !files.isEmpty else { return }
             append(.changes(id: id, set: FileChangeSet(files: files)))
             if let runID = event["run_id"].string { diffsToLoad[id] = runID }
-        case "turn_finished":
+        // Codex records a turn the user stopped as finished with `stopped`; it reads
+        // as stopped, the way Codex shows an interrupted turn.
+        case "turn_finished" where event["stopped"].bool != true:
             running = false
             closeTurn(at: time)
             pending.removeAll()
             lastActivity = time
             if lastAssistantText == nil, let text = event["result_text"].text { lastAssistantText = text }
             settleRunningTools(as: .succeeded)
-        case "turn_stopped", "turn_aborted":
+        case "turn_finished", "turn_stopped", "turn_aborted":
             running = false
             closeTurn(at: time)
             pending.removeAll()
             settleRunningTools(as: .failed)
+            // One stop recorded twice (a hard stop and the runner's own finish) shows once.
+            if case .divider(_, "已停止")? = items.last { return }
             append(.divider(id: id, text: "已停止"))
         case "turn_failed", "error":
             running = false

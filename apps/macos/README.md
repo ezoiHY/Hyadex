@@ -51,6 +51,16 @@ or adopted. Only one app may own this instance at a time. The backend is started
 with `--exit-with-parent`, so it also shuts down if the app crashes or is
 force-quit, and the next launch can start the instance again.
 
+Phones: Settings → 服务器 → **允许手机连接** restarts this backend on every
+interface at port 7870 and shows a QR code for each LAN or Tailscale address,
+which the Hyadex Android app scans. The code holds the token, so keep it to
+yourself. If another server already answers on 7870 (an installed one, say),
+the switch says so and the backend keeps running as it was. Turning it off
+restarts the backend on this Mac only, with the same token. With the macOS
+firewall on, macOS asks whether Python may accept incoming connections; allow
+it, or phones cannot connect (System Settings → Network → Firewall → Options
+changes it later).
+
 Settings → 服务器: enter the address (for example `http://127.0.0.1:7870`, a LAN
 address or a Tailscale `100.x` address) and the access token, then 连接. The token
 is kept in the login keychain and is sent only in the `Authorization` header. Use
@@ -386,15 +396,14 @@ text only).
 ## Known gaps
 
 - Autopilot receipts list changed files without diffs in the inspector.
-- Assistant text arrives as whole messages (the server does not stream tokens).
 - Math covers the LaTeX agents usually write (fractions, roots, scripts, big
   operators, delimiters, accents, matrices, cases, aligned); an unsupported
   command shows the formula's source instead.
 - Not exercised end to end yet: manually connecting through the Settings form
-  with a remote token (keychain), creating groups from their sheet, Stop and
-  queued-message editing on a live server, and reconnection after an external
-  server restart. Managed local startup/reconnection and chat creation are
-  verified above.
+  with a remote token (keychain), creating groups from their sheet, editing a
+  queued message on a live server, and reconnection after an external server
+  restart. Managed local startup/reconnection and chat creation are verified
+  above.
 - Ad-hoc signing only; the keychain may ask again after each rebuild.
 - Slash suggestions, attachments and side questions are offered in chats, not in
   group messages (the server's group message has no attachments).

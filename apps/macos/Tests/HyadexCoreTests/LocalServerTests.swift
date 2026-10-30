@@ -93,6 +93,34 @@ struct LocalServerTests {
         #expect(second.errorMessage?.contains("限定时间") == true)
     }
 
+    /// 允许手机连接: every interface at a fixed port, so a paired phone keeps its address.
+    @Test func phoneAccessListensOnEveryInterfaceAtAFixedPort() {
+        var config = LocalServerConfiguration(sourceDirectory: nil, homeDirectory: URL(fileURLWithPath: "/tmp"))
+        #expect(config.bindAddress == "127.0.0.1")
+        #expect(config.launchPort == 0)
+        config.phoneAccess = true
+        #expect(config.bindAddress == "0.0.0.0")
+        #expect(config.launchPort == LocalServerConfiguration.phonePort)
+        config.port = 17_870
+        #expect(config.launchPort == 17_870)
+    }
+
+    /// A port another server answers on fails before anything is stopped or changed.
+    @Test func phoneAccessLeavesEverythingAsItWasWhenItsPortIsTaken() async throws {
+        let (descriptor, port) = try boundSocket()
+        defer { close(descriptor) }
+        #expect(listen(descriptor, 1) == 0)
+        let controller = LocalServerController(configuration: .init(sourceDirectory: nil, homeDirectory: URL(fileURLWithPath: "/tmp"), port: port))
+        do {
+            _ = try await controller.setPhoneAccess(true)
+            Issue.record("a taken port should fail")
+        } catch LocalServerError.phonePortTaken(let taken) {
+            #expect(taken == port)
+        }
+        #expect(!controller.configuration.phoneAccess)
+        #expect(controller.state == .idle)
+    }
+
     @Test func explicitEnvironmentOverridesDoNotFallBack() {
         let config = LocalServerConfiguration.current(environment: [
             "HYADEX_LOCAL_SERVER_SOURCE": "/does-not-exist/hyadex",
@@ -219,6 +247,42 @@ struct LocalServerLiveTests {
         }
         await first.shutdown()
         await competitor.shutdown()
+        try FileManager.default.removeItem(at: home)
+    }
+}
+
+/// Opt in like the test above: phones reach the backend only while 允许手机连接 is on.
+@MainActor
+struct LocalServerPhoneAccessLiveTests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["HYADEX_LOCAL_SERVER_LIVE_TEST"] == "1"))
+    func phonesReachTheBackendOnlyWhileAllowed() async throws {
+        let home = try temporaryHome()
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let config = LocalServerConfiguration(sourceDirectory: source, homeDirectory: home, instanceName: "mac-phone-test",
+                                              port: 17_871, phoneAccess: true)
+        let controller = LocalServerController(configuration: config)
+        do {
+            let open = try await controller.start()
+            let local = HyadexClient(endpoint: open.endpoint, token: open.token)
+            // The pairing addresses come from the server, as the settings code shows them.
+            let addresses = try await local.request("GET", "api/connection-addresses", nativeToken: true)["urls"].array
+                .compactMap(\.string)
+            let lan = try #require(addresses.first, "this Mac has no LAN or Tailscale address")
+            let remote = HyadexClient(endpoint: ServerEndpoint(name: "phone", baseURL: try #require(URL(string: lan))), token: open.token)
+            #expect(try await remote.health().raw["auth_required"].bool == true)
+            // Back to this Mac only: the same token, no longer reachable from the LAN.
+            let closed = try #require(try await controller.setPhoneAccess(false))
+            #expect(closed.token == open.token)
+            #expect(try await HyadexClient(endpoint: closed.endpoint, token: closed.token).health().raw["auth_required"].bool == true)
+            await #expect(throws: HyadexClientError.self) { try await remote.request("GET", "api/health", timeout: 2) }
+        } catch {
+            await controller.shutdown()
+            try? FileManager.default.removeItem(at: home)
+            throw error
+        }
+        await controller.shutdown()
         try FileManager.default.removeItem(at: home)
     }
 }

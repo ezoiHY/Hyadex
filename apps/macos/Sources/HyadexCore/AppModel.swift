@@ -1457,6 +1457,49 @@ public final class AppModel {
         }
     }
 
+    // MARK: Phones
+
+    /// Phones on the LAN or tailnet may reach the app-owned backend.
+    public var phoneAccess: Bool { localServer.configuration.phoneAccess }
+
+    /// 设置 › 服务器 › 允许手机连接: restarts a running backend on every interface
+    /// (or back on this Mac only), and reconnects to it if it is the server in use.
+    public func setPhoneAccess(_ allowed: Bool) async {
+        errorMessage = nil
+        let before = localServer.endpoint
+        let inUse = before != nil && currentServerID == managedLocalServerID
+        do {
+            let local = try await localServer.setPhoneAccess(allowed)
+            UserDefaults.standard.set(allowed, forKey: LocalServerConfiguration.phoneAccessKey)
+            guard let local else { return }
+            managedLocalServerID = local.endpoint.id
+            managedLocalToken = local.token
+            if inUse { await connect(to: local.endpoint, token: local.token, remember: false) }
+        } catch {
+            // A failed restart started the backend again as it was, at a new port.
+            if inUse, localServer.endpoint != before, let local = try? await localServer.start() {
+                await connect(to: local.endpoint, token: local.token, remember: false)
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Links a phone opens to connect (`hyadex://connect?address=…&token=…`), one per
+    /// address the backend can be reached at, Tailscale first. Empty when it is on this Mac only.
+    public func phoneLinks() async -> [(address: String, link: String)] {
+        // Asked of the app's own backend, even while another server is in use.
+        guard phoneAccess, let endpoint = localServer.endpoint, let token = managedLocalToken,
+              let json = try? await HyadexClient(endpoint: endpoint, token: token)
+                  .request("GET", "api/connection-addresses", nativeToken: true) else { return [] }
+        return json["urls"].array.compactMap(\.string).compactMap { address in
+            var components = URLComponents()
+            components.scheme = "hyadex"
+            components.host = "connect"
+            components.queryItems = [URLQueryItem(name: "address", value: address), URLQueryItem(name: "token", value: token)]
+            return components.string.map { (address, $0) }
+        }
+    }
+
     /// Reuses the app-owned local credentials without writing them to the keychain.
     public func reconnect(to server: ServerEndpoint) async {
         if server.id == managedLocalServerID {

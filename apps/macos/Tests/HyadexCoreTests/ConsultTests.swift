@@ -35,6 +35,11 @@ struct ConsultTests {
         #expect(!denied.ok && denied.status == .denied && denied.error == "the user declined this deep consult")
         let plain = ConsultReceipt.parse(output: "Hyadex helper timed out", failed: true)
         #expect(!plain.ok && plain.error == "Hyadex helper timed out")
+        // Codex's form (seen live): the receipt is the text of an MCP result.
+        let codex = ConsultReceipt.parse(
+            output: #"{"content":[{"type":"text","text":"{\"ok\":true,\"consult_id\":\"cns_2\",\"status\":\"completed\",\"answer\":\"One file: README.md\"}"}],"structuredContent":null,"_meta":null}"#,
+            failed: false)
+        #expect(codex.ok && codex.answer == "One file: README.md" && codex.consultID == "cns_2")
     }
 
     @Test func theTimelineShowsAConsultCardThatFinishesWithItsReceipt() {

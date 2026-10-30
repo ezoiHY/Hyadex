@@ -8,7 +8,7 @@ import Observation
 @MainActor @Observable
 public final class LocalServerController {
     public private(set) var state: LocalServerState = .idle
-    public let configuration: LocalServerConfiguration
+    public private(set) var configuration: LocalServerConfiguration
     public var isStarting: Bool { state == .starting }
     public var isRunning: Bool { state == .running }
     public var endpoint: ServerEndpoint? { connection?.endpoint }
@@ -79,6 +79,31 @@ public final class LocalServerController {
         }
     }
 
+    /// Opens the backend to phones on the LAN or tailnet, or keeps it on this Mac;
+    /// a running backend restarts to apply it (its token stays the same). Should
+    /// that restart fail, the backend starts again as it was before the error is thrown.
+    public func setPhoneAccess(_ allowed: Bool) async throws -> LocalServerConnection? {
+        guard configuration.phoneAccess != allowed else { return nil }
+        var next = configuration
+        next.phoneAccess = allowed
+        // A fixed port another server answers on fails before the backend is touched.
+        let port = next.launchPort
+        if port != 0, port != connection?.endpoint.baseURL.port, Self.answers(on: port) {
+            throw LocalServerError.phonePortTaken(port)
+        }
+        let wasRunning = isRunning || isStarting
+        if wasRunning { await shutdown() }
+        configuration = next
+        guard wasRunning else { return nil }
+        do {
+            return try await start()
+        } catch let error where !(error is CancellationError) {
+            configuration.phoneAccess = !allowed
+            _ = try? await start()
+            throw error
+        }
+    }
+
     /// Called by application termination, not when switching servers or closing
     /// a window. The long grace window leaves the backend time to stop providers.
     public func shutdown() async {
@@ -116,14 +141,14 @@ public final class LocalServerController {
         guard fm.isExecutableFile(atPath: python.path) else { throw LocalServerError.missingPython(source.path) }
 
         let endpointID = try prepareOwnership()
-        let port = try availablePort(config.port)
+        let port = try availablePort(config.launchPort)
         let endpoint = ServerEndpoint(id: endpointID, name: "这台 Mac", baseURL: URL(string: "http://127.0.0.1:\(port)")!)
         let child = Process()
         child.executableURL = python
         // --exit-with-parent: the backend shuts itself down if this app crashes
         // or is force-quit, so it never holds the instance for the next launch.
         child.arguments = [source.appending(path: "scripts/dev_server.py").path,
-                           "--instance", config.instanceName, "--port", String(port), "--bind", "127.0.0.1",
+                           "--instance", config.instanceName, "--port", String(port), "--bind", config.bindAddress,
                            "--exit-with-parent"]
         child.currentDirectoryURL = source
         var environment = ProcessInfo.processInfo.environment
@@ -269,9 +294,17 @@ public final class LocalServerController {
     }
 
     private func availablePort(_ requested: Int) throws -> Int {
+        // A server still answering on the port has it. Connections only lingering
+        // after the previous backend (TIME_WAIT, as when 允许手机连接 restarts it)
+        // do not: the backend reuses the address, and so does this check.
+        if requested != 0, Self.answers(on: requested) { throw LocalServerError.portUnavailable(requested) }
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw LocalServerError.portUnavailable(requested) }
         defer { close(descriptor) }
+        if requested != 0 {
+            var reuse: Int32 = 1
+            setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+        }
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
@@ -287,6 +320,30 @@ public final class LocalServerController {
         }
         guard named == 0 else { throw LocalServerError.portUnavailable(requested) }
         return Int(in_port_t(bigEndian: address.sin_port))
+    }
+
+    /// Whether a server accepts connections on the port, asked without blocking:
+    /// a port that is only bound may never answer, so the question gives up after 300 ms.
+    private static func answers(on port: Int) -> Bool {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+        _ = fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK)
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(port).bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let started = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        if started == 0 { return true }
+        guard errno == EINPROGRESS else { return false }
+        var waiting = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+        guard poll(&waiting, 1, 300) == 1 else { return false }
+        var failure: Int32 = 0
+        var length = socklen_t(MemoryLayout<Int32>.size)
+        return getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &failure, &length) == 0 && failure == 0
     }
 
     private func stopProcess() async {

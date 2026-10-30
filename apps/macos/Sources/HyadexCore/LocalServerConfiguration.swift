@@ -9,16 +9,20 @@ public struct LocalServerConfiguration: Sendable {
     public var homeDirectory: URL
     public var instanceName: String
     public var port: Int
+    /// Phones on the LAN or tailnet may connect: the backend listens on every
+    /// interface at a fixed port (unless one was given), so a paired phone keeps working.
+    public var phoneAccess: Bool
     public var startupTimeout: TimeInterval
     public var shutdownTimeout: TimeInterval
 
     public init(sourceDirectory: URL?, homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-                instanceName: String = "mac-app", port: Int = 0,
+                instanceName: String = "mac-app", port: Int = 0, phoneAccess: Bool = false,
                 startupTimeout: TimeInterval = 35, shutdownTimeout: TimeInterval = 80) {
         self.sourceDirectory = sourceDirectory.map(Self.canonicalDirectory)
         self.homeDirectory = Self.canonicalDirectory(homeDirectory)
         self.instanceName = instanceName
         self.port = port
+        self.phoneAccess = phoneAccess
         self.startupTimeout = startupTimeout
         self.shutdownTimeout = shutdownTimeout
     }
@@ -43,8 +47,17 @@ public struct LocalServerConfiguration: Sendable {
             ?? FileManager.default.homeDirectoryForCurrentUser
         return Self(sourceDirectory: source, homeDirectory: home,
                     instanceName: environment["HYADEX_LOCAL_SERVER_INSTANCE"] ?? "mac-app",
-                    port: environment["HYADEX_LOCAL_SERVER_PORT"].map { Int($0) ?? -1 } ?? 0)
+                    port: environment["HYADEX_LOCAL_SERVER_PORT"].map { Int($0) ?? -1 } ?? 0,
+                    phoneAccess: UserDefaults.standard.bool(forKey: phoneAccessKey))
     }
+
+    /// 设置 › 服务器 › 允许手机连接.
+    public static let phoneAccessKey = "localServerPhoneAccess"
+    /// The port phones pair with: the server's documented default.
+    public static let phonePort = 7870
+
+    var bindAddress: String { phoneAccess ? "0.0.0.0" : "127.0.0.1" }
+    var launchPort: Int { port != 0 ? port : phoneAccess ? Self.phonePort : 0 }
 
     public var stateDirectory: URL { homeDirectory.appending(path: ".hyadex-instances/\(instanceName)") }
     public var configDirectory: URL { homeDirectory.appending(path: ".config/hyadex-server-instances/\(instanceName)") }
@@ -91,6 +104,7 @@ public enum LocalServerError: LocalizedError, Sendable {
     case alreadyOwned
     case stopping
     case portUnavailable(Int)
+    case phonePortTaken(Int)
     case unsafeFile
     case launchFailed
     case exited(Int32, String)
@@ -106,6 +120,7 @@ public enum LocalServerError: LocalizedError, Sendable {
         case .alreadyOwned: "另一个 Hyadex 应用正在管理这个本地实例。请使用那个窗口，或退出后重试。"
         case .stopping: "本地服务正在停止，请稍后再启动。"
         case .portUnavailable(let port): "本地端口 \(port) 已被占用，未停止任何服务。请使用其他端口后重试。"
+        case .phonePortTaken(let port): "端口 \(port) 已被其他服务占用（可能是已安装的 Hyadex 服务），本地服务保持原样。手机可以直接连接那个服务。"
         case .unsafeFile: "本地服务配置不是当前用户的普通私有文件，无法安全启动。请检查所选实例的目录权限。"
         case .launchFailed: "无法启动本地 Python。请重新运行 uv sync --locked --python 3.13 准备后端环境。"
         case .exited(let code, let detail): "本地服务启动失败（退出码 \(code)）。\(detail)"

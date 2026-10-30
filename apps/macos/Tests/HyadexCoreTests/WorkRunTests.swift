@@ -45,6 +45,24 @@ struct WorkRunTests {
         #expect(projection.workSeconds == ["t1": 10, "c1": 29])
     }
 
+    /// Codex records a turn the user stopped as finished with `stopped` (the server's real event).
+    @Test func aTurnTheUserStoppedReadsAsStopped() {
+        var projection = SessionProjection(backend: .codex, cwd: "/w")
+        projection.apply([
+            ["seq": 1, "type": "turn_started", "id": "u1", "prompt": "Run sleep 60", "ts": Self.at(0)],
+            ["seq": 2, "type": "tool_started", "tool": ["id": "c1", "name": "Bash", "input": ["command": "sleep 60"]],
+             "ts": Self.at(2)],
+            ["seq": 3, "type": "turn_finished", "id": "f1", "exit_code": .null, "result_text": "", "stopped": true,
+             "ts": Self.at(12)],
+            // The same stop recorded again shows once.
+            ["seq": 4, "type": "turn_stopped", "id": "s1", "ts": Self.at(12)],
+        ])
+        #expect(projection.running == false)
+        #expect(projection.items.contains { if case .tool(_, _, _, _, .failed, _) = $0 { true } else { false } })
+        #expect(projection.items.filter { if case .divider(_, "已停止") = $0 { true } else { false } }.count == 1)
+        #expect(projection.items.last.map { if case .divider(_, "已停止") = $0 { true } else { false } } == true)
+    }
+
     @Test func codexImageGenerationHasAName() {
         #expect(SessionProjection.describe(tool: ["name": "ImageGeneration", "input": [:]], cwd: "/w").title == "生成图片")
     }
