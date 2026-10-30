@@ -3,6 +3,22 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-30 — 0.1.0-beta.1: Hyadex's own version line
+
+- **Hyadex numbers its own releases**, starting at 0.1.0-beta.1, instead of the
+  1.0.7-beta.11 it carried over from AgentsDock (whose attribution stays in
+  NOTICE). The server, the Mac app and the Android app share one version, read
+  from the repository's `VERSION` file, and the server reports it as
+  `server_version`.
+- Android: `versionName` is that version and `versionCode` follows from it,
+  each beta before its release (0.1.0-beta.1 is 10001, 0.1.0 is 10099). Mac:
+  `CFBundleShortVersionString` is that version. `pyproject.toml` and `uv.lock`
+  say 0.1.0b1, the same version in Python's spelling.
+- Verification: the release APK reports versionCode 10001 and versionName
+  0.1.0-beta.1 and is signed with the release key; the Mac app's Info.plist
+  and the server both say 0.1.0-beta.1; `uv lock --check` passes; the 11
+  installer and startup tests that read `VERSION` pass.
+
 ## 2026-10-30 — Android release signing
 
 - **Release APKs are signed with a release key** that stays outside the

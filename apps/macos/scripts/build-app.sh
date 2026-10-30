@@ -7,8 +7,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 CONFIG="${CONFIG:-release}"
 APP="dist/Hyadex.app"
-VERSION="${APP_VERSION:-0.1.0}"
 SOURCE_ROOT="$(cd ../.. && pwd)"
+# One version for the whole project, from the repository's VERSION file.
+VERSION="${APP_VERSION:-$(tr -d '[:space:]' < "$SOURCE_ROOT/VERSION")}"
 
 echo "==> swift build -c $CONFIG"
 swift build -c "$CONFIG" --product Hyadex

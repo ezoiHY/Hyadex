@@ -6,6 +6,15 @@ plugins {
   alias(libs.plugins.kotlin.serialization)
 }
 
+// One version for the whole project, from the repository's VERSION file: MAJOR.MINOR.PATCH,
+// or MAJOR.MINOR.PATCH-beta.N with N from 1 to 98. The version code puts each beta before
+// its release: 0.1.0-beta.1 is 10001 and 0.1.0 is 10099.
+val hyadexVersion = providers.fileContents(layout.projectDirectory.file("../../../VERSION")).asText.get().trim()
+val hyadexVersionCode = Regex("""(\d{1,3})\.(\d{1,2})\.(\d{1,2})(?:-beta\.([1-9]|[1-8]\d|9[0-8]))?""")
+  .matchEntire(hyadexVersion)?.destructured
+  ?.let { (major, minor, patch, beta) -> major.toInt() * 1_000_000 + minor.toInt() * 10_000 + patch.toInt() * 100 + (beta.toIntOrNull() ?: 99) }
+  ?: error("VERSION should read MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N, not \"$hyadexVersion\"")
+
 // Release builds are signed with the key that ~/.android/hyadex-release.properties
 // names (storeFile, storePassword, keyAlias, keyPassword), or the file HYADEX_SIGNING
 // points at. The key stays outside the repository.
@@ -19,8 +28,8 @@ android {
     applicationId = "dev.hyadex.android"
     minSdk = 29
     targetSdk = 37
-    versionCode = 1
-    versionName = "0.1.0"
+    versionCode = hyadexVersionCode
+    versionName = hyadexVersion
   }
 
   signingConfigs {
