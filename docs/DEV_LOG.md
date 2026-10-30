@@ -3,6 +3,160 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-30 — Pair a phone by QR code; Android review fixes, motion and answers from other chats
+
+- **Mac: 允许手机连接.** A switch in Settings → 服务器 restarts the app-owned
+  backend on every interface at port 7870 (otherwise it stays on this Mac, on a
+  random port) and shows a QR code for each LAN or Tailscale address. The code
+  holds `hyadex://connect?address=…&token=…`.
+  - If another server already answers on 7870 (an installed one, say), the
+    switch says so and the backend keeps running as it was. A restart that
+    fails starts the backend again as before.
+  - The code always comes from the app's own backend, and switching no longer
+    moves you off another server you are using.
+  - A fixed port still in TIME_WAIT after a restart is reused.
+- **Codex answers from other chats (both apps).** When a Codex chat asked
+  another chat, its card showed the raw MCP result; it now shows the answer.
+- **Android: pairing.**
+  - 扫码连接 scans the Mac's code, and 粘贴连接链接 reads a copied link. Opening
+    the link on the phone works too.
+  - The form fills in and connecting stays your tap. A link that arrives while
+    the app is connected asks before switching servers.
+  - The camera is asked for only when you scan. If you refuse, the screen says
+    how to allow it or paste the link; the scanner's misleading "camera
+    problem" dialog no longer appears.
+  - The scanner's prompt sits above the navigation bar; before, it was hidden
+    under it.
+- **Android: motion.**
+  - A chat slides in over the list. The predictive back gesture shrinks it
+    toward your finger with the list behind, and it springs back if you cancel.
+  - Swipe a chat left to archive it, with 撤销 in the snackbar.
+  - A 新消息 / 回到最新 pill appears when you have scrolled up.
+  - Rows fade in and move into place, folds open with a spring, and the send
+    button and chevrons animate.
+  - The splash screen uses the app's background, light or dark (Android 12+).
+- **Android: answers from other chats.** When the agent asks another chat, a
+  card shows the question and the answer, marked 深度 for a deep one. A deep
+  question waits in the timeline for 拒绝, 允许 or 这个聊天以后都允许, and the
+  status line says 正在询问.
+- **Android: fixes from a review.**
+  - Taps on an open chat no longer reach the list underneath.
+  - After Stop, queued messages show as paused with 继续发送; loading older
+    history no longer shows them twice.
+  - Sending while an image is still uploading, or after it failed, keeps the
+    text and says why.
+  - An approval cannot be sent twice: the card shows your choice at once and
+    goes back if sending fails.
+  - Connection:
+    - A banner shows while the stream reconnects.
+    - A refused token or a chat that is gone ends the stream.
+    - A chat archived or deleted elsewhere closes with a note.
+    - The list says when the server cannot be reached, and settings offer
+      重新连接.
+  - Rotating the phone keeps the open chat and its stream.
+  - A notification or link is not handled again when the app is restored.
+  - Notifications:
+    - None while notifications are turned off.
+    - 回复完成 only when the chat wrote a new reply.
+    - Stopped and failed turns say so.
+  - Long model names no longer push the send button off the screen.
+- **Android: lighter.**
+  - The list polls a summary of each chat and fetches the full records only
+    every 15th time. It stops drawing while a chat covers it.
+  - Running marks and shimmer animate in the draw phase only.
+  - Long answers are parsed off the main thread and cached. Tool input and
+    output kept in memory are cut to 4,000 characters.
+  - Photos are decoded two at a time.
+  - The stream reconnects with jittered backoff, which resets only after a
+    stable connection.
+  - The token is read from the Keystore off the main thread.
+  - Touch targets are larger, and insets cover landscape and cutouts.
+- Verification:
+  - 18 JVM unit tests, including:
+    - consult cards with Codex's receipt;
+    - a consult settled by Stop;
+    - trimmed events;
+    - a stop recorded twice;
+    - pairing links in the form the Mac writes.
+  - 126 Swift tests, including a taken phone port that leaves the backend
+    alone.
+  - The opt-in live test: with phone access on, the backend answered on this
+    Mac's LAN address with the same token; after it was turned off, it did not.
+  - The Mac's code, drawn by the same CoreImage code at its size, decodes to
+    the exact link with the ZXing version the phone uses.
+  - Android 17 emulator against an isolated `android2` instance:
+    - a deep question approved from the card, with its answer;
+    - Stop with a queued message, then 继续发送;
+    - swipe to archive and 撤销 (exactly two requests);
+    - the reconnect banner while the server was stopped and restarted;
+    - rotation with no new socket;
+    - predictive back;
+    - pairing by link;
+    - the camera refused, then allowed;
+    - the R8 release build paired and opened a chat.
+- Not verified:
+  - A real phone.
+  - Scanning a code with a real camera (the emulator's camera cannot show one).
+  - The Mac pairing panel on screen: it is built and tested, but no one has
+    looked at it.
+- Not yet:
+  - The server resends a live answer's whole text every 50 ms. An incremental
+    frame would cut traffic on long answers.
+  - A deep question waiting in a chat that is not open shows only once you open
+    that chat.
+  - No baseline profile.
+
+## 2026-10-30 — Android app (first version)
+
+- **New client: `apps/android`.** Kotlin and Jetpack Compose in one Gradle
+  module, in the Mac app's style (light and dark), built with
+  `apps/android/scripts/build-apk.sh` into a 3.5 MB APK.
+  - Connect with an address and token; the token is encrypted with an Android
+    Keystore key.
+  - Work chats by project, with search, pinned, unread and running marks, pull
+    to refresh. Long press to pin, mark unread, rename or archive; + creates a
+    Claude or Codex chat in a server folder.
+  - The timeline ports the Mac app's projection and row grouping: one "已处理"
+    row per run of work, Markdown with highlighted code, images opened full
+    screen in the app, older history paged in as you scroll up.
+  - Live: the open chat's event stream with the reasoning and answer lanes;
+    the status line shows thinking or the running tool.
+  - Composer: text and images, Stop, queued messages, and the permission
+    preset, model and effort in the provider's own terms.
+  - Approvals, Codex questions and MCP forms answered in place.
+  - While a chat works and the app is out of sight, a notification says when
+    the reply is done or an approval waits; tapping it opens the chat.
+- **Kept light.**
+  - No polling or socket in the background; the stream resumes after the last
+    `seq`.
+  - Event bursts are folded into one rebuild per frame.
+  - The notification watch runs only while a chat is busy, for at most two
+    hours.
+  - Photos are sent as JPEG of at most 2560 px.
+  - Release builds are shrunk by R8.
+- **Stopped turns (both apps).** A turn the user stopped shows as stopped,
+  with the interrupted command failed. The server records it as `turn_finished`
+  with `stopped` (Codex and Claude); before, the Mac app showed no divider and
+  marked the command as succeeded. One stop recorded twice shows once. Covered
+  by a new Swift test using the server's real event, with 123 Swift tests passing.
+- Verification:
+  - 14 JVM unit tests, ported from the Mac projection tests plus stop,
+    approvals, subagents, live text, the status line, forms and rows.
+  - Android 17 emulator against an isolated `android` instance, with real
+    Claude and Codex:
+    - A Claude file write approved from the card.
+    - A Codex command with its live commentary.
+    - An uploaded image that Claude described correctly.
+    - Stop mid-command.
+    - The app sent to the background mid-turn, catching up after `after=seq`.
+    - A "done" notification that opened its chat.
+    - New chat and rename; history paging (page size 6, four pages); dark mode.
+    - The R8 release build (list, history, images, a live turn).
+- Not yet:
+  - Groups, Autopilot, scheduled jobs, side questions and @ questions.
+  - The terminal, full diffs, and QR pairing (the Mac app shows no code yet).
+  - No real phone tested.
+
 ## 2026-10-29 — Images: Codex generations shown, work rows timed, in-app preview
 
 - **Codex image generation.** A finished `imageGeneration` item is published

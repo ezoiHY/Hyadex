@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hyadex servers are reached by LAN or Tailscale address over plain HTTP
+     (Tailscale traffic is already encrypted). The user types the address,
+     so cleartext cannot be limited to known hosts. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

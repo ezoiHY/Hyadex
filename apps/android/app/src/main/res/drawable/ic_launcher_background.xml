@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Mac icon's night sky, light at the top and dark at the bottom. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient android:angle="270" android:startColor="#FF454980" android:endColor="#FF19193F" />
+</shape>

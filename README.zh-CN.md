@@ -90,6 +90,7 @@ Hyadex 是一个很小的自托管服务器，专门做这件事；再配一个�
 flowchart LR
     subgraph 客户端
         Mac["Hyadex for macOS<br/>SwiftUI"]
+        Android["Hyadex for Android<br/>Jetpack Compose"]
         Other["任意 HTTP / WebSocket 客户端"]
     end
 
@@ -109,6 +110,7 @@ flowchart LR
     end
 
     Mac -- "Bearer 令牌 · 局域网 / Tailscale" --> API
+    Android -- "Bearer 令牌 · 局域网 / Tailscale" --> API
     Other --> API
     API --> Features --> Core --> Providers
     API --> Core
@@ -163,6 +165,13 @@ flowchart LR
 | `HyadexApp` | 窗口、设置、菜单和开发检查 |
 
 服务器的原始事件在客户端投影成时间线条目。列表靠轮询刷新；当前打开的聊天或讨论组通过 WebSocket 实时更新。
+
+### Android 应用
+
+[`apps/android`](apps/android/README.md) 里的客户端用 Kotlin 和 Jetpack Compose 编写，只有一个 Gradle 模块，
+不用依赖注入、数据库或导航库。它的 `core` 包移植了 Mac 应用的事件投影（连同测试），所以同一个聊天在两边显示得一样。
+目前覆盖 Work 聊天：实时时间线、发送文字和图片、停止、排队、审批和表单、向其他聊天询问的回答、模型、推理强度和权限，
+以及 app 不在前台时回复完成或有审批在等的通知。扫描 Mac 应用显示的二维码就能配对。release 包约 3.8 MB。
 
 ### 界面设计
 
@@ -223,6 +232,19 @@ open dist/Hyadex.app
 
 令牌请妥善保管，不要把端口直接暴露到公网。
 
+### 运行 Android 应用
+
+```bash
+cd apps/android
+scripts/build-apk.sh     # 生成 dist/Hyadex.apk，需要 Android SDK
+adb install -r dist/Hyadex.apk
+```
+
+在 Mac 上打开 设置 → 服务器 → **允许手机连接**，再用手机上的**扫码连接**扫描它显示的二维码
+（两台设备在同一个 Wi-Fi，或都在同一个 tailnet 里）。如果 Mac 开着防火墙，系统会问是否允许 Python 接受传入连接，
+要点允许，否则手机连不上；以后可以在 系统设置 → 网络 → 防火墙 → 选项 里修改。
+如果服务器是你自己运行的，启动时加上 `--bind 0.0.0.0`（或绑定到它的 Tailscale 地址），再在手机上填写这个地址和令牌。
+
 ## API
 
 REST 接口在 `/api` 下，用 `Authorization: Bearer <token>` 认证，完整接口定义在 `/openapi.json`。
@@ -261,6 +283,7 @@ curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 | [讨论组](docs/GROUP_DISCUSSIONS.md) | 路由、token 预算规则、API |
 | [自动接力](docs/AUTOPILOT.md) | 角色、选项和验证关卡 |
 | [Mac 应用](apps/macos/README.md) | 使用方法、和服务器的交互方式、开发检查 |
+| [Android 应用](apps/android/README.md) | 安装、连接、覆盖哪些功能、怎样保持轻量 |
 | [命名实例](docs/NAMED_INSTANCES_TESTING.md) | 一台机器上运行多个隔离的服务器 |
 | [开发日志](docs/DEV_LOG.md) | 面向用户的改动，按时间倒序 |
 
@@ -274,7 +297,8 @@ curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 ## 状态
 
 Hyadex 处于早期开发阶段。服务器和 macOS 应用已经在真实的 Claude Code 和 Codex 上做过端到端验证；
-应用目前从源码构建，使用临时签名。Android 客户端在计划中。
+应用目前从源码构建，使用临时签名。第一版 Android 客户端覆盖 Work 聊天，
+已经在 Android 17 模拟器上对真实的 Claude Code 和 Codex 做过验证。
 
 ## 来历与许可
 

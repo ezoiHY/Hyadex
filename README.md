@@ -95,6 +95,7 @@ a native Mac app rather than a terminal.
 flowchart LR
     subgraph Clients
         Mac["Hyadex for macOS<br/>SwiftUI"]
+        Android["Hyadex for Android<br/>Jetpack Compose"]
         Other["Any HTTP / WebSocket client"]
     end
 
@@ -114,6 +115,7 @@ flowchart LR
     end
 
     Mac -- "Bearer token · LAN / Tailscale" --> API
+    Android -- "Bearer token · LAN / Tailscale" --> API
     Other --> API
     API --> Features --> Core --> Providers
     API --> Core
@@ -177,6 +179,17 @@ with no third-party packages:
 
 Raw server events are projected into timeline items on the client. Lists are
 polled; the open chat or group streams live over its WebSocket.
+
+### Android app
+
+The client in [`apps/android`](apps/android/README.md) is Kotlin and Jetpack
+Compose in one Gradle module, without dependency injection, a database or a
+navigation library. Its `core` package ports the Mac app's event projection
+(with the same tests), so a chat reads the same on both. It covers Work chats:
+the live timeline, sending text and images, Stop, the queue, approvals and
+forms, answers from other chats, model, effort and permissions, and a
+notification when a reply is done or an approval waits while the app is away.
+It pairs by scanning the code the Mac app shows. Release builds are about 3.8 MB.
 
 ### UI design
 
@@ -245,6 +258,22 @@ its token.
 
 Keep the token private and never expose the port directly to the internet.
 
+### Run the Android app
+
+```bash
+cd apps/android
+scripts/build-apk.sh     # dist/Hyadex.apk, needs the Android SDK
+adb install -r dist/Hyadex.apk
+```
+
+On the Mac, turn on Settings → 服务器 → **允许手机连接** and scan the code it
+shows with 扫码连接 on the phone (same Wi-Fi, or both on your tailnet). If the
+Mac's firewall is on, macOS asks whether Python may accept incoming
+connections; allow it, or the phone cannot connect (System Settings → Network →
+Firewall → Options changes it later). For a server you run yourself, start it
+with `--bind 0.0.0.0` (or on its Tailscale address) and enter that address and
+the token on the phone.
+
 ## API
 
 REST under `/api` with `Authorization: Bearer <token>`; the full schema is at
@@ -285,6 +314,7 @@ Settings are environment variables; an installed service also reads
 | [Group discussions](docs/GROUP_DISCUSSIONS.md) | Routing, token budget rules, API |
 | [Autopilot](docs/AUTOPILOT.md) | Roles, options and the verification gate |
 | [Mac app](apps/macos/README.md) | Using the app, how it talks to the server, development checks |
+| [Android app](apps/android/README.md) | Installing, connecting, what it covers, how it stays light |
 | [Named instances](docs/NAMED_INSTANCES_TESTING.md) | Several isolated servers on one machine |
 | [Development log](docs/DEV_LOG.md) | User-facing changes, newest first |
 
@@ -299,7 +329,8 @@ isolated server.
 
 Hyadex is in early development. The server and the macOS app have been
 exercised end to end against real Claude Code and Codex; the app is built from
-source and signed ad hoc. An Android client is planned.
+source and signed ad hoc. The first Android app covers Work chats and has been
+exercised on an Android 17 emulator against real Claude Code and Codex.
 
 ## History and license
 

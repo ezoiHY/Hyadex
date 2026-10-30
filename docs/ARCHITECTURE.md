@@ -96,6 +96,14 @@ the old global names to `SERVER`, `RUNS` and `PROVIDERS`. Tests that compile
 single definitions in isolation read `tests/server_source.text()`, the
 combined source of the server modules.
 
+## Clients
+
+The clients live under `apps/` and use only the public REST and WebSocket API:
+`apps/macos` (SwiftUI, SwiftPM) and `apps/android` (Kotlin, Jetpack Compose,
+one Gradle module). Each projects a chat's event log into its timeline on the
+device. The Android `core` package is a port of the Mac `HyadexCore`
+projection, so a change to how events read goes into both, with their tests.
+
 ## Removed features
 
 Cross-chat messaging is removed: the cross-chat stores, mailbox and the chats

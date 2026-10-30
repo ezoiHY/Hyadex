@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Hyadex" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF242424</item>
+        <item name="android:windowSplashScreenBackground">#FF242424</item>
+    </style>
+</resources>
