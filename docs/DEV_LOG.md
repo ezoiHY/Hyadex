@@ -3,6 +3,15 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-30 — 0.1.0-beta.2
+
+- **Released as 0.1.0-beta.2:** the Android app's settings and the Mac's Work
+  tools (the entry below). The APK's versionCode is 10002 and it is signed with
+  the same key as 0.1.0-beta.1, so it installs over it as an update.
+- Verification: the release APK reports versionCode 10002 and versionName
+  0.1.0-beta.2 and is signed with the release key; `uv lock --check` passes;
+  the installer, startup and release-manifest tests that read `VERSION` pass.
+
 ## 2026-10-30 — Android: settings and the Mac's Work tools
 
 The Android app now does what the Mac app does with Work chats (groups,
