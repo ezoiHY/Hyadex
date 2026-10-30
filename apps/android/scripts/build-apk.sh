@@ -1,5 +1,6 @@
 #!/bin/bash
-# Builds dist/Hyadex.apk (release: shrunk by R8, signed with the local debug key).
+# Builds dist/Hyadex.apk (release: shrunk by R8, signed with the release key that
+# ~/.android/hyadex-release.properties names, or the local debug key without one).
 #   scripts/build-apk.sh
 # Needs the Android SDK (Android Studio installs it) and a JDK 17+; Android
 # Studio's bundled JDK is used when JAVA_HOME is not set.
@@ -19,3 +20,9 @@ fi
 mkdir -p dist
 cp app/build/outputs/apk/release/app-release.apk dist/Hyadex.apk
 echo "==> dist/Hyadex.apk ($(du -h dist/Hyadex.apk | cut -f1 | tr -d ' '))"
+# Say which key signed it: a phone only takes an update signed with the same key.
+APKSIGNER="$(ls -d "$SDK"/build-tools/*/apksigner 2>/dev/null | tail -1 || true)"
+if [ -n "$APKSIGNER" ]; then
+    PATH="$JAVA_HOME/bin:$PATH" "$APKSIGNER" verify --print-certs dist/Hyadex.apk \
+        | sed -n 's/^Signer #1 certificate DN: /==> signed by /p'
+fi

@@ -13,8 +13,16 @@ adb install -r dist/Hyadex.apk
 ```
 
 The script needs the Android SDK (Android Studio installs it) and uses Android
-Studio's JDK when `JAVA_HOME` is not set. The release APK is signed with the
-local debug key, so it installs directly; publishing would need a release key.
+Studio's JDK when `JAVA_HOME` is not set.
+
+Release builds are signed with the key that `~/.android/hyadex-release.properties`
+names (`storeFile`, absolute or relative to that file, `storePassword`,
+`keyAlias`, `keyPassword`; `HYADEX_SIGNING` points at another file). The key
+stays outside the repository. Without it, release builds fall back to the local
+debug key, and the script says which key signed the APK. Android installs an
+update only when it is signed with the same key: uninstall a build signed with
+the other key first, and back up the key together with its properties file,
+since without them installed copies can no longer be updated.
 
 ## Connect
 

@@ -3,6 +3,18 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-30 — Android release signing
+
+- **Release APKs are signed with a release key** that stays outside the
+  repository: `~/.android/hyadex-release.properties` names it (or the file
+  `HYADEX_SIGNING` points at). Without one, release builds fall back to the
+  local debug key, and `scripts/build-apk.sh` says which key signed the APK.
+- A phone holding a debug-signed build must uninstall it once before installing
+  a release-signed one; Android only updates an app with the same key.
+- Verification: `apksigner` verifies `dist/Hyadex.apk` (APK Signature Scheme
+  v2), and its signer certificate's SHA-256 matches the new key. The 18 JVM
+  tests pass with no release key present. Not yet installed on a device.
+
 ## 2026-10-30 — Pair a phone by QR code; Android review fixes, motion and answers from other chats
 
 - **Mac: 允许手机连接.** A switch in Settings → 服务器 restarts the app-owned

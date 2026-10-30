@@ -1,8 +1,16 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
 }
+
+// Release builds are signed with the key that ~/.android/hyadex-release.properties
+// names (storeFile, storePassword, keyAlias, keyPassword), or the file HYADEX_SIGNING
+// points at. The key stays outside the repository.
+val releaseKeyFile = File(System.getenv("HYADEX_SIGNING") ?: "${System.getProperty("user.home")}/.android/hyadex-release.properties")
+val releaseKey = releaseKeyFile.takeIf { it.isFile }?.let { file -> Properties().apply { file.inputStream().use { load(it) } } }
 
 android {
   namespace = "dev.hyadex.android"
@@ -15,14 +23,26 @@ android {
     versionName = "0.1.0"
   }
 
+  signingConfigs {
+    releaseKey?.let { key ->
+      create("release") {
+        storeFile = releaseKeyFile.resolveSibling(key.getProperty("storeFile"))
+        storePassword = key.getProperty("storePassword")
+        keyAlias = key.getProperty("keyAlias")
+        keyPassword = key.getProperty("keyPassword")
+      }
+    }
+  }
+
   buildTypes {
     release {
       // R8 drops what the app never calls (most of the icon set, unused library code).
       isMinifyEnabled = true
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      // Signed with the local debug key until there is a release key, so the APK installs as is.
-      signingConfig = signingConfigs.getByName("debug")
+      // The release key when this machine has one; otherwise the local debug key, so a
+      // fresh checkout or CI still builds an installable APK.
+      signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
     }
   }
   compileOptions {
