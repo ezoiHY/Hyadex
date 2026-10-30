@@ -192,7 +192,8 @@ flowchart LR
 - Apple 芯片的 macOS，或带 `systemctl --user` 的 Linux
 - [`uv`](https://docs.astral.sh/uv/)（会自动装好 Python 3.13）、`git`，终端功能需要 `tmux`
 - 服务器上已安装**并登录**了 Claude Code 和/或 Codex
-- Mac 应用需要 macOS 15 或更高版本，以及 Swift 6 工具链（Xcode 或 Command Line Tools）
+- Mac 应用可以在 macOS 15 或更高版本上运行。构建它需要 Xcode 26 或更高版本，或者对应版本的
+  Command Line Tools（要有 macOS 26 SDK）；Xcode 26 本身要求 macOS 15.6 或更高版本
 
 ### 运行服务器
 

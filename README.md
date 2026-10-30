@@ -216,7 +216,8 @@ It pairs by scanning the code the Mac app shows. Release builds are about 3.8 MB
 - macOS on Apple silicon, or Linux with `systemctl --user`
 - [`uv`](https://docs.astral.sh/uv/) (it installs Python 3.13), `git`, and `tmux` for terminals
 - Claude Code and/or Codex installed **and signed in** on the server machine
-- For the Mac app: macOS 15 or later and a Swift 6 toolchain (Xcode or the Command Line Tools)
+- For the Mac app: macOS 15 or later. Building it needs Xcode 26 or later, or its
+  Command Line Tools (the macOS 26 SDK); Xcode 26 runs on macOS 15.6 or later
 
 ### Run the server
 

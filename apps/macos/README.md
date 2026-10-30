@@ -11,7 +11,9 @@ API. It is built with SwiftPM and does not need an Xcode project.
 ## Requirements
 
 - macOS 15 or later (the app adopts the current system design on macOS 26+).
-- A Swift 6 toolchain: Xcode, or the Command Line Tools with the macOS SDK.
+- To build: Xcode 26 or later, or its Command Line Tools. The app uses macOS 26
+  interface APIs where the system has them, so building needs the macOS 26 SDK
+  although the app runs on macOS 15. Xcode 26 itself needs macOS 15.6 or later.
 - For the local server: keep this source checkout and prepare its Python environment
   once with `uv sync --locked --python 3.13` at the repository root.
 - Or a Hyadex server you can reach (same Mac, LAN or Tailscale) and its access token.
