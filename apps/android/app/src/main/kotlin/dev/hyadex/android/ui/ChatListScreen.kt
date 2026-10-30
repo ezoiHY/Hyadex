@@ -13,10 +13,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,15 +27,16 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -74,12 +73,14 @@ import androidx.compose.ui.unit.dp
 import dev.hyadex.android.app.AppViewModel
 import dev.hyadex.android.app.Connection
 import dev.hyadex.android.core.ActivityState
+import dev.hyadex.android.core.AgentBackend
 import dev.hyadex.android.core.ChatSummary
 import dev.hyadex.android.core.ProjectSection
 import dev.hyadex.android.core.projectSections
 import dev.hyadex.android.core.relativeShort
 import dev.hyadex.android.ui.theme.Hyadex
 import dev.hyadex.android.ui.theme.HyadexType
+import kotlin.math.roundToInt
 
 /** The Mac app's sidebar as a phone's first screen: Work chats by project. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,13 +90,34 @@ fun ChatListScreen(model: AppViewModel, onOpen: (String) -> Unit, onSettings: ()
   var query by rememberSaveable { mutableStateOf("") }
   var creating by rememberSaveable { mutableStateOf(false) }
   var renaming by remember { mutableStateOf<ChatSummary?>(null) }
+  var moving by remember { mutableStateOf<ChatSummary?>(null) }
+  var deleting by remember { mutableStateOf<ChatSummary?>(null) }
+  var archivedOpen by rememberSaveable { mutableStateOf(false) }
   val chats = model.chats
   val previews = model.previews
-  val sections = remember(chats, query, previews.toMap()) {
-    val needle = query.trim().lowercase()
-    val shown = if (needle.isEmpty()) chats else chats.filter { needle in it.title.lowercase() || needle in (previews[it.id] ?: "").lowercase() }
+  val byProject = model.settings.groupByProject
+  val needle = query.trim().lowercase()
+  fun matches(chat: ChatSummary) = needle.isEmpty() || needle in chat.title.lowercase() || needle in (previews[chat.id] ?: "").lowercase()
+  val sections = remember(chats, needle, previews.toMap(), byProject) {
+    val shown = chats.filter(::matches)
     val pinned = shown.filter { it.pinned }.sortedByDescending { it.lastActivity }
-    listOfNotNull(pinned.takeIf { it.isNotEmpty() }?.let { ProjectSection("pinned", "置顶", it) }) + projectSections(shown.filter { !it.pinned })
+    val rest = shown.filter { !it.pinned }
+    val grouped = if (byProject) projectSections(rest) else listOfNotNull(rest.takeIf { it.isNotEmpty() }?.let { ProjectSection("recent", "最近", it.sortedByDescending { chat -> chat.lastActivity }) })
+    listOfNotNull(pinned.takeIf { it.isNotEmpty() }?.let { ProjectSection("pinned", "置顶", it) }) + grouped
+  }
+  val archived = remember(model.archivedChats, needle, previews.toMap()) { model.archivedChats.filter(::matches) }
+  // Message search runs on the server as you type; title matches show at once above it.
+  LaunchedEffect(query, model.client) { model.search(query) }
+  val known = remember(chats, model.archivedChats) { (chats + model.archivedChats).associateBy { it.id } }
+  val hits = if (needle.length >= 2) model.searchHits.filter { it.chatID in known } else emptyList()
+  val actions = remember(model) {
+    ChatRowActions(
+      open = onOpen,
+      rename = { renaming = it },
+      move = { moving = it },
+      delete = { deleting = it },
+      fork = { chat -> model.fork(chat) { id -> onOpen(id) } },
+    )
   }
   Column(modifier.fillMaxSize().background(colors.sidebar).statusBarsPadding()) {
     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -106,6 +128,7 @@ fun ChatListScreen(model: AppViewModel, onOpen: (String) -> Unit, onSettings: ()
       }
     }
     SearchField(query) { query = it }
+    EmergencyBanners(model.emergencies, onOpen = onOpen, onAcknowledge = model::acknowledge)
     PullToRefreshBox(isRefreshing = model.refreshing, onRefresh = model::refresh, modifier = Modifier.weight(1f)) {
       LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 12.dp)) {
         for (section in sections) {
@@ -114,12 +137,30 @@ fun ChatListScreen(model: AppViewModel, onOpen: (String) -> Unit, onSettings: ()
             // A chat that moves up (new activity) slides to its place.
             Box(Modifier.animateItem()) {
               SwipeToArchive(onArchive = { model.archive(chat) }) {
-                ChatRow(chat, model.previews[chat.id], animate, onOpen = { onOpen(chat.id) }, model = model, onRename = { renaming = chat })
+                ChatRow(chat, model.previews[chat.id], animate, model, actions)
               }
             }
           }
         }
-        if (sections.isEmpty()) {
+        if (hits.isNotEmpty()) {
+          item(key = "hits", contentType = "section") { PlainHeader("消息内容") }
+          items(hits, key = { "hit/" + it.chatID }, contentType = { "hit" }) { hit ->
+            SearchHitRow(hit, known.getValue(hit.chatID), query) { onOpen(hit.chatID) }
+          }
+        }
+        if (archived.isNotEmpty()) {
+          // Folded away unless opened, or unless a search finds something in it.
+          val open = archivedOpen || needle.isNotEmpty()
+          item(key = "archived", contentType = "section") {
+            ArchivedHeader(archived.size, open, enabled = needle.isEmpty()) { archivedOpen = !archivedOpen }
+          }
+          if (open) {
+            items(archived, key = { "archived/" + it.id }, contentType = { "chat" }) { chat ->
+              Box(Modifier.animateItem()) { ChatRow(chat, model.previews[chat.id], animate, model, actions) }
+            }
+          }
+        }
+        if (sections.isEmpty() && hits.isEmpty() && archived.isEmpty()) {
           item {
             Text(
               if (query.isBlank()) "还没有聊天，点右上角 + 新建一个" else "没有匹配的聊天",
@@ -130,13 +171,26 @@ fun ChatListScreen(model: AppViewModel, onOpen: (String) -> Unit, onSettings: ()
       }
     }
     HorizontalDivider(color = colors.separator, thickness = 0.5.dp)
-    ConnectionFooter(model.connection, model.offline, onSettings)
+    val usage = if (model.settings.showUsage) model.usage.values.mapNotNull { usage -> usage.tightest?.usedPercent?.let { usage.backend to it } } else emptyList()
+    ConnectionFooter(model.connection, model.offline, usage.sortedBy { it.first.ordinal }, onSettings)
   }
   if (creating) NewChatSheet(model, onDismiss = { creating = false }) { id ->
     creating = false
     onOpen(id)
   }
   renaming?.let { chat -> RenameDialog(chat.title, onDismiss = { renaming = null }) { title -> model.updateChat(chat.id, mapOf("title" to title)); renaming = null } }
+  moving?.let { chat ->
+    MoveToProjectDialog(chat, model.knownProjects, onDismiss = { moving = null }) { project ->
+      moving = null
+      model.moveToProject(chat, project)
+    }
+  }
+  deleting?.let { chat ->
+    DeleteChatDialog(chat, onDismiss = { deleting = null }) {
+      deleting = null
+      model.deleteChat(chat)
+    }
+  }
 }
 
 @Composable
@@ -164,21 +218,50 @@ private fun SearchField(query: String, onChange: (String) -> Unit) {
 private fun SectionHeader(section: ProjectSection) {
   val colors = Hyadex.colors
   Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    Icon(if (section.key == "pinned") Icons.Outlined.PushPin else Icons.Outlined.Folder, null, tint = colors.secondary, modifier = Modifier.size(18.dp))
+    val icon = when (section.key) {
+      "pinned" -> Icons.Outlined.PushPin
+      "recent" -> Icons.Outlined.History
+      else -> Icons.Outlined.Folder
+    }
+    Icon(icon, null, tint = colors.secondary, modifier = Modifier.size(18.dp))
     Text(section.title, style = HyadexType.headline, color = colors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+  }
+}
+
+@Composable
+private fun PlainHeader(title: String) {
+  val colors = Hyadex.colors
+  Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Icon(Icons.Outlined.Search, null, tint = colors.secondary, modifier = Modifier.size(18.dp))
+    Text(title, style = HyadexType.headline, color = colors.primary)
+  }
+}
+
+/** "已归档 · 3", folded by default as in the Mac sidebar. */
+@Composable
+private fun ArchivedHeader(count: Int, open: Boolean, enabled: Boolean, onToggle: () -> Unit) {
+  val colors = Hyadex.colors
+  Row(
+    Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onToggle).padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    Icon(Icons.Outlined.Archive, null, tint = colors.secondary, modifier = Modifier.size(18.dp))
+    Text("已归档 · $count", style = HyadexType.headline, color = colors.secondary, modifier = Modifier.weight(1f))
+    if (enabled) Chevron(open, Modifier.size(18.dp))
   }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatRow(chat: ChatSummary, preview: String?, animate: Boolean, onOpen: () -> Unit, model: AppViewModel, onRename: () -> Unit) {
+private fun ChatRow(chat: ChatSummary, preview: String?, animate: Boolean, model: AppViewModel, actions: ChatRowActions) {
   val colors = Hyadex.colors
   var menu by remember { mutableStateOf(false) }
   val haptics = LocalHapticFeedback.current
   Box {
     Row(
       Modifier.fillMaxWidth().background(colors.sidebar).combinedClickable(
-        onClick = onOpen,
+        onClick = { actions.open(chat.id) },
         onLongClick = {
           haptics.performHapticFeedback(HapticFeedbackType.LongPress)
           menu = true
@@ -193,26 +276,24 @@ private fun ChatRow(chat: ChatSummary, preview: String?, animate: Boolean, onOpe
             chat.title, style = HyadexType.body.copy(fontWeight = if (chat.unread) FontWeight.SemiBold else FontWeight.Normal),
             color = colors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
           )
-          StateMark(chat, animate)
+          StateMark(chat, animate, emergency = model.emergencies.any { it.chatID == chat.id })
           Text(relativeShort(chat.lastActivity), style = HyadexType.meta, color = colors.tertiary)
         }
         Text(preview ?: " ", style = HyadexType.secondary, color = colors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
       }
     }
     DropdownMenu(menu, onDismissRequest = { menu = false }) {
-      DropdownMenuItem(text = { Text(if (chat.pinned) "取消置顶" else "置顶") }, onClick = { menu = false; model.updateChat(chat.id, mapOf("pinned" to !chat.pinned)) })
-      DropdownMenuItem(text = { Text("标为未读") }, onClick = { menu = false; model.markUnread(chat.id) })
-      DropdownMenuItem(text = { Text("重命名") }, onClick = { menu = false; onRename() })
-      DropdownMenuItem(text = { Text("归档") }, onClick = { menu = false; model.archive(chat) })
+      ChatMenuItems(chat, model, actions) { menu = false }
     }
   }
 }
 
 /** Running, waiting for the user, or unread — one mark, as in the Mac sidebar. */
 @Composable
-private fun StateMark(chat: ChatSummary, animate: Boolean) {
+private fun StateMark(chat: ChatSummary, animate: Boolean, emergency: Boolean) {
   val colors = Hyadex.colors
   when {
+    emergency -> Icon(Icons.Filled.Warning, "紧急提醒", tint = colors.red, modifier = Modifier.size(16.dp))
     chat.state == ActivityState.NEEDS_ACTION -> Icon(Icons.Filled.Error, "等待你处理", tint = colors.orange, modifier = Modifier.size(16.dp))
     // Spins only while the list is on screen.
     chat.state == ActivityState.RUNNING ->
@@ -223,7 +304,7 @@ private fun StateMark(chat: ChatSummary, animate: Boolean) {
 }
 
 @Composable
-private fun ConnectionFooter(connection: Connection, offline: Boolean, onSettings: () -> Unit) {
+private fun ConnectionFooter(connection: Connection, offline: Boolean, usage: List<Pair<AgentBackend, Double>>, onSettings: () -> Unit) {
   val colors = Hyadex.colors
   Row(
     Modifier.fillMaxWidth().clickable(onClick = onSettings).navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp),
@@ -243,11 +324,18 @@ private fun ConnectionFooter(connection: Connection, offline: Boolean, onSetting
       Text(title, style = HyadexType.secondary, color = colors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
       if (detail.isNotEmpty()) Text(detail, style = HyadexType.meta, color = colors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
+    // Each provider's tightest plan limit, as the Mac sidebar's usage meter.
+    for ((backend, used) in usage) {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        ProviderMark(backend, 14.dp)
+        Text("${used.roundToInt()}%", style = HyadexType.meta, color = if (used >= 90) colors.red else if (used >= 70) colors.orange else colors.secondary)
+      }
+    }
   }
 }
 
 @Composable
-private fun RenameDialog(title: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+fun RenameDialog(title: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
   // The old title starts selected, so typing replaces it.
   var text by remember { mutableStateOf(TextFieldValue(title, TextRange(0, title.length))) }
   val focus = remember { FocusRequester() }
@@ -258,36 +346,6 @@ private fun RenameDialog(title: String, onDismiss: () -> Unit, onSave: (String) 
     text = { OutlinedTextField(text, { text = it }, singleLine = true, modifier = Modifier.focusRequester(focus)) },
     confirmButton = { TextButton(onClick = { onSave(text.text.trim()) }, enabled = text.text.isNotBlank()) { Text("保存") } },
     dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-  )
-}
-
-@Composable
-fun SettingsDialog(model: AppViewModel, onDismiss: () -> Unit) {
-  val connection = model.connection
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    title = { Text("服务器") },
-    text = {
-      Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        when (connection) {
-          is Connection.Connected -> {
-            Text(connection.serverName ?: connection.address, style = HyadexType.body)
-            Text(connection.address + (connection.version?.let { " · v$it" } ?: ""), style = HyadexType.meta, color = Hyadex.colors.secondary)
-          }
-          is Connection.Failed -> Text(connection.message, style = HyadexType.secondary, color = Hyadex.colors.red)
-          else -> Text("未连接")
-        }
-        Spacer(Modifier.height(4.dp))
-        Text("断开后会删除这台手机上保存的地址和令牌。", style = HyadexType.meta, color = Hyadex.colors.secondary)
-      }
-    },
-    confirmButton = {
-      Row {
-        if (connection is Connection.Failed) TextButton(onClick = { model.reconnect(); onDismiss() }) { Text("重新连接") }
-        TextButton(onClick = { model.disconnect(); onDismiss() }) { Text("断开连接", color = Hyadex.colors.red) }
-      }
-    },
-    dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
   )
 }
 

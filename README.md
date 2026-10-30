@@ -185,11 +185,14 @@ polled; the open chat or group streams live over its WebSocket.
 The client in [`apps/android`](apps/android/README.md) is Kotlin and Jetpack
 Compose in one Gradle module, without dependency injection, a database or a
 navigation library. Its `core` package ports the Mac app's event projection
-(with the same tests), so a chat reads the same on both. It covers Work chats:
-the live timeline, sending text and images, Stop, the queue, approvals and
-forms, answers from other chats, model, effort and permissions, and a
-notification when a reply is done or an approval waits while the app is away.
-It pairs by scanning the code the Mac app shows. Release builds are about 3.8 MB.
+(with the same tests), so a chat reads the same on both. It covers Work chats
+as the Mac does: the live timeline, sends with images and files, Stop and the
+queue, approvals and forms, commands and skills, asking other chats, side
+questions, goals, context, details with MCP servers and subagents, advanced
+settings, diffs, content search, archive, fork, projects and emergency alerts,
+plus its own settings and a notification when a reply is done or an approval
+waits while the app is away. It pairs by scanning the code the Mac app shows.
+Release builds are about 4 MB.
 
 ### UI design
 

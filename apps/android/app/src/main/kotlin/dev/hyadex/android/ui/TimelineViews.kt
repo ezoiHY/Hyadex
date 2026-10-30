@@ -39,7 +39,7 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Extension
-import androidx.compose.material.icons.outlined.InsertDriveFile
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.PanTool
 import androidx.compose.material.icons.outlined.Public
@@ -86,6 +86,7 @@ import coil3.compose.AsyncImage
 import dev.hyadex.android.core.ApprovalChoice
 import dev.hyadex.android.core.ApprovalDecision
 import dev.hyadex.android.core.Author
+import dev.hyadex.android.core.FileChange
 import dev.hyadex.android.core.FileChangeSet
 import dev.hyadex.android.core.InteractionReply
 import dev.hyadex.android.core.LiveActivity
@@ -108,6 +109,12 @@ class TimelineActions(
   val fileUrl: (String) -> String?,
   val imageLoader: ImageLoader?,
   val onOpenImage: (String) -> Unit,
+  /** Each run of work starts open (the 默认展开处理过程 setting). */
+  val expandWork: Boolean = false,
+  /** Stops a question the user asked another chat. */
+  val onCancelConsult: (TimelineItem.Consult) -> Unit = {},
+  /** Opens a changed file's diff (with the run that changed it). */
+  val onOpenChange: (FileChange, String?) -> Unit = { _, _ -> },
 )
 
 @Composable
@@ -131,18 +138,18 @@ fun TimelineItemView(item: TimelineItem, actions: TimelineActions) {
       }
     is TimelineItem.Thinking -> ThinkingRow(item)
     is TimelineItem.Tool -> ToolRow(item)
-    is TimelineItem.Changes -> ChangesCard(item.set)
+    is TimelineItem.Changes -> ChangesCard(item.set) { file -> actions.onOpenChange(file, item.runID) }
     is TimelineItem.Approval -> ApprovalCard(item) { actions.onReply(item.id, it) }
     is TimelineItem.Form -> FormCard(item) { actions.onReply(item.id, it) }
     is TimelineItem.Media -> MediaGroup(item.files, item.author.kind == Author.Kind.USER, actions)
     is TimelineItem.Divider -> DividerRow(item.text)
-    is TimelineItem.Consult -> ConsultCard(item)
+    is TimelineItem.Consult -> ConsultCard(item, onCancel = if (item.byUser) ({ actions.onCancelConsult(item) }) else null)
   }
 }
 
 /** A question to another chat: who was asked, then the answer (or why there is none). */
 @Composable
-private fun ConsultCard(item: TimelineItem.Consult) {
+private fun ConsultCard(item: TimelineItem.Consult, onCancel: (() -> Unit)?) {
   val colors = Hyadex.colors
   var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
   Column(Modifier.fillMaxWidth().card().clickable(enabled = !item.running) { expanded = !expanded }.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -162,7 +169,10 @@ private fun ConsultCard(item: TimelineItem.Consult) {
     }
     if (item.question.isNotEmpty()) Text(item.question, style = HyadexType.meta, color = colors.secondary, maxLines = if (expanded) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
     when {
-      item.running -> Text("正在询问…", style = HyadexType.meta, color = colors.tertiary)
+      item.running -> Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("正在询问…", style = HyadexType.meta, color = colors.tertiary, modifier = Modifier.weight(1f))
+        if (onCancel != null) TextButton(onClick = onCancel) { Text("停止") }
+      }
       // The other agent answers in Markdown: a clean preview folded, the full answer unfolded.
       item.answer != null ->
         if (expanded) MessageText(item.answer)
@@ -260,7 +270,7 @@ private fun Modifier.breathing(): Modifier {
 /** One run of work collapsed to a summary ("已处理 12 秒 · 运行 2 条命令"); while running, headed by the live status. */
 @Composable
 private fun ProcessRow(row: TimelineRow.Process, live: LiveActivity?, actions: TimelineActions) {
-  var expanded by rememberSaveable(row.key) { mutableStateOf(false) }
+  var expanded by rememberSaveable(row.key) { mutableStateOf(actions.expandWork) }
   val colors = Hyadex.colors
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Row(
@@ -413,18 +423,19 @@ private fun DiffStat(added: Int, removed: Int) {
 }
 
 @Composable
-private fun ChangesCard(set: FileChangeSet) {
+private fun ChangesCard(set: FileChangeSet, onOpen: (FileChange) -> Unit) {
   val colors = Hyadex.colors
   Column(Modifier.fillMaxWidth().card()) {
     Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-      Icon(Icons.Outlined.InsertDriveFile, null, tint = colors.secondary, modifier = Modifier.size(16.dp))
+      Icon(Icons.AutoMirrored.Outlined.InsertDriveFile, null, tint = colors.secondary, modifier = Modifier.size(16.dp))
       Text("改动了 ${set.files.size} 个文件", style = HyadexType.secondary.copy(fontWeight = FontWeight.Medium), color = colors.primary)
       DiffStat(set.added, set.removed)
     }
     HorizontalDivider(color = colors.separator, thickness = 0.5.dp)
     Column(Modifier.padding(vertical = 3.dp)) {
       for (file in set.files) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Each file opens its diff, as the Mac's change panel.
+        Row(Modifier.fillMaxWidth().clickable { onOpen(file) }.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           Text(file.path, style = HyadexType.mono, color = colors.primary, maxLines = 1, overflow = TextOverflow.StartEllipsis, modifier = Modifier.weight(1f))
           DiffStat(file.added, file.removed)
         }
@@ -516,7 +527,7 @@ private fun MediaGroup(files: List<MediaFile>, alignEnd: Boolean, actions: Timel
         )
       } else {
         Row(Modifier.card().padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          Icon(Icons.Outlined.InsertDriveFile, null, tint = colors.secondary, modifier = Modifier.size(16.dp))
+          Icon(Icons.AutoMirrored.Outlined.InsertDriveFile, null, tint = colors.secondary, modifier = Modifier.size(16.dp))
           Text(file.name, style = HyadexType.meta, color = colors.primary, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
         }
       }

@@ -226,7 +226,7 @@ class SessionProjection(val backend: AgentBackend, val cwd: String, private val 
           val path = file["path"].string ?: return@mapNotNull null
           FileChange(path, file["additions"].int ?: 0, file["deletions"].int ?: 0, root = event["repository_root"].string ?: cwd)
         }
-        if (files.isNotEmpty()) append(TimelineItem.Changes(id, FileChangeSet(files)))
+        if (files.isNotEmpty()) append(TimelineItem.Changes(id, FileChangeSet(files), event["run_id"].string))
       }
       // Codex records a stopped turn as finished with `stopped`; it reads as stopped, as Codex shows it.
       "turn_finished" if event["stopped"].bool != true -> {
@@ -259,11 +259,19 @@ class SessionProjection(val backend: AgentBackend, val cwd: String, private val 
       "turn_unqueued", "turn_queue_run_now" -> event["queued_id"].string?.let { queuedID -> queued.removeAll { it.id == queuedID } }
       "turn_queue_paused" -> {
         val ids = event["queued_ids"].array.mapNotNull { it.string }.toSet()
-        queued.replaceAll { if (it.id in ids) it.copy(paused = true) else it }
+        queued.replaceAll { if (it.id in ids && it.hold == null) it.copy(hold = QueuedMessage.Hold.STOPPED) else it }
+      }
+      "turn_queue_delivery_fenced" -> event["queued_id"].string?.let { queuedID ->
+        queued.replaceAll { if (it.id == queuedID) it.copy(hold = QueuedMessage.Hold.DELIVERY_UNCERTAIN) else it }
       }
       "turn_queue_resumed" -> {
         val ids = event["queued_ids"].array.mapNotNull { it.string }.toSet()
-        queued.replaceAll { if (it.id in ids) it.copy(paused = false) else it }
+        queued.replaceAll { if (it.id in ids && it.hold == QueuedMessage.Hold.STOPPED) it.copy(hold = null) else it }
+      }
+      "turn_queue_reordered" -> {
+        // The server's new order, by position (moved up or down a place).
+        val positions = event["positions"].array.mapNotNull { place -> place["queued_id"].string?.let { it to (place["position"].int ?: Int.MAX_VALUE) } }.toMap()
+        if (positions.isNotEmpty()) queued.sortBy { positions[it.id] ?: Int.MAX_VALUE }
       }
       "turn_queue_updated" -> {
         val queuedID = event["queued_id"].string ?: return
@@ -299,7 +307,8 @@ class SessionProjection(val backend: AgentBackend, val cwd: String, private val 
     queued.clear()
     turns.mapNotNullTo(queued) { turn ->
       val id = turn["id"].string ?: turn["queued_id"].string ?: return@mapNotNullTo null
-      QueuedMessage(id, turn["display_prompt"].text ?: turn["prompt"].text ?: "", paused = turn["paused"].bool == true)
+      val hold = if (turn["paused"].bool == true) QueuedMessage.Hold.of(turn["pause_reason"].string) else null
+      QueuedMessage(id, turn["display_prompt"].text ?: turn["prompt"].text ?: "", hold)
     }
   }
 

@@ -69,6 +69,10 @@ class RunWatchService : Service() {
     val url = saved?.let { HyadexClient.parseAddress(it.address) }
     if (saved == null || url == null) return stopSelf()
     val client = HyadexClient(url, saved.token)
+    // Read once: the settings cannot change while the app is out of sight.
+    val settings = AppSettings(this)
+    val notifyApproval = settings.notifyApproval
+    val notifyFinished = settings.notifyFinished
     var previous = initial
     var shownCount = -1
     var interval = POLL_MILLIS
@@ -86,7 +90,7 @@ class RunWatchService : Service() {
           if (before == ActivityState.QUEUED && chat.state == ActivityState.IDLE) {
             // Unless its agent already acted: the turn was quick and is done.
             if (chat.agentSeq > (baselines[chat.id] ?: Int.MAX_VALUE)) {
-              notify(chat.id, chat.title, outcome(client, chat.id), important = false)
+              if (notifyFinished) notify(chat.id, chat.title, outcome(client, chat.id), important = false)
             } else if (System.currentTimeMillis() - started < START_GRACE_MILLIS) {
               next[chat.id] = ActivityState.QUEUED
             }
@@ -94,8 +98,9 @@ class RunWatchService : Service() {
           }
           if (before != chat.state) changed = true
           when {
-            chat.state == ActivityState.NEEDS_ACTION && before != ActivityState.NEEDS_ACTION -> notify(chat.id, chat.title, "等待你处理", important = true)
-            chat.state == ActivityState.IDLE -> notify(chat.id, chat.title, outcome(client, chat.id), important = false)
+            chat.state == ActivityState.NEEDS_ACTION && before != ActivityState.NEEDS_ACTION ->
+              if (notifyApproval) notify(chat.id, chat.title, "等待你处理", important = true)
+            chat.state == ActivityState.IDLE -> if (notifyFinished) notify(chat.id, chat.title, outcome(client, chat.id), important = false)
           }
           if (chat.state == ActivityState.RUNNING || chat.state == ActivityState.NEEDS_ACTION) next[chat.id] = chat.state
         }

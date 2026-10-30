@@ -32,13 +32,13 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 /**
- * The open chat over the chat list. It slides in from the right; back, the
+ * A screen over the chat list (a chat, the settings). It slides in from the right; back, the
  * arrow or the predictive back gesture slide it away. During the gesture it
  * shrinks toward the finger with rounded corners, showing the list behind it,
  * and springs back if the gesture is cancelled.
  */
 @Composable
-fun ChatPane(onClosed: () -> Unit, onCovering: (Boolean) -> Unit = {}, content: @Composable (close: () -> Unit) -> Unit) {
+fun SlidingPane(onClosed: () -> Unit, onCovering: (Boolean) -> Unit = {}, content: @Composable (close: () -> Unit) -> Unit) {
   BoxWithConstraints(Modifier.fillMaxSize()) {
     val width = constraints.maxWidth.toFloat()
     val scope = rememberCoroutineScope()

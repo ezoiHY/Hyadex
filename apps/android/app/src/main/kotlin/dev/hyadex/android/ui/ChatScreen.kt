@@ -55,7 +55,11 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.Forum
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.PauseCircle
 import androidx.compose.material.icons.outlined.Schedule
@@ -91,6 +95,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -100,7 +106,9 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import coil3.compose.AsyncImage
 import dev.hyadex.android.app.AppViewModel
 import dev.hyadex.android.core.Author
+import dev.hyadex.android.core.ChatMention
 import dev.hyadex.android.core.ChatSummary
+import dev.hyadex.android.core.FileChange
 import dev.hyadex.android.core.LiveActivity
 import dev.hyadex.android.core.PermissionPreset
 import dev.hyadex.android.core.QueuedMessage
@@ -114,12 +122,20 @@ import dev.hyadex.android.ui.theme.HyadexType
 import kotlinx.coroutines.launch
 
 @Composable
-fun ChatScreen(model: AppViewModel, chat: ChatSummary, onBack: () -> Unit) {
+fun ChatScreen(model: AppViewModel, chat: ChatSummary, onBack: () -> Unit, onOpenChat: (String) -> Unit) {
   val colors = Hyadex.colors
   val view = model.chatView
+  val tools = model.tools
   var viewing by remember { mutableStateOf<String?>(null) }
+  var details by rememberSaveable { mutableStateOf(false) }
+  var advanced by rememberSaveable { mutableStateOf(false) }
+  var renaming by remember { mutableStateOf(false) }
+  var moving by remember { mutableStateOf(false) }
+  var deleting by remember { mutableStateOf(false) }
+  var openDiff by remember { mutableStateOf<Pair<FileChange, String?>?>(null) }
   val haptics = LocalHapticFeedback.current
-  val actions = remember(model.imageLoader) {
+  val expandWork = model.settings.expandWork
+  val actions = remember(model.imageLoader, expandWork) {
     TimelineActions(
       onReply = { id, reply ->
         haptics.performHapticFeedback(HapticFeedbackType.Confirm)
@@ -132,15 +148,36 @@ fun ChatScreen(model: AppViewModel, chat: ChatSummary, onBack: () -> Unit) {
       fileUrl = model::fileUrl,
       imageLoader = model.imageLoader,
       onOpenImage = { viewing = it },
+      expandWork = expandWork,
+      onCancelConsult = model::cancelConsult,
+      onOpenChange = { file, runID -> openDiff = file to runID },
     )
   }
+  Box(Modifier.fillMaxSize()) {
   Column(Modifier.fillMaxSize().background(colors.background).imePadding()) {
     Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
       IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回", tint = colors.primary) }
       ProviderMark(chat.backend, 20.dp)
       Text(chat.title, style = HyadexType.headline, color = colors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 10.dp).weight(1f))
+      // The Mac toolbar's side questions, goal and details, then the chat's menu.
+      IconButton(onClick = { tools.sideOpen = true }) { Icon(Icons.Outlined.Forum, "侧问", tint = colors.secondary) }
+      IconButton(onClick = {
+        val support = tools.goalSupport
+        if (support?.available == false) model.tell(support.reason) else tools.goalSheetOpen = true
+      }) { Icon(Icons.Outlined.Flag, "目标", tint = if (tools.goal?.isOpen == true) colors.accent else colors.secondary) }
+      IconButton(onClick = { details = true }) { Icon(Icons.Outlined.Info, "详情", tint = colors.secondary) }
+      var menu by remember { mutableStateOf(false) }
+      Box {
+        IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "更多", tint = colors.secondary) }
+        DropdownMenu(menu, onDismissRequest = { menu = false }) {
+          val rowActions = ChatRowActions(open = onOpenChat, rename = { renaming = true }, move = { moving = true }, delete = { deleting = true }, fork = { model.fork(it) { id -> onOpenChat(id) } })
+          ChatMenuItems(chat, model, rowActions) { menu = false }
+          DropdownMenuItem(text = { Text("高级设置…") }, onClick = { menu = false; advanced = true })
+        }
+      }
     }
     HorizontalDivider(color = colors.separator, thickness = 0.5.dp)
+    EmergencyBanners(model.emergencies.filter { it.chatID == chat.id }, onOpen = null, onAcknowledge = model::acknowledge)
     // The live stream dropped: say so until it is back (events are caught up then).
     AnimatedVisibility(view?.reconnecting == true, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
       Row(Modifier.fillMaxWidth().background(colors.orange.copy(alpha = 0.12f)).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -155,10 +192,20 @@ fun ChatScreen(model: AppViewModel, chat: ChatSummary, onBack: () -> Unit) {
         Timeline(view.rows, chat, view.activity, view.olderHistory, model::loadOlder, actions)
       }
     }
-    if (view != null && view.queued.isNotEmpty()) QueueList(view.queued, model::removeQueued, model::resumeQueue)
-    Composer(model, chat, running = view?.running == true)
+    if (view != null && view.queued.isNotEmpty()) QueueStrip(view.queued, model)
+    Composer(model, chat, running = view?.running == true, onGoal = { tools.goalSheetOpen = true })
+  }
+  // Screens for typing slide over the chat; back returns to it.
+  if (advanced) SlidingPane(onClosed = { advanced = false }) { close -> AdvancedSettingsPane(model, chat, close) }
+  if (tools.goalSheetOpen) SlidingPane(onClosed = { tools.goalSheetOpen = false }) { close -> GoalPane(model, close) }
+  if (tools.sideOpen) SlidingPane(onClosed = { tools.sideOpen = false }) { close -> SidePane(model, close) }
   }
   viewing?.let { url -> ImageViewer(url, model) { viewing = null } }
+  if (details) ChatDetailsSheet(model, chat, onDismiss = { details = false }, onAdvanced = { details = false; advanced = true })
+  openDiff?.let { (file, runID) -> DiffSheet(model, file, runID) { openDiff = null } }
+  if (renaming) RenameDialog(chat.title, onDismiss = { renaming = false }) { title -> renaming = false; model.updateChat(chat.id, mapOf("title" to title)) }
+  if (moving) MoveToProjectDialog(chat, model.knownProjects, onDismiss = { moving = false }) { project -> moving = false; model.moveToProject(chat, project) }
+  if (deleting) DeleteChatDialog(chat, onDismiss = { deleting = false }) { deleting = false; model.deleteChat(chat) }
 }
 
 /** Newest at the bottom (a reversed list), following the agent as it writes unless you scroll away. */
@@ -247,45 +294,38 @@ private fun EmptyChat(chat: ChatSummary) {
   }
 }
 
+/** The Mac composer on a phone: goal, suggestions, folder line, the message box, then permissions, context, model, effort and send. */
 @Composable
-private fun QueueList(queued: List<QueuedMessage>, onRemove: (String) -> Unit, onResume: () -> Unit) {
+private fun Composer(model: AppViewModel, chat: ChatSummary, running: Boolean, onGoal: () -> Unit) {
   val colors = Hyadex.colors
-  Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-    // After a Stop the server holds the queue until the user sends it on.
-    if (queued.any { it.paused }) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("停止后，这些消息已暂停", style = HyadexType.meta, color = colors.secondary, modifier = Modifier.weight(1f))
-        TextButton(onClick = onResume) { Text("继续发送") }
-      }
-    }
-    for (message in queued) {
-      Row(Modifier.fillMaxWidth().card().padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Icon(if (message.paused) Icons.Outlined.PauseCircle else Icons.Outlined.Schedule, null, tint = colors.secondary, modifier = Modifier.size(15.dp))
-        Text((if (message.paused) "已暂停：" else "排队：") + message.text, style = HyadexType.meta, color = colors.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        IconButton(onClick = { onRemove(message.id) }) { Icon(Icons.Filled.Close, "撤回", tint = colors.secondary, modifier = Modifier.size(16.dp)) }
-      }
-    }
+  val tools = model.tools
+  var field by rememberSaveable(chat.id, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(model.drafts[chat.id] ?: "")) }
+  val text = field.text
+  // A draft put back from elsewhere (a queued message to edit, a failed send) lands with the cursor at its end.
+  LaunchedEffect(model.drafts[chat.id]) { model.drafts[chat.id]?.let { if (it != field.text) field = TextFieldValue(it, TextRange(it.length)) } }
+  /** Text the app writes (a suggestion, a cleared box): the cursor goes to its end. */
+  fun update(value: String) {
+    field = TextFieldValue(value, TextRange(value.length))
+    model.drafts[chat.id] = value
   }
-}
-
-/** The Mac composer on a phone: folder line, the message box, then permissions, model, effort and send. */
-@Composable
-private fun Composer(model: AppViewModel, chat: ChatSummary, running: Boolean) {
-  val colors = Hyadex.colors
-  var text by rememberSaveable(chat.id) { mutableStateOf(model.drafts[chat.id] ?: "") }
-  LaunchedEffect(model.drafts[chat.id]) { model.drafts[chat.id]?.let { text = it } }
   val attachments = model.attachments[chat.id].orEmpty()
-  val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(6)) { uris -> if (uris.isNotEmpty()) model.attach(uris) }
-  val canSend = text.isNotBlank() || attachments.any { it.fileID != null }
+  val images = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(6)) { uris -> if (uris.isNotEmpty()) model.attach(uris) }
+  val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) model.attach(uris) }
+  // A message that opens with another chat's @ asks that chat, not this agent.
+  val mentionsFirst = text.trimStart().startsWith("@「")
+  LaunchedEffect(mentionsFirst) { if (mentionsFirst) tools.loadTargets() }
+  val direct = remember(text, tools.targets) { tools.targets?.let { ChatMention.direct(text, it) } }
+  var deepAsk by rememberSaveable(chat.id) { mutableStateOf(false) }
+  val canSend = if (direct != null) direct.second.isNotEmpty() else text.isNotBlank() || attachments.any { it.fileID != null }
   val haptics = LocalHapticFeedback.current
   // Coming back to the app should not open the keyboard on its own.
   val focus = LocalFocusManager.current
   LifecycleEventEffect(Lifecycle.Event.ON_STOP) { focus.clearFocus() }
   Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-    Row(Modifier.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-      Icon(Icons.Outlined.Folder, null, tint = colors.secondary, modifier = Modifier.size(15.dp))
-      Text(shortPath(chat.cwd), style = HyadexType.meta, color = colors.secondary, maxLines = 1, overflow = TextOverflow.StartEllipsis)
-    }
+    GoalBar(model, onEdit = onGoal)
+    ComposerSuggestions(model, text, ::update)
+    if (direct != null) DirectAskBar(direct.first, chat.backend, deepAsk && direct.first.allowsDeep) { deepAsk = it }
+    FolderLine(chat, shortPath(chat.cwd)) { model.tell("已拷贝路径") }
     Column(
       Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(colors.card).border(0.5.dp, colors.separator, RoundedCornerShape(20.dp))
         .animateContentSize(spring(stiffness = Spring.StiffnessMediumLow)).padding(horizontal = 14.dp, vertical = 10.dp),
@@ -294,10 +334,20 @@ private fun Composer(model: AppViewModel, chat: ChatSummary, running: Boolean) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           for (attachment in attachments) {
             Box {
-              AsyncImage(attachment.uri, attachment.name, imageLoader = model.imageLoader ?: return@Box, contentScale = ContentScale.Crop, modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)))
-              if (attachment.fileID == null && !attachment.failed) CircularProgressIndicator(Modifier.align(Alignment.Center).size(18.dp), strokeWidth = 2.dp, color = Color.White)
+              if (attachment.isImage) {
+                AsyncImage(attachment.uri, attachment.name, imageLoader = model.imageLoader ?: return@Box, contentScale = ContentScale.Crop, modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)))
+              } else {
+                Row(
+                  Modifier.height(56.dp).widthIn(max = 170.dp).clip(RoundedCornerShape(8.dp)).background(colors.bubble).padding(start = 10.dp, end = 28.dp),
+                  verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                  Icon(Icons.AutoMirrored.Outlined.InsertDriveFile, null, tint = colors.secondary, modifier = Modifier.size(18.dp))
+                  Text(attachment.name, style = HyadexType.meta, color = colors.primary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+              }
+              if (attachment.fileID == null && !attachment.failed) CircularProgressIndicator(Modifier.align(Alignment.Center).size(18.dp), strokeWidth = 2.dp, color = if (attachment.isImage) Color.White else colors.accent)
               if (attachment.failed) Text("失败", style = HyadexType.small, color = Color.White, modifier = Modifier.align(Alignment.Center).background(colors.red, RoundedCornerShape(4.dp)).padding(2.dp))
-              // A small mark on a large target: the whole top-right corner removes the image.
+              // A small mark on a large target: the whole top-right corner removes the file.
               Box(Modifier.align(Alignment.TopEnd).size(32.dp).clickable { model.removeAttachment(attachment.key) }, contentAlignment = Alignment.TopEnd) {
                 Icon(
                   Icons.Filled.Close, "移除", tint = Color.White,
@@ -309,25 +359,34 @@ private fun Composer(model: AppViewModel, chat: ChatSummary, running: Boolean) {
         }
       }
       Box(Modifier.fillMaxWidth().heightIn(min = 24.dp, max = 160.dp)) {
-        if (text.isEmpty()) Text("给 ${chat.backend.displayName} 发消息", style = HyadexType.body, color = colors.tertiary)
+        if (text.isEmpty()) Text("给 ${chat.backend.displayName} 发消息，/ 用命令，@ 问别的聊天", style = HyadexType.body, color = colors.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         BasicTextField(
-          text, { text = it; model.drafts[chat.id] = it }, textStyle = HyadexType.body.copy(color = colors.primary), cursorBrush = SolidColor(colors.accent),
+          field, { field = it; model.drafts[chat.id] = it.text }, textStyle = HyadexType.body.copy(color = colors.primary), cursorBrush = SolidColor(colors.accent),
           maxLines = 6,
           modifier = Modifier.fillMaxWidth(),
         )
       }
       Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        IconButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-          Icon(Icons.Outlined.Add, "添加图片", tint = colors.secondary)
-        }
+        AttachButton(
+          onImages = { images.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+          onFiles = { files.launch(arrayOf("*/*")) },
+        )
         // Measured last: the permission label gives way before the send button does.
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { PermissionChip(model, chat) }
+        ContextRing(model, running)
         ModelChips(model, chat)
         SendButton(canSend = canSend, running = running) {
-          if (canSend) {
+          if (direct != null && canSend) {
+            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+            val draft = text
+            update("")
+            model.drafts.remove(chat.id)
+            // The answer shows as a card here; a failed ask puts the words back.
+            tools.ask(direct.first, direct.second, deepAsk) { update(draft) }
+          } else if (canSend) {
             haptics.performHapticFeedback(HapticFeedbackType.Confirm)
             // Kept when it cannot go yet (an image still uploading): nothing typed is lost.
-            if (model.send(text)) text = ""
+            if (model.send(text)) field = TextFieldValue("")
           } else if (running) {
             haptics.performHapticFeedback(HapticFeedbackType.Reject)
             model.stop()
@@ -374,7 +433,7 @@ private fun PermissionChip(model: AppViewModel, chat: ChatSummary) {
   Box {
     Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable { open = true }.padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
       Icon(Icons.Outlined.Shield, null, tint = tint, modifier = Modifier.size(15.dp))
-      Text(chat.permission, style = HyadexType.meta, color = tint, maxLines = 1)
+      Text(chat.permission, style = HyadexType.meta, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
     DropdownMenu(open, onDismissRequest = { open = false }) {
       for (preset in PermissionPreset.presets(chat.backend)) {
@@ -397,7 +456,7 @@ private fun ModelChips(model: AppViewModel, chat: ChatSummary) {
   val catalog = model.catalogs[chat.backend]
   val models = catalog?.models.orEmpty()
   val efforts = catalog?.efforts(chat.model).orEmpty()
-  OptionChip(shortLabel(models, chat.model), 104.dp, models) { model.updateOpenChat(mapOf("model" to it)) }
+  OptionChip(shortLabel(models, chat.model), 104.dp, models) { model.setModel(chat, it) }
   OptionChip(shortLabel(efforts, chat.effort), 72.dp, efforts) { model.updateOpenChat(mapOf("effort" to it)) }
 }
 

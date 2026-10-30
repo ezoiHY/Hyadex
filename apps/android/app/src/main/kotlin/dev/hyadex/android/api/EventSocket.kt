@@ -35,13 +35,14 @@ private object Opened
  * A chat's event stream. Replays everything after the last applied `seq`, then
  * delivers live events; on disconnect it reconnects with backoff and resumes
  * after the last `seq` it delivered, so events are never repeated or skipped.
+ * Without `after` (a stream with no log behind it) every frame is a control frame.
  */
-fun HyadexClient.events(path: String, after: Int, query: Map<String, String> = emptyMap()): Flow<EventFrame> = channelFlow {
+fun HyadexClient.events(path: String, after: Int?, query: Map<String, String> = emptyMap(), protocol: String = PROTOCOL): Flow<EventFrame> = channelFlow {
   var lastSeq = after
   var delaySeconds = 0.5
   while (isActive) {
-    val url = url(path, query + ("after" to lastSeq.toString()))
-    val request = Request.Builder().url(url).header("Sec-WebSocket-Protocol", PROTOCOL).build()
+    val url = url(path, lastSeq?.let { query + ("after" to it.toString()) } ?: query)
+    val request = Request.Builder().url(url).header("Sec-WebSocket-Protocol", protocol).build()
     val signals = Channel<Any>(Channel.UNLIMITED)
     val socket = http.newWebSocket(
       request,
@@ -82,9 +83,10 @@ fun HyadexClient.events(path: String, after: Int, query: Map<String, String> = e
           is String -> {
             val json = runCatching { JsonCodec.parseToJsonElement(signal) }.getOrNull() ?: continue
             val seq = json["seq"].int
-            if (seq == null) {
+            val last = lastSeq
+            if (seq == null || last == null) {
               send(EventFrame.Control(json))
-            } else if (seq > lastSeq) {
+            } else if (seq > last) {
               lastSeq = seq
               send(EventFrame.Event(json))
             }
@@ -107,5 +109,9 @@ fun HyadexClient.events(path: String, after: Int, query: Map<String, String> = e
   }
 }.flowOn(Dispatchers.IO) // Frames (live snapshots can be large) are parsed off the main thread.
 
+/** Agents' emergency alerts across all chats: a snapshot on every (re)connect, then each change. */
+fun HyadexClient.emergencyAlerts(): Flow<EventFrame> = events("api/emergency-alerts/events", after = null, protocol = EMERGENCY_PROTOCOL)
+
 private const val PROTOCOL = "hyadex-events-v1"
+private const val EMERGENCY_PROTOCOL = "hyadex-emergency-v1"
 private const val STABLE_MILLIS = 10_000L

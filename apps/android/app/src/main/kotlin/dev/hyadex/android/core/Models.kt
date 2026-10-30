@@ -23,6 +23,28 @@ data class Author(val name: String, val kind: Kind, val backend: AgentBackend? =
 
 data class FileChange(val path: String, val added: Int, val removed: Int, val diff: String = "", val root: String? = null)
 
+/** A run's unified diff split by file path, as the Mac's change panel reads it. */
+fun splitDiff(unified: String): Map<String, String> {
+  val result = mutableMapOf<String, String>()
+  var path: String? = null
+  val lines = mutableListOf<String>()
+  fun flush() {
+    path?.let { result[it] = lines.joinToString("\n") }
+    lines.clear()
+  }
+  for (line in unified.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      flush()
+      path = line.substringAfterLast(" b/")
+      continue
+    }
+    if (line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ") || line.startsWith("new file mode") || line.startsWith("deleted file mode")) continue
+    lines += line
+  }
+  flush()
+  return result
+}
+
 data class FileChangeSet(val files: List<FileChange>) {
   val added: Int get() = files.sumOf { it.added }
   val removed: Int get() = files.sumOf { it.removed }
@@ -80,7 +102,8 @@ sealed interface TimelineItem {
     val seconds: Double,
   ) : TimelineItem
 
-  data class Changes(override val id: String, val set: FileChangeSet) : TimelineItem
+  /** What a run changed; `runID` loads the diffs (`GET …/diffs/{run}`). */
+  data class Changes(override val id: String, val set: FileChangeSet, val runID: String? = null) : TimelineItem
 
   data class Approval(
     override val id: String,
@@ -133,7 +156,21 @@ fun List<TimelineItem>.pendingForm(): TimelineItem.Form? =
 
 enum class ActivityState { IDLE, QUEUED, RUNNING, NEEDS_ACTION, FAILED, DONE, PAUSED }
 
-data class QueuedMessage(val id: String, val text: String, val paused: Boolean = false)
+data class QueuedMessage(val id: String, val text: String, val hold: Hold? = null) {
+  enum class Hold {
+    /** Kept after the user stopped the turn; waits for 继续发送 or 立即发送. */
+    STOPPED,
+    /** The provider may already have it; the user should check before sending it again. */
+    DELIVERY_UNCERTAIN;
+
+    companion object {
+      fun of(reason: String?): Hold = if (reason == "delivery_uncertain") DELIVERY_UNCERTAIN else STOPPED
+    }
+  }
+
+  /** Waiting on the user rather than on the agent. */
+  val paused: Boolean get() = hold != null
+}
 
 data class ChatSummary(
   val id: String,
@@ -151,6 +188,8 @@ data class ChatSummary(
   val folder: String?,
   /** The seq of the chat's latest agent event: grows when its agent does anything. */
   val agentSeq: Int = 0,
+  /** Tokens the chat has used so far, when the list carries them. */
+  val tokens: TokenTotals? = null,
 )
 
 /** What the agent is doing now: starting, thinking, running a tool, or waiting for the user. */

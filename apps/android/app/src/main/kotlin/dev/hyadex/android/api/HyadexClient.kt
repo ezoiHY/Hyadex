@@ -41,21 +41,36 @@ class HyadexClient(val baseUrl: HttpUrl, private val token: String) {
         val request = chain.request()
         // Only this server gets the token (images and sockets share the client).
         if (token.isNotEmpty() && request.url.host == baseUrl.host && request.url.port == baseUrl.port) {
-          chain.proceed(request.newBuilder().header("Authorization", "Bearer $token").build())
+          // Native controls (plan usage, side questions) take it in their own header, and only there.
+          val native = request.tag(NativeToken::class.java) != null
+          chain.proceed(request.newBuilder().header(if (native) "X-Hyadex-Token" else "Authorization", if (native) token else "Bearer $token").build())
         } else {
           chain.proceed(request)
         }
       }
       .build()
 
+  /** Marks a request for a native control. */
+  private object NativeToken
+
   fun url(path: String, query: Map<String, String> = emptyMap()): HttpUrl =
     baseUrl.newBuilder().addPathSegments(path).apply { query.toSortedMap().forEach { (key, value) -> addQueryParameter(key, value) } }.build()
 
-  suspend fun request(method: String, path: String, query: Map<String, String> = emptyMap(), body: JsonElement? = null): JsonElement {
+  /** For the few requests the server may take minutes over (a fork copies the provider's session). */
+  private val slowHttp: OkHttpClient by lazy { http.newBuilder().readTimeout(3, TimeUnit.MINUTES).build() }
+
+  suspend fun request(
+    method: String,
+    path: String,
+    query: Map<String, String> = emptyMap(),
+    body: JsonElement? = null,
+    native: Boolean = false,
+    slow: Boolean = false,
+  ): JsonElement {
     val payload = body?.toString()?.toRequestBody(JSON_TYPE) ?: if (method == "POST") "{}".toRequestBody(JSON_TYPE) else null
-    val request = Request.Builder().url(url(path, query)).method(method, payload).build()
+    val request = Request.Builder().url(url(path, query)).method(method, payload).apply { if (native) tag(NativeToken::class.java, NativeToken) }.build()
     val response = try {
-      http.newCall(request).await()
+      (if (slow) slowHttp else http).newCall(request).await()
     } catch (error: IOException) {
       throw HyadexError.Unreachable(error.message ?: error.javaClass.simpleName)
     }
@@ -87,9 +102,18 @@ class HyadexClient(val baseUrl: HttpUrl, private val token: String) {
   suspend fun sessionPage(id: String, before: Int, limit: Int = 400): JsonElement =
     get("api/sessions/$id", mapOf("before" to before.toString(), "limit" to limit.toString()))
 
-  suspend fun sendTurn(id: String, prompt: String, requestID: String, capabilities: List<String>, fileIDs: List<String> = emptyList()): JsonElement {
+  /** Sends a message; `skill` is the opaque id and inventory revision of the command or skill it starts with. */
+  suspend fun sendTurn(
+    id: String,
+    prompt: String,
+    requestID: String,
+    capabilities: List<String>,
+    fileIDs: List<String> = emptyList(),
+    skill: Pair<String, String>? = null,
+  ): JsonElement {
     val body = mutableMapOf<String, Any?>("prompt" to prompt, "client_request_id" to requestID, "client_capabilities" to capabilities)
     if (fileIDs.isNotEmpty()) body["file_ids"] = fileIDs
+    if (skill != null) body["skill_selection"] = mapOf("id" to skill.first, "revision" to skill.second)
     return post("api/sessions/$id/turns", toJson(body))
   }
 
@@ -132,6 +156,26 @@ class HyadexClient(val baseUrl: HttpUrl, private val token: String) {
     post("api/sessions/$id/unread")
   }
 
+  /** Acknowledges a chat's emergency alerts up to and including `alertID`. */
+  suspend fun acknowledgeEmergency(id: String, alertID: String) {
+    post("api/sessions/$id/emergency/acknowledge", jsonOf("through_alert_id" to alertID))
+  }
+
+  /** A copy of the chat that remembers its conversation so far; returns the copy's record. */
+  suspend fun fork(id: String): JsonElement = request("POST", "api/sessions/$id/fork", slow = true)["session"] ?: JsonNull
+
+  /** Deletes a chat and its history on the server. */
+  suspend fun deleteSession(id: String) {
+    request("DELETE", "api/sessions/$id")
+  }
+
+  /** Chats whose history matches `query` (at least two characters), newest match first, one per chat. */
+  suspend fun search(query: String, limit: Int = 40): JsonElement = get("api/search", mapOf("q" to query, "limit" to limit.toString()))
+
+  /** A provider's plan usage ("claude" or "codex"); `refresh` asks the provider again instead of the server's last reading. */
+  suspend fun usage(backend: String, refresh: Boolean = false): JsonElement =
+    request("GET", "api/runtime/usage", mapOf("backend" to backend) + (if (refresh) mapOf("refresh" to "true") else emptyMap()), native = true)
+
   /** Native models and reasoning efforts per backend (probes the CLIs; may take seconds). */
   suspend fun runtimeCatalog(): JsonElement = get("api/runtime/catalog")
 
@@ -153,6 +197,91 @@ class HyadexClient(val baseUrl: HttpUrl, private val token: String) {
         if (it.code == 401 || it.code == 403) throw HyadexError.Unauthorized()
         if (it.code !in 200..299) throw HyadexError.Http(it.code, json["detail"].string)
         json["file"] ?: JsonNull
+      }
+    }
+  }
+
+  // The agent's own tools, as the Mac app drives them.
+
+  /** Context fill and the native goal (`backend` is "claude" or "codex"). */
+  suspend fun runtime(id: String, backend: String): JsonElement = get("api/sessions/$id/$backend/runtime")
+
+  /** Commands and skills the chat's agent offers in its folder. */
+  suspend fun providerCommands(id: String, refresh: Boolean = false): JsonElement =
+    request("GET", "api/sessions/$id/provider-commands", if (refresh) mapOf("refresh" to "true") else emptyMap(), slow = true)
+
+  /** Sets Claude Code's `/goal` completion condition; returns the Claude runtime. */
+  suspend fun setClaudeGoal(id: String, condition: String): JsonElement = request("PUT", "api/sessions/$id/claude/goal", body = jsonOf("condition" to condition), slow = true)
+
+  suspend fun clearClaudeGoal(id: String): JsonElement = request("DELETE", "api/sessions/$id/claude/goal", slow = true)
+
+  /** Creates or changes Codex's persistent goal; only the given fields change (null removes a budget). */
+  suspend fun setCodexGoal(id: String, fields: Map<String, Any?>): JsonElement = request("PUT", "api/sessions/$id/codex/goal", body = toJson(fields), slow = true)
+
+  suspend fun clearCodexGoal(id: String): JsonElement = request("DELETE", "api/sessions/$id/codex/goal", slow = true)
+
+  /** Starts Codex's native context compaction (idle chats only). */
+  suspend fun compactCodex(id: String): JsonElement = post("api/sessions/$id/codex/compact")
+
+  /** The MCP servers the chat's agent loaded. */
+  suspend fun mcp(id: String, backend: String): JsonElement = request("GET", "api/sessions/$id/$backend/mcp", slow = true)
+
+  /** `action` is reconnect, reconnect_all, enable or disable (Claude only). */
+  suspend fun controlClaudeMcp(id: String, action: String, server: String?, generation: String): JsonElement {
+    val body = mutableMapOf<String, Any?>("version" to 1, "action" to action, "expected_generation" to generation)
+    if (server != null) body["server_name"] = server
+    return request("POST", "api/sessions/$id/claude/mcp", body = toJson(body), slow = true)
+  }
+
+  suspend fun subagents(id: String): JsonElement = get("api/sessions/$id/subagents")
+
+  /** The chats this chat may ask (same project, accepting questions), most recent first. */
+  suspend fun consultTargets(id: String): JsonElement = get("api/sessions/$id/consult-targets")
+
+  /** The user asks `chat` a question from this chat (@ in its composer); the answer stays in this chat's view. */
+  suspend fun askFromChat(id: String, chat: String, question: String, deep: Boolean): JsonElement =
+    post("api/sessions/$id/ask", jsonOf("chat" to chat, "mode" to if (deep) "deep" else "basic", "question" to question))
+
+  suspend fun cancelConsult(id: String, consultID: String): JsonElement = post("api/sessions/$id/consults/$consultID/cancel")
+
+  /** Force Send: steers the running turn natively, or stops it and runs this message next. */
+  suspend fun runQueuedNow(id: String, queuedID: String): JsonElement =
+    request("POST", "api/sessions/$id/queue/$queuedID/run-now", body = jsonOf("accept_deferred_queue_response" to true), slow = true)
+
+  /** Moves a queued message one place "up" or "down". */
+  suspend fun moveQueued(id: String, queuedID: String, direction: String, expectedAdjacent: String?) {
+    val body = mutableMapOf<String, Any?>("direction" to direction)
+    if (expectedAdjacent != null) body["expected_adjacent_queued_id"] = expectedAdjacent
+    post("api/sessions/$id/queue/$queuedID/move", toJson(body))
+  }
+
+  /** The chat's side conversation (Claude Code's /btw, a Codex fork). */
+  suspend fun sideChat(id: String): JsonElement = request("GET", "api/sessions/$id/side-chat", native = true)
+
+  suspend fun askSideChat(id: String, requestID: String, question: String, sideChatID: String, after: String?): JsonElement =
+    request(
+      "POST", "api/sessions/$id/side-chat",
+      body = jsonOf("request_id" to requestID, "question" to question, "side_chat_id" to sideChatID, "after_request_id" to after),
+      native = true, slow = true,
+    )
+
+  suspend fun cancelSideQuestion(id: String, requestID: String): JsonElement = request("DELETE", "api/sessions/$id/side-chat/requests/$requestID", native = true)
+
+  suspend fun clearSideChat(id: String, sideChatID: String): JsonElement = request("DELETE", "api/sessions/$id/side-chat/$sideChatID", native = true)
+
+  /** A run's changes as one unified diff (plain text). */
+  suspend fun diff(id: String, runID: String): String {
+    val request = Request.Builder().url(url("api/sessions/$id/diffs/$runID")).build()
+    val response = try {
+      http.newCall(request).await()
+    } catch (error: IOException) {
+      throw HyadexError.Unreachable(error.message ?: error.javaClass.simpleName)
+    }
+    return withContext(Dispatchers.IO) {
+      response.use {
+        if (it.code == 401 || it.code == 403) throw HyadexError.Unauthorized()
+        if (it.code !in 200..299) throw HyadexError.Http(it.code, null)
+        it.body.string()
       }
     }
   }

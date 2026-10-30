@@ -50,6 +50,7 @@ fun chatSummary(json: JsonElement): ChatSummary? {
     archived = json["archived"].bool == true,
     folder = json["folder"].string?.trim()?.takeIf { it.isNotEmpty() && it != SERVER_DEFAULT_FOLDER },
     agentSeq = agentSeq,
+    tokens = TokenTotals.parse(json["token_totals"]),
   )
 }
 

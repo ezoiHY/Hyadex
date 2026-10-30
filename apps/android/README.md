@@ -8,7 +8,7 @@ API as the Mac app and keeps nothing but the server address and token.
 
 ```bash
 cd apps/android
-scripts/build-apk.sh     # dist/Hyadex.apk, about 3.8 MB
+scripts/build-apk.sh     # dist/Hyadex.apk, about 4 MB
 adb install -r dist/Hyadex.apk
 ```
 
@@ -50,10 +50,19 @@ Android Keystore. Never expose the server's port to the internet.
 
 ## What it does
 
-- **Chats.** Work chats by project, with search, pinned chats, unread and
-  running marks, and pull to refresh. Long press to pin, mark unread, rename or
-  archive; swipe a chat left to archive it (撤销 undoes it); + starts a chat
-  with Claude or Codex in a server folder.
+- **Chats.** Work chats by project (or one list by recent activity), with
+  pinned chats, unread, running and emergency marks, and pull to refresh. The
+  search box filters titles and also searches every chat's messages on the
+  server, the words in bold. Long press to mark read or unread, pin, rename,
+  fork, move to a project, archive or delete; swipe a chat left to archive it
+  (撤销 undoes it). Archived chats fold under 已归档, where they open, come back
+  or are deleted. + starts a chat with Claude or Codex in a server folder.
+- **Settings.** The server and its version, theme (system, light, dark), a
+  larger text size, 默认展开处理过程, grouping by project, notifications (approvals,
+  finished replies, watching after you leave), each provider's plan usage (also
+  at the foot of the list), the version and the open-source licenses.
+- **Emergency alerts.** An agent's emergency alert shows as a red banner over
+  the list and in its chat, with 打开 and 确认, as on the Mac.
 - **Moving around.** A chat slides in over the list. The back gesture shows the
   list behind it as you swipe (predictive back) and springs back if you change
   your mind. When you have scrolled up, a 新消息 / 回到最新 pill takes you to
@@ -65,23 +74,37 @@ Android Keystore. Never expose the server's port to the internet.
 - **Live.** The open chat streams its events, the provider's live reasoning
   summary and the answer being written. "正在思考 / 正在运行" shows what the
   agent is doing.
-- **Composer.** Send text and images (photos go up as JPEG of at most 2560 px),
-  stop a turn, withdraw queued messages, and switch the permission preset,
-  model and effort in the provider's own terms. After a stop, queued messages
-  wait until 继续发送.
+- **Composer.** Send text, images (photos go up as JPEG of at most 2560 px) and
+  any file, stop a turn, and switch the permission preset, model and effort in
+  the provider's own terms. "/" suggests the agent's commands and skills (and
+  /goal, /btw); "@" suggests other chats, and a message that opens with one asks
+  that chat (基础 or 深度) instead of the agent, its answer shown as a card. The
+  context ring shows how full the context is and compacts it. Drafts are kept
+  on the phone until sent.
+- **Queue.** Each queued message can be sent now, taken back to edit, moved up
+  or down, or withdrawn; after a stop they wait until 继续发送.
+- **The chat's tools.** The bar over a chat opens side questions (the agent
+  answers on the side, the conversation untouched), the native goal (Claude's
+  /goal, Codex's objective with budgets) with its bar over the composer, and
+  details: model, effort, permissions, tokens, commands, MCP servers (Claude's
+  can be reconnected, disabled or enabled) and subagents. Its menu holds
+  高级设置 (system prompt, subagent limit, naming, jobs access, questions from
+  other chats), fork, project, archive and delete.
+- **Changes.** A run's changed files open their diffs, added lines green and
+  removed red.
 - **Approvals and questions.** Commands, file changes, permissions, Codex
   questions and MCP forms are answered in place with the provider's own choices.
-- **Other chats' answers.** When the agent asks another chat in its project, a
-  card shows the question and the answer; a deep question waits for 允许,
-  拒绝 or 这个聊天以后都允许.
+- **Other chats' answers.** When the agent (or you, with @) asks another chat
+  in its project, a card shows the question and the answer; a deep question
+  waits for 允许, 拒绝 or 这个聊天以后都允许, and your own can be stopped.
 - **Connection.** A banner shows while the stream reconnects. A refused token
   or a chat that was archived or deleted elsewhere ends the stream with a note.
 - **Away from the app.** While a chat is still working and the app is out of
   sight, a notification says when the reply is done or an approval is waiting;
   tapping it opens the chat.
 
-Not yet: groups, Autopilot, scheduled jobs, side questions, asking another
-chat yourself with @, the terminal, and diffs beyond the changed-file list.
+Not yet: groups, Autopilot, scheduled jobs, the terminal, more than one saved
+server, and notifications once the two-hour watch ends.
 
 ## How it is built
 
@@ -92,7 +115,7 @@ database or navigation library:
 | --- | --- |
 | `api` | OkHttp REST client, the event stream (`hyadex-events-v1`, resumed by `seq`), lenient JSON reads |
 | `core` | Ports of the Mac app's `SessionProjection`, live text, interactions and row grouping; no Android types, unit tested on the JVM |
-| `app` | `AppViewModel` (the one state holder), the encrypted server store, `RunWatchService` |
+| `app` | `AppViewModel` (the one state holder), `ChatTools` (the open chat's commands, goal, context, MCP, subagents and side questions), settings and drafts, the encrypted server store, `RunWatchService` |
 | `ui` | Compose screens and the design tokens (`ui/theme`) |
 
 Kept light on the phone:
@@ -112,7 +135,7 @@ Kept light on the phone:
   of sight, polls every 5 seconds, and stops when nothing is busy (at most two hours).
 - Images are cached in memory and on disk and decoded at the size shown;
   photos to send are decoded two at a time.
-- Release builds are shrunk by R8 (3.8 MB instead of 68 MB).
+- Release builds are shrunk by R8 (about 4 MB instead of 68 MB).
 
 The projection follows the Mac app (`apps/macos/Sources/HyadexCore`): change
 both together, and port their tests (`app/src/test`) with them.
@@ -120,7 +143,7 @@ both together, and port their tests (`app/src/test`) with them.
 ## Development
 
 ```bash
-./gradlew testDebugUnitTest    # projection and row tests
+./gradlew testDebugUnitTest    # projection, row and capability tests
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 ```
 

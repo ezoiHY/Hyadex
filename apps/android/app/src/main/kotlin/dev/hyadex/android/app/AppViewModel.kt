@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import coil3.ImageLoader
@@ -20,6 +21,7 @@ import dev.hyadex.android.api.EventFrame
 import dev.hyadex.android.api.HyadexClient
 import dev.hyadex.android.api.HyadexError
 import dev.hyadex.android.api.array
+import dev.hyadex.android.api.emergencyAlerts
 import dev.hyadex.android.api.events
 import dev.hyadex.android.api.get
 import dev.hyadex.android.api.int
@@ -28,7 +30,9 @@ import dev.hyadex.android.api.text
 import dev.hyadex.android.core.ActivityState
 import dev.hyadex.android.core.AgentBackend
 import dev.hyadex.android.core.ApprovalDecision
+import dev.hyadex.android.core.ChatSettings
 import dev.hyadex.android.core.ChatSummary
+import dev.hyadex.android.core.EmergencyAlert
 import dev.hyadex.android.core.InteractionReply
 import dev.hyadex.android.core.LiveActivity
 import dev.hyadex.android.core.LiveText
@@ -37,10 +41,15 @@ import dev.hyadex.android.core.PendingConsult
 import dev.hyadex.android.core.PendingSend
 import dev.hyadex.android.core.QueuedMessage
 import dev.hyadex.android.core.RuntimeCatalog
+import dev.hyadex.android.core.ProviderUsage
+import dev.hyadex.android.core.SearchHit
 import dev.hyadex.android.core.SessionProjection
+import dev.hyadex.android.core.SlashParser
 import dev.hyadex.android.core.TimelineItem
 import dev.hyadex.android.core.TimelineRow
 import dev.hyadex.android.core.chatSummary
+import dev.hyadex.android.core.consultProblem
+import dev.hyadex.android.core.splitDiff
 import dev.hyadex.android.core.liveActivity
 import dev.hyadex.android.core.permissionLabel
 import dev.hyadex.android.core.timelineRows
@@ -54,6 +63,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -81,12 +92,14 @@ class Notice(val text: String, val action: String? = null, val run: () -> Unit =
 sealed interface Connection {
   data object NotConfigured : Connection
   data object Connecting : Connection
-  data class Connected(val address: String, val serverName: String?, val version: String?) : Connection
+  data class Connected(val address: String, val serverName: String?, val version: String?, val contract: Int? = null) : Connection
   data class Failed(val address: String, val message: String) : Connection
 }
 
 /** An image picked for the next message: uploading until it has a file id. */
-data class Attachment(val key: String, val uri: Uri, val name: String, val fileID: String? = null, val failed: Boolean = false)
+data class Attachment(val key: String, val uri: Uri, val name: String, val contentType: String = "image/*", val fileID: String? = null, val failed: Boolean = false) {
+  val isImage: Boolean get() = contentType.startsWith("image/")
+}
 
 /**
  * The app's one state holder. Chats are polled while the app is in front; the
@@ -95,6 +108,10 @@ data class Attachment(val key: String, val uri: Uri, val name: String, val fileI
  */
 class AppViewModel(application: Application) : AndroidViewModel(application) {
   private val store = ServerStore(application)
+  private val draftStore = DraftStore(application)
+  val settings = AppSettings(application)
+  /** The open chat's commands, goal, context, MCP servers, subagents and side questions. */
+  val tools = ChatTools(viewModelScope) { tell(it) }
 
   var connection by mutableStateOf<Connection>(Connection.NotConfigured)
     private set
@@ -103,6 +120,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
   var imageLoader by mutableStateOf<ImageLoader?>(null)
     private set
   var chats by mutableStateOf<List<ChatSummary>>(emptyList())
+    private set
+  /** Archived chats, most recent first; the list leaves them out. */
+  var archivedChats by mutableStateOf<List<ChatSummary>>(emptyList())
+    private set
+  /** Chats whose messages match the search box, from the server's history search. */
+  var searchHits by mutableStateOf<List<SearchHit>>(emptyList())
+    private set
+  /** Agents' unacknowledged emergency alerts, one per chat, newest first (streamed while the app is in front). */
+  var emergencies by mutableStateOf<List<EmergencyAlert>>(emptyList())
     private set
   /** The chat list has arrived at least once (so a chat missing from it is really gone). */
   var listLoaded by mutableStateOf(false)
@@ -120,6 +146,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
   val drafts = mutableStateMapOf<String, String>()
   val attachments = mutableStateMapOf<String, List<Attachment>>()
   val catalogs = mutableStateMapOf<AgentBackend, RuntimeCatalog>()
+  /** Each provider's plan usage, read now and then while the app is in front. */
+  val usage = mutableStateMapOf<AgentBackend, ProviderUsage>()
+  private var usageReadAt = 0L
   var refreshing by mutableStateOf(false)
     private set
   /** A chat to open, from a tapped notification. */
@@ -138,6 +167,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
   private var streamJob: Job? = null
   private var publishJob: Job? = null
   private var consultJob: Job? = null
+  private var searchJob: Job? = null
+  private var alertJob: Job? = null
   private var projection: SessionProjection? = null
   /** The open chat's events, oldest first and trimmed, so older history can be paged in front of them. */
   private val events = mutableListOf<JsonElement>()
@@ -146,18 +177,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
   private var liveReasoning: String? = null
   private var reconnecting = false
   private var consultApprovals = emptyList<PendingConsult>()
+  /** This chat's questions to other chats (`GET …/consults`, outgoing), by consult id. */
+  private var consultRecords = emptyMap<String, JsonElement>()
   private val pendingSends = mutableMapOf<String, MutableList<PendingSend>>()
   /** Interactions being answered: a second tap waits for the first. */
   private val answering = mutableSetOf<String>()
   /** Permission presets by chat, from full records (the summary list leaves them out). */
   private val permissions = mutableMapOf<String, String>()
   private val uploads = Semaphore(2)
+  private val diffCache = mutableMapOf<String, Map<String, String>>()
+  /** Chats whose preview is out of date (their agent did something since it was read). */
+  private val stalePreviews = mutableSetOf<String>()
 
   init {
     viewModelScope.launch {
       val saved = withContext(Dispatchers.IO) { store.load() }
       savedServer = saved
       saved?.let { connect(it.address, it.token, save = false) }
+    }
+    viewModelScope.launch {
+      drafts.putAll(withContext(Dispatchers.IO) { draftStore.load() })
+      // Saved a moment after typing stops: a new keystroke cancels the pending write.
+      snapshotFlow { drafts.toMap() }.drop(1).collectLatest {
+        delay(DRAFT_SAVE_MILLIS)
+        withContext(Dispatchers.IO) { draftStore.save(it) }
+      }
     }
   }
 
@@ -186,10 +230,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
           .diskCache { DiskCache.Builder().directory(getApplication<Application>().cacheDir.resolve("images")).maxSizeBytes(64L shl 20).build() }
           .build()
         val port = if (url.port != 80 && url.port != 443) ":${url.port}" else ""
-        connection = Connection.Connected(url.host + port, health["server_name"].text, health["server_version"].string)
+        connection = Connection.Connected(url.host + port, health["server_name"].text, health["server_version"].string, health["api_contract_version"].int)
         offline = false
         applyChats(sessions, full = true)
         startPolling()
+        watchEmergencies()
         loadCatalog()
       } catch (cancelled: CancellationException) {
         throw cancelled
@@ -207,16 +252,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
   fun disconnect() {
     pollJob?.cancel()
+    alertJob?.cancel()
+    alertJob = null
+    emergencies = emptyList()
     closeChat()
     store.clear()
     savedServer = null
     client = null
     imageLoader = null
     chats = emptyList()
+    archivedChats = emptyList()
+    searchHits = emptyList()
     listLoaded = false
     previews.clear()
     catalogs.clear()
+    usage.clear()
     permissions.clear()
+    // Drafts belong to that server's chats.
+    drafts.clear()
+    attachments.clear()
     connection = Connection.NotConfigured
   }
 
@@ -225,7 +279,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     if (foreground == value) return
     foreground = value
     if (value) {
-      if (client != null) startPolling(immediately = true)
+      if (client != null) {
+        startPolling(immediately = true)
+        watchEmergencies()
+      }
       val id = openChatID
       if (id != null && streamJob == null) {
         // Left while the history was still loading: load it again.
@@ -239,6 +296,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     } else {
       pollJob?.cancel()
       pollJob = null
+      alertJob?.cancel()
+      alertJob = null
       streamJob?.cancel()
       streamJob = null
       consultJob?.cancel()
@@ -251,6 +310,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     pollJob = viewModelScope.launch {
       if (immediately) refreshChats()
       while (true) {
+        if (System.currentTimeMillis() - usageReadAt > USAGE_MILLIS) loadUsage()
         // The open chat has its own stream; the list matters less then.
         delay(if (openChatID != null) OPEN_CHAT_POLL_MILLIS else POLL_MILLIS)
         refreshChats()
@@ -285,17 +345,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
   private suspend fun applyChats(sessions: List<JsonElement>, full: Boolean) {
     val open = projection
     var unknown = false
-    val mapped = sessions.mapNotNull { json ->
+    val all = sessions.mapNotNull { json ->
       val chat = chatSummary(json) ?: return@mapNotNull null
       if (full) permissions[chat.id] = chat.permission
       val permission = permissions[chat.id] ?: chat.permission.also { unknown = true }
       chat.copy(permission = permission)
-    }.filter { !it.archived }.map { chat ->
+    }
+    val archived = all.filter { it.archived }.sortedByDescending { it.lastActivity }
+    if (archived != archivedChats) archivedChats = archived
+    val mapped = all.filter { !it.archived }.map { chat ->
       if (chat.id == openChatID && open != null) chat.copy(state = stateOf(open), unread = false) else chat
     }
     // Keep unchanged chats as they were, so their rows skip recomposition.
     val previous = chats.associateBy { it.id }
     val merged = mapped.map { chat -> previous[chat.id]?.takeIf { it == chat } ?: chat }
+    // A turn finished elsewhere (another device, a job): read that chat's preview again, once it is idle.
+    for (chat in merged) {
+      val before = previous[chat.id] ?: continue
+      if (chat.id != openChatID && chat.agentSeq != before.agentSeq && chat.state != ActivityState.RUNNING) stalePreviews += chat.id
+    }
     if (merged != chats) chats = merged
     listLoaded = true
     if (unknown && !full) refreshChats(full = true)
@@ -305,7 +373,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
   /** The list has no message text, so fetch a short tail for chats without a preview. */
   private suspend fun loadMissingPreviews() {
     val client = client ?: return
-    val missing = chats.filter { it.id !in previews }.take(12)
+    val missing = chats.filter { it.id !in previews || it.id in stalePreviews }.take(12)
+    stalePreviews -= missing.map { it.id }.toSet()
     if (missing.isEmpty()) return
     val results = missing.map { chat ->
       viewModelScope.async {
@@ -315,6 +384,52 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
       }
     }.awaitAll()
     for ((id, text) in results) previews[id] = text?.let(::previewLine) ?: "还没有消息"
+  }
+
+  /** The emergency stream: a snapshot of every chat's open alert on each (re)connect, then changes. */
+  private fun watchEmergencies() {
+    val client = client ?: return
+    alertJob?.cancel()
+    alertJob = viewModelScope.launch {
+      client.emergencyAlerts().collect { frame ->
+        val json = (frame as? EventFrame.Control)?.json ?: return@collect
+        val next = when (json["type"].string) {
+          "emergency_snapshot" -> json["sessions"].array.mapNotNull(EmergencyAlert::parse)
+          "emergency_changed" -> {
+            val id = json["session"]["id"].string
+            emergencies.filter { it.chatID != id } + listOfNotNull(EmergencyAlert.parse(json["session"]))
+          }
+          "emergency_removed" -> emergencies.filter { it.chatID != json["session_id"].string }
+          else -> return@collect
+        }
+        emergencies = next.sortedByDescending { it.raisedAt }
+      }
+    }
+  }
+
+  /** Acknowledges a chat's alerts up to this one; the stream brings it back if that fails. */
+  fun acknowledge(alert: EmergencyAlert) {
+    val client = client ?: return
+    emergencies = emergencies.filter { it.chatID != alert.chatID }
+    viewModelScope.launch {
+      runCatching { client.acknowledgeEmergency(alert.chatID, alert.alertID) }.onFailure {
+        tell(it.message)
+        watchEmergencies()
+      }
+    }
+  }
+
+  /** Both providers' plan usage; `refresh` asks the providers themselves (slower). */
+  fun loadUsage(refresh: Boolean = false) {
+    val client = client ?: return
+    if (!settings.showUsage && !refresh) return
+    usageReadAt = System.currentTimeMillis()
+    for (backend in AgentBackend.entries) {
+      viewModelScope.launch {
+        val json = runCatching { client.usage(backend.raw, refresh) }.getOrNull() ?: return@launch
+        usage[backend] = ProviderUsage.parse(backend, json)
+      }
+    }
   }
 
   private fun loadCatalog() {
@@ -334,7 +449,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val record = client.updateSession(id, fields)
         chatSummary(record)?.let { updated ->
           permissions[id] = updated.permission
-          chats = if (updated.archived) chats.filter { it.id != id } else chats.map { if (it.id == id) updated.copy(state = it.state, unread = it.unread) else it }
+          if (updated.archived) {
+            chats = chats.filter { it.id != id }
+            archivedChats = listOf(updated) + archivedChats.filter { it.id != id }
+          } else if (chats.none { it.id == id }) {
+            // Brought back from the archive.
+            archivedChats = archivedChats.filter { it.id != id }
+            chats = listOf(updated) + chats
+          } else {
+            chats = chats.map { if (it.id == id) updated.copy(state = it.state, unread = it.unread) else it }
+          }
         }
       } catch (cancelled: CancellationException) {
         throw cancelled
@@ -357,6 +481,86 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         runCatching { client.updateSession(chat.id, mapOf("archived" to false)) }.onFailure { tell(it.message) }
         refreshChats()
       }
+    }
+  }
+
+  fun unarchive(chat: ChatSummary) {
+    updateChat(chat.id, mapOf("archived" to false))
+  }
+
+  /** Puts the chat in a project, or (null) takes it out of its project. */
+  fun moveToProject(chat: ChatSummary, project: String?) {
+    updateChat(chat.id, mapOf("folder" to (project?.trim()?.takeIf { it.isNotEmpty() } ?: SERVER_DEFAULT_FOLDER)))
+  }
+
+  /** Projects the chats are in, most recently active first. */
+  val knownProjects: List<String> get() = (chats + archivedChats).sortedByDescending { it.lastActivity }.mapNotNull { it.folder }.distinct()
+
+  fun markRead(id: String) {
+    val client = client ?: return
+    viewModelScope.launch {
+      runCatching { client.markRead(id) }.onSuccess { chats = chats.map { if (it.id == id) it.copy(unread = false) else it } }.onFailure { tell(it.message) }
+    }
+  }
+
+  /** A copy of the chat that remembers the conversation so far; it opens when ready. */
+  fun fork(chat: ChatSummary, onCreated: (String) -> Unit) {
+    val client = client ?: return
+    tell("正在分叉「${chat.title}」…")
+    viewModelScope.launch {
+      try {
+        val copy = chatSummary(client.fork(chat.id)) ?: return@launch
+        permissions[copy.id] = copy.permission
+        chats = listOf(copy.copy(lastActivity = Instant.now())) + chats.filter { it.id != copy.id }
+        onCreated(copy.id)
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (error: Exception) {
+        tell(error.message)
+      }
+    }
+  }
+
+  /** Deletes a chat for good (the screen asks first). */
+  fun deleteChat(chat: ChatSummary) {
+    val client = client ?: return
+    viewModelScope.launch {
+      try {
+        client.deleteSession(chat.id)
+        if (openChatID == chat.id) closedChat = chat.id
+        chats = chats.filter { it.id != chat.id }
+        archivedChats = archivedChats.filter { it.id != chat.id }
+        searchHits = searchHits.filter { it.chatID != chat.id }
+        drafts.remove(chat.id)
+        tell("已删除「${chat.title}」")
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (error: Exception) {
+        tell(error.message)
+      }
+    }
+  }
+
+  /** Searches the chats' history for the search box's text (a moment after typing stops). */
+  fun search(query: String) {
+    searchJob?.cancel()
+    val text = query.trim()
+    val client = client
+    if (text.length < 2 || client == null) {
+      searchHits = emptyList()
+      return
+    }
+    searchJob = viewModelScope.launch {
+      delay(SEARCH_DELAY_MILLIS)
+      val result = try {
+        client.search(text)
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (_: Exception) {
+        // The list's own filter still shows title matches.
+        return@launch
+      }
+      searchHits = result["results"].array.mapNotNull(SearchHit::parse)
     }
   }
 
@@ -414,7 +618,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     if (openChatID == id) return
     closeChat()
     val client = client ?: return
-    val chat = chats.firstOrNull { it.id == id } ?: return
+    val chat = chats.firstOrNull { it.id == id } ?: archivedChats.firstOrNull { it.id == id } ?: return
     openChatID = id
     chatView = ChatView(id, emptyList(), null, false, emptyList(), olderHistory = false, loaded = false)
     streamJob = viewModelScope.launch {
@@ -437,13 +641,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
       }
       if (openChatID != id) return@launch
+      tools.open(client, chat)
       page["session"].takeIf { it is JsonObject }?.let { permissions[id] = permissionLabel(it, chat.backend) }
       events.clear()
       events += loaded
       olderHistory = (page["events_omitted_before"].int ?: 0) > 0
       projection = built
       publish()
-      if (built.items.any { it is TimelineItem.Consult && it.running }) watchConsults()
+      if (built.items.any { it is TimelineItem.Consult && (it.running || it.byUser) }) watchConsults()
       try {
         client.markRead(id)
       } catch (cancelled: CancellationException) {
@@ -476,8 +681,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if ((frame.json["seq"].int ?: 0) > (events.lastOrNull()?.get("seq").int ?: 0)) events += trimmed(frame.json)
             projection.apply(frame.json)
             liveText.settle(frame.json)
+            tools.onEvent(frame.json["type"].string)
             when (frame.json["type"].string) {
               "turn_finished" -> launch {
+                // A turn spends plan usage: read it again on the next poll.
+                usageReadAt = 0L
                 try {
                   client.markRead(id)
                 } catch (cancelled: CancellationException) {
@@ -490,10 +698,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 launch(Dispatchers.Default) { MarkdownCache.warm(it) }
               }
               "tool_started" -> if (SessionProjection.consultCall(frame.json["tool"]) != null) watchConsults()
+              "chat_consult_asked" -> watchConsults()
             }
             schedulePublish()
           }
-          is EventFrame.Control ->
+          is EventFrame.Control -> {
+            tools.onControl(frame.json)
             when (frame.json["type"].string) {
               "reasoning_summary_stream" -> {
                 liveReasoning = frame.json["items"].array.asReversed().firstNotNullOfOrNull { it["text"].text }?.takeLast(400)
@@ -505,6 +715,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
               }
               "chat_consult_updated" -> watchConsults()
             }
+          }
           is EventFrame.Link -> {
             if (reconnecting == frame.up) {
               reconnecting = !frame.up
@@ -535,27 +746,56 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     if (consultJob?.isActive == true) return
     consultJob = viewModelScope.launch {
       while (openChatID == id) {
-        val waiting = try {
+        val outgoing = try {
           client.consults(id)["outgoing"].array
+        } catch (cancelled: CancellationException) {
+          throw cancelled
+        } catch (_: Exception) {
+          null
+        }
+        if (outgoing != null) {
+          val waiting = outgoing
             .filter { it["status"].string == "awaiting_approval" }
             .mapNotNull { record ->
               val consultID = record["id"].string ?: return@mapNotNull null
               PendingConsult(consultID, record["target"]["title"].string ?: "聊天", record["question"].string ?: "")
             }
-        } catch (cancelled: CancellationException) {
-          throw cancelled
-        } catch (_: Exception) {
-          consultApprovals
-        }
-        if (waiting != consultApprovals) {
-          consultApprovals = waiting
-          schedulePublish()
+          // The user's own questions (@ in the composer) get their answers from these records.
+          val records = outgoing.mapNotNull { record -> record["id"].string?.let { it to record } }.toMap()
+          if (waiting != consultApprovals || records != consultRecords) {
+            consultApprovals = waiting
+            consultRecords = records
+            schedulePublish()
+          }
         }
         val asking = projection?.items?.any { it is TimelineItem.Consult && it.running } == true
-        if (!asking && waiting.isEmpty()) break
+        if (!asking && consultApprovals.isEmpty() && userAsks().none { it.running }) break
         delay(CONSULT_POLL_MILLIS)
       }
     }
+  }
+
+  /** The user's own questions to other chats, with what their records say. */
+  private fun userAsks(): List<TimelineItem.Consult> =
+    projection?.items.orEmpty().filterIsInstance<TimelineItem.Consult>().filter { it.byUser }.map(::withRecord)
+
+  private fun withRecord(item: TimelineItem.Consult): TimelineItem.Consult {
+    if (!item.byUser) return item
+    // Until its record arrives the question is still on its way.
+    val record = consultRecords[item.id.removePrefix("consult-")] ?: return item.copy(running = true)
+    val status = record["status"].string
+    return item.copy(
+      running = status in setOf("awaiting_approval", "queued", "running"),
+      answer = record["answer"].text,
+      error = consultProblem(status, record["error_code"].string, record["error"].text, item.deep),
+    )
+  }
+
+  /** Stops a question the user asked another chat. */
+  fun cancelConsult(item: TimelineItem.Consult) {
+    if (!item.byUser) return
+    tools.cancelConsult(item.id.removePrefix("consult-"))
+    watchConsults()
   }
 
   /** "allow", "always" (this chat from now on) or "deny". */
@@ -629,7 +869,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     liveReasoning = null
     reconnecting = false
     consultApprovals = emptyList()
+    consultRecords = emptyMap()
+    diffCache.clear()
     answering.clear()
+    tools.close()
     chatView = null
   }
 
@@ -650,7 +893,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
       liveReasoning = null
     }
     val pending = pendingSends[id]?.apply { removeAll { it.id in projection.acceptedRequests } }?.toList() ?: emptyList()
-    val items = projection.items.toList() + liveText.messages(projection.agent)
+    val items = projection.items.map { if (it is TimelineItem.Consult && it.byUser) withRecord(it) else it } + liveText.messages(projection.agent)
     val busy = projection.running || projection.pending.isNotEmpty()
     val activity = liveActivity(projection.backend, busy, items, projection.turnStartedAt, pending, liveReasoning, consultApprovals.size)
     chatView = ChatView(
@@ -694,6 +937,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
     val fileIDs = files.mapNotNull { it.fileID }
     if (message.isEmpty() && fileIDs.isEmpty()) return false
+    // "/goal …" and "/btw …" drive the agent's goal and side questions; neither becomes a turn.
+    if (files.isEmpty()) {
+      val goalArgument = SlashParser.goalArgument(message)
+      if (goalArgument != null && tools.goalSupport?.available == true) {
+        when {
+          goalArgument.isEmpty() -> tools.goalSheetOpen = true
+          goalArgument.lowercase() in setOf("clear", "off", "stop") -> tools.clearGoal()
+          else -> tools.setGoal(goalArgument)
+        }
+        drafts.remove(id)
+        return true
+      }
+      SlashParser.sideQuestion(message)?.let { question ->
+        tools.sideOpen = true
+        tools.askSide(question)
+        drafts.remove(id)
+        return true
+      }
+    }
+    // A message that starts with a command or skill names it, so the agent runs it natively.
+    val skill = tools.commands?.let { inventory -> inventory.command(message)?.let { it.id to inventory.revision } }
     // Show the message and a "starting" status at once; the server's turn_started
     // (matched by client_request_id) replaces it.
     val requestID = "android-" + UUID.randomUUID()
@@ -704,7 +968,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     publish()
     viewModelScope.launch {
       try {
-        client.sendTurn(id, message, requestID, CAPABILITIES, fileIDs)
+        try {
+          client.sendTurn(id, message, requestID, CAPABILITIES, fileIDs, skill)
+        } catch (error: HyadexError.Http) {
+          // The command list changed since it was read: read it again and send once more.
+          if (skill == null || error.code != 409 || error.detail?.contains("provider command") != true) throw error
+          val again = tools.reloadCommands(client, id)?.let { inventory -> inventory.command(message)?.let { it.id to inventory.revision } }
+          client.sendTurn(id, message, requestID, CAPABILITIES, fileIDs, again)
+        }
         if (message.isNotEmpty()) previews[id] = previewLine(message)
       } catch (cancelled: CancellationException) {
         throw cancelled
@@ -754,6 +1025,39 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch { runCatching { client.deleteQueued(id, queuedID) }.onFailure { tell(it.message) } }
   }
 
+  /** Force Send: steers the running turn natively, or stops it and runs this message next. */
+  fun runQueuedNow(queuedID: String) {
+    val id = openChatID ?: return
+    val client = client ?: return
+    viewModelScope.launch { runCatching { client.runQueuedNow(id, queuedID) }.onFailure { tell(it.message) } }
+  }
+
+  /** Takes a queued message back into the composer to change it (withdrawn from the queue). */
+  fun editQueued(message: QueuedMessage) {
+    val id = openChatID ?: return
+    val client = client ?: return
+    viewModelScope.launch {
+      runCatching { client.deleteQueued(id, message.id) }
+        .onSuccess {
+          val draft = drafts[id].orEmpty()
+          drafts[id] = if (draft.isBlank()) message.text else message.text + "\n" + draft
+        }
+        .onFailure { tell(it.message) }
+    }
+  }
+
+  /** Moves a queued message one place up or down. */
+  fun moveQueued(queuedID: String, up: Boolean) {
+    val id = openChatID ?: return
+    val client = client ?: return
+    val queue = projection?.queued?.toList() ?: return
+    val index = queue.indexOfFirst { it.id == queuedID }
+    val neighbour = queue.getOrNull(if (up) index - 1 else index + 1) ?: return
+    viewModelScope.launch {
+      runCatching { client.moveQueued(id, queuedID, if (up) "up" else "down", neighbour.id) }.onFailure { tell(it.message) }
+    }
+  }
+
   /** Sends the messages held after a Stop. */
   fun resumeQueue() {
     val id = openChatID ?: return
@@ -765,9 +1069,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
   fun attach(uris: List<Uri>) {
     val id = openChatID ?: return
     val client = client ?: return
+    val resolver = getApplication<Application>().contentResolver
     for (uri in uris) {
       val key = UUID.randomUUID().toString()
-      attachments[id] = attachments[id].orEmpty() + Attachment(key, uri, "image")
+      val name = runCatching { resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null } }.getOrNull() ?: "文件"
+      attachments[id] = attachments[id].orEmpty() + Attachment(key, uri, name, resolver.getType(uri) ?: "application/octet-stream")
       viewModelScope.launch {
         val result = runCatching {
           uploads.withPermit {
@@ -823,6 +1129,64 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     openChatID?.let { updateChat(it, fields) }
   }
 
+  /** A new model; an effort the model does not offer goes back to the server's default. */
+  fun setModel(chat: ChatSummary, model: String) {
+    val efforts = catalogs[chat.backend]?.efforts(model).orEmpty()
+    val fields = mutableMapOf<String, Any?>("model" to model)
+    if (chat.effort.isNotEmpty() && efforts.isNotEmpty() && efforts.none { it.value == chat.effort }) fields["effort"] = null
+    updateOpenChat(fields)
+  }
+
+  /** A chat's advanced settings, from its full record. */
+  suspend fun loadChatSettings(id: String): ChatSettings? {
+    val client = client ?: return null
+    return try {
+      ChatSettings.parse(client.sessionTail(id, 1)["session"])
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (error: Exception) {
+      tell(error.message)
+      null
+    }
+  }
+
+  /** Saves only what changed; `onSaved` runs once the server has it. */
+  fun saveChatSettings(id: String, before: ChatSettings, after: ChatSettings, onSaved: () -> Unit) {
+    val client = client ?: return
+    val fields = before.changes(after)
+    if (fields.isEmpty()) return onSaved()
+    viewModelScope.launch {
+      try {
+        chatSummary(client.updateSession(id, fields))?.let { updated -> chats = chats.map { if (it.id == id) updated.copy(state = it.state, unread = it.unread) else it } }
+        onSaved()
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (error: Exception) {
+        tell(error.message)
+      }
+    }
+  }
+
+  /** A run's diffs by file path, read once per run while its chat is open. */
+  suspend fun diffFiles(runID: String): Map<String, String>? {
+    diffCache[runID]?.let { return it }
+    val id = openChatID ?: return null
+    val client = client ?: return null
+    return try {
+      splitDiff(client.diff(id, runID)).also { if (openChatID == id) diffCache[runID] = it }
+    } catch (cancelled: CancellationException) {
+      throw cancelled
+    } catch (error: Exception) {
+      tell(error.message)
+      null
+    }
+  }
+
+  /** Context compaction: Codex's native one, or Claude's `/compact` as a turn. */
+  fun compact() {
+    if (tools.backend == AgentBackend.CODEX) tools.compactCodex() else send("/compact")
+  }
+
   fun fileUrl(fileID: String): String? {
     val id = openChatID ?: return null
     return client?.fileUrl(id, fileID)
@@ -839,6 +1203,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private const val LIVE_FRAME_MILLIS = 80L
     private const val HISTORY_PAGE = 400
     private const val MAX_IMAGE_SIDE = 2560
+    private const val DRAFT_SAVE_MILLIS = 600L
+    private const val SEARCH_DELAY_MILLIS = 300L
+    /** How often plan usage is read again (the Mac reads it every 90 seconds). */
+    private const val USAGE_MILLIS = 90_000L
+    /** The folder the server gives chats outside any project. */
+    private const val SERVER_DEFAULT_FOLDER = "General"
     /** What a kept event's tool input and output are cut to (the timeline shows less). */
     private const val KEPT_TEXT = 4_000
 

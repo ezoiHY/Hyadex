@@ -3,6 +3,49 @@
 Newest first. Hyadex started from the AgentsDock server source (see
 [NOTICE](../NOTICE)); its own history begins with the first version below.
 
+## 2026-10-30 — Android: settings and the Mac's Work tools
+
+The Android app now does what the Mac app does with Work chats (groups,
+Autopilot, jobs and the terminal stay Mac-only), ported from the Mac's own
+code and tests.
+
+- **Settings.** A settings screen replaces the server dialog: the server and its
+  version and API contract, theme (system, light, dark), the Mac's larger text
+  size, 默认展开处理过程, grouping by project, notifications for approvals and
+  finished replies, the background watch, each provider's plan usage (also at
+  the foot of the list), the app's version and its open-source licenses.
+- **Chat list.** Searching also searches every chat's messages on the server
+  (one hit per chat, its words in bold). Long press offers mark read, fork, move
+  to a project and delete (with a confirmation); archived chats fold under
+  已归档, where they open, come back or are deleted. Previews follow turns that
+  finish on other devices.
+- **Emergency alerts.** Streamed while the app is in front: red banners over the
+  list and in the chat with 打开 and 确认, and a mark on the chat's row.
+- **Composer.** "/" suggests the agent's commands and skills, sent natively;
+  /goal and /btw drive the goal and side questions. "@" suggests other chats;
+  a message that opens with one asks it (基础 or 深度) and shows the answer as a
+  card, which can be stopped. Any file can be attached. The context ring
+  compacts the context. Changing the model resets an effort it does not offer.
+  Drafts are kept on the phone.
+- **Queue.** 立即发送, 编辑 (back into the composer), 上移 / 下移 and 撤回, with
+  the Mac's held states (已暂停, 投递未确认).
+- **The chat's tools.** Side questions, the goal (and its bar over the
+  composer), details (settings, tokens, commands, MCP servers with Claude's
+  reconnect, disable and enable, subagents), 高级设置, and diffs of changed
+  files. Screens you type in slide over the chat, so the keyboard never hides
+  them.
+- Verification: 33 JVM unit tests, including the Mac's capability tests
+  ported (commands, goals, MCP, queue order and holds, emergency alerts, search,
+  side questions, subagents, mentions, context, diffs). On the Android 17
+  emulator against an isolated server with real Claude Code and Codex: settings
+  in both themes, usage, message search, archive and unarchive, fork, project,
+  delete, "/" and "@" suggestions, an @ question answered by the Codex chat, a
+  side question, a Claude /goal reached, a write approved, two queued messages
+  reordered and one taken back to edit, a diff opened, 高级设置 saved to the
+  server, and an agent's emergency alert shown and acknowledged.
+- Not verified: compacting the context, MCP controls, a Codex goal with budgets,
+  and attaching a non-image file through the system picker.
+
 ## 2026-10-30 — 0.1.0-beta.1: Hyadex's own version line
 
 - **Hyadex numbers its own releases**, starting at 0.1.0-beta.1, instead of the
